@@ -1,0 +1,4 @@
+{
+  "platform": "replace-with-openssl-rand-hex-32",
+  "payments": "replace-with-openssl-rand-hex-32"
+}
