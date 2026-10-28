@@ -437,10 +437,11 @@ things a change must not undo by accident.
   rewrite is applied before the project one. The project description is
   folded from the note, not from the repository description.
 - A failure is classed, and the class decides everything:
-  - the model's answer off the schema, a 4xx from the gateway (context
-    overflow, rejected format), a 2xx of the wrong shape: specific to this
-    call, the note is marked consolidated with a log line and never
-    retried;
+  - the model's answer off the schema, an answer cut by the model's output
+    limit (`too_long`: the description asked for does not fit one call), a
+    4xx from the gateway (context overflow, rejected format), a 2xx of the
+    wrong shape: specific to this call, the note is marked consolidated
+    with a log line and never retried;
   - a timeout, a 5xx, a transport failure, a refused key, a rate limit, a
     proxy page where the answer should be: the gateway's, the worker holds
     (thirty seconds, doubling to ten minutes, or the rate limit's

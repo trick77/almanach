@@ -696,6 +696,7 @@ components:
           type: integer
         chars:
           type: integer
+          description: Runes of prose in the revision (summary plus every statement's name and text), the figure the page's ceiling applies to.
         created_at:
           type: string
           format: date-time

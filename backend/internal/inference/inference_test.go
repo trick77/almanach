@@ -80,7 +80,7 @@ func TestMergeFormat(t *testing.T) {
 }
 
 func TestOutcomeString(t *testing.T) {
-	for o, want := range map[Outcome]string{OutcomeOK: "ok", OutcomeTimedOut: "timed_out", OutcomeUnparseable: "unparseable", OutcomeError: "error", Outcome(99): "error"} {
+	for o, want := range map[Outcome]string{OutcomeOK: "ok", OutcomeTimedOut: "timed_out", OutcomeUnparseable: "unparseable", OutcomeError: "error", OutcomeTooLong: "too_long", Outcome(99): "error"} {
 		if got := o.String(); got != want {
 			t.Errorf("Outcome(%d).String() = %q, want %q", int(o), got, want)
 		}

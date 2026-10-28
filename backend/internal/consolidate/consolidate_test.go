@@ -277,7 +277,7 @@ func TestFoldKeptIDChangedAppendsPROnce(t *testing.T) {
 }
 
 func TestFoldRejections(t *testing.T) {
-	long := strings.Repeat("x", limits.RepoMaxChars)
+	long := strings.Repeat("x", limits.RepoMaxChars+1)
 	many := make([]inference.Statement, limits.RepoMaxStatements+1)
 	for i := range many {
 		many[i] = inference.Statement{Kind: "rule", Name: "n", Text: "t"}
@@ -494,7 +494,8 @@ func TestRender(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown", "at most 3 statements", "at most 2 statements",
-		"400 characters of prose in all", "200 characters in all", "Der Dienst speichert Dateien.", "- [s1] component: Uploader: Nimmt Dateien an. (internal/files/upload.go)",
+		"400 characters of prose in all", "200 characters of prose in all", "Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
+		"the current description has 54", "the current description has 0",
 		"_None yet._", `{"components":[{"name":"x"}]}`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)
@@ -512,8 +513,34 @@ func TestDescribe(t *testing.T) {
 	p := existingRepoPage()
 	p.Statements = append(p.Statements, store.Statement{ID: "s2", Kind: "rule", Name: "R", Text: "T"})
 	got := describe(p)
-	if !strings.HasPrefix(got, "Der Dienst speichert Dateien.\n\n- [s1] component: Uploader: Nimmt Dateien an. (internal/files/upload.go)\n- [s2] rule: R: T\n") {
-		t.Errorf("describe = %q", got)
+	want := "Der Dienst speichert Dateien.\n\n### [s1] component: Uploader\n\nNimmt Dateien an.\n\nFiles: internal/files/upload.go\n\n### [s2] rule: R\n\nT\n"
+	if got != want {
+		t.Errorf("describe =\n%q\nwant\n%q", got, want)
+	}
+	// A multi-paragraph text stays under its heading, every paragraph
+	// attributable to the id.
+	p.Statements[1].Text = "Absatz eins.\n\nAbsatz zwei."
+	if got := describe(p); !strings.Contains(got, "### [s2] rule: R\n\nAbsatz eins.\n\nAbsatz zwei.\n") {
+		t.Errorf("describe with paragraphs = %q", got)
+	}
+}
+
+// A statement is as long as its subject needs: a text far over the old
+// per-statement cap is accepted under the page's ceiling, and the chars
+// stored are the prose the ceiling counted. The project scope has its own,
+// smaller ceiling.
+func TestFoldLongStatementUnderThePageCeiling(t *testing.T) {
+	st := newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+	text := strings.Repeat("ä", 350) + "\n\n" + strings.Repeat("b", 20)
+	repo := &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: text}}}
+	project := &inference.Description{Summary: strings.Repeat("p", limits.ProjectMaxChars+1), Statements: nil}
+	newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || st.revisions[0].Scope != store.ScopeRepository {
+		t.Fatalf("revisions = %+v, want the repository accepted and the project rejected", st.revisions)
+	}
+	if want := 1 + 1 + 350 + 2 + 20; st.revisions[0].Chars != want {
+		t.Errorf("chars = %d, want the prose runes %d", st.revisions[0].Chars, want)
 	}
 }
 

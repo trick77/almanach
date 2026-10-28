@@ -19,7 +19,7 @@ Fold one new note, written after a merged pull request of repository `{repo}` in
 
 ## Limits
 
-These are ceilings against unbounded growth, not targets. Repository: at most {repo_max_statements} statements and {repo_max_chars} characters of prose in all. Project: at most {project_max_statements} statements and {project_max_chars} characters in all. A description over a limit is rejected whole and nothing changes: when a description nears its limit, merge and tighten what is there rather than drop what is essential.
+These are ceilings against unbounded growth, not targets. Prose is the summary plus every statement's name and text; paths do not count. Repository: at most {repo_max_statements} statements and {repo_max_chars} characters of prose in all; the current description has {repo_chars}. Project: at most {project_max_statements} statements and {project_max_chars} characters of prose in all; the current description has {project_chars}. A description over a limit is rejected whole and nothing changes: when a description nears its limit, merge and tighten what is there rather than drop what is essential.
 
 ## Output format
 

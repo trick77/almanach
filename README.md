@@ -22,7 +22,7 @@ next pull request that gets a fact right corrects it.
 
 ## What you get
 
-- **Repository description**: a short summary plus statements about the
+- **Repository description**: an overview of what the repository is for and how it is structured, plus documentation of the
   components, business rules, invariants and data entities of the code,
   each with the pull requests it was learned from.
 - **Project description**: what spans the project's repositories, built by

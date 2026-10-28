@@ -16,9 +16,11 @@ import (
 	"github.com/trick77/llmwire"
 )
 
-// CallTimeout bounds one merge call. The descriptions are small; a fold
-// that takes longer is the gateway hanging.
-const CallTimeout = 180 * time.Second
+// CallTimeout bounds one merge call. A fold rewrites two descriptions that
+// may run to tens of thousands of characters each, with reasoning before
+// them; ten minutes covers that, and a fold that takes longer is the
+// gateway hanging.
+const CallTimeout = 10 * time.Minute
 
 // Outcome says how a call ended.
 type Outcome int
@@ -30,6 +32,9 @@ const (
 	OutcomeTimedOut
 	OutcomeUnparseable
 	OutcomeError
+	// OutcomeTooLong: the model's output limit cut the answer. The
+	// description asked for does not fit one call.
+	OutcomeTooLong
 )
 
 func (o Outcome) String() string {
@@ -40,6 +45,8 @@ func (o Outcome) String() string {
 		return "timed_out"
 	case OutcomeUnparseable:
 		return "unparseable"
+	case OutcomeTooLong:
+		return "too_long"
 	default:
 		return "error"
 	}
@@ -237,6 +244,13 @@ func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
 		return out
 	}
 	out := MergeResult{Cost: costFrom(resp)}
+	if resp.FinishReason == "length" {
+		// Cut by the model's output cap, so the JSON is incomplete: say so,
+		// rather than reporting the cut as an answer off the schema.
+		out.Outcome = OutcomeTooLong
+		out.Err = errors.New("the answer was cut by the model's output limit")
+		return out
+	}
 	m, ok := ParseMerge(resp.Content)
 	if !ok {
 		out.Outcome = OutcomeUnparseable
