@@ -20,7 +20,6 @@ team-keys.json
 .codex/
 .zed/
 .windsurf/
-.playwright-mcp/
 
 # macOS
 .DS_Store

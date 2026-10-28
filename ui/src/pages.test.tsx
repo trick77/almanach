@@ -130,6 +130,8 @@ const repo: RepoDetail = {
   project_key: "PAY",
   slug: "pay-clearing",
   description: null,
+  notes_total: 250,
+  last_merge: mergedAt,
   revisions: [
     {
       revision: 2,
@@ -188,6 +190,8 @@ const note: NoteDetail = {
     output_tokens: 800,
     cost_usd: "0.012",
     rounds: 3,
+    rounds_input_tokens: 300000,
+    rounds_output_tokens: 2400,
     rounds_cost_usd: "0.040",
   },
 };

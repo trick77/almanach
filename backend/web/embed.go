@@ -29,13 +29,14 @@ var placeholderHTML []byte
 // routes mirrors ui/src/routing.ts: an explicit allowlist, so an unknown
 // path is a real 404 rather than 200 plus the shell. A project key and a
 // repository slug are what Bitbucket allows: letters, digits, dot, dash,
-// underscore; a PR id is a positive integer.
+// underscore, and the tilde of a personal project (~user); a PR id is a
+// positive integer.
 var routes = []*regexp.Regexp{
 	regexp.MustCompile(`^/$`),
 	regexp.MustCompile(`^/faq$`),
-	regexp.MustCompile(`^/projekte/[A-Za-z0-9._-]+$`),
-	regexp.MustCompile(`^/projekte/[A-Za-z0-9._-]+/repos/[A-Za-z0-9._-]+$`),
-	regexp.MustCompile(`^/projekte/[A-Za-z0-9._-]+/repos/[A-Za-z0-9._-]+/notizen/[1-9][0-9]{0,8}$`),
+	regexp.MustCompile(`^/projekte/[A-Za-z0-9._~-]+$`),
+	regexp.MustCompile(`^/projekte/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+$`),
+	regexp.MustCompile(`^/projekte/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+/notizen/[1-9][0-9]{0,8}$`),
 }
 
 func isRoute(p string) bool {
@@ -55,12 +56,8 @@ func dist() fs.FS {
 	return sub
 }
 
-// HasBuiltIndex reports whether the embedded dist/ holds a real build rather
-// than just the tracked .gitkeep.
-func HasBuiltIndex() bool { return spa.Built(dist()) }
-
-// Handler serves the SPA. It is registered on "/" as the catch-all; Go's
-// ServeMux prefers the most specific pattern, so every explicit route
+// Handler serves the SPA. It is registered on "GET /" as the catch-all;
+// Go's ServeMux prefers the most specific pattern, so every explicit route
 // (/api/..., /auth/ping, /webhooks/noergler, /healthz, /readyz) still wins
 // over it.
 func Handler() http.Handler { return handler(dist()) }

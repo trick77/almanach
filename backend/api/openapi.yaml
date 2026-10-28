@@ -703,12 +703,18 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, revisions, notes]
+      required: [project_key, slug, description, revisions, notes, notes_total, last_merge]
       properties:
         project_key:
           type: string
         slug:
           type: string
+        notes_total:
+          type: integer
+          description: Every note of the repository; `notes` lists the newest hundred.
+        last_merge:
+          type: [string, "null"]
+          format: date-time
         description:
           oneOf:
             - $ref: "#/components/schemas/Description"
@@ -724,7 +730,7 @@ components:
 
     NoteCallSummary:
       type: object
-      required: [outcome, note_status, input_tokens, cache_read_tokens, output_tokens, rounds]
+      required: [outcome, note_status, input_tokens, cache_read_tokens, output_tokens, rounds, rounds_input_tokens, rounds_output_tokens]
       properties:
         outcome:
           type: string
@@ -742,6 +748,11 @@ components:
           type: string
           description: 3-decimal USD; absent when unpriced.
         rounds:
+          type: integer
+          description: Every note call the PR made; the lanes above are this call alone.
+        rounds_input_tokens:
+          type: integer
+        rounds_output_tokens:
           type: integer
         rounds_cost_usd:
           type: string

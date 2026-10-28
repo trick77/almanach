@@ -215,7 +215,7 @@ function Body({ n }: { n: NoteDetail }) {
             <Tile
               label={S.note.allRounds}
               value={money(call.rounds_cost_usd)}
-              note={S.note.allRoundsNote(call.rounds, call.input_tokens ?? 0)}
+              note={S.note.allRoundsNote(call.rounds, call.rounds_input_tokens)}
             />
           </Tiles>
           <p className="mt-2.5 text-[12.5px] text-faint">
@@ -259,8 +259,8 @@ function ItemBlock({ item }: { item: NoteItem }) {
         text={item.text}
         className="mt-1 mb-1.5 font-serif text-[15.5px] leading-[1.55] text-ink-dim"
       />
-      {item.files.length > 0 && (
-        <div className={mono + " text-muted"}>{item.files.join(", ")}</div>
+      {(item.files ?? []).length > 0 && (
+        <div className={mono + " text-muted"}>{item.files!.join(", ")}</div>
       )}
     </article>
   );

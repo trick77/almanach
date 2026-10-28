@@ -100,7 +100,10 @@ export interface RepoDetail {
   slug: string;
   description: Description | null;
   revisions: Revision[];
+  /** The newest hundred; notes_total is the whole count. */
   notes: NoteSummary[];
+  notes_total: number;
+  last_merge: string | null;
 }
 
 export interface Bugfix {
@@ -112,7 +115,9 @@ export interface Bugfix {
 export interface NoteItem {
   name: string;
   text: string;
-  files: string[];
+  /** Absent on the lists the sender does not type (rules, invariants,
+   *  entities): the note is stored verbatim. */
+  files?: string[] | null;
 }
 
 /** NoteBody is the note object as noergler's model wrote it. Kept loose:
@@ -136,7 +141,10 @@ export interface NoteCall {
   cache_read_tokens: number | null;
   output_tokens: number | null;
   cost_usd?: string;
+  /** Every note call the PR made, summed; the lanes above are this call. */
   rounds: number;
+  rounds_input_tokens: number;
+  rounds_output_tokens: number;
   rounds_cost_usd?: string;
 }
 

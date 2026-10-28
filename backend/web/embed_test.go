@@ -30,7 +30,7 @@ func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 	h := handler(built())
 	for _, path := range []string{
 		"/", "/faq", "/projekte/PLAT", "/projekte/pay.v2/repos/pay-api", "/projekte/PLAT/repos/files/notizen/42",
-		"/projekte/PLAT/repos/files/notizen/123456789",
+		"/projekte/PLAT/repos/files/notizen/123456789", "/projekte/~jan/repos/scratch",
 	} {
 		w := req(t, h, path)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "id=root") {
@@ -40,7 +40,7 @@ func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 	for _, path := range []string{
 		"/nope", "/projekte", "/projekte/", "/projekte/PLAT/repos", "/projekte/PLAT/repos/files/notizen/0",
 		"/projekte/PLAT/repos/files/notizen/abc", "/projekte/PLAT/repos/files/notizen/1234567890",
-		"/projekte/a%20b", "/FAQ", "/api/projects", "/auth/ping", "/webhooks/noergler",
+		"/projekte/a%20b", "/projekte/PLAT/repos/~x", "/FAQ", "/api/projects", "/auth/ping", "/webhooks/noergler",
 		"/assets/missing.js",
 	} {
 		if code := req(t, h, path).Code; code != http.StatusNotFound {

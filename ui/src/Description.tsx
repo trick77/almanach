@@ -2,7 +2,7 @@ import type { Description, Kind, Statement } from "./api";
 import { day } from "./format";
 import { notePathFor } from "./routing";
 import { S } from "./strings";
-import { Chip, Empty, Summary, eyebrow, mono } from "./ui";
+import { Chip, Empty, Prose, Summary, eyebrow, mono } from "./ui";
 
 const KINDS: Kind[] = ["component", "rule", "invariant", "entity"];
 
@@ -57,13 +57,10 @@ export function StatementBlock({ statement: s }: { statement: Statement }) {
   return (
     <article className="border-t border-border-soft py-3 first:border-t-0">
       <h4 className="font-semibold text-ink">{s.name}</h4>
-      <div className="mt-1 mb-1.5 font-serif text-[15.5px] leading-[1.55] text-ink-dim">
-        {s.text.split(/\n\s*\n/).map((p, i) => (
-          <p key={i} className="mb-3 last:mb-0">
-            {p.trim()}
-          </p>
-        ))}
-      </div>
+      <Prose
+        text={s.text}
+        className="mt-1 mb-1.5 font-serif text-[15.5px] leading-[1.55] text-ink-dim"
+      />
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-muted">
         {s.files.map((f, i) => (
           <span key={f}>

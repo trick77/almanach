@@ -58,10 +58,7 @@ export function RepoPage({
 }
 
 function Body({ data }: { data: RepoDetail }) {
-  const lastMerge = data.notes
-    .map((n) => n.merged_at)
-    .sort()
-    .at(-1);
+  const lastMerge = data.last_merge;
   const current = data.description?.revision ?? 0;
   return (
     <>
@@ -75,14 +72,14 @@ function Body({ data }: { data: RepoDetail }) {
           {data.project_key}
         </Link>
         <Sep />
-        {S.projects.notes(data.notes.length)}
+        {S.projects.notes(data.notes_total)}
         <Sep />
         {data.description
           ? S.project.descriptionRevision(data.description.revision)
           : S.projects.noDescription}
         <Sep />
         {S.projects.lastMerge}{" "}
-        {lastMerge === undefined ? S.common.never : day(lastMerge)}
+        {lastMerge === null ? S.common.never : day(lastMerge)}
       </p>
 
       <DescriptionView

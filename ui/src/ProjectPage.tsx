@@ -61,10 +61,12 @@ export function ProjectPage({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
+  // By instant, not by string: an RFC 3339 stamp with an offset does not
+  // sort chronologically as text.
   const lastMerge = data.repos
     .map((r) => r.last_merge)
     .filter((d): d is string => d !== null)
-    .sort()
+    .sort((a, b) => Date.parse(a) - Date.parse(b))
     .at(-1);
   const [hRepo, hDesc, hNotes, hMerge] = S.project.repoHeaders;
   return (

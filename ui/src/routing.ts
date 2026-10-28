@@ -10,13 +10,16 @@ export type Route =
   | { page: "note"; key: string; slug: string; pr: number };
 
 // A project key and a repository slug are what Bitbucket allows: letters,
-// digits, dot, dash, underscore. Mirrored in backend/web/embed.go.
-const SEG = "[A-Za-z0-9._-]+";
-const PROJECT = new RegExp(`^/projekte/(${SEG})$`);
-const REPO = new RegExp(`^/projekte/(${SEG})/repos/(${SEG})$`);
-const NOTE = new RegExp(
-  `^/projekte/(${SEG})/repos/(${SEG})/notizen/([1-9][0-9]{0,8})$`,
-);
+// digits, dot, dash, underscore, and the tilde of a personal project
+// (~user). Mirrored exactly in backend/web/embed.go: a path the shell is
+// served for must parse here, and the other way round.
+const KEY = "[A-Za-z0-9._~-]+";
+const SLUG = "[A-Za-z0-9._-]+";
+const PR = "[1-9][0-9]{0,8}";
+const PROJECT = new RegExp(`^/projekte/(${KEY})$`);
+const REPO = new RegExp(`^/projekte/(${KEY})/repos/(${SLUG})$`);
+const NOTE = new RegExp(`^/projekte/(${KEY})/repos/(${SLUG})/notizen/(${PR})$`);
+const PR_KEY = new RegExp(`^(${KEY})/(${SLUG})#(${PR})$`);
 
 export function routeFromPath(path: string): Route {
   let m = NOTE.exec(path);
@@ -29,22 +32,24 @@ export function routeFromPath(path: string): Route {
   return { page: "projects" };
 }
 
+// Encoded, so a key the server would not serve becomes a visible 404
+// rather than a link that changes the URL and shows nothing.
 export function projectPath(key: string): string {
-  return `/projekte/${key}`;
+  return `/projekte/${encodeURIComponent(key)}`;
 }
 
 export function repoPath(key: string, slug: string): string {
-  return `/projekte/${key}/repos/${slug}`;
+  return `${projectPath(key)}/repos/${encodeURIComponent(slug)}`;
 }
 
 export function notePath(key: string, slug: string, pr: number): string {
-  return `/projekte/${key}/repos/${slug}/notizen/${pr}`;
+  return `${repoPath(key, slug)}/notizen/${pr}`;
 }
 
 /** notePathFor is the note page for a PR key the API gives as
- *  PROJECT/repo#id, or null when the key is not in that shape. */
+ *  PROJECT/repo#id, or null when the key is not one the routes serve. */
 export function notePathFor(prKey: string): string | null {
-  const m = /^([^/]+)\/([^#]+)#([1-9][0-9]*)$/.exec(prKey);
+  const m = PR_KEY.exec(prKey);
   if (!m) return null;
   return notePath(m[1], m[2], Number(m[3]));
 }

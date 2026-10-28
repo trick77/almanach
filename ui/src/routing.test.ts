@@ -48,5 +48,13 @@ describe("routeFromPath", () => {
     );
     expect(notePathFor("garbage")).toBeNull();
     expect(notePathFor("PLAT/files#0")).toBeNull();
+    // Exactly the server's allowlist: a key the shell would 404 on is no link.
+    expect(notePathFor("~jan/scratch#3")).toBe(
+      "/projekte/~jan/repos/scratch/notizen/3",
+    );
+    expect(notePathFor("a b/files#3")).toBeNull();
+    expect(notePathFor("PLAT/~x#3")).toBeNull();
+    // Builders encode, so a bad key is a visible 404 rather than a silent miss.
+    expect(repoPath("a b", "files")).toBe("/projekte/a%20b/repos/files");
   });
 });
