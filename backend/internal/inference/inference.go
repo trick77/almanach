@@ -1,5 +1,6 @@
 // Package inference is the merge call: one llmwire client on the LiteLLM
-// gateway, one Chat per fold, a strict schema, no retry, never streaming.
+// gateway, one Chat per fold, a strict schema, never streaming, no retry
+// inside a call (the consolidation worker's hold is the only retry).
 package inference
 
 import (
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,20 +78,77 @@ func New(opt Options) (*Client, error) {
 	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log}, nil
 }
 
-// Startup checks the profile can do what a fold needs: strict JSON-schema
-// output and, when a level is set, that level. Read off the profile, never
-// probed.
-func (c *Client) Startup(_ context.Context) error {
+// Startup checks the profile can do what a fold needs (strict JSON-schema
+// output and, when a level is set, that level) and then asks the gateway
+// for its model list. A gateway that does not answer is a warning, not a
+// fault: it being down is no reason not to take notes, and folds retry. A
+// gateway that answers without the alias, or refuses the key, is a fault:
+// that is configuration, and every fold would fail.
+func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	p, err := c.wire.Registry().Require(c.model, llmwire.Needs{JSONSchema: true})
 	if err != nil {
-		return fmt.Errorf("inference: model %q: %w", c.model, err)
+		return "", fmt.Errorf("inference: model %q: %w", c.model, err)
 	}
 	if c.effort != "" && !p.Reasoning.Accepts(c.effort) {
-		return fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)",
+		return "", fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)",
 			c.effort, c.model, strings.Join(p.Reasoning.EffortValues, ", "))
 	}
-	return nil
+	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
+	defer cancel()
+	entries, warnings, err := c.wire.ListModels(ctx)
+	if err != nil {
+		// A refused key, a 4xx (the URL without its /v1, an unknown route)
+		// or a body that is not a listing (an HTML page) is configuration:
+		// no fold would get through. A 5xx, a transport failure or a
+		// timeout is the gateway's day, not the operator's.
+		for _, fault := range []error{llmwire.ErrAuth, llmwire.ErrBadRequest, llmwire.ErrMalformedResponse, llmwire.ErrResponseShape} {
+			if errors.Is(err, fault) {
+				return "", fmt.Errorf("inference: the gateway's model listing failed: %w", err)
+			}
+		}
+		return fmt.Sprintf("gateway did not answer the model listing (%v); folds retry until it does", err), nil
+	}
+	var ids []string
+	for _, e := range entries {
+		if e.ID == p.WireModelID {
+			return "", nil
+		}
+		ids = append(ids, e.ID)
+	}
+	return "", fmt.Errorf("inference: model %q (gateway alias %q) is not listed by the gateway for this key%s%s",
+		c.model, p.WireModelID, listedIDs(ids), aliasWarnings(warnings))
 }
+
+// listedIDs names what the gateway did list, sorted and capped: the alias
+// is the one thing the operator has to get exactly right, and a shared
+// gateway lists hundreds.
+func listedIDs(ids []string) string {
+	if len(ids) == 0 {
+		return "; it lists nothing"
+	}
+	sort.Strings(ids)
+	const show = 12
+	if len(ids) > show {
+		return fmt.Sprintf("; listed: %s and %d more", strings.Join(ids[:show], ", "), len(ids)-show)
+	}
+	return "; listed: " + strings.Join(ids, ", ")
+}
+
+// aliasWarnings keeps what llmwire could not read off the listing: a row
+// whose id is not a string reads as missing otherwise.
+func aliasWarnings(ws []llmwire.Warning) string {
+	if len(ws) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ws))
+	for _, w := range ws {
+		parts = append(parts, w.Feature+": "+w.Details)
+	}
+	return "; the listing also had " + strings.Join(parts, "; ")
+}
+
+// startupTimeout bounds the model listing at startup.
+const startupTimeout = 10 * time.Second
 
 // Model is the profile id.
 func (c *Client) Model() string { return c.model }

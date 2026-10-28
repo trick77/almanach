@@ -97,6 +97,15 @@ func (s *Store) NextStatementID(ctx context.Context, scope, project, repo string
 	return n, err
 }
 
+// DeferFold counts a failed gateway call against the note and leaves it
+// queued; returns the attempts so far. The worker gives up past its bound.
+func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `UPDATE notes SET fold_attempts = fold_attempts + 1
+		WHERE project_key = $1 AND repo_slug = $2 AND pr_id = $3 RETURNING fold_attempts`, project, repo, prID).Scan(&n)
+	return n, err
+}
+
 // MarkConsolidated takes the note off the queue, folded or refused.
 func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID int) error {
 	_, err := s.pool.Exec(ctx, `UPDATE notes SET consolidated_at = now() WHERE project_key = $1 AND repo_slug = $2 AND pr_id = $3`,

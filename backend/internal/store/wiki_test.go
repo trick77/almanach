@@ -39,6 +39,16 @@ func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 		t.Errorf("Bugfix = %q, want empty on a feature note", q.Bugfix)
 	}
 
+	// A deferred fold counts its attempt and leaves the note where it is.
+	for want := 1; want <= 2; want++ {
+		if n, err := s.DeferFold(ctx, "PRJ", "svc", 1); err != nil || n != want {
+			t.Fatalf("DeferFold = %d, %v; want %d", n, err, want)
+		}
+	}
+	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 1 {
+		t.Fatalf("after defer: ok=%v pr=%d err=%v, want pr 1 still queued", ok, q.PRID, err)
+	}
+
 	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1); err != nil {
 		t.Fatal(err)
 	}

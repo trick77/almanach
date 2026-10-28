@@ -16,6 +16,7 @@ import (
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
+	"github.com/trick77/llmwire"
 )
 
 var (
@@ -30,6 +31,8 @@ type fakeStore struct {
 	queue        []store.QueuedNote
 	queueErr     error
 	markErr      error
+	deferErr     error
+	attempts     map[string]int
 	pages        map[string]store.Page
 	marked       []string
 	revisions    []store.NewRevision
@@ -92,6 +95,18 @@ func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, pr
 	}
 	f.marked = append(f.marked, pageKey(project, repo, strconv.Itoa(prID)))
 	return nil
+}
+
+func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int) (int, error) {
+	if f.deferErr != nil {
+		return 0, f.deferErr
+	}
+	if f.attempts == nil {
+		f.attempts = map[string]int{}
+	}
+	k := pageKey(project, repo, strconv.Itoa(prID))
+	f.attempts[k]++
+	return f.attempts[k], nil
 }
 
 func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) (store.Page, bool, error) {
@@ -339,21 +354,126 @@ func TestFoldProjectScope(t *testing.T) {
 	}
 }
 
-func TestFoldFailedCall(t *testing.T) {
-	for _, outcome := range []inference.Outcome{inference.OutcomeError, inference.OutcomeTimedOut, inference.OutcomeUnparseable} {
+// withDescription is a failed result that still carries a rewrite, so a
+// gate that fell through to apply() would show as a revision.
+func failed(outcome inference.Outcome, err error) inference.MergeResult {
+	return inference.MergeResult{Outcome: outcome, Err: err,
+		Merge: inference.Merge{Repository: &inference.Description{Summary: "s", Statements: nil}}}
+}
+
+// A failure specific to the call (the model's answer off the schema, a
+// 4xx, a 2xx of the wrong shape) marks the note: no retry, no hold.
+func TestFoldCallSpecificFailureMarks(t *testing.T) {
+	for name, res := range map[string]inference.MergeResult{
+		"unparseable":    failed(inference.OutcomeUnparseable, errors.New("boom")),
+		"bad request":    failed(inference.OutcomeError, fmt.Errorf("wrapped: %w", llmwire.ErrBadRequest)),
+		"response shape": failed(inference.OutcomeError, fmt.Errorf("wrapped: %w", llmwire.ErrResponseShape)),
+	} {
 		st := newFakeStore()
-		m := &fakeMerger{result: inference.MergeResult{Outcome: outcome, Err: errors.New("boom"),
-			Merge: inference.Merge{Repository: &inference.Description{Summary: "s", Statements: nil}}}}
-		newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
-		if len(st.revisions) != 0 {
-			t.Errorf("%s: revisions = %+v, want none", outcome, st.revisions)
+		w := newWorker(st, &fakeMerger{result: res})
+		if next := w.Fold(context.Background(), queued("PLAT/files#42")); !next {
+			t.Errorf("%s: paused the drain", name)
 		}
-		if len(st.marked) != 1 {
-			t.Errorf("%s: marked = %v, want the note marked", outcome, st.marked)
+		if len(st.revisions) != 0 || len(st.marked) != 1 || len(st.attempts) != 0 || w.holding() {
+			t.Errorf("%s: revisions %d marked %v attempts %v holding %v; want marked, no retry, no hold",
+				name, len(st.revisions), st.marked, st.attempts, w.holding())
 		}
-		if len(st.calls) != 1 || st.calls[0].Outcome != outcome.String() {
-			t.Errorf("%s: calls = %+v, want one row with the outcome", outcome, st.calls)
+		if len(st.calls) != 1 || st.calls[0].Outcome != res.Outcome.String() {
+			t.Errorf("%s: calls = %+v, want one row with the outcome", name, st.calls)
 		}
+	}
+}
+
+// A gateway-class failure (timeout, 5xx, transport, refused key, rate
+// limit) keeps the note, counts the attempt and holds the whole worker
+// with a doubling backoff; a wake during the hold folds nothing; a rate
+// limit's Retry-After wins when longer; a call that gets through clears
+// the hold; past maxFoldAttempts the note is given up.
+func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
+	for name, res := range map[string]inference.MergeResult{
+		"timed out":  failed(inference.OutcomeTimedOut, llmwire.ErrCallCap),
+		"upstream":   failed(inference.OutcomeError, fmt.Errorf("wrapped: %w", llmwire.ErrUpstream)),
+		"auth":       failed(inference.OutcomeError, fmt.Errorf("wrapped: %w", llmwire.ErrAuth)),
+		"transport":  failed(inference.OutcomeError, errors.New("dial tcp: connection refused")),
+		"proxy page": failed(inference.OutcomeError, fmt.Errorf("wrapped: %w", llmwire.ErrMalformedResponse)),
+		"rate limited": failed(inference.OutcomeError, &llmwire.RateLimitError{
+			APIError: &llmwire.APIError{StatusCode: 429}, RetryAfter: time.Hour}),
+	} {
+		st := newFakeStore()
+		st.queue = []store.QueuedNote{queued("PLAT/files#42"), queued("PLAT/files#43")}
+		m := &fakeMerger{result: res}
+		w := newWorker(st, m)
+		clock := mergedAt
+		w.now = func() time.Time { return clock }
+		w.drain(context.Background())
+		if len(m.prompts) != 1 || len(st.marked) != 0 || st.attempts["PLAT|files|42"] != 1 || len(st.revisions) != 0 {
+			t.Errorf("%s: after one drain: calls %d marked %v attempts %v revisions %d; want one call, nothing marked, one attempt",
+				name, len(m.prompts), st.marked, st.attempts, len(st.revisions))
+		}
+		want := backoffMin
+		if name == "rate limited" {
+			want = time.Hour
+		}
+		if !w.holding() || !w.retryAt.Equal(clock.Add(want)) {
+			t.Errorf("%s: hold until %v, want %v from now", name, w.retryAt, want)
+		}
+		// A wake inside the hold folds nothing.
+		w.drain(context.Background())
+		if len(m.prompts) != 1 {
+			t.Errorf("%s: a drain inside the hold made %d calls", name, len(m.prompts)-1)
+		}
+		// Past the hold the same note is tried again and the hold doubles.
+		clock = w.retryAt
+		w.drain(context.Background())
+		if len(m.prompts) != 2 || st.attempts["PLAT|files|42"] != 2 {
+			t.Errorf("%s: after the hold: calls %d attempts %v; want a second try of the same note", name, len(m.prompts), st.attempts)
+		}
+		if name != "rate limited" && !w.retryAt.Equal(clock.Add(2*backoffMin)) {
+			t.Errorf("%s: second hold until %v, want doubled to %s", name, w.retryAt, 2*backoffMin)
+		}
+	}
+
+	// The backoff caps, and a call that gets through clears the hold.
+	st := newFakeStore()
+	m := &fakeMerger{result: failed(inference.OutcomeError, errors.New("down"))}
+	w := newWorker(st, m)
+	clock := mergedAt
+	w.now = func() time.Time { return clock }
+	for i := 0; i < 8; i++ {
+		w.Fold(context.Background(), queued("PLAT/files#42"))
+		clock = w.retryAt
+	}
+	if w.backoff != backoffMax {
+		t.Errorf("backoff after 8 failures = %s, want the cap %s", w.backoff, backoffMax)
+	}
+	m.result = okResult(nil, nil)
+	w.Fold(context.Background(), queued("PLAT/files#43"))
+	if w.holding() || w.backoff != 0 {
+		t.Errorf("a call that got through left a hold: until %v backoff %s", w.retryAt, w.backoff)
+	}
+
+	// Past maxFoldAttempts the note is given up, marked, with the rest
+	// of the queue untouched by it.
+	st = newFakeStore()
+	m = &fakeMerger{result: failed(inference.OutcomeError, errors.New("down"))}
+	w = newWorker(st, m)
+	w.now = func() time.Time { return mergedAt }
+	for i := 1; i <= maxFoldAttempts; i++ {
+		w.clearHold()
+		if next := w.Fold(context.Background(), queued("PLAT/files#42")); next != (i == maxFoldAttempts) {
+			t.Errorf("attempt %d: next = %v", i, next)
+		}
+	}
+	if len(st.marked) != 1 || st.attempts["PLAT|files|42"] != maxFoldAttempts || len(st.revisions) != 0 {
+		t.Errorf("after %d attempts: marked %v attempts %v revisions %d; want given up once", maxFoldAttempts, st.marked, st.attempts, len(st.revisions))
+	}
+
+	// A defer the store refuses pauses the drain like a failed mark.
+	st = newFakeStore()
+	st.deferErr = errors.New("read-only")
+	w = newWorker(st, &fakeMerger{result: failed(inference.OutcomeError, errors.New("down"))})
+	if next := w.Fold(context.Background(), queued("PLAT/files#42")); next || len(st.marked) != 0 {
+		t.Errorf("defer failed: next %v marked %v; want paused and unmarked", next, st.marked)
 	}
 }
 

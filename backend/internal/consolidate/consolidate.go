@@ -8,6 +8,7 @@ package consolidate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
+	"github.com/trick77/llmwire"
 	"github.com/trick77/ship/kit/logging"
 )
 
@@ -26,6 +28,7 @@ import (
 type Store interface {
 	NextQueued(ctx context.Context) (store.QueuedNote, bool, error)
 	MarkConsolidated(ctx context.Context, project, repo string, prID int) error
+	DeferFold(ctx context.Context, project, repo string, prID int) (int, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
 	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
@@ -53,13 +56,46 @@ type Worker struct {
 	quit   chan struct{}
 	cancel context.CancelFunc
 	done   chan struct{}
+	// A gateway-class failure holds the whole worker, not just the note:
+	// the next fold would meet the same gateway. retryAt is when the hold
+	// ends, backoff how long the next one lasts (doubling, capped); a call
+	// that gets through resets both.
+	retryAt time.Time
+	backoff time.Duration
+	now     func() time.Time
 }
+
+// The hold after a gateway-class failure: from backoffMin, doubling to
+// backoffMax. A rate limit's Retry-After wins when it is longer.
+const (
+	backoffMin = 30 * time.Second
+	backoffMax = 10 * time.Minute
+)
 
 // New builds a worker. It runs nothing until Start.
 func New(st Store, llm Merger, limits config.Limits, log *slog.Logger) *Worker {
 	return &Worker{store: st, llm: llm, limits: limits, log: log, wake: make(chan struct{}, 1), poll: 30 * time.Second,
-		quit: make(chan struct{}), done: make(chan struct{})}
+		quit: make(chan struct{}), done: make(chan struct{}), now: time.Now}
 }
+
+// hold pauses the worker after a gateway-class failure; retryAfter is the
+// endpoint's own ask, zero when it made none.
+func (w *Worker) hold(ctx context.Context, retryAfter time.Duration) {
+	if w.backoff == 0 {
+		w.backoff = backoffMin
+	} else {
+		w.backoff = min(w.backoff*2, backoffMax)
+	}
+	wait := max(w.backoff, retryAfter)
+	w.retryAt = w.now().Add(wait)
+	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: gateway hold for %s, no fold until then", wait))
+}
+
+// holding reports whether a gateway hold is still on.
+func (w *Worker) holding() bool { return w.now().Before(w.retryAt) }
+
+// clearHold forgets the hold once a call got through.
+func (w *Worker) clearHold() { w.backoff, w.retryAt = 0, time.Time{} }
 
 // Wake tells the loop a note was queued. Never blocks: a wake already
 // pending is the same wake.
@@ -114,13 +150,13 @@ func (w *Worker) stopping() bool {
 }
 
 // drain folds every queued note, oldest first, until the queue is empty,
-// a stop was asked for or ctx ends. A fold's own failure takes its note
-// off the queue with a log line: a note that fails forever would otherwise
-// block every note behind it. A mark that fails ends the drain instead:
-// the same note would come back at once, one paid call per lap, until
-// the database takes writes again; the next wake or poll tries again.
+// a stop was asked for or ctx ends. A fold the model refused takes its
+// note off the queue with a log line: a note that fails forever would
+// otherwise block every note behind it. A fold the gateway failed, or a
+// mark the store refused, ends the drain instead: the same note would come
+// back at once, one paid call per lap; the next wake or poll tries again.
 func (w *Worker) drain(ctx context.Context) {
-	for ctx.Err() == nil && !w.stopping() {
+	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		q, ok, err := w.store.NextQueued(ctx)
 		if err != nil {
 			w.log.WarnContext(ctx, "consolidate: queue read failed", logging.Err(err))
@@ -135,18 +171,59 @@ func (w *Worker) drain(ctx context.Context) {
 	}
 }
 
+// maxFoldAttempts bounds how often one note is tried against a gateway
+// that keeps failing. Under the backoff that is hours, enough for an
+// outage or a key fixed the same day; past it the note is taken off the
+// queue with a log line, so one note the gateway always fails cannot hold
+// the queue forever. A timed-out call may have been billed: a gateway
+// that is consistently slower than the call cap costs up to this many
+// merges per note, which the log makes visible.
+const maxFoldAttempts = 8
+
+// gatewayClass tells a failure of the gateway as a whole (worth a hold and
+// a later retry) from one specific to this call (the note is done). A
+// refused key, a 5xx or transport failure, a rate limit, a proxy page, a
+// timeout: the gateway. A 4xx (context overflow, rejected format) or a
+// 2xx of the wrong shape: this call. retryAfter is the endpoint's own ask.
+func gatewayClass(res inference.MergeResult) (gateway bool, retryAfter time.Duration) {
+	if res.Outcome == inference.OutcomeTimedOut {
+		return true, 0
+	}
+	if res.Outcome != inference.OutcomeError {
+		return false, 0
+	}
+	var rl *llmwire.RateLimitError
+	if errors.As(res.Err, &rl) {
+		return true, rl.RetryAfter
+	}
+	if errors.Is(res.Err, llmwire.ErrBadRequest) || errors.Is(res.Err, llmwire.ErrResponseShape) {
+		return false, 0
+	}
+	return true, 0
+}
+
 // Fold runs one note through the merge: the current pages in, the rewritten
-// ones out, each checked against the caps and written as a revision, the
-// note marked consolidated either way. Reports whether the mark landed.
-func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (marked bool) {
+// ones out, each checked against the caps and written as a revision. The
+// note is marked consolidated whatever the model answered and after a
+// failure specific to this call; a gateway-class failure leaves it queued
+// with its attempt counted and holds the worker, up to maxFoldAttempts.
+// Reports whether the drain may go on: false after a deferred note or a
+// mark the store refused, so the same note is not paid for again in the
+// same lap.
+func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	ctx = logging.With(ctx, "team", q.Team, "pr_key", q.PRKey)
+	deferred := false
 	defer func() {
-		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
-			w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
-			marked = false
+		if deferred {
+			next = false
 			return
 		}
-		marked = true
+		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
+			w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
+			next = false
+			return
+		}
+		next = true
 	}()
 
 	repoPage, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, q.ProjectKey, q.RepoSlug)
@@ -171,7 +248,27 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (marked bool) {
 		w.log.WarnContext(ctx, "consolidate: call row failed", logging.Err(err))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
-	if res.Outcome != inference.OutcomeOK {
+	if gateway, retryAfter := gatewayClass(res); gateway {
+		w.hold(ctx, retryAfter)
+		attempts, derr := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID)
+		if derr != nil {
+			w.log.WarnContext(ctx, "consolidate: defer failed, drain paused", logging.Err(derr))
+			deferred = true
+			return
+		}
+		if attempts < maxFoldAttempts {
+			w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s, attempt %d of %d, kept for after the hold",
+				q.PRKey, res.Outcome, attempts, maxFoldAttempts), logging.Err(res.Err))
+			deferred = true
+			return
+		}
+		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s given up after %d failed calls: %s", q.PRKey, attempts, res.Outcome), logging.Err(res.Err))
+		return
+	}
+	switch res.Outcome {
+	case inference.OutcomeOK:
+		w.clearHold()
+	default:
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s", q.PRKey, res.Outcome), logging.Err(res.Err))
 		return
 	}
