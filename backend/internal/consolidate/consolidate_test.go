@@ -30,6 +30,8 @@ type fakeStore struct {
 	queue        []store.QueuedNote
 	queueErr     error
 	markErr      error
+	deferErr     error
+	attempts     map[string]int
 	pages        map[string]store.Page
 	marked       []string
 	revisions    []store.NewRevision
@@ -92,6 +94,18 @@ func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, pr
 	}
 	f.marked = append(f.marked, pageKey(project, repo, strconv.Itoa(prID)))
 	return nil
+}
+
+func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int) (int, error) {
+	if f.deferErr != nil {
+		return 0, f.deferErr
+	}
+	if f.attempts == nil {
+		f.attempts = map[string]int{}
+	}
+	k := pageKey(project, repo, strconv.Itoa(prID))
+	f.attempts[k]++
+	return f.attempts[k], nil
 }
 
 func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) (store.Page, bool, error) {
@@ -339,21 +353,52 @@ func TestFoldProjectScope(t *testing.T) {
 	}
 }
 
+// An answer the model gave but not the schema is the model's: marked, no
+// retry. A call the gateway failed is deferred with its attempt counted,
+// the drain pauses, and after maxFoldAttempts the note is given up.
 func TestFoldFailedCall(t *testing.T) {
-	for _, outcome := range []inference.Outcome{inference.OutcomeError, inference.OutcomeTimedOut, inference.OutcomeUnparseable} {
+	st := newFakeStore()
+	m := &fakeMerger{result: inference.MergeResult{Outcome: inference.OutcomeUnparseable, Err: errors.New("boom")}}
+	if next := newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42")); !next {
+		t.Error("an unparseable answer paused the drain")
+	}
+	if len(st.revisions) != 0 || len(st.marked) != 1 || len(st.attempts) != 0 {
+		t.Errorf("unparseable: revisions %d marked %v attempts %v; want marked, no retry", len(st.revisions), st.marked, st.attempts)
+	}
+	if len(st.calls) != 1 || st.calls[0].Outcome != "unparseable" {
+		t.Errorf("calls = %+v, want one row with the outcome", st.calls)
+	}
+
+	for _, outcome := range []inference.Outcome{inference.OutcomeError, inference.OutcomeTimedOut} {
 		st := newFakeStore()
-		m := &fakeMerger{result: inference.MergeResult{Outcome: outcome, Err: errors.New("boom"),
-			Merge: inference.Merge{Repository: &inference.Description{Summary: "s", Statements: nil}}}}
-		newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
+		st.queue = []store.QueuedNote{queued("PLAT/files#42"), queued("PLAT/files#43")}
+		m := &fakeMerger{result: inference.MergeResult{Outcome: outcome, Err: errors.New("gateway down")}}
+		w := newWorker(st, m)
+		w.drain(context.Background())
+		if len(m.prompts) != 1 || len(st.marked) != 0 || st.attempts["PLAT|files|42"] != 1 {
+			t.Errorf("%s: after one drain: calls %d marked %v attempts %v; want one call, nothing marked, one attempt",
+				outcome, len(m.prompts), st.marked, st.attempts)
+		}
+		// The note stays queued: the next laps try again, then give up.
+		for i := 2; i <= maxFoldAttempts; i++ {
+			if next := w.Fold(context.Background(), queued("PLAT/files#42")); next != (i == maxFoldAttempts) {
+				t.Errorf("%s: attempt %d: next = %v", outcome, i, next)
+			}
+		}
+		if len(st.marked) != 1 || st.attempts["PLAT|files|42"] != maxFoldAttempts {
+			t.Errorf("%s: after %d attempts: marked %v attempts %v; want given up once", outcome, maxFoldAttempts, st.marked, st.attempts)
+		}
 		if len(st.revisions) != 0 {
 			t.Errorf("%s: revisions = %+v, want none", outcome, st.revisions)
 		}
-		if len(st.marked) != 1 {
-			t.Errorf("%s: marked = %v, want the note marked", outcome, st.marked)
-		}
-		if len(st.calls) != 1 || st.calls[0].Outcome != outcome.String() {
-			t.Errorf("%s: calls = %+v, want one row with the outcome", outcome, st.calls)
-		}
+	}
+
+	// A defer the store refuses pauses the drain like a failed mark.
+	st = newFakeStore()
+	st.deferErr = errors.New("read-only")
+	m = &fakeMerger{result: inference.MergeResult{Outcome: inference.OutcomeError, Err: errors.New("gateway down")}}
+	if next := newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42")); next || len(st.marked) != 0 {
+		t.Errorf("defer failed: next %v marked %v; want paused and unmarked", next, st.marked)
 	}
 }
 

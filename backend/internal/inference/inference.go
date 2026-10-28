@@ -76,20 +76,43 @@ func New(opt Options) (*Client, error) {
 	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log}, nil
 }
 
-// Startup checks the profile can do what a fold needs: strict JSON-schema
-// output and, when a level is set, that level. Read off the profile, never
-// probed.
-func (c *Client) Startup(_ context.Context) error {
+// Startup checks the profile can do what a fold needs (strict JSON-schema
+// output and, when a level is set, that level) and then asks the gateway
+// for its model list. A gateway that does not answer is a warning, not a
+// fault: it being down is no reason not to take notes, and folds retry. A
+// gateway that answers without the alias, or refuses the key, is a fault:
+// that is configuration, and every fold would fail.
+func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	p, err := c.wire.Registry().Require(c.model, llmwire.Needs{JSONSchema: true})
 	if err != nil {
-		return fmt.Errorf("inference: model %q: %w", c.model, err)
+		return "", fmt.Errorf("inference: model %q: %w", c.model, err)
 	}
 	if c.effort != "" && !p.Reasoning.Accepts(c.effort) {
-		return fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)",
+		return "", fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)",
 			c.effort, c.model, strings.Join(p.Reasoning.EffortValues, ", "))
 	}
-	return nil
+	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
+	defer cancel()
+	entries, _, err := c.wire.ListModels(ctx)
+	if err != nil {
+		if errors.Is(err, llmwire.ErrAuth) {
+			return "", fmt.Errorf("inference: the gateway refuses the key: %w", err)
+		}
+		return fmt.Sprintf("gateway did not answer the model listing (%v); folds retry until it does", err), nil
+	}
+	var ids []string
+	for _, e := range entries {
+		if e.ID == p.WireModelID {
+			return "", nil
+		}
+		ids = append(ids, e.ID)
+	}
+	return "", fmt.Errorf("inference: model %q (gateway alias %q) is not listed by the gateway for this key; listed: %s",
+		c.model, p.WireModelID, strings.Join(ids, ", "))
 }
+
+// startupTimeout bounds the model listing at startup.
+const startupTimeout = 10 * time.Second
 
 // Model is the profile id.
 func (c *Client) Model() string { return c.model }

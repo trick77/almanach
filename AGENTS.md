@@ -48,11 +48,14 @@ and tests included.
 - Problem areas group by the shared directory of the bugfix's component
   files (`bugfix_area`, computed at ingest), never by the model's component
   name.
-- One consolidation worker, serial, oldest first. A fold that fails takes
-  its note off the queue with a log line; a note that fails forever must not
-  block the queue. A mark that fails pauses the drain (else one paid call
-  per lap). Shutdown waits for the fold in flight up to a grace, then cuts
-  it.
+- One consolidation worker, serial, oldest first. A fold the model refused
+  takes its note off the queue with a log line; a call the gateway failed
+  leaves it queued, attempt counted, and pauses the drain; given up after
+  `maxFoldAttempts`. A note that fails forever must not block the queue.
+  A mark that fails pauses the drain (else one paid call per lap).
+  Shutdown waits for the fold in flight up to a grace, then cuts it.
+- Startup lists the gateway's models: unreachable = warning, refused key
+  or unlisted alias = fault.
 - One `Chat` per fold, strict JSON schema, no retry, never streaming. Models
   are llmwire profile ids in config, never in code.
 - Money is nano-USD `BIGINT` in the DB and a 3-decimal string in JSON, never

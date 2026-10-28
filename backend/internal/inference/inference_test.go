@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +168,40 @@ func TestMergeTimeout(t *testing.T) {
 	}
 	if res.Err == nil || res.Cost.Answered {
 		t.Errorf("result = %+v", res)
+	}
+}
+
+// Startup: the profile must do strict JSON and the gateway must list its
+// alias. No answer from the gateway is a warning (folds retry); a refused
+// key or an alias it does not list is a fault.
+func TestStartup(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	if warning, err := testClient(srv.Client()).Startup(context.Background()); err != nil || warning != "" {
+		t.Fatalf("Startup against the listing server: warning %q err %v", warning, err)
+	}
+
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	answer := func(status int, body string) *llmwire.Client {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
+		}))
+		t.Cleanup(s.Close)
+		return llmwire.New(llmwire.Config{BaseURL: s.URL, APIKey: "k", Registry: llmwiretest.Registry(), CallTimeout: time.Second, Logger: quiet})
+	}
+
+	if _, err := testClient(answer(401, `{"error":{"message":"bad key"}}`)).Startup(context.Background()); err == nil || !strings.Contains(err.Error(), "refuses the key") {
+		t.Errorf("401: err = %v, want the key refused", err)
+	}
+	if _, err := testClient(answer(200, `{"data":[{"id":"something-else"}]}`)).Startup(context.Background()); err == nil || !strings.Contains(err.Error(), "something-else") {
+		t.Errorf("alias missing: err = %v, want the listing named", err)
+	}
+
+	down := llmwire.New(llmwire.Config{BaseURL: "http://127.0.0.1:1", APIKey: "k", Registry: llmwiretest.Registry(), CallTimeout: time.Second, Logger: quiet})
+	warning, err := testClient(down).Startup(context.Background())
+	if err != nil || !strings.Contains(warning, "did not answer") {
+		t.Errorf("gateway down: warning %q err %v; want a warning only", warning, err)
 	}
 }
 

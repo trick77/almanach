@@ -26,6 +26,7 @@ import (
 type Store interface {
 	NextQueued(ctx context.Context) (store.QueuedNote, bool, error)
 	MarkConsolidated(ctx context.Context, project, repo string, prID int) error
+	DeferFold(ctx context.Context, project, repo string, prID int) (int, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
 	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
@@ -114,11 +115,11 @@ func (w *Worker) stopping() bool {
 }
 
 // drain folds every queued note, oldest first, until the queue is empty,
-// a stop was asked for or ctx ends. A fold's own failure takes its note
-// off the queue with a log line: a note that fails forever would otherwise
-// block every note behind it. A mark that fails ends the drain instead:
-// the same note would come back at once, one paid call per lap, until
-// the database takes writes again; the next wake or poll tries again.
+// a stop was asked for or ctx ends. A fold the model refused takes its
+// note off the queue with a log line: a note that fails forever would
+// otherwise block every note behind it. A fold the gateway failed, or a
+// mark the store refused, ends the drain instead: the same note would come
+// back at once, one paid call per lap; the next wake or poll tries again.
 func (w *Worker) drain(ctx context.Context) {
 	for ctx.Err() == nil && !w.stopping() {
 		q, ok, err := w.store.NextQueued(ctx)
@@ -135,18 +136,33 @@ func (w *Worker) drain(ctx context.Context) {
 	}
 }
 
+// maxFoldAttempts bounds the retries of a fold the gateway failed. Three
+// covers a gateway blip or a key fixed within a few merges; past it the
+// note is taken off the queue so a dead gateway cannot hold the queue, and
+// the log says the note was given up.
+const maxFoldAttempts = 3
+
 // Fold runs one note through the merge: the current pages in, the rewritten
-// ones out, each checked against the caps and written as a revision, the
-// note marked consolidated either way. Reports whether the mark landed.
-func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (marked bool) {
+// ones out, each checked against the caps and written as a revision. The
+// note is marked consolidated whatever the model answered; only a call the
+// gateway failed (no answer, an error) leaves it queued for another try,
+// up to maxFoldAttempts. Reports whether the drain may go on: false after
+// a deferred note or a mark the store refused, so the same note is not
+// paid for again in the same lap.
+func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	ctx = logging.With(ctx, "team", q.Team, "pr_key", q.PRKey)
+	deferred := false
 	defer func() {
-		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
-			w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
-			marked = false
+		if deferred {
+			next = false
 			return
 		}
-		marked = true
+		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
+			w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
+			next = false
+			return
+		}
+		next = true
 	}()
 
 	repoPage, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, q.ProjectKey, q.RepoSlug)
@@ -171,7 +187,25 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (marked bool) {
 		w.log.WarnContext(ctx, "consolidate: call row failed", logging.Err(err))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
-	if res.Outcome != inference.OutcomeOK {
+	switch res.Outcome {
+	case inference.OutcomeOK:
+	case inference.OutcomeError, inference.OutcomeTimedOut:
+		// The gateway, not the model: worth another try later.
+		attempts, derr := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID)
+		if derr != nil {
+			w.log.WarnContext(ctx, "consolidate: defer failed, drain paused", logging.Err(derr))
+			deferred = true
+			return
+		}
+		if attempts < maxFoldAttempts {
+			w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s, attempt %d of %d, retried at the next wake or poll",
+				q.PRKey, res.Outcome, attempts, maxFoldAttempts), logging.Err(res.Err))
+			deferred = true
+			return
+		}
+		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s given up after %d failed calls: %s", q.PRKey, attempts, res.Outcome), logging.Err(res.Err))
+		return
+	default:
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s", q.PRKey, res.Outcome), logging.Err(res.Err))
 		return
 	}

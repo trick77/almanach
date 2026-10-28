@@ -90,10 +90,14 @@ The answer is then held to rules the model cannot bend:
 
 What passes is written as the next revision of the page and the page
 repointed to it, in one transaction. History is kept; a rollback is a
-repoint. Whatever happened, the note is marked consolidated, so a note that
-fails forever cannot block the queue; the log says why. If the mark itself
-fails (the database refusing writes), the drain pauses until the next wake
-or poll rather than paying for the same fold again and again. A shutdown
+repoint. Whatever the model answered, the note is then marked consolidated,
+so a note that fails forever cannot block the queue; the log says why. A
+call the gateway failed (no answer, an error, a refused key) is different:
+the note stays queued with its attempt counted and the drain pauses until
+the next wake or poll; after three failed calls it is given up, with a log
+line, so a dead gateway cannot hold the queue either. If the mark itself
+fails (the database refusing writes), the drain pauses the same way rather
+than paying for the same fold again and again. A shutdown
 lets the fold in flight finish, up to a grace of the call timeout, before
 it is cut off.
 
@@ -134,7 +138,10 @@ read-only by design.
 - `/healthz` is liveness, `/readyz` asks the database. Both answer loopback
   callers only, so probes are `exec` probes against the binary's
   `-healthcheck` and `-readycheck`.
-- Startup runs every check (database, team keys, model profile) before
-  aborting, so the log names all the failures at once.
+- Startup runs every check (database, team keys, model profile, the
+  gateway's model listing) before aborting, so the log names all the
+  failures at once. A gateway that does not answer is a warning only: notes
+  are still taken and folds retry; a gateway that refuses the key or does
+  not list the alias is a fault.
 - Logs are structured, one line per event. No secret, no DSN, no token ever
   appears in them; the startup config line prints addresses, model and caps.

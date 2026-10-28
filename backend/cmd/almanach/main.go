@@ -156,13 +156,17 @@ func serve(log *slog.Logger) error {
 		log.Info("Team keys: OK", "teams", keys.Teams())
 	}
 	llm, err := inference.New(inference.Options{Model: app.Model, ReasoningEffort: app.ReasoningEffort, Logger: log, Lookup: os.LookupEnv})
+	var warning string
 	if err == nil {
-		err = llm.Startup(ctx)
+		warning, err = llm.Startup(ctx)
 	}
-	if err != nil {
+	switch {
+	case err != nil:
 		log.Error("LLM: " + err.Error())
 		checks = append(checks, "LLM")
-	} else {
+	case warning != "":
+		log.Warn("LLM: " + warning)
+	default:
 		log.Info("LLM: OK", "model", app.Model)
 	}
 	if len(checks) > 0 {
