@@ -4,6 +4,9 @@ go:
   coverpkg: ./internal/...
 # The store tests' Postgres: compose.yaml's image, the major the deployment runs.
 postgres: compose:postgres
+ui:
+  # ship empties it but for .gitkeep before the build (vite's emptyOutDir is off).
+  embed: backend/web/dist
 steps:
   - { name: openapi lint, run: npx --yes @stoplight/spectral-cli@6.15.0 lint backend/api/openapi.yaml --ruleset .spectral.yaml }
   # The wire contract is noergler's golden payload; our copy must be its

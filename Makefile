@@ -25,9 +25,22 @@ lint:
 	$(SHIP_CMD) lint
 # ship:end
 
-.PHONY: build test
+.PHONY: fe-build fe-test build test
 
-build:
+# The find, rather than emptyOutDir: vite runs with emptyOutDir false so the
+# tracked dist/.gitkeep survives (//go:embed all:dist needs a non-empty
+# directory in a fresh clone), which means stale hashed assets from an
+# earlier build would otherwise accumulate in the binary.
+fe-build:
+	find backend/web/dist -mindepth 1 ! -name '.gitkeep' -delete
+	cd ui && npm ci && npm run build
+
+# npm run test does not typecheck on its own; npm run build is `tsc -b &&
+# vite build`, which is where the gate gets its typecheck from.
+fe-test:
+	cd ui && npx tsc -b && npm run test -- --run
+
+build: fe-build
 	cd backend && CGO_ENABLED=0 go build -trimpath \
 		-ldflags="-s -w -X github.com/trick77/ship/kit/version.Version=$(VERSION)" \
 		-o ../bin/almanach ./cmd/almanach

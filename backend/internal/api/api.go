@@ -21,6 +21,7 @@ import (
 	"github.com/trick77/almanach/internal/ingest"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
+	"github.com/trick77/almanach/web"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
 )
@@ -58,6 +59,10 @@ type Deps struct {
 
 // Register mounts every route.
 func Register(s *httpapi.Server, d Deps) {
+	// The wiki SPA is the catch-all: Go's mux prefers the most specific
+	// pattern, so every explicit route below still wins, and the SPA's own
+	// allowlist keeps /api, /auth and /webhooks typos a 404.
+	s.Handle("/", web.Handler())
 	s.HandleFunc("GET /auth/ping", d.ping)
 	s.Handle("POST /webhooks/noergler", httpx.MaxBody(maxBody)(http.HandlerFunc(d.webhook)))
 	s.HandleFunc("GET /api/projects", d.projects)
