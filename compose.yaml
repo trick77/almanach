@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: almanach
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: almanach
+    ports:
+      - "5433:5432"
+    # The parent, not .../data: from 18 the image keeps PGDATA in a
+    # versioned subdirectory and refuses to start on the old mount.
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U almanach"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Same as the init container in the deployment: migrations run before the
+  # service, never inside it.
+  migrate:
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["migrate"]
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://almanach:changeme@postgres:5432/almanach}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  almanach:
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "8081:8080"
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://almanach:changeme@postgres:5432/almanach}
+      - ALMANACH_TEAM_KEYS_PATH=/app/team-keys.json
+    volumes:
+      # One token per team; see team-keys.example.json.
+      - ./team-keys.json:/app/team-keys.json:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:

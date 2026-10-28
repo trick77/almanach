@@ -1,0 +1,783 @@
+openapi: 3.1.0
+
+info:
+  title: Almanach API
+  # The CONTRACT's version, not the binary's.
+  version: 1.0.0
+  description: |
+    Almanach is the living wiki noergler feeds: one scratch note per merged
+    pull request comes in, a repository description and a project description
+    come out, rewritten revision by revision by a model call, never edited by
+    hand. Everything is German.
+
+    ## Two surfaces
+
+    - `POST /webhooks/noergler` and `GET /auth/ping` take a bearer token. The
+      token is the whole identity: it names the team, nothing in a body does.
+      Tokens live in the team-keys file of the Almanach instance.
+    - `/api/...` is the read side for the UI. It is open to whoever reaches it;
+      an OAuth sidecar in front decides who that is (`ALMANACH_AUTH_MODE=proxy`).
+      Nothing is written through it.
+
+    ## Delivery dedup
+
+    A note is keyed by `pr_merged_note#<pr_key, lowercased>#<source_commit_sha>`.
+    A body with a key seen before answers `202 {"status":"deduped"}` and changes
+    nothing: noergler may send a note twice, the first delivery stands.
+
+    Fields may be added; nothing is removed or renamed without a version change.
+
+servers:
+  - url: /
+
+tags:
+  - name: feed
+    description: What noergler calls.
+  - name: wiki
+    description: What the UI reads.
+
+paths:
+  /auth/ping:
+    get:
+      tags: [feed]
+      summary: Check a team token
+      description: noergler calls this at startup; a 401 disables that team's feed there.
+      operationId: ping
+      security:
+        - teamToken: []
+      responses:
+        "200":
+          description: The token is known.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ping"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /webhooks/noergler:
+    post:
+      tags: [feed]
+      summary: Deliver one merged PR's note
+      description: |
+        Strict: an unknown field or a missing required one is a 422 naming it.
+        The body is stored whole, lifted into the wiki's rows and queued for
+        the consolidation worker.
+      operationId: deliverNote
+      security:
+        - teamToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteDelivery"
+      responses:
+        "202":
+          description: Accepted, or a duplicate of an earlier delivery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          description: Body over one megabyte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The body is not a note; `error` names the field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: The note could not be stored. Send it again later.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/projects:
+    get:
+      tags: [wiki]
+      summary: Every project with a note
+      description: One row per project a note has arrived for, with counts and the current revision.
+      operationId: listProjects
+      responses:
+        "200":
+          description: Projects, newest merge first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Projects"
+
+  /api/projects/{key}:
+    get:
+      tags: [wiki]
+      summary: A project's description, repositories, problem areas and recent notes
+      description: The project page. `description` is null until the first fold wrote a revision.
+      operationId: getProject
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/projects/{key}/problems:
+    get:
+      tags: [wiki]
+      summary: Problem areas of a project
+      description: |
+        Bugfix notes of the window grouped by repository and the shared
+        directory of the bugfix's component files, never by the model's
+        wording of the component name.
+      operationId: getProblems
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - name: days
+          in: query
+          description: Window in days; the instance default when absent.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3650
+      responses:
+        "200":
+          description: The areas, most bugfixes first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problems"
+        "400":
+          description: days out of range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/projects/{key}/repos/{slug}:
+    get:
+      tags: [wiki]
+      summary: A repository's description, revisions and notes
+      description: The repository page with its revision history, newest first, and its notes.
+      operationId: getRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "200":
+          description: The repository.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/projects/{key}/repos/{slug}/notes/{pr}:
+    get:
+      tags: [wiki]
+      summary: One merged PR's note
+      description: The note as noergler sent it, the facts beside it and the gateway figures of the call that wrote it.
+      operationId: getNote
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+        - name: pr
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The note with its facts and the recorded note call.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    teamToken:
+      type: http
+      scheme: bearer
+      description: The team's token from the instance's team-keys file.
+
+  parameters:
+    projectKey:
+      name: key
+      in: path
+      required: true
+      schema:
+        type: string
+    repoSlug:
+      name: slug
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    Unauthorized:
+      description: No bearer, or one no team owns.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Unknown project, repository or note.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    Ping:
+      type: object
+      required: [status, team]
+      properties:
+        status:
+          type: string
+          const: ok
+        team:
+          type: string
+
+    Accepted:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [accepted, deduped]
+
+    Money:
+      type: [string, "null"]
+      description: USD as a decimal string, never a float. Null when the gateway did not price the call.
+      examples: ["0.012"]
+
+    NoteDelivery:
+      type: object
+      description: What noergler sends at merge. Every field is present; absent values are null.
+      additionalProperties: false
+      required:
+        - event_type
+        - project_key
+        - repo_slug
+        - pr_id
+        - pr_key
+        - pr_title
+        - ticket_key
+        - jira_issue_type
+        - change_kind
+        - reviewed_commit
+        - source_commit_sha
+        - merge_commit_sha
+        - merged_at
+        - run_id
+        - model_label
+        - issues_posted
+        - suggestions_posted
+        - note
+        - claims
+        - note_call
+        - rounds
+        - review_totals
+      properties:
+        event_type:
+          type: string
+          const: pr_merged_note
+        project_key:
+          type: string
+        repo_slug:
+          type: string
+        pr_id:
+          type: integer
+          minimum: 1
+        pr_key:
+          type: string
+          description: PROJECT/repo#id.
+        pr_title:
+          type: string
+        ticket_key:
+          type: [string, "null"]
+        jira_issue_type:
+          type: [string, "null"]
+        change_kind:
+          type: [string, "null"]
+          enum: [bugfix, feature, refactor, chore, null]
+        reviewed_commit:
+          type: [string, "null"]
+        source_commit_sha:
+          type: string
+          minLength: 7
+        merge_commit_sha:
+          type: [string, "null"]
+        merged_at:
+          type: string
+          format: date-time
+        run_id:
+          type: integer
+        model_label:
+          type: [string, "null"]
+        issues_posted:
+          type: integer
+        suggestions_posted:
+          type: integer
+        note:
+          $ref: "#/components/schemas/Note"
+        claims:
+          type: array
+          description: The team's ownership of the note's project; a null repo_slug is the whole project.
+          items:
+            type: object
+            required: [project_key, repo_slug]
+            properties:
+              project_key:
+                type: string
+              repo_slug:
+                type: [string, "null"]
+        note_call:
+          oneOf:
+            - $ref: "#/components/schemas/NoteCall"
+            - type: "null"
+        rounds:
+          type: object
+          description: Every note call this PR made, summed.
+          required: [count, input_tokens, output_tokens, cost_usd, cost_nano_usd]
+          properties:
+            count:
+              type: integer
+            input_tokens:
+              type: integer
+            output_tokens:
+              type: integer
+            cost_usd:
+              $ref: "#/components/schemas/Money"
+            cost_nano_usd:
+              type: [integer, "null"]
+        review_totals:
+          type: object
+          description: The PR's review aggregate, kept verbatim in the delivery.
+
+    Note:
+      type: object
+      description: The validated note as noergler's model wrote it, German.
+      required: [summary, change_kind, bugfix, components, rules, invariants, entities]
+      properties:
+        summary:
+          type: [string, "null"]
+        change_kind:
+          type: string
+          enum: [bugfix, feature, refactor, chore]
+        bugfix:
+          oneOf:
+            - type: object
+              required: [symptom, cause, cause_kind]
+              properties:
+                symptom:
+                  type: string
+                cause:
+                  type: string
+                cause_kind:
+                  type: string
+                  enum: [logic, concurrency, config, input_validation, integration, missing_test, other]
+            - type: "null"
+        components:
+          $ref: "#/components/schemas/NoteItems"
+        rules:
+          $ref: "#/components/schemas/NoteItems"
+        invariants:
+          $ref: "#/components/schemas/NoteItems"
+        entities:
+          $ref: "#/components/schemas/NoteItems"
+
+    NoteItems:
+      type: array
+      items:
+        type: object
+        required: [name, text, files]
+        properties:
+          name:
+            type: string
+          text:
+            type: string
+          files:
+            type: array
+            items:
+              type: string
+
+    NoteCall:
+      type: object
+      description: Everything the gateway reported for the round's note call. A lane it did not send is null.
+      required: [outcome, note_status]
+      properties:
+        outcome:
+          type: string
+        note_status:
+          type: string
+        profile:
+          type: [string, "null"]
+        model:
+          type: [string, "null"]
+        deployment:
+          type: [string, "null"]
+        reasoning_sent:
+          type: [string, "null"]
+        finish_reason:
+          type: [string, "null"]
+        call_id:
+          type: [string, "null"]
+        litellm_version:
+          type: [string, "null"]
+        input_tokens:
+          type: [integer, "null"]
+        input_uncached_tokens:
+          type: [integer, "null"]
+        cache_read_tokens:
+          type: [integer, "null"]
+        cache_write_tokens:
+          type: [integer, "null"]
+        output_tokens:
+          type: [integer, "null"]
+        reasoning_tokens:
+          type: [integer, "null"]
+        cost_usd:
+          $ref: "#/components/schemas/Money"
+        cost_nano_usd:
+          type: [integer, "null"]
+        cost_input_nano_usd:
+          type: [integer, "null"]
+        cost_cache_read_nano_usd:
+          type: [integer, "null"]
+        cost_cache_write_nano_usd:
+          type: [integer, "null"]
+        cost_output_nano_usd:
+          type: [integer, "null"]
+        cost_reasoning_nano_usd:
+          type: [integer, "null"]
+        cost_tool_usage_nano_usd:
+          type: [integer, "null"]
+        key_spend_usd:
+          $ref: "#/components/schemas/Money"
+        key_spend_nano_usd:
+          type: [integer, "null"]
+        headers_ms:
+          type: [integer, "null"]
+        total_ms:
+          type: [integer, "null"]
+        warnings:
+          type: array
+          items:
+            type: string
+
+    Projects:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+
+    Project:
+      type: object
+      required: [key, team, repos, notes, revision, last_merge]
+      properties:
+        key:
+          type: string
+        team:
+          type: string
+        repos:
+          type: integer
+        notes:
+          type: integer
+        revision:
+          type: integer
+          description: The project description's current revision, 0 when none.
+        last_merge:
+          type: [string, "null"]
+          format: date-time
+
+    Source:
+      type: object
+      description: The PR a statement was learned from or last changed by.
+      required: [pr_key, merged_at]
+      properties:
+        pr_key:
+          type: string
+        ticket_key:
+          type: string
+        merged_at:
+          type: string
+          format: date-time
+
+    Statement:
+      type: object
+      required: [id, kind, name, text, files, sources]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [component, rule, invariant, entity]
+        name:
+          type: string
+        text:
+          type: string
+        files:
+          type: array
+          items:
+            type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Source"
+
+    Description:
+      type: object
+      description: The current revision of a page.
+      required: [revision, summary, statements, source_pr_key, updated_at]
+      properties:
+        revision:
+          type: integer
+        summary:
+          type: string
+        statements:
+          type: array
+          items:
+            $ref: "#/components/schemas/Statement"
+        source_pr_key:
+          type: string
+          description: The PR whose note produced this revision.
+        updated_at:
+          type: string
+          format: date-time
+
+    Repo:
+      type: object
+      required: [slug, revision, summary, notes, last_merge]
+      properties:
+        slug:
+          type: string
+        revision:
+          type: integer
+        summary:
+          type: string
+          description: The description's first sentence.
+        notes:
+          type: integer
+        last_merge:
+          type: [string, "null"]
+          format: date-time
+
+    NoteSummary:
+      type: object
+      required: [pr_id, pr_key, pr_title, repo_slug, merged_at, items, issues_posted, suggestions_posted]
+      properties:
+        pr_id:
+          type: integer
+        pr_key:
+          type: string
+        pr_title:
+          type: string
+        repo_slug:
+          type: string
+        ticket_key:
+          type: string
+        change_kind:
+          type: string
+        merged_at:
+          type: string
+          format: date-time
+        items:
+          type: integer
+          description: Components, rules, invariants and entities in the note.
+        issues_posted:
+          type: integer
+        suggestions_posted:
+          type: integer
+
+    Problem:
+      type: object
+      required: [repo_slug, area, component, bugfixes, top_cause, top_cause_count, issues_posted, suggestions_posted, last_fix_pr_key, last_fix_at]
+      properties:
+        repo_slug:
+          type: string
+        area:
+          type: string
+          description: The shared directory of the fixes' component files; "" when they share nothing.
+        component:
+          type: string
+          description: The most recent component name seen for the area.
+        bugfixes:
+          type: integer
+        top_cause:
+          type: string
+        top_cause_count:
+          type: integer
+        issues_posted:
+          type: integer
+        suggestions_posted:
+          type: integer
+        last_fix_pr_key:
+          type: string
+        last_fix_at:
+          type: string
+          format: date-time
+
+    Problems:
+      type: object
+      required: [problems, problem_window_days]
+      properties:
+        problems:
+          type: array
+          items:
+            $ref: "#/components/schemas/Problem"
+        problem_window_days:
+          type: integer
+
+    ProjectDetail:
+      type: object
+      required: [key, team, description, repos, problems, problem_window_days, recent_notes]
+      properties:
+        key:
+          type: string
+        team:
+          type: string
+        description:
+          oneOf:
+            - $ref: "#/components/schemas/Description"
+            - type: "null"
+        repos:
+          type: array
+          items:
+            $ref: "#/components/schemas/Repo"
+        problems:
+          type: array
+          items:
+            $ref: "#/components/schemas/Problem"
+        problem_window_days:
+          type: integer
+        recent_notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/NoteSummary"
+
+    Revision:
+      type: object
+      required: [revision, source_pr_key, statements, chars, created_at]
+      properties:
+        revision:
+          type: integer
+        source_pr_key:
+          type: string
+        statements:
+          type: integer
+        chars:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    RepoDetail:
+      type: object
+      required: [project_key, slug, description, revisions, notes]
+      properties:
+        project_key:
+          type: string
+        slug:
+          type: string
+        description:
+          oneOf:
+            - $ref: "#/components/schemas/Description"
+            - type: "null"
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Revision"
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/NoteSummary"
+
+    NoteCallSummary:
+      type: object
+      required: [outcome, note_status, input_tokens, cache_read_tokens, output_tokens, rounds]
+      properties:
+        outcome:
+          type: string
+        note_status:
+          type: string
+        model:
+          type: string
+        input_tokens:
+          type: [integer, "null"]
+        cache_read_tokens:
+          type: [integer, "null"]
+        output_tokens:
+          type: [integer, "null"]
+        cost_usd:
+          type: string
+          description: 3-decimal USD; absent when unpriced.
+        rounds:
+          type: integer
+        rounds_cost_usd:
+          type: string
+
+    NoteDetail:
+      allOf:
+        - $ref: "#/components/schemas/NoteSummary"
+        - type: object
+          required: [project_key, source_commit, bugfix, note, received_at, consolidated_at, note_call]
+          properties:
+            project_key:
+              type: string
+            jira_issue_type:
+              type: string
+            reviewed_commit:
+              type: string
+            source_commit:
+              type: string
+            merge_commit:
+              type: string
+            run_id:
+              type: integer
+            model_label:
+              type: string
+            bugfix:
+              description: The bugfix block of the note, null for anything but a bugfix.
+            bugfix_area:
+              type: string
+            note:
+              $ref: "#/components/schemas/Note"
+            received_at:
+              type: string
+              format: date-time
+            consolidated_at:
+              type: [string, "null"]
+              format: date-time
+            note_call:
+              oneOf:
+                - $ref: "#/components/schemas/NoteCallSummary"
+                - type: "null"

@@ -1,0 +1,6 @@
+extends: ["spectral:oas"]
+
+rules:
+  # There is no contact to give: the API is served by whichever Almanach
+  # instance a team was pointed at, and the person to ask is its admin.
+  info-contact: off

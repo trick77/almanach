@@ -1,0 +1,10 @@
+# The gate (make check, and ship pre-push in the hook) and the release, see github.com/trick77/ship.
+go:
+  dir: backend
+  coverpkg: ./internal/...
+# The store tests' Postgres: compose.yaml's image, the major the deployment runs.
+postgres: compose:postgres
+steps:
+  - { name: openapi lint, run: npx --yes @stoplight/spectral-cli@6.15.0 lint backend/api/openapi.yaml --ruleset .spectral.yaml }
+images:
+  - {}
