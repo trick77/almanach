@@ -1,0 +1,228 @@
+// The small shared vocabulary, after ../noergler's ui.tsx: class strings
+// hoisted to named consts where a component would add nothing, components
+// where there is behaviour or a shape worth a name.
+import type { ReactNode } from "react";
+import { paragraphs, type Tone } from "./format";
+import { S } from "./strings";
+import { onNav } from "./routing";
+
+export const page = "h-full overflow-auto";
+/** The reading column: 900px, centred, ../rongo's measure. */
+export const column = "mx-auto max-w-[900px] px-4 py-7 sm:px-6 lg:px-10";
+export const h2 =
+  "font-serif text-[22px] font-medium leading-tight tracking-tight text-ink sm:text-[28px]";
+export const meta = "mt-1.5 text-[14.5px] text-muted";
+export const lede = "mt-1 mb-6 max-w-[66ch] text-[14.5px] text-muted";
+export const eyebrow =
+  "mt-7 mb-2.5 text-[11px] font-medium tracking-[.12em] text-faint uppercase";
+export const mono = "font-mono text-[12.5px]";
+
+/** Sep is the dot between the clauses of a meta line. An element with
+ *  margins, not a string with spaces: a Unicode space is a fraction of the
+ *  font size and reads jammed. aria-hidden: it is punctuation. */
+export function Sep() {
+  return (
+    <span aria-hidden className="mx-[max(7px,0.32em)] text-faint">
+      {S.common.sep}
+    </span>
+  );
+}
+
+/** Link is an in-app link: a real <a> with the path, so a middle click or a
+ *  copied address works, and a plain click stays in the SPA. */
+export function Link({
+  to,
+  className = "",
+  children,
+}: {
+  to: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <a href={to} onClick={onNav(to)} className={className}>
+      {children}
+    </a>
+  );
+}
+
+/** Chip is a citation: a PR key in a small accent-bordered box, ../rongo's
+ *  citation marker. It links to the note when the key has the API's shape. */
+export function Chip({
+  to,
+  children,
+}: {
+  to: string | null;
+  children: ReactNode;
+}) {
+  const cls =
+    "inline-flex items-center gap-1 rounded-[6px] border border-accent-dim bg-accent/10 px-[7px] py-px font-mono text-[11px] whitespace-nowrap text-accent-strong";
+  if (to === null) return <span className={cls}>{children}</span>;
+  return (
+    <Link to={to} className={cls + " hover:border-accent hover:text-ink"}>
+      {children}
+    </Link>
+  );
+}
+
+const toneClass: Record<Tone, string> = {
+  ok: "bg-online/15 text-[#82c491]",
+  warn: "bg-ochre-wash text-ochre",
+  fail: "bg-danger/15 text-danger-ink",
+  none: "bg-elevated text-ink-dim",
+  quiet: "text-muted ring-1 ring-inset ring-elevated-border",
+};
+const dotClass: Record<Tone, string> = {
+  ok: "bg-online",
+  warn: "bg-ochre",
+  fail: "bg-danger",
+  none: "bg-muted",
+  quiet: "bg-faint",
+};
+
+/** Pill always carries its word; the dot is a second cue, never the only
+ *  one. */
+export function Pill({
+  tone,
+  dot = false,
+  children,
+}: {
+  tone: Tone;
+  dot?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap " +
+        toneClass[tone]
+      }
+    >
+      {dot && (
+        <span
+          aria-hidden
+          className={"inline-block h-1.5 w-1.5 rounded-full " + dotClass[tone]}
+        />
+      )}
+      {children}
+    </span>
+  );
+}
+
+/** Prose renders a text as paragraphs, split on blank lines and nothing
+ *  else: the wiki is prose, never markdown. */
+export function Prose({
+  text,
+  className = "",
+}: {
+  text: string;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      {paragraphs(text).map((p, i) => (
+        <p key={i} className="mb-3.5 last:mb-0">
+          {p}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** Summary is a description's or a note's prose in the serif, ../rongo's
+ *  answer column. */
+export function Summary({ text }: { text: string }) {
+  return (
+    <Prose
+      text={text}
+      className="font-serif text-[17px] leading-[1.6] text-ink-prose"
+    />
+  );
+}
+
+/** Tables scroll inside their box on a narrow screen rather than widening
+ *  the page. */
+export const tableBox = "overflow-x-auto";
+export const table =
+  "w-full min-w-[560px] border-separate border-spacing-0 text-[13.5px]";
+export const th =
+  "border-b border-border pb-2 pr-2.5 text-left text-[11px] font-medium tracking-[.12em] text-faint uppercase whitespace-nowrap";
+export const thNum = th + " text-right";
+export const td =
+  "border-b border-border-soft py-[7px] pr-2.5 align-top text-ink-dim";
+export const tdNum = td + " text-right tabular-nums whitespace-nowrap";
+export const tdMono = td + " " + mono + " whitespace-nowrap";
+
+/** Empty is what a section says when there is nothing, a real state here. */
+export function Empty({ children }: { children: ReactNode }) {
+  return <p className="py-1.5 text-[13.5px] text-faint">{children}</p>;
+}
+
+/** Failed takes `what` in the case the sentence needs ("das Projekt"). */
+export function Failed({ what }: { what: string }) {
+  return (
+    <div className="rounded-ui border border-border bg-panel px-3.5 py-3 text-[13.5px] text-muted">
+      {S.common.failed(what)}
+    </div>
+  );
+}
+
+/** Skeleton is the page while it loads: three fading bars. */
+export function Skeleton() {
+  return (
+    <div aria-busy className="space-y-3 py-2">
+      <div className="skeleton h-7 w-1/3 rounded-ui-sm" />
+      <div className="skeleton h-4 w-2/3 rounded-ui-sm" />
+      <div className="skeleton h-4 w-1/2 rounded-ui-sm" />
+    </div>
+  );
+}
+
+/** Crumbs is the breadcrumb: links, then the current name. */
+export function Crumbs({ items }: { items: { label: string; to?: string }[] }) {
+  return (
+    <nav aria-label="Pfad" className="mb-2.5 text-[13px] text-faint">
+      {items.map((it, i) => (
+        <span key={i}>
+          {i > 0 && <span className="mx-1.5">/</span>}
+          {it.to ? (
+            <Link to={it.to} className="text-muted hover:text-ink-dim">
+              {it.label}
+            </Link>
+          ) : (
+            <span className="text-ink-dim">{it.label}</span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+/** Tiles is a row of stat tiles, four across on a wide screen. */
+export function Tiles({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{children}</div>
+  );
+}
+
+export function Tile({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: ReactNode;
+  note?: string;
+}) {
+  return (
+    <div className="rounded-ui border border-border bg-panel px-3.5 py-3">
+      <div className="text-[11px] font-medium tracking-[.12em] text-faint uppercase">
+        {label}
+      </div>
+      <div className="mt-0.5 text-[22px] font-medium tabular-nums text-ink">
+        {value}
+      </div>
+      {note && <div className="text-[12px] text-muted">{note}</div>}
+    </div>
+  );
+}

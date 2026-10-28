@@ -8,9 +8,13 @@ and tests included.
 
 ## Commands
 
-- Module in `backend/` (go commands there); docs, `compose.yaml`, `make` at
-  the root. The prompt is `backend/internal/prompts/almanach_merge.txt`,
-  compiled in, never configurable.
+- Module in `backend/` (go commands there); `ui/` (npm commands there),
+  docs, `compose.yaml`, `make` at the root. The prompt is
+  `backend/internal/prompts/almanach_merge.txt`, compiled in, never
+  configurable. `make fe-build` writes `backend/web/dist`, which `go
+  build` embeds; the UI is German only (`ui/src/strings.ts`), read-only,
+  reads `/api/...` and nothing else; its routes are mirrored in
+  `backend/web/embed.go`, statements render as paragraphs, never markdown.
 - Gate = `make check` (ship master; `SHIP_CMD=<binary>` locally). `make
   hooks` per clone. GitHub is never first to find a failure.
 - Store tests need docker (ship starts Postgres); plain `go test` skips them.

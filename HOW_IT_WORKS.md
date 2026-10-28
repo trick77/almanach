@@ -15,7 +15,8 @@ needed, nothing else is called except the LLM gateway.
   noergler ──POST /webhooks/noergler (bearer)──▶ ┌──────────────────────┐
   noergler ──GET  /auth/ping          (bearer)──▶ │  HTTP (net/http)     │
                                                   │  api: webhook, ping, │
-  browser  ──GET  /api/... (via oauth sidecar)──▶ │  read routes         │
+  browser  ──GET  /api/... (via oauth sidecar)──▶ │  read routes,        │
+  browser  ──GET  /, /projekte/... (sidecar)   ──▶ │  embedded UI (web)   │
                                                   └──────────┬───────────┘
                                                              │ Ingest, reads
                                                              ▼
@@ -35,10 +36,13 @@ needed, nothing else is called except the LLM gateway.
 
 Three parts, three responsibilities:
 
-- **The HTTP surface** (`internal/api`, `internal/httpapi`) takes notes in
-  and serves the wiki out. The webhook is the only write path; the read
-  routes are the only thing a person touches. Both are thin: decode, call
-  the store, encode.
+- **The HTTP surface** (`internal/api`, `internal/httpapi`, `web`) takes
+  notes in and serves the wiki out. The webhook is the only write path;
+  the read routes and the embedded UI are the only things a person
+  touches. The routes are thin: decode, call the store, encode. The UI is
+  a static bundle (`ui/`, built into `backend/web/dist`) served from the
+  binary; it reads `/api/...` and nothing else, and knows no team, no
+  user and no secret.
 - **The store** (`internal/store`) owns every query and every transaction.
   It is the one place SQL lives; the other packages see Go types. An
   accepted delivery and everything derived from it land in one
@@ -228,7 +232,10 @@ read-only by design.
 
 ## 6. Package layout
 
-Everything lives under `backend/`, one Go module. The dependency direction
+Everything Go lives under `backend/`, one Go module; the UI is `ui/`, a
+Vite and React bundle that `make fe-build` (and the image's node stage)
+writes into `backend/web/dist` before `go build` embeds it. The dependency
+direction
 is strictly downward: `cmd` wires, and a package below depends on another
 only for its types; where a test needs a fake, the consumer declares the
 interface it needs and the test satisfies it. llmwire is reached in two
@@ -239,7 +246,8 @@ one.
 | Package | Role | Depends on |
 | --- | --- | --- |
 | `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
-| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | config, httpapi, ingest, store, teamkeys |
+| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, and `/` handed to `web`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | config, httpapi, ingest, store, teamkeys, web |
+| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/faq`, `/projekte/{key}`, `.../repos/{slug}`, `.../notizen/{pr}`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
 | `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
@@ -361,9 +369,14 @@ so the choice is not undone as a cleanup.
   speaking; the spelling is enforced in code (`lang.SwissSS`) on every
   prose field because the model drifts to the sharp s. File paths are never
   touched.
-- **No UI in this repository yet.** The read API is the contract
-  (`backend/api/openapi.yaml`); a UI reads it and nothing more, so it can
-  live anywhere and change independently.
+- **The UI is in the binary, but only as a reader.** It ships with the
+  process so a deployment is one image and one sidecar, yet it talks to
+  the read API alone (`backend/api/openapi.yaml`); nothing in it knows a
+  team, a token or a user, and nothing in the backend knows the UI beyond
+  the route allowlist. It is German only, read-only, with no settings and
+  no login of its own: the sidecar authenticates, the UI shows. Statement
+  text is rendered as paragraphs split on blank lines, never as markdown,
+  so a model that emits markup cannot change the page's shape.
 
 ## 9. Rules and invariants
 
