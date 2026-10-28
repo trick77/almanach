@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	limits   = config.Limits{RepoMaxStatements: 3, ProjectMaxStatements: 2, SummaryMaxChars: 80, StatementMaxChars: 30}
+	limits   = config.Limits{RepoMaxStatements: 3, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200}
 	mergedAt = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 	older    = time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 )
@@ -277,7 +277,7 @@ func TestFoldKeptIDChangedAppendsPROnce(t *testing.T) {
 }
 
 func TestFoldRejections(t *testing.T) {
-	long := strings.Repeat("x", limits.StatementMaxChars+1)
+	long := strings.Repeat("x", limits.RepoMaxChars+1)
 	many := make([]inference.Statement, limits.RepoMaxStatements+1)
 	for i := range many {
 		many[i] = inference.Statement{Kind: "rule", Name: "n", Text: "t"}
@@ -292,8 +292,10 @@ func TestFoldRejections(t *testing.T) {
 			{ID: str("s1"), Kind: "rule", Name: "n", Text: "t"}, {ID: str("s1"), Kind: "rule", Name: "m", Text: "u"}}}},
 		{"empty statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: " ", Text: "t"}}}},
 		{"over the statement cap", &inference.Description{Summary: "s", Statements: many}},
-		{"statement text over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: long}}}},
-		{"summary over cap", &inference.Description{Summary: strings.Repeat("y", limits.SummaryMaxChars+1), Statements: nil}},
+		// The ceiling is the whole description: the summary and the names
+		// and texts together, never one statement by itself.
+		{"description over the cap by a statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: long}}}},
+		{"description over the cap by the summary", &inference.Description{Summary: strings.Repeat("y", limits.RepoMaxChars+1), Statements: nil}},
 		{"empty summary", &inference.Description{Summary: "  ", Statements: nil}},
 		{"name over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}},
 		{"too many files", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
@@ -486,13 +488,14 @@ func TestRender(t *testing.T) {
 	empty := store.Page{}
 	out := render(prompts.Merge, q, existingRepoPage(), empty, limits)
 	for _, ph := range []string{"{repo}", "{project}", "{pr_key}", "{ticket_key}", "{change_kind}", "{repo_max_statements}",
-		"{project_max_statements}", "{statement_max_chars}", "{summary_max_chars}", "{repo_description}", "{project_description}", "{note}"} {
+		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}", "{note}"} {
 		if strings.Contains(out, ph) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
 	}
 	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown", "at most 3 statements", "at most 2 statements",
-		"at most 30 characters", "at most 80", "Der Dienst speichert Dateien.", "- [s1] component: Uploader: Nimmt Dateien an. (internal/files/upload.go)",
+		"400 characters of prose in all", "200 characters of prose in all", "Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
+		"the current description has 54", "the current description has 0",
 		"_None yet._", `{"components":[{"name":"x"}]}`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)
@@ -510,8 +513,34 @@ func TestDescribe(t *testing.T) {
 	p := existingRepoPage()
 	p.Statements = append(p.Statements, store.Statement{ID: "s2", Kind: "rule", Name: "R", Text: "T"})
 	got := describe(p)
-	if !strings.HasPrefix(got, "Der Dienst speichert Dateien.\n\n- [s1] component: Uploader: Nimmt Dateien an. (internal/files/upload.go)\n- [s2] rule: R: T\n") {
-		t.Errorf("describe = %q", got)
+	want := "Der Dienst speichert Dateien.\n\n### [s1] component: Uploader\n\nNimmt Dateien an.\n\nFiles: internal/files/upload.go\n\n### [s2] rule: R\n\nT\n"
+	if got != want {
+		t.Errorf("describe =\n%q\nwant\n%q", got, want)
+	}
+	// A multi-paragraph text stays under its heading, every paragraph
+	// attributable to the id.
+	p.Statements[1].Text = "Absatz eins.\n\nAbsatz zwei."
+	if got := describe(p); !strings.Contains(got, "### [s2] rule: R\n\nAbsatz eins.\n\nAbsatz zwei.\n") {
+		t.Errorf("describe with paragraphs = %q", got)
+	}
+}
+
+// A statement is as long as its subject needs: a text far over the old
+// per-statement cap is accepted under the page's ceiling, and the chars
+// stored are the prose the ceiling counted. The project scope has its own,
+// smaller ceiling.
+func TestFoldLongStatementUnderThePageCeiling(t *testing.T) {
+	st := newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+	text := strings.Repeat("ä", 350) + "\n\n" + strings.Repeat("b", 20)
+	repo := &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: text}}}
+	project := &inference.Description{Summary: strings.Repeat("p", limits.ProjectMaxChars+1), Statements: nil}
+	newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || st.revisions[0].Scope != store.ScopeRepository {
+		t.Fatalf("revisions = %+v, want the repository accepted and the project rejected", st.revisions)
+	}
+	if want := 1 + 1 + 350 + 2 + 20; st.revisions[0].Chars != want {
+		t.Errorf("chars = %d, want the prose runes %d", st.revisions[0].Chars, want)
 	}
 }
 

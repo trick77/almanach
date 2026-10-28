@@ -40,7 +40,7 @@ func TestLoadDefaults(t *testing.T) {
 	if app.Host != "0.0.0.0" || app.Port != 8080 || app.AuthMode != AuthNone || app.ReasoningEffort != "" {
 		t.Errorf("server defaults = %+v", app)
 	}
-	want := Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, SummaryMaxChars: 1500, StatementMaxChars: 300}
+	want := Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, RepoMaxChars: 60000, ProjectMaxChars: 40000}
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
@@ -57,8 +57,8 @@ func TestLoadOverrides(t *testing.T) {
 	env["ALMANACH_REASONING_EFFORT"] = "high"
 	env["ALMANACH_REPO_MAX_STATEMENTS"] = "10"
 	env["ALMANACH_PROJECT_MAX_STATEMENTS"] = "5"
-	env["ALMANACH_SUMMARY_MAX_CHARS"] = "800"
-	env["ALMANACH_STATEMENT_MAX_CHARS"] = "120"
+	env["ALMANACH_REPO_MAX_CHARS"] = "800"
+	env["ALMANACH_PROJECT_MAX_CHARS"] = "120"
 	env["ALMANACH_PROBLEM_WINDOW_DAYS"] = "30"
 	env["LOG_LEVEL"] = "DEBUG"
 	app, err := Load(lookup(env))
@@ -68,7 +68,7 @@ func TestLoadOverrides(t *testing.T) {
 	if app.Host != "127.0.0.1" || app.Port != 9090 || app.AuthMode != AuthProxy || app.ReasoningEffort != "high" {
 		t.Errorf("server values = %+v", app)
 	}
-	want := Limits{RepoMaxStatements: 10, ProjectMaxStatements: 5, SummaryMaxChars: 800, StatementMaxChars: 120}
+	want := Limits{RepoMaxStatements: 10, ProjectMaxStatements: 5, RepoMaxChars: 800, ProjectMaxChars: 120}
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
@@ -99,8 +99,8 @@ func TestProxyModeNeedsLoopback(t *testing.T) {
 }
 
 func TestNonPositiveCap(t *testing.T) {
-	for _, name := range []string{"ALMANACH_REPO_MAX_STATEMENTS", "ALMANACH_PROJECT_MAX_STATEMENTS", "ALMANACH_SUMMARY_MAX_CHARS",
-		"ALMANACH_STATEMENT_MAX_CHARS", "ALMANACH_PROBLEM_WINDOW_DAYS"} {
+	for _, name := range []string{"ALMANACH_REPO_MAX_STATEMENTS", "ALMANACH_PROJECT_MAX_STATEMENTS", "ALMANACH_REPO_MAX_CHARS",
+		"ALMANACH_PROJECT_MAX_CHARS", "ALMANACH_PROBLEM_WINDOW_DAYS"} {
 		for _, v := range []string{"0", "-3"} {
 			env := minimal()
 			env[name] = v
@@ -115,8 +115,8 @@ func TestNonPositiveCap(t *testing.T) {
 		}
 	}
 	env := minimal()
-	env["ALMANACH_SUMMARY_MAX_CHARS"] = "lots"
-	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `ALMANACH_SUMMARY_MAX_CHARS: "lots" is not an integer`) {
+	env["ALMANACH_REPO_MAX_CHARS"] = "lots"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `ALMANACH_REPO_MAX_CHARS: "lots" is not an integer`) {
 		t.Errorf("non-integer cap: error = %v", err)
 	}
 }
@@ -144,7 +144,7 @@ func TestSummaryHidesDSN(t *testing.T) {
 			t.Errorf("Summary leaks %q: %s", secret, s)
 		}
 	}
-	for _, want := range []string{"addr=0.0.0.0:8080", "auth=none", "model=gpt-x", "limits={repo 40, project 24, summary 1500, statement 300}", "problem_window=90d"} {
+	for _, want := range []string{"addr=0.0.0.0:8080", "auth=none", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars}", "problem_window=90d"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Summary lacks %q: %s", want, s)
 		}

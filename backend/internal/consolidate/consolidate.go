@@ -7,7 +7,6 @@ package consolidate
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -277,14 +276,14 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	if callID != 0 {
 		id = &callID
 	}
-	w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, w.limits.RepoMaxStatements, id)
-	w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, w.limits.ProjectMaxStatements, id)
+	w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, w.limits.RepoMaxStatements, w.limits.RepoMaxChars, id)
+	w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars, id)
 	return
 }
 
 // apply checks one rewritten description and writes it as a revision, or
 // logs why not. nil = the model wants no change.
-func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, d *inference.Description, maxStatements int, callID *int64) {
+func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, d *inference.Description, maxStatements, maxChars int, callID *int64) {
 	if d == nil {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
 		return
@@ -297,7 +296,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 	statements, reason := attach(current.Statements, d.Statements, q, next)
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
-	chars, capReason := check(summary, statements, maxStatements, w.limits)
+	chars, capReason := check(summary, statements, maxStatements, maxChars)
 	if reason == "" {
 		reason = capReason
 	}
@@ -397,22 +396,24 @@ const (
 	pathMaxChars = 200
 )
 
-// check applies the caps: statement count, summary, text, name and files.
-// chars is the serialized size, for the revision row.
-func check(summary string, statements []store.Statement, maxStatements int, l config.Limits) (int, string) {
+// check applies the ceilings: the statement count, the prose of the whole
+// description, and the fixed caps on a name and on files. chars is that
+// prose count, stored on the revision row.
+func check(summary string, statements []store.Statement, maxStatements, maxChars int) (int, string) {
 	if strings.TrimSpace(summary) == "" {
 		return 0, "empty summary"
-	}
-	if utf8.RuneCountInString(summary) > l.SummaryMaxChars {
-		return 0, fmt.Sprintf("summary over %d characters", l.SummaryMaxChars)
 	}
 	if len(statements) > maxStatements {
 		return 0, fmt.Sprintf("%d statements over the cap of %d", len(statements), maxStatements)
 	}
+	// The ceiling is on the whole description, never on one statement: a
+	// description is documentation and a statement is as long as its
+	// subject needs. Prose runes only: names, texts, the summary.
+	size := prose(summary, statements)
+	if size > maxChars {
+		return 0, fmt.Sprintf("description is %d characters, over the cap of %d", size, maxChars)
+	}
 	for _, s := range statements {
-		if utf8.RuneCountInString(s.Text) > l.StatementMaxChars {
-			return 0, fmt.Sprintf("statement %s over %d characters", s.ID, l.StatementMaxChars)
-		}
 		if utf8.RuneCountInString(s.Name) > nameMaxChars {
 			return 0, fmt.Sprintf("statement %s name over %d characters", s.ID, nameMaxChars)
 		}
@@ -425,8 +426,9 @@ func check(summary string, statements []store.Statement, maxStatements int, l co
 			}
 		}
 	}
-	b, _ := json.Marshal(statements)
-	return utf8.RuneCountInString(summary) + utf8.RuneCount(b), ""
+	// chars on the revision is the figure the ceiling gated, so the API
+	// shows the same number the cap applies to.
+	return size, ""
 }
 
 func sameStatements(a, b []store.Statement) bool {
@@ -459,8 +461,10 @@ func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l
 		"{change_kind}", kind,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements),
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements),
-		"{statement_max_chars}", fmt.Sprint(l.StatementMaxChars),
-		"{summary_max_chars}", fmt.Sprint(l.SummaryMaxChars),
+		"{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
+		"{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
+		"{repo_chars}", fmt.Sprint(prose(repoPage.Summary, repoPage.Statements)),
+		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{repo_description}", describe(repoPage),
 		"{project_description}", describe(projectPage),
 		"{note}", string(q.Body),
@@ -475,13 +479,25 @@ func describe(p store.Page) string {
 	}
 	var b strings.Builder
 	b.WriteString(p.Summary)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	// One block per statement, its id in the heading: the text is prose
+	// with paragraphs of its own, so a bullet per statement would leave
+	// every second paragraph outside any id.
 	for _, s := range p.Statements {
-		fmt.Fprintf(&b, "- [%s] %s: %s: %s", s.ID, s.Kind, s.Name, s.Text)
+		fmt.Fprintf(&b, "\n### [%s] %s: %s\n\n%s\n", s.ID, s.Kind, s.Name, s.Text)
 		if len(s.Files) > 0 {
-			fmt.Fprintf(&b, " (%s)", strings.Join(s.Files, ", "))
+			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
 		}
-		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// prose is the runes a description's ceiling counts: the summary and every
+// statement's name and text. Paths and ids are not prose.
+func prose(summary string, statements []store.Statement) int {
+	n := utf8.RuneCountInString(summary)
+	for _, s := range statements {
+		n += utf8.RuneCountInString(s.Name) + utf8.RuneCountInString(s.Text)
+	}
+	return n
 }

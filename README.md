@@ -10,16 +10,19 @@ Every review noergler runs already paid for reading the files, the diff and
 the ticket. Almanach keeps what the model learned on the way: after each
 review round noergler asks the same conversation one more question, "what
 does this pull request teach about this repository?", and at merge it sends
-the answer here. Almanach folds every note into two short descriptions, one
-per repository and one per Bitbucket project, under hard size caps, and
-keeps a history of every revision. Nothing flows back into reviews.
+the answer here. Almanach folds every note into two descriptions, one per
+repository and one per Bitbucket project: documentation of what the thing
+is for, how it is structured, what each repository holds, which rules and
+invariants the code enforces and why, as comprehensive as the subject
+needs, under a ceiling on the whole page so it cannot bloat. Every revision
+is kept. Nothing flows back into reviews.
 
 The descriptions are German, Swiss spelling. Nobody edits them by hand: the
 next pull request that gets a fact right corrects it.
 
 ## What you get
 
-- **Repository description**: a short summary plus statements about the
+- **Repository description**: an overview of what the repository is for and how it is structured, plus documentation of the
   components, business rules, invariants and data entities of the code,
   each with the pull requests it was learned from.
 - **Project description**: what spans the project's repositories, built by

@@ -72,7 +72,7 @@ what this pull request teaches about this repository, as a strict JSON
 object in German. Components, business rules, invariants, data entities; the
 change kind (`bugfix`, `feature`, `refactor`, `chore`); for a bugfix the
 symptom, the cause and its class. noergler validates it with blunt rules
-(Swiss spelling, no secrets, caps per field) and keeps the latest round's
+(Swiss spelling, no secrets, a ceiling on the whole note) and keeps the latest round's
 note per pull request. At `pr:merged` it stamps the note final and sends it
 here with everything it knows beside it: the project key, the repository
 slug, the pull request, the ticket, the commits, the counts of issues and
@@ -144,10 +144,13 @@ The answer is then held to rules the model cannot bend:
   starts with this pull request, numbered past every id the page's history
   ever used, so an id dropped in one fold never names another fact later.
   An id the page does not have, or one used twice, rejects the rewrite.
-- Caps: statement count per scope, runes per statement text and summary,
-  and fixed caps on a statement's name and its file list. Over any cap the
-  rewrite is rejected whole and the page stays as it was. Never truncated:
-  a truncated description lies.
+- Ceilings: statement count per scope and runes per whole description
+  (the summary and every statement's name and text), plus fixed caps on a
+  statement's name and its file list. No statement has a length cap of its
+  own: a description is documentation, each statement as long as its
+  subject needs, and only the whole must not grow without bound. Over a
+  ceiling the rewrite is rejected whole and the page stays as it was. Never
+  truncated: a truncated description lies.
 - An identical rewrite is no revision.
 
 What passes is written as the next revision of the page and the page
@@ -301,7 +304,8 @@ never summed with `note_calls`.
 What is derived and what is kept: `deliveries` and `notes` are kept as
 they arrived. `bugfix_area`, the statements' `sources` and ids, the
 revision numbers and the page pointers are code's. The `summary` and the
-statements' text are the model's, within caps. The problem areas are not
+statements' text are the model's, as long as the subject needs under the
+page's ceiling. The problem areas are not
 stored at all: they are a query over bugfix notes within a window, grouped
 by repository and `bugfix_area`.
 
@@ -433,10 +437,11 @@ things a change must not undo by accident.
   rewrite is applied before the project one. The project description is
   folded from the note, not from the repository description.
 - A failure is classed, and the class decides everything:
-  - the model's answer off the schema, a 4xx from the gateway (context
-    overflow, rejected format), a 2xx of the wrong shape: specific to this
-    call, the note is marked consolidated with a log line and never
-    retried;
+  - the model's answer off the schema, an answer cut by the model's output
+    limit (`too_long`: the description asked for does not fit one call), a
+    4xx from the gateway (context overflow, rejected format), a 2xx of the
+    wrong shape: specific to this call, the note is marked consolidated
+    with a log line and never retried;
   - a timeout, a 5xx, a transport failure, a refused key, a rate limit, a
     proxy page where the answer should be: the gateway's, the worker holds
     (thirty seconds, doubling to ten minutes, or the rate limit's
@@ -469,13 +474,15 @@ the reason in the log and the page unchanged:
   sources exactly; one whose name or text changed gains the current PR
   once (never twice for the same PR); a new statement starts with the
   current PR. The model never writes a source.
-- Caps, in this order after the spelling: the summary is not empty and
-  not over `ALMANACH_SUMMARY_MAX_CHARS` runes; the statement count is
-  within the scope's cap (`ALMANACH_REPO_MAX_STATEMENTS`,
-  `ALMANACH_PROJECT_MAX_STATEMENTS`); each text within
-  `ALMANACH_STATEMENT_MAX_CHARS` runes; each name within 80 runes; at most
-  5 files per statement, each within 200 runes and without whitespace.
-  Empty file strings are dropped before counting.
+- Ceilings, in this order after the spelling: the summary is not empty;
+  the statement count is within the scope's cap
+  (`ALMANACH_REPO_MAX_STATEMENTS`, `ALMANACH_PROJECT_MAX_STATEMENTS`); the
+  prose of the whole description (summary plus every name and text) is
+  within the scope's cap (`ALMANACH_REPO_MAX_CHARS`,
+  `ALMANACH_PROJECT_MAX_CHARS`); each name within 80 runes; at most 5
+  files per statement, each within 200 runes and without whitespace. A
+  statement's text has no cap of its own. Empty file strings are dropped
+  before counting.
 - A rewrite identical to the current page (same summary, same statements
   in the same order with the same ids, kinds, names, texts and files)
   writes no revision.
