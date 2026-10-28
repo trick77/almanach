@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +29,7 @@ var (
 type fakeStore struct {
 	queue        []store.QueuedNote
 	queueErr     error
+	markErr      error
 	pages        map[string]store.Page
 	marked       []string
 	revisions    []store.NewRevision
@@ -34,6 +37,34 @@ type fakeStore struct {
 	nextQueuedN  int
 	revisionErr  error
 	insertCallID int64
+	// history is every statement id a page ever used beyond the current
+	// page and the revisions written in the test: what NextStatementID
+	// reads off the revisions table.
+	history map[string][]string
+}
+
+func (f *fakeStore) NextStatementID(_ context.Context, scope, project, repo string) (int, error) {
+	n := 1
+	bump := func(id string) {
+		var v int
+		if _, err := fmt.Sscanf(id, "s%d", &v); err == nil && v >= n {
+			n = v + 1
+		}
+	}
+	for _, id := range f.history[pageKey(scope, project, repo)] {
+		bump(id)
+	}
+	for _, s := range f.pages[pageKey(scope, project, repo)].Statements {
+		bump(s.ID)
+	}
+	for _, r := range f.revisions {
+		if r.Scope == scope && r.ProjectKey == project && r.RepoSlug == repo {
+			for _, s := range r.Statements {
+				bump(s.ID)
+			}
+		}
+	}
+	return n, nil
 }
 
 func newFakeStore() *fakeStore {
@@ -56,6 +87,9 @@ func (f *fakeStore) NextQueued(context.Context) (store.QueuedNote, bool, error) 
 }
 
 func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, prID int) error {
+	if f.markErr != nil {
+		return f.markErr
+	}
 	f.marked = append(f.marked, pageKey(project, repo, strconv.Itoa(prID)))
 	return nil
 }
@@ -105,7 +139,7 @@ func queued(prKey string) store.QueuedNote {
 
 func str(s string) *string { return &s }
 
-func newWorker(st *fakeStore, m *fakeMerger) *Worker {
+func newWorker(st *fakeStore, m Merger) *Worker {
 	return New(st, m, limits, slog.New(slog.DiscardHandler))
 }
 
@@ -246,6 +280,13 @@ func TestFoldRejections(t *testing.T) {
 		{"statement text over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: long}}}},
 		{"summary over cap", &inference.Description{Summary: strings.Repeat("y", limits.SummaryMaxChars+1), Statements: nil}},
 		{"empty summary", &inference.Description{Summary: "  ", Statements: nil}},
+		{"name over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}},
+		{"too many files", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
+			Files: []string{"a", "b", "c", "d", "e", "f"}}}}},
+		{"path over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
+			Files: []string{strings.Repeat("p", pathMaxChars+1)}}}}},
+		{"path with whitespace", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
+			Files: []string{"internal/a file.go"}}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -352,25 +393,88 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
-func TestNextID(t *testing.T) {
-	cases := []struct {
-		ids  []string
-		want int
-	}{
-		{nil, 1},
-		{[]string{"s1"}, 2},
-		{[]string{"s3", "s1", "s7"}, 8},
-		{[]string{"x9", "s2"}, 3},
+// An id a past revision used and a later fold dropped is never reissued:
+// the page holds s1, the history once held s3, the new statement is s4.
+func TestNewStatementIDNeverReusesADroppedOne(t *testing.T) {
+	st := newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+	st.history = map[string][]string{pageKey(store.ScopeRepository, "PLAT", "files"): {"s1", "s2", "s3"}}
+	desc := &inference.Description{Summary: "s", Statements: []inference.Statement{
+		{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an."},
+		{Kind: "rule", Name: "Neu", Text: "t"},
+	}}
+	newWorker(st, &fakeMerger{result: okResult(desc, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || len(st.revisions[0].Statements) != 2 || st.revisions[0].Statements[1].ID != "s4" {
+		t.Fatalf("revisions = %+v, want the new statement as s4", st.revisions)
 	}
-	for _, tc := range cases {
-		var cur []store.Statement
-		for _, id := range tc.ids {
-			cur = append(cur, store.Statement{ID: id})
-		}
-		if got := nextID(cur); got != tc.want {
-			t.Errorf("nextID(%v) = %d, want %d", tc.ids, got, tc.want)
-		}
+}
+
+// A mark that fails pauses the drain: the same note would otherwise come
+// back at once, one paid call per lap.
+func TestDrainPausesWhenTheMarkFails(t *testing.T) {
+	st := newFakeStore()
+	st.queue = []store.QueuedNote{queued("PLAT/files#1"), queued("PLAT/files#2")}
+	st.markErr = errors.New("read-only transaction")
+	m := &fakeMerger{result: okResult(nil, nil)}
+	newWorker(st, m).drain(context.Background())
+	if len(m.prompts) != 1 || st.nextQueuedN != 1 {
+		t.Errorf("drain folded %d notes after %d reads, want one of each", len(m.prompts), st.nextQueuedN)
 	}
+}
+
+// Stop lets the fold in flight finish; past the grace it cancels it.
+func TestStopWaitsForTheFoldThenCancels(t *testing.T) {
+	st := newFakeStore()
+	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	m := newBlockingMerger()
+	w := newWorker(st, m)
+	w.Start(context.Background())
+	<-m.started
+	done := make(chan struct{})
+	go func() { w.Stop(5 * time.Second); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("Stop returned while the fold was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(m.block)
+	<-done
+	if len(st.marked) != 1 {
+		t.Errorf("marked = %v, want the fold in flight finished", st.marked)
+	}
+
+	st = newFakeStore()
+	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	m = newBlockingMerger()
+	w = newWorker(st, m)
+	w.Start(context.Background())
+	<-m.started
+	w.Stop(20 * time.Millisecond)
+	if m.ctx == nil || m.ctx.Err() == nil {
+		t.Error("the fold was not cancelled past the grace")
+	}
+}
+
+// blockingMerger holds its first call until block closes or the ctx ends.
+type blockingMerger struct {
+	block   chan struct{}
+	started chan struct{}
+	ctx     context.Context
+	once    sync.Once
+}
+
+func newBlockingMerger() *blockingMerger {
+	return &blockingMerger{block: make(chan struct{}), started: make(chan struct{})}
+}
+
+func (m *blockingMerger) Merge(ctx context.Context, _ inference.MergeRequest) inference.MergeResult {
+	m.ctx = ctx
+	m.once.Do(func() { close(m.started) })
+	select {
+	case <-m.block:
+	case <-ctx.Done():
+	}
+	return okResult(nil, nil)
 }
 
 func TestDrainOldestFirst(t *testing.T) {

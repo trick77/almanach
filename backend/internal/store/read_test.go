@@ -138,13 +138,25 @@ func TestNotes_ByProjectAndRepo(t *testing.T) {
 	three.ChangeKind = ""
 	ingest(t, s, three)
 	ingest(t, s, noteFor("ZED", "z", 4))
+	// A list that is JSON null, or a scalar, counts as empty and breaks no
+	// read: the sender's note object may carry null for an empty list.
+	odd := noteFor("PRJ", "lib", 6)
+	odd.Body = []byte(`{"components":null,"rules":"x","invariants":[{"name":"i"}]}`)
+	odd.MergedAt = mergedBase.Add(-time.Hour)
+	ingest(t, s, odd)
 
 	ns, err := s.Notes(ctx, "PRJ", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ns) != 3 || ns[0].PRID != 3 || ns[1].PRID != 2 || ns[2].PRID != 1 {
-		t.Fatalf("Notes(PRJ) = %+v, want PRs 3, 2, 1", ns)
+	if len(ns) != 4 || ns[0].PRID != 3 || ns[1].PRID != 2 || ns[2].PRID != 1 || ns[3].PRID != 6 {
+		t.Fatalf("Notes(PRJ) = %+v, want PRs 3, 2, 1, 6", ns)
+	}
+	if ns[3].Items != 1 {
+		t.Errorf("PR 6 items = %d, want 1 (null and scalar lists count as empty)", ns[3].Items)
+	}
+	if d, ok, err := s.NoteByKey(ctx, "PRJ", "lib", 6); err != nil || !ok || d.Items != 1 {
+		t.Errorf("NoteByKey(PR 6) items = %d ok=%v err=%v, want 1", d.Items, ok, err)
 	}
 	if ns[0].Items != 3 || ns[0].RepoSlug != "svc" || ns[0].TicketKey != "" || ns[0].ChangeKind != "" {
 		t.Errorf("PR 3 = %+v, want 3 items, repo svc, empty ticket and kind", ns[0])

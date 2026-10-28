@@ -109,6 +109,17 @@ func TestHotReload(t *testing.T) {
 		t.Errorf("old table lost billing: %q", team)
 	}
 
+	// An emptied file ({} from a bad rollout) is refused the same way: the
+	// old table stays and the error says so.
+	writeKeys(t, path, `{}`, t0.Add(150*time.Minute))
+	team, reloadErr = k.Lookup("tok-platform")
+	if reloadErr == nil || !strings.Contains(reloadErr.Error(), "no team keys") {
+		t.Fatalf("reloadErr = %v for an empty file", reloadErr)
+	}
+	if team != "platform" {
+		t.Errorf("Lookup during the empty file = %q, want the old table's platform", team)
+	}
+
 	// A repaired file reloads cleanly; an unchanged mtime then reloads nothing.
 	writeKeys(t, path, `{"platform": "tok-platform", "billing": "tok-billing"}`, t0.Add(3*time.Hour))
 	if _, reloadErr = k.Lookup("tok-platform"); reloadErr != nil {

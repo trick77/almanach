@@ -27,6 +27,7 @@ type Store interface {
 	NextQueued(ctx context.Context) (store.QueuedNote, bool, error)
 	MarkConsolidated(ctx context.Context, project, repo string, prID int) error
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
+	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
 	InsertLLMCall(ctx context.Context, c store.LLMCall) (int64, error)
 }
@@ -47,12 +48,17 @@ type Worker struct {
 	wake chan struct{}
 	// poll is how often the loop looks on its own.
 	poll time.Duration
-	done chan struct{}
+	// quit asks the loop to end after the fold in flight; cancel cuts that
+	// fold off when the grace runs out; done closes when the loop ended.
+	quit   chan struct{}
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // New builds a worker. It runs nothing until Start.
 func New(st Store, llm Merger, limits config.Limits, log *slog.Logger) *Worker {
-	return &Worker{store: st, llm: llm, limits: limits, log: log, wake: make(chan struct{}, 1), poll: 30 * time.Second, done: make(chan struct{})}
+	return &Worker{store: st, llm: llm, limits: limits, log: log, wake: make(chan struct{}, 1), poll: 30 * time.Second,
+		quit: make(chan struct{}), done: make(chan struct{})}
 }
 
 // Wake tells the loop a note was queued. Never blocks: a wake already
@@ -64,14 +70,17 @@ func (w *Worker) Wake() {
 	}
 }
 
-// Start runs the loop until ctx ends; Stop waits for the fold in flight.
+// Start runs the loop until Stop asks it to end or ctx ends.
 func (w *Worker) Start(ctx context.Context) {
+	ctx, w.cancel = context.WithCancel(ctx)
 	go func() {
 		defer close(w.done)
 		for {
 			w.drain(ctx)
 			select {
 			case <-ctx.Done():
+				return
+			case <-w.quit:
 				return
 			case <-w.wake:
 			case <-time.After(w.poll):
@@ -80,14 +89,38 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
-// Stop waits for the loop to end; the caller cancels its ctx first.
-func (w *Worker) Stop() { <-w.done }
+// Stop ends the loop after the fold in flight: a fold is a paid gateway
+// call and its writes, cut off it would be paid for nothing and the note
+// folded again after the restart. Past grace the fold is cancelled anyway.
+func (w *Worker) Stop(grace time.Duration) {
+	close(w.quit)
+	select {
+	case <-w.done:
+	case <-time.After(grace):
+		w.log.Warn("consolidate: fold still running after the grace period, cancelling it")
+		w.cancel()
+		<-w.done
+	}
+}
 
-// drain folds every queued note, oldest first, until the queue is empty or
-// ctx ends. A fold's own failure takes its note off the queue with a log
-// line: a note that fails forever would otherwise block every note behind it.
+// stopping reports whether Stop was called.
+func (w *Worker) stopping() bool {
+	select {
+	case <-w.quit:
+		return true
+	default:
+		return false
+	}
+}
+
+// drain folds every queued note, oldest first, until the queue is empty,
+// a stop was asked for or ctx ends. A fold's own failure takes its note
+// off the queue with a log line: a note that fails forever would otherwise
+// block every note behind it. A mark that fails ends the drain instead:
+// the same note would come back at once, one paid call per lap, until
+// the database takes writes again; the next wake or poll tries again.
 func (w *Worker) drain(ctx context.Context) {
-	for ctx.Err() == nil {
+	for ctx.Err() == nil && !w.stopping() {
 		q, ok, err := w.store.NextQueued(ctx)
 		if err != nil {
 			w.log.WarnContext(ctx, "consolidate: queue read failed", logging.Err(err))
@@ -96,19 +129,24 @@ func (w *Worker) drain(ctx context.Context) {
 		if !ok {
 			return
 		}
-		w.Fold(ctx, q)
+		if !w.Fold(ctx, q) {
+			return
+		}
 	}
 }
 
 // Fold runs one note through the merge: the current pages in, the rewritten
 // ones out, each checked against the caps and written as a revision, the
-// note marked consolidated either way.
-func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) {
+// note marked consolidated either way. Reports whether the mark landed.
+func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (marked bool) {
 	ctx = logging.With(ctx, "team", q.Team, "pr_key", q.PRKey)
 	defer func() {
 		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
-			w.log.WarnContext(ctx, "consolidate: mark failed", logging.Err(err))
+			w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
+			marked = false
+			return
 		}
+		marked = true
 	}()
 
 	repoPage, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, q.ProjectKey, q.RepoSlug)
@@ -143,6 +181,7 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) {
 	}
 	w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, w.limits.RepoMaxStatements, id)
 	w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, w.limits.ProjectMaxStatements, id)
+	return
 }
 
 // apply checks one rewritten description and writes it as a revision, or
@@ -152,7 +191,12 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
 		return
 	}
-	statements, reason := attach(current.Statements, d.Statements, q)
+	next, err := w.store.NextStatementID(ctx, scope, q.ProjectKey, repo)
+	if err != nil {
+		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
+		return
+	}
+	statements, reason := attach(current.Statements, d.Statements, q, next)
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, maxStatements, w.limits)
@@ -184,9 +228,11 @@ var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, 
 
 // attach turns the model's statements into stored ones: a kept id carries
 // its sources forward and gains this PR when the text changed; a new one
-// starts with this PR. An id the current page does not have is the model
-// inventing one: rejected. Spelling is Swiss on every prose field.
-func attach(current []store.Statement, proposed []inference.Statement, q store.QueuedNote) ([]store.Statement, string) {
+// starts with this PR, numbered from next (one past every id the page's
+// history used, so a dropped id is never reissued). An id the current page
+// does not have is the model inventing one: rejected. Spelling is Swiss on
+// every prose field.
+func attach(current []store.Statement, proposed []inference.Statement, q store.QueuedNote, next int) ([]store.Statement, string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
@@ -194,7 +240,6 @@ func attach(current []store.Statement, proposed []inference.Statement, q store.Q
 	src := store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt}
 	out := make([]store.Statement, 0, len(proposed))
 	seen := map[string]bool{}
-	next := nextID(current)
 	for _, p := range proposed {
 		if !kinds[p.Kind] {
 			return nil, "unknown statement kind " + p.Kind
@@ -227,18 +272,6 @@ func attach(current []store.Statement, proposed []inference.Statement, q store.Q
 	return out, ""
 }
 
-// nextID is one past the highest s<n> id on the page.
-func nextID(current []store.Statement) int {
-	n := 1
-	for _, s := range current {
-		var v int
-		if _, err := fmt.Sscanf(s.ID, "s%d", &v); err == nil && v >= n {
-			n = v + 1
-		}
-	}
-	return n
-}
-
 func appendSource(sources []store.Source, s store.Source) []store.Source {
 	for _, have := range sources {
 		if have.PRKey == s.PRKey {
@@ -258,7 +291,15 @@ func cleanFiles(files []string) []string {
 	return out
 }
 
-// check applies the caps: statement count, text and summary rune lengths.
+// Caps on the fields the config does not size: a statement's name and its
+// file list, the same numbers noergler holds a note's items to.
+const (
+	nameMaxChars = 80
+	filesMax     = 5
+	pathMaxChars = 200
+)
+
+// check applies the caps: statement count, summary, text, name and files.
 // chars is the serialized size, for the revision row.
 func check(summary string, statements []store.Statement, maxStatements int, l config.Limits) (int, string) {
 	if strings.TrimSpace(summary) == "" {
@@ -273,6 +314,17 @@ func check(summary string, statements []store.Statement, maxStatements int, l co
 	for _, s := range statements {
 		if utf8.RuneCountInString(s.Text) > l.StatementMaxChars {
 			return 0, fmt.Sprintf("statement %s over %d characters", s.ID, l.StatementMaxChars)
+		}
+		if utf8.RuneCountInString(s.Name) > nameMaxChars {
+			return 0, fmt.Sprintf("statement %s name over %d characters", s.ID, nameMaxChars)
+		}
+		if len(s.Files) > filesMax {
+			return 0, fmt.Sprintf("statement %s names %d files, over %d", s.ID, len(s.Files), filesMax)
+		}
+		for _, f := range s.Files {
+			if utf8.RuneCountInString(f) > pathMaxChars || strings.ContainsAny(f, " \t\n") {
+				return 0, fmt.Sprintf("statement %s has a path over %d characters or with whitespace", s.ID, pathMaxChars)
+			}
 		}
 	}
 	b, _ := json.Marshal(statements)

@@ -34,9 +34,6 @@ func Load(path string) (*Keys, error) {
 	if err := k.reload(); err != nil {
 		return nil, err
 	}
-	if len(k.byToken) == 0 {
-		return nil, fmt.Errorf("%s: no team keys", path)
-	}
 	return k, nil
 }
 
@@ -96,6 +93,11 @@ func (k *Keys) reload() error {
 		}
 		byToken[token] = team
 		teams = append(teams, team)
+	}
+	if len(byToken) == 0 {
+		// A rollout that wrote {} or null must not empty the table in
+		// silence: every team would get 401 with nothing in the log.
+		return fmt.Errorf("team keys: %s: no team keys", k.path)
 	}
 	sort.Strings(teams)
 	k.byToken, k.teams, k.mod = byToken, teams, st.ModTime()

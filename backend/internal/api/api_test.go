@@ -219,10 +219,11 @@ func TestWebhook(t *testing.T) {
 			t.Error("an invalid body was stored")
 		}
 	})
-	t.Run("400 malformed JSON", func(t *testing.T) {
+	t.Run("422 malformed JSON", func(t *testing.T) {
 		h := handler(t, newFakeStore(), &fakeWaker{}, config.AuthNone)
-		if code, _ := do(t, h, "POST", "/webhooks/noergler", "tok-platform", "{not json", nil); code != 400 {
-			t.Errorf("code = %d", code)
+		code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", "{not json", nil)
+		if code != 422 || !strings.HasPrefix(field(t, body, "error"), "body:") {
+			t.Errorf("code = %d, body %v; want 422 with the body named", code, body)
 		}
 	})
 	t.Run("202 accepted wakes the worker", func(t *testing.T) {
@@ -441,6 +442,7 @@ func TestNote(t *testing.T) {
 		Note: store.Note{ProjectKey: "PLAT", RepoSlug: "files", PRID: 42, Team: "platform", PRKey: "PLAT/files#42", PRTitle: "Fix", TicketKey: "PLAT-7",
 			IssueType: "Bug", ChangeKind: "bugfix", Bugfix: json.RawMessage(`{"cause_kind":"race"}`), BugfixArea: "internal/files",
 			Body: json.RawMessage(`{"components":[]}`), SourceCommit: "abcdef1234567", MergedAt: mergedAt, RunID: 9, IssuesPosted: 2},
+		Items:      3,
 		ReceivedAt: received,
 		Call:       &store.NoteCallRow{Outcome: "ok", NoteStatus: "posted", Model: "gpt-x", InputTokens: &in, CostNanoUSD: &cost, Rounds: 3, RoundsCost: &rounds},
 	}
@@ -449,7 +451,8 @@ func TestNote(t *testing.T) {
 		t.Fatalf("code = %d, body %v", code, body)
 	}
 	if field(t, body, "pr_key") != "PLAT/files#42" || field(t, body, "project_key") != "PLAT" || field(t, body, "jira_issue_type") != "Bug" ||
-		field(t, body, "bugfix_area") != "internal/files" || field(t, body, "source_commit") != "abcdef1234567" || string(body["run_id"]) != "9" {
+		field(t, body, "bugfix_area") != "internal/files" || field(t, body, "source_commit") != "abcdef1234567" || string(body["run_id"]) != "9" ||
+		string(body["items"]) != "3" {
 		t.Errorf("body = %v", body)
 	}
 	if string(body["bugfix"]) != `{"cause_kind":"race"}` || string(body["note"]) != `{"components":[]}` || string(body["consolidated_at"]) != "null" {
@@ -520,6 +523,9 @@ func TestFirstSentence(t *testing.T) {
 	for in, want := range map[string]string{
 		"Eins. Zwei.": "Eins.", "Eins! Zwei": "Eins!", "Frage? Ja": "Frage?", "Kein Ende": "Kein Ende", "  Eins.  ": "Eins.",
 		".": ".", "": "", "Ende.": "Ende.",
+		"Der Dienst liest config.yaml und bedient z.B. den Webhook. Mehr.": "Der Dienst liest config.yaml und bedient z.B. den Webhook.",
+		"Seit Version 2.0 läuft es bzw. es geht. Fertig.":                  "Seit Version 2.0 läuft es bzw. es geht.",
+		"Liest main.go. Dann mehr.":                                        "Liest main.go.",
 	} {
 		if got := firstSentence(in); got != want {
 			t.Errorf("firstSentence(%q) = %q, want %q", in, got, want)

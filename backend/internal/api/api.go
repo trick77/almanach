@@ -6,11 +6,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/httpapi"
@@ -111,8 +115,19 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	if team == "" {
 		return
 	}
-	var raw json.RawMessage
-	if !httpx.DecodeJSON(w, r, &raw, maxBody) {
+	// The body is read whole and handed to Parse: a body that is not JSON
+	// is as invalid as one with a wrong field, a 422 with its line, never
+	// a 400 without one. The route's MaxBody bounds the read.
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			d.Log.InfoContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", "invalid", "team", team,
+				"delivery_id", "", "reason", "body over the limit")
+			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "body over the limit")
+			return
+		}
+		httpx.ServerError(w, r, err, "read body")
 		return
 	}
 	in, err := ingest.Parse(raw)
@@ -155,6 +170,13 @@ func (d Deps) user(r *http.Request) string {
 	return ""
 }
 
+// reader puts the reader on the access log line of every read route.
+func (d Deps) reader(r *http.Request) {
+	if u := d.user(r); u != "" {
+		httpx.LogAttrs(r.Context(), slog.String("user", u))
+	}
+}
+
 // --- read API ----------------------------------------------------------------
 
 type projectBody struct {
@@ -172,9 +194,7 @@ type projectsBody struct {
 
 func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if u := d.user(r); u != "" {
-		httpx.LogAttrs(ctx, slog.String("user", u))
-	}
+	d.reader(r)
 	rows, err := d.Store.Projects(ctx)
 	if err != nil {
 		httpx.ServerError(w, r, err, "projects")
@@ -275,6 +295,7 @@ type projectDetailBody struct {
 
 func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	d.reader(r)
 	key := r.PathValue("key")
 	team, ok, err := d.Store.ProjectExists(ctx, key)
 	if err != nil {
@@ -320,6 +341,7 @@ type problemsBody struct {
 
 func (d Deps) problems(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	d.reader(r)
 	key := r.PathValue("key")
 	days := d.ProblemWindow
 	if v := r.URL.Query().Get("days"); v != "" {
@@ -363,6 +385,7 @@ type repoDetailBody struct {
 
 func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	d.reader(r)
 	key, slug := r.PathValue("key"), r.PathValue("slug")
 	ok, err := d.Store.RepoExists(ctx, key, slug)
 	if err != nil {
@@ -427,6 +450,7 @@ type noteDetailBody struct {
 
 func (d Deps) note(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	d.reader(r)
 	key, slug := r.PathValue("key"), r.PathValue("slug")
 	prID, err := strconv.Atoi(r.PathValue("pr"))
 	if err != nil || prID < 1 {
@@ -444,7 +468,7 @@ func (d Deps) note(w http.ResponseWriter, r *http.Request) {
 	}
 	out := noteDetailBody{
 		noteBody: noteBody{PRID: n.PRID, PRKey: n.PRKey, PRTitle: n.PRTitle, RepoSlug: n.RepoSlug, TicketKey: n.TicketKey,
-			ChangeKind: n.ChangeKind, MergedAt: n.MergedAt, Issues: n.IssuesPosted, Suggestions: n.Suggestions},
+			ChangeKind: n.ChangeKind, MergedAt: n.MergedAt, Items: n.Items, Issues: n.IssuesPosted, Suggestions: n.Suggestions},
 		ProjectKey: n.ProjectKey, JiraIssueType: n.IssueType, ReviewedCommit: n.ReviewedCommit, SourceCommit: n.SourceCommit,
 		MergeCommit: n.MergeCommit, RunID: n.RunID, ModelLabel: n.ModelLabel, Bugfix: orNull(n.Bugfix), BugfixArea: n.BugfixArea,
 		Note: orNull(n.Body), ReceivedAt: n.ReceivedAt, ConsolidatedAt: n.ConsolidatedAt,
@@ -475,10 +499,32 @@ func noteBodies(rows []store.NoteRow) []noteBody {
 	return out
 }
 
-// firstSentence is a summary's first sentence, for a list.
+// abbreviations end in a period without ending the sentence, the German
+// ones a description of software reaches for.
+var abbreviations = map[string]bool{
+	"bzw": true, "ca": true, "etc": true, "evtl": true, "ggf": true, "inkl": true, "max": true, "min": true,
+	"nr": true, "usw": true, "vgl": true, "zb": true, "dh": true, "ua": true, "sog": true, "bspw": true, "vs": true,
+}
+
+// firstSentence is a summary's first sentence, for a list: up to the first
+// ".", "!" or "?" that is followed by a space or the end. After an
+// abbreviation or a dotted name ("z.B.", "config.yaml", "2.0") the period
+// ends the sentence only when a capital follows ("Liest main.go. Dann").
 func firstSentence(s string) string {
 	s = strings.TrimSpace(s)
-	if i := strings.IndexAny(s, ".!?"); i > 0 && i+1 < len(s) {
+	for i := 0; i < len(s); i++ {
+		if !strings.ContainsRune(".!?", rune(s[i])) || (i+1 < len(s) && s[i+1] != ' ') {
+			continue
+		}
+		if i+1 == len(s) {
+			return s
+		}
+		start := strings.LastIndexByte(s[:i], ' ') + 1
+		word := s[start:i]
+		dotted := strings.Contains(word, ".") || abbreviations[strings.ToLower(strings.ReplaceAll(word, ".", ""))]
+		if next, _ := utf8.DecodeRuneInString(strings.TrimLeft(s[i+1:], " ")); dotted && !unicode.IsUpper(next) {
+			continue
+		}
 		return s[:i+1]
 	}
 	return s

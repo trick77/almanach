@@ -83,6 +83,20 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 	return q, true, nil
 }
 
+// NextStatementID is one past the highest s<n> id any revision of the page
+// ever used, 1 for a page with none. Over every revision, not the current
+// one: an id dropped in one fold must never name a different fact later,
+// the history reads ids as stable.
+func (s *Store) NextStatementID(ctx context.Context, scope, project, repo string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(substr(st->>'id', 2)::int), 0) + 1
+		  FROM revisions r, jsonb_array_elements(r.statements) st
+		 WHERE r.scope = $1 AND r.project_key = $2 AND COALESCE(r.repo_slug, '') = $3
+		   AND st->>'id' ~ '^s[0-9]{1,9}$'`, scope, project, repo).Scan(&n)
+	return n, err
+}
+
 // MarkConsolidated takes the note off the queue, folded or refused.
 func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID int) error {
 	_, err := s.pool.Exec(ctx, `UPDATE notes SET consolidated_at = now() WHERE project_key = $1 AND repo_slug = $2 AND pr_id = $3`,

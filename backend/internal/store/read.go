@@ -147,12 +147,21 @@ type NoteRow struct {
 	Suggestions int
 }
 
+// itemsSQL counts a note's components, rules, invariants and entities. Only
+// an array is counted: a missing key or a JSON null is zero, never an error
+// (jsonb_array_length raises on a scalar, and one such note would break
+// every list it appears in).
+var itemsSQL = `(` + arrayLen("components") + ` + ` + arrayLen("rules") + ` + ` + arrayLen("invariants") + ` + ` + arrayLen("entities") + `)`
+
+func arrayLen(key string) string {
+	return `CASE WHEN jsonb_typeof(note->'` + key + `') = 'array' THEN jsonb_array_length(note->'` + key + `') ELSE 0 END`
+}
+
 // Notes lists the notes of a repo (repo != "") or a project, newest first.
 func (s *Store) Notes(ctx context.Context, project, repo string, limit int) ([]NoteRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT pr_id, pr_key, pr_title, repo_slug, COALESCE(ticket_key, ''), COALESCE(change_kind, ''), merged_at,
-		       COALESCE(jsonb_array_length(note->'components'), 0) + COALESCE(jsonb_array_length(note->'rules'), 0)
-		       + COALESCE(jsonb_array_length(note->'invariants'), 0) + COALESCE(jsonb_array_length(note->'entities'), 0),
+		       `+itemsSQL+`,
 		       issues_posted, suggestions_posted
 		  FROM notes WHERE project_key = $1 AND ($2 = '' OR repo_slug = $2)
 		 ORDER BY merged_at DESC LIMIT $3`, project, repo, limit)
@@ -174,6 +183,9 @@ func (s *Store) Notes(ctx context.Context, project, repo string, limit int) ([]N
 // NoteDetail is one note in full.
 type NoteDetail struct {
 	Note
+	// Items is the count the list shows: components, rules, invariants and
+	// entities.
+	Items          int
 	ReceivedAt     time.Time
 	ConsolidatedAt *time.Time
 	Call           *NoteCallRow
@@ -201,11 +213,11 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	err := s.pool.QueryRow(ctx, `
 		SELECT project_key, repo_slug, pr_id, team, pr_key, pr_title, ticket_key, jira_issue_type, change_kind,
 		       bugfix, bugfix_area, bugfix_component, note, reviewed_commit, source_commit, merge_commit, merged_at,
-		       run_id, model_label, issues_posted, suggestions_posted, received_at, consolidated_at
+		       run_id, model_label, issues_posted, suggestions_posted, received_at, consolidated_at, `+itemsSQL+`
 		  FROM notes WHERE project_key = $1 AND repo_slug = $2 AND pr_id = $3`, project, repo, prID).Scan(
 		&d.ProjectKey, &d.RepoSlug, &d.PRID, &d.Team, &d.PRKey, &d.PRTitle, &ticket, &issueType, &kind,
 		&bugfix, &area, &comp, &note, &reviewed, &d.SourceCommit, &merge, &d.MergedAt,
-		&runID, &model, &d.IssuesPosted, &d.Suggestions, &d.ReceivedAt, &d.ConsolidatedAt)
+		&runID, &model, &d.IssuesPosted, &d.Suggestions, &d.ReceivedAt, &d.ConsolidatedAt, &d.Items)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return NoteDetail{}, false, nil
 	}

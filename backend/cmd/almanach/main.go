@@ -169,11 +169,12 @@ func serve(log *slog.Logger) error {
 		return fmt.Errorf("startup aborted: %d check(s) failed: %s", len(checks), strings.Join(checks, ", "))
 	}
 
-	// The worker runs on its own context: a signal stops the server first,
-	// then the fold in flight finishes before the pool closes under it.
-	workerCtx, stopWorker := context.WithCancel(context.WithoutCancel(ctx))
+	// The worker runs on its own context, detached from the signal: the
+	// server stops first, then Stop lets the fold in flight finish (a paid
+	// call and its writes) and only past the grace cuts it off, before the
+	// pool closes under it.
 	worker := consolidate.New(db, llm, app.Limits, log)
-	worker.Start(workerCtx)
+	worker.Start(context.WithoutCancel(ctx))
 
 	srv := httpapi.New(db.Ping, log)
 	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Log: log})
@@ -182,8 +183,7 @@ func serve(log *slog.Logger) error {
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))
 	runErr := httpx.Serve(ctx, httpx.NewServer(addr, srv.Handler()), 15*time.Second)
 
-	stopWorker()
-	worker.Stop()
+	worker.Stop(inference.CallTimeout + 15*time.Second)
 	if runErr != nil {
 		return runErr
 	}

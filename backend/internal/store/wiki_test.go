@@ -74,6 +74,9 @@ func TestInsertRevision_NumbersAndRepoints(t *testing.T) {
 	if _, ok, err := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc"); err != nil || ok {
 		t.Fatalf("CurrentPage before any revision: ok=%v err=%v", ok, err)
 	}
+	if n, err := s.NextStatementID(ctx, ScopeRepository, "PRJ", "svc"); err != nil || n != 1 {
+		t.Fatalf("NextStatementID before any revision = %d, %v; want 1", n, err)
+	}
 	callID, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "PRJ", RepoSlug: "svc", SourcePR: "PRJ/svc#1", Outcome: "ok",
 		Model: "test-model", InputTokens: 10, CachedTokens: 5, OutputTokens: 3, CostNanoUSD: i64(42), CallID: "c1"})
 	if err != nil {
@@ -118,6 +121,19 @@ func TestInsertRevision_NumbersAndRepoints(t *testing.T) {
 	// A second page numbers independently.
 	if n, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "other", Summary: "o", SourcePR: "x"}); err != nil || n != 1 {
 		t.Fatalf("other repo revision = %d err=%v, want 1", n, err)
+	}
+
+	// The next statement id is one past every id the page's history used,
+	// a dropped one included: revision 4 keeps s1 only, s2 stays taken.
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "r4",
+		Statements: fixtureStatements()[:1], SourcePR: "PRJ/svc#9"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.NextStatementID(ctx, ScopeRepository, "PRJ", "svc"); err != nil || n != 3 {
+		t.Errorf("NextStatementID after dropping s2 = %d, %v; want 3", n, err)
+	}
+	if n, err := s.NextStatementID(ctx, ScopeRepository, "PRJ", "other"); err != nil || n != 1 {
+		t.Errorf("NextStatementID of a page without statements = %d, %v; want 1", n, err)
 	}
 }
 

@@ -30,22 +30,29 @@ and tests included.
 - `deliveries` is append-only, keyed by noergler's dedup id; a retry is
   `deduped`, never an update. A persist failure is a 500, never swallowed:
   noergler keeps the note pending and sends it again.
-- Ingest is strict: `DisallowUnknownFields`, a 422 names the field. The
-  contract is `backend/api/openapi.yaml`, kept in step with `api.go`.
+- Ingest is strict: `DisallowUnknownFields`, a 422 names the field; a body
+  that is not JSON is a 422 too, never a 400. One `webhook_processed` line
+  per request. The contract is `backend/api/openapi.yaml`, kept in step
+  with `api.go`.
 - German always, Swiss spelling (`lang.SwissSS` on every prose field, never
   on paths), generic masculine. No `ß` anywhere, docs included.
-- Caps are code: statement counts and rune lengths from config. Over any cap
-  the rewrite is rejected whole and the page stays; never truncated. An
-  identical rewrite is no revision.
+- Caps are code: statement counts and rune lengths from config, name and
+  file caps as constants. Checked on the stored (Swiss-spelled) text. Over
+  any cap the rewrite is rejected whole and the page stays; never
+  truncated. An identical rewrite is no revision.
 - Provenance is code's, never the model's: a statement's `sources` are
   carried forward by id and the current PR appended when its text changed.
-  An id the page does not have is the model inventing one: rejected.
+  An id the page does not have is the model inventing one: rejected. A new
+  id comes from `NextStatementID` over the page's whole history: a dropped
+  id is never reissued.
 - Problem areas group by the shared directory of the bugfix's component
   files (`bugfix_area`, computed at ingest), never by the model's component
   name.
 - One consolidation worker, serial, oldest first. A fold that fails takes
   its note off the queue with a log line; a note that fails forever must not
-  block the queue.
+  block the queue. A mark that fails pauses the drain (else one paid call
+  per lap). Shutdown waits for the fold in flight up to a grace, then cuts
+  it.
 - One `Chat` per fold, strict JSON schema, no retry, never streaming. Models
   are llmwire profile ids in config, never in code.
 - Money is nano-USD `BIGINT` in the DB and a 3-decimal string in JSON, never

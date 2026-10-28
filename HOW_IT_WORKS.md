@@ -34,8 +34,9 @@ team-keys file in constant time across every entry; the team it names is
 the note's team. Nothing in the body names a team, and the handler never
 reads the sidecar's user header: machine traffic is bearer-only.
 
-The body is decoded strictly: an unknown field, a missing required one, a
-malformed timestamp or a short commit hash is a 422 naming the field. The
+The body is decoded strictly: a body that is not JSON, an unknown field, a
+missing required one, a malformed timestamp or a short commit hash is a 422
+naming what is wrong. The
 contract is ours on both sides, so an invalid body is a bug and must not be
 half-stored.
 
@@ -78,17 +79,23 @@ The answer is then held to rules the model cannot bend:
 - Spelling: `ss` for `ß` on every prose field, never on file paths.
 - Provenance: a kept id takes its sources from the current page and gains
   this pull request only when its text or name changed; a new statement
-  starts with this pull request. An id the page does not have, or one used
-  twice, rejects the rewrite.
-- Caps: statement count per scope, runes per statement text, runes per
-  summary. Over any cap the rewrite is rejected whole and the page stays as
-  it was. Never truncated: a truncated description lies.
+  starts with this pull request, numbered past every id the page's history
+  ever used, so an id dropped in one fold never names another fact later.
+  An id the page does not have, or one used twice, rejects the rewrite.
+- Caps: statement count per scope, runes per statement text and summary,
+  and fixed caps on a statement's name and its file list. Over any cap the
+  rewrite is rejected whole and the page stays as it was. Never truncated:
+  a truncated description lies.
 - An identical rewrite is no revision.
 
 What passes is written as the next revision of the page and the page
 repointed to it, in one transaction. History is kept; a rollback is a
 repoint. Whatever happened, the note is marked consolidated, so a note that
-fails forever cannot block the queue; the log says why.
+fails forever cannot block the queue; the log says why. If the mark itself
+fails (the database refusing writes), the drain pauses until the next wake
+or poll rather than paying for the same fold again and again. A shutdown
+lets the fold in flight finish, up to a grace of the call timeout, before
+it is cut off.
 
 Every merge call leaves an `llm_calls` row: Almanach's own ledger, never
 mixed with the figures noergler reports in `note_calls`.
