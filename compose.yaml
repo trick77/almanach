@@ -1,3 +1,6 @@
+# The in-network DSN, once: the postgres service's user, password and db.
+x-dsn: &dsn DATABASE_URL=postgresql://almanach:changeme@postgres:5432/almanach
+
 services:
   postgres:
     image: postgres:18-alpine
@@ -24,9 +27,13 @@ services:
       context: .
       dockerfile: Containerfile
     command: ["migrate"]
-    env_file: .env
+    # No env_file: migrate needs the DSN and nothing else, least of all the
+    # gateway key. Fixed, not interpolated: .env's DATABASE_URL is the
+    # host's view (localhost:5433, for the binary run outside compose) and
+    # must not reach a container, where only the service name resolves.
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://almanach:changeme@postgres:5432/almanach}
+      - *dsn
+      - LOG_LEVEL=INFO
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,9 +45,16 @@ services:
     ports:
       - "8081:8080"
     env_file: .env
+    # What the container must not take from .env: the DSN, the keys path
+    # and the listener. A loopback SERVER_HOST or proxy mode set for a host
+    # run would bind inside the container's own namespace, with the port
+    # mapping dead and the healthcheck (same env) still green.
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://almanach:changeme@postgres:5432/almanach}
+      - *dsn
       - ALMANACH_TEAM_KEYS_PATH=/app/team-keys.json
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - ALMANACH_AUTH_MODE=none
     volumes:
       # One token per team; see team-keys.example.json.
       - ./team-keys.json:/app/team-keys.json:ro
