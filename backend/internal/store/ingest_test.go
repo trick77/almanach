@@ -124,6 +124,9 @@ func TestIngest_SamePRReplacesAndRequeues(t *testing.T) {
 	ctx := context.Background()
 	n := noteFor("PRJ", "svc", 1)
 	ingest(t, s, n)
+	if _, err := s.DeferFold(ctx, "PRJ", "svc", 1); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1); err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +140,8 @@ func TestIngest_SamePRReplacesAndRequeues(t *testing.T) {
 	if got := count(t, s, "notes", ""); got != 1 {
 		t.Errorf("notes = %d, want 1", got)
 	}
-	if got := count(t, s, "notes", "pr_title = 'merged again' AND delivery_id = 'd-second' AND consolidated_at IS NULL"); got != 1 {
-		t.Errorf("replaced, requeued note rows = %d, want 1", got)
+	if got := count(t, s, "notes", "pr_title = 'merged again' AND delivery_id = 'd-second' AND consolidated_at IS NULL AND fold_attempts = 0"); got != 1 {
+		t.Errorf("replaced, requeued note rows with the attempts reset = %d, want 1", got)
 	}
 	if got := count(t, s, "note_calls", ""); got != 2 {
 		t.Errorf("note_calls = %d, want 2", got)

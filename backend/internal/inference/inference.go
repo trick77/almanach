@@ -1,5 +1,6 @@
 // Package inference is the merge call: one llmwire client on the LiteLLM
-// gateway, one Chat per fold, a strict schema, no retry, never streaming.
+// gateway, one Chat per fold, a strict schema, never streaming, no retry
+// inside a call (the consolidation worker's hold is the only retry).
 package inference
 
 import (
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -93,10 +95,16 @@ func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
-	entries, _, err := c.wire.ListModels(ctx)
+	entries, warnings, err := c.wire.ListModels(ctx)
 	if err != nil {
-		if errors.Is(err, llmwire.ErrAuth) {
-			return "", fmt.Errorf("inference: the gateway refuses the key: %w", err)
+		// A refused key, a 4xx (the URL without its /v1, an unknown route)
+		// or a body that is not a listing (an HTML page) is configuration:
+		// no fold would get through. A 5xx, a transport failure or a
+		// timeout is the gateway's day, not the operator's.
+		for _, fault := range []error{llmwire.ErrAuth, llmwire.ErrBadRequest, llmwire.ErrMalformedResponse, llmwire.ErrResponseShape} {
+			if errors.Is(err, fault) {
+				return "", fmt.Errorf("inference: the gateway's model listing failed: %w", err)
+			}
 		}
 		return fmt.Sprintf("gateway did not answer the model listing (%v); folds retry until it does", err), nil
 	}
@@ -107,8 +115,36 @@ func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 		}
 		ids = append(ids, e.ID)
 	}
-	return "", fmt.Errorf("inference: model %q (gateway alias %q) is not listed by the gateway for this key; listed: %s",
-		c.model, p.WireModelID, strings.Join(ids, ", "))
+	return "", fmt.Errorf("inference: model %q (gateway alias %q) is not listed by the gateway for this key%s%s",
+		c.model, p.WireModelID, listedIDs(ids), aliasWarnings(warnings))
+}
+
+// listedIDs names what the gateway did list, sorted and capped: the alias
+// is the one thing the operator has to get exactly right, and a shared
+// gateway lists hundreds.
+func listedIDs(ids []string) string {
+	if len(ids) == 0 {
+		return "; it lists nothing"
+	}
+	sort.Strings(ids)
+	const show = 12
+	if len(ids) > show {
+		return fmt.Sprintf("; listed: %s and %d more", strings.Join(ids[:show], ", "), len(ids)-show)
+	}
+	return "; listed: " + strings.Join(ids, ", ")
+}
+
+// aliasWarnings keeps what llmwire could not read off the listing: a row
+// whose id is not a string reads as missing otherwise.
+func aliasWarnings(ws []llmwire.Warning) string {
+	if len(ws) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ws))
+	for _, w := range ws {
+		parts = append(parts, w.Feature+": "+w.Details)
+	}
+	return "; the listing also had " + strings.Join(parts, "; ")
 }
 
 // startupTimeout bounds the model listing at startup.

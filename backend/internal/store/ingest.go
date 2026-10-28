@@ -139,7 +139,7 @@ func (s *Store) Ingest(ctx context.Context, d Delivery, n Note, call *NoteCall, 
 		    merge_commit = EXCLUDED.merge_commit, merged_at = EXCLUDED.merged_at, run_id = EXCLUDED.run_id,
 		    model_label = EXCLUDED.model_label, issues_posted = EXCLUDED.issues_posted,
 		    suggestions_posted = EXCLUDED.suggestions_posted, delivery_id = EXCLUDED.delivery_id,
-		    received_at = now(), consolidated_at = NULL`,
+		    received_at = now(), consolidated_at = NULL, fold_attempts = 0`,
 		n.ProjectKey, n.RepoSlug, n.PRID, n.Team, n.PRKey, n.PRTitle, n.TicketKey, n.IssueType, n.ChangeKind,
 		nullJSON(n.Bugfix), n.BugfixArea, n.BugfixComponent, []byte(n.Body), n.ReviewedCommit, n.SourceCommit, n.MergeCommit,
 		n.MergedAt.UTC(), n.RunID, n.ModelLabel, n.IssuesPosted, n.Suggestions, d.ID); err != nil {
