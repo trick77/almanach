@@ -371,10 +371,12 @@ func TestFoldCallSpecificFailureMarks(t *testing.T) {
 	} {
 		st := newFakeStore()
 		w := newWorker(st, &fakeMerger{result: res})
+		// A hold from an earlier gateway failure ends with any answer.
+		w.backoff, w.retryAt = backoffMin, time.Time{}
 		if next := w.Fold(context.Background(), queued("PLAT/files#42")); !next {
 			t.Errorf("%s: paused the drain", name)
 		}
-		if len(st.revisions) != 0 || len(st.marked) != 1 || len(st.attempts) != 0 || w.holding() {
+		if len(st.revisions) != 0 || len(st.marked) != 1 || len(st.attempts) != 0 || w.holding() || w.backoff != 0 {
 			t.Errorf("%s: revisions %d marked %v attempts %v holding %v; want marked, no retry, no hold",
 				name, len(st.revisions), st.marked, st.attempts, w.holding())
 		}

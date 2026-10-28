@@ -265,9 +265,10 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s given up after %d failed calls: %s", q.PRKey, attempts, res.Outcome), logging.Err(res.Err))
 		return
 	}
+	// The gateway answered: whatever it said, the hold is over.
+	w.clearHold()
 	switch res.Outcome {
 	case inference.OutcomeOK:
-		w.clearHold()
 	default:
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s", q.PRKey, res.Outcome), logging.Err(res.Err))
 		return

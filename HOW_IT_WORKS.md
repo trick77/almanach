@@ -114,9 +114,12 @@ Everything lands in one transaction:
 A persist failure is a 500. noergler keeps the note pending and sends it
 again on the team's next merge.
 
-The handler logs exactly one `webhook_processed` line per request with the
-outcome (`accepted`, `deduped`, `invalid`) and the delivery id, then pokes
-the worker.
+The handler logs one `webhook_processed` line for every request it read
+with the outcome (`accepted`, `deduped`, `invalid`) and the delivery id,
+then pokes the worker. The two exceptions log their own line instead: a
+request without a known bearer is a 401 on the access log only, and a
+delivery the database refused is a `webhook_persist_failed` error line
+with the 500.
 
 ## 3. The consolidation worker
 
@@ -167,8 +170,8 @@ gateway, so a gateway consistently slower than the call cap costs up to
 eight merges per note before giving up; the ledger shows them. If the mark
 itself fails (the database refusing writes), the drain pauses until the
 next wake or poll rather than paying for the same fold again. A shutdown
-lets the fold in flight finish, up to a grace of the call timeout, before
-it is cut off.
+lets the fold in flight finish, up to a grace of the call timeout plus
+fifteen seconds for its writes, before it is cut off.
 
 Every merge call leaves an `llm_calls` row: Almanach's own ledger, never
 mixed with the figures noergler reports in `note_calls`.
@@ -177,7 +180,7 @@ mixed with the figures noergler reports in `note_calls`.
 
 `/api/...` serves the wiki as JSON, structs with stable field order:
 
-- `/api/projects`: every project with a note, newest merge first.
+- `/api/projects`: every project a note has arrived for, by key.
 - `/api/projects/{key}`: the project description, the repositories with
   the first sentence of their description, the problem areas, the recent
   notes.
@@ -217,13 +220,18 @@ read-only by design.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
   asked to stop and finishes the fold in flight, up to a grace of the call
-  timeout; only then does the pool close.
+  timeout plus fifteen seconds; only then does the pool close. Size the
+  pod's termination grace above that sum plus the HTTP drain.
 
 ## 6. Package layout
 
 Everything lives under `backend/`, one Go module. The dependency direction
-is strictly downward: `cmd` wires, the packages below know nothing of each
-other except through small interfaces declared by the consumer.
+is strictly downward: `cmd` wires, and a package below depends on another
+only for its types; where a test needs a fake, the consumer declares the
+interface it needs and the test satisfies it. llmwire is reached in two
+places: `inference` holds the client and the call, `consolidate` reads
+llmwire's error classes to tell a gateway failure from a call-specific
+one.
 
 | Package | Role | Depends on |
 | --- | --- | --- |
@@ -233,7 +241,7 @@ other except through small interfaces declared by the consumer.
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
 | `internal/store` | PostgreSQL: pool, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes. | pgx, kit/migrate |
-| `internal/consolidate` | The worker: loop, hold, fold, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | config, inference, lang, prompts, store |
+| `internal/consolidate` | The worker: loop, hold, fold, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | config, inference, lang, prompts, store, llmwire (error classes) |
 | `internal/inference` | The llmwire client: startup checks, one `Merge` call with the strict schema, answer parsing, cost extraction. | llmwire |
 | `internal/prompts` | `almanach_merge.txt`, compiled in with `go:embed`. Never configurable. | nothing |
 | `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
@@ -319,8 +327,11 @@ so the choice is not undone as a cleanup.
 - **One worker, serial.** Two folds of the same project would rewrite the
   project description from two different bases and one would overwrite
   the other's facts. The volume is one note per merged PR; a queue of
-  minutes is fine, a wrong description is not. The advisory lock in
-  `InsertRevision` keeps it correct even if that changes.
+  minutes is fine, a wrong description is not. The serial worker is what
+  keeps a fold's base current; the advisory lock in `InsertRevision` only
+  keeps revision numbers and the page pointer consistent, it does not
+  make concurrent folds safe. Parallelising the worker would need the
+  base revision checked at write time.
 - **Provenance is code's, never the model's.** The sources on a statement
   (which PRs it was learned from) are what make a wiki trustworthy, and a
   model asked to maintain them would invent PR numbers. So the model
@@ -371,17 +382,23 @@ things a change must not undo by accident.
   source commit (a reopen and re-merge) is a new delivery: it replaces
   the note row, re-queues it and resets its fold attempts; the revisions
   the old note produced stay.
-- **The body is strict at every level.** An unknown key anywhere, a
-  missing required field (`project_key`, `repo_slug`, `pr_key`,
-  `pr_title`, `source_commit_sha`, `merged_at`), `pr_id` below 1, a source
-  commit shorter than seven characters, a `merged_at` that is not RFC 3339,
-  a `note` that is null or not an object, a claim without a project key,
-  or a body that is not JSON at all: 422 naming what is wrong, in a fixed
-  order, never half-stored. A body over one megabyte is 413.
-- **Exactly one `webhook_processed` line per request**, with the outcome
-  (`accepted`, `deduped`, `invalid`), the team and the delivery id when one
-  could be built. A persist failure is a separate `webhook_persist_failed`
-  error line and a 500, so the sender keeps the note pending.
+- **The envelope is strict, the note is verbatim.** An unknown key at the
+  top level or inside `note_call`, `rounds` or a claim, a missing required
+  field (`project_key`, `repo_slug`, `pr_key`, `pr_title`,
+  `source_commit_sha`, `merged_at`), `pr_id` below 1, a source commit
+  shorter than seven characters, a `merged_at` that is not RFC 3339, a
+  `note` that is null or not an object, a claim without a project key, or
+  a body that is not JSON at all: 422 naming what is wrong, in a fixed
+  order, never half-stored. The `note` object and `review_totals` are
+  kept as they came: a key noergler adds inside them is stored, not
+  refused, which is how the note can grow without a release here. A body
+  over one megabyte is 413.
+- **One `webhook_processed` line for every request that was read**, with
+  the outcome (`accepted`, `deduped`, `invalid`), the team and the
+  delivery id when one could be built. A request without a known bearer
+  is a 401 on the access log only; a delivery the database refused logs
+  `webhook_persist_failed` instead, with the 500, so the sender keeps the
+  note pending. Count the three lines together for a per-request total.
 - **Timestamps are stored in UTC**; `merged_at` is parsed in whatever
   offset noergler sent and normalised.
 
@@ -391,7 +408,9 @@ things a change must not undo by accident.
   note object's own `change_kind` is taken.
 - The bugfix block is lifted only when the kind is `bugfix` *and* the
   block is present and not null. A bugfix note without a block has no
-  `bugfix_area` and does not count toward any problem area.
+  `bugfix_area` and no cause: the problem areas still count it, under the
+  root area with cause `other`, because it is a bugfix of that repository
+  all the same.
 - `bugfix_area` is the longest directory every file of every component
   shares: one file gives its directory, files that share nothing but the
   root give `""` (which still groups, as the area "root"), no files give
@@ -422,9 +441,9 @@ things a change must not undo by accident.
     proxy page where the answer should be: the gateway's, the worker holds
     (thirty seconds, doubling to ten minutes, or the rate limit's
     Retry-After when longer), the note keeps its place with its attempt
-    counted, and is tried again after the hold. A call that gets through
-    clears the hold. After eight gateway failures of one note it is given
-    up and marked.
+    counted, and is tried again after the hold. Any answer from the
+    gateway, parsed or not, clears the hold. After eight gateway failures
+    of one note it is given up and marked.
 - A mark or a defer the store refuses pauses the drain until the next wake
   or poll rather than paying for the same fold again.
 - Every model call leaves an `llm_calls` row, whatever its outcome, with
@@ -488,7 +507,11 @@ the reason in the log and the page unchanged:
   summed issue and suggestion counts noergler posted on those PRs. Ordered
   by count, then by the most recent fix.
 - A note's detail shows the most recent `note_calls` row for the PR (the
-  last delivery's), or `null` when the delivery had no call.
+  last delivery's). A delivery without a `note_call` object still has a
+  row (empty outcome and status, the round totals filled), so on the wire
+  `note_call` is an object with empty strings, not `null`; `null` only
+  appears for a row that predates the delivery's call, which the current
+  ingest never produces.
 - Money: nano-USD integers in the store; on the wire a 3-decimal USD
   string rounded half up, or omitted when the gateway did not price the
   call. Never a float, never summed across `note_calls` and `llm_calls`.
