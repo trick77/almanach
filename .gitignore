@@ -1,0 +1,25 @@
+# Secrets / per-deployment config
+.env
+team-keys.json
+
+# Build. Anchored: a bare name matches any path component at any depth.
+/backend/almanach
+/bin/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*~
+
+# Agent tooling
+.claude/
+.agents/
+.cursor/
+.aider*
+.codex/
+.zed/
+.windsurf/
+
+# macOS
+.DS_Store
