@@ -25,8 +25,11 @@ services:
       dockerfile: Containerfile
     command: ["migrate"]
     env_file: .env
+    # Fixed, not interpolated: .env's DATABASE_URL is the host's view
+    # (localhost:5433, for the binary run outside compose) and must not
+    # reach a container, where only the service name resolves.
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://almanach:changeme@postgres:5432/almanach}
+      - DATABASE_URL=postgresql://almanach:changeme@postgres:5432/almanach
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,7 +42,7 @@ services:
       - "8081:8080"
     env_file: .env
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://almanach:changeme@postgres:5432/almanach}
+      - DATABASE_URL=postgresql://almanach:changeme@postgres:5432/almanach
       - ALMANACH_TEAM_KEYS_PATH=/app/team-keys.json
     volumes:
       # One token per team; see team-keys.example.json.
