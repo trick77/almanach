@@ -30,10 +30,12 @@ and tests included.
 - `deliveries` is append-only, keyed by noergler's dedup id; a retry is
   `deduped`, never an update. A persist failure is a 500, never swallowed:
   noergler keeps the note pending and sends it again.
-- Ingest is strict: `DisallowUnknownFields`, a 422 names the field; a body
-  that is not JSON is a 422 too, never a 400. One `webhook_processed` line
-  per request. The contract is `backend/api/openapi.yaml`, kept in step
-  with `api.go`.
+- Ingest is strict on the envelope (`DisallowUnknownFields`, a 422 names
+  the field; a body that is not JSON is a 422 too, never a 400); the
+  `note` object and `review_totals` are kept verbatim. One
+  `webhook_processed` line per request read; a 401 is on the access log
+  only, a persist failure is `webhook_persist_failed`. The contract is
+  `backend/api/openapi.yaml`, kept in step with `api.go`.
 - German always, Swiss spelling (`lang.SwissSS` on every prose field, never
   on paths), generic masculine. No `ß` anywhere, docs included.
 - Caps are code: statement counts and rune lengths from config, name and

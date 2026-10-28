@@ -2,7 +2,66 @@
 
 Almanach receives one note per merged pull request from noergler and turns
 the notes into two descriptions: one per repository, one per Bitbucket
-project. This document follows a note from the webhook to the page.
+project. This document starts with the shape of the system, then follows
+a note from the webhook to the page, and ends with the storage model and
+the decisions behind it.
+
+## Architecture overview
+
+Almanach is one Go process and one PostgreSQL database. Nothing else is
+needed, nothing else is called except the LLM gateway.
+
+```
+  noergler ──POST /webhooks/noergler (bearer)──▶ ┌──────────────────────┐
+  noergler ──GET  /auth/ping          (bearer)──▶ │  HTTP (net/http)     │
+                                                  │  api: webhook, ping, │
+  browser  ──GET  /api/... (via oauth sidecar)──▶ │  read routes         │
+                                                  └──────────┬───────────┘
+                                                             │ Ingest, reads
+                                                             ▼
+                                                  ┌──────────────────────┐
+                                                  │  store (pgx)         │
+                                                  │  deliveries, notes,  │
+                                                  │  revisions, pages... │
+                                                  └──────────┬───────────┘
+                                                        ▲    │ NextQueued
+                                        InsertRevision  │    ▼
+                                                  ┌──────────────────────┐      ┌─────────────┐
+                                                  │  consolidate worker  │─Chat─▶│ LLM gateway │
+                                                  │  one goroutine,      │◀──────│ (LiteLLM)   │
+                                                  │  serial, oldest first│      └─────────────┘
+                                                  └──────────────────────┘
+```
+
+Three parts, three responsibilities:
+
+- **The HTTP surface** (`internal/api`, `internal/httpapi`) takes notes in
+  and serves the wiki out. The webhook is the only write path; the read
+  routes are the only thing a person touches. Both are thin: decode, call
+  the store, encode.
+- **The store** (`internal/store`) owns every query and every transaction.
+  It is the one place SQL lives; the other packages see Go types. An
+  accepted delivery and everything derived from it land in one
+  transaction; a revision and its page pointer land in one transaction.
+- **The consolidation worker** (`internal/consolidate`) is the only caller
+  of the model. It takes notes off the queue one at a time, renders the
+  merge prompt, checks the answer against rules the model cannot bend and
+  writes a revision. It runs in the same process, started after the
+  startup checks and stopped after the HTTP server.
+
+The two surfaces have different trust models. Machine traffic (noergler)
+authenticates with a bearer token that *is* the team: the token names the
+team, nothing in a body does, and the webhook never reads a user header.
+Human traffic reaches the read routes only through an OAuth sidecar in
+production (`ALMANACH_AUTH_MODE=proxy`), which sets a user header that the
+access log records and nothing else acts on; the wiki is read-only and
+serves the same to everyone who can log in.
+
+What flows between the parts is small and typed: `ingest.Parsed` from the
+webhook into the store, `store.QueuedNote` and `store.Page` into the
+worker, `inference.MergeResult` back, `store.NewRevision` into the store.
+Money is nano-USD integers in the store and 3-decimal strings on the
+wire, never a float on either side.
 
 ## 1. Where the notes come from
 
@@ -55,9 +114,12 @@ Everything lands in one transaction:
 A persist failure is a 500. noergler keeps the note pending and sends it
 again on the team's next merge.
 
-The handler logs exactly one `webhook_processed` line per request with the
-outcome (`accepted`, `deduped`, `invalid`) and the delivery id, then pokes
-the worker.
+The handler logs one `webhook_processed` line for every request it read
+with the outcome (`accepted`, `deduped`, `invalid`) and the delivery id,
+then pokes the worker. The two exceptions log their own line instead: a
+request without a known bearer is a 401 on the access log only, and a
+delivery the database refused is a `webhook_persist_failed` error line
+with the 500.
 
 ## 3. The consolidation worker
 
@@ -76,7 +138,7 @@ statements. A statement it keeps or edits carries its `id`; a new one has
 
 The answer is then held to rules the model cannot bend:
 
-- Spelling: `ss` for `ß` on every prose field, never on file paths.
+- Spelling: the sharp s becomes `ss` on every prose field, never on file paths.
 - Provenance: a kept id takes its sources from the current page and gains
   this pull request only when its text or name changed; a new statement
   starts with this pull request, numbered past every id the page's history
@@ -108,8 +170,8 @@ gateway, so a gateway consistently slower than the call cap costs up to
 eight merges per note before giving up; the ledger shows them. If the mark
 itself fails (the database refusing writes), the drain pauses until the
 next wake or poll rather than paying for the same fold again. A shutdown
-lets the fold in flight finish, up to a grace of the call timeout, before
-it is cut off.
+lets the fold in flight finish, up to a grace of the call timeout plus
+fifteen seconds for its writes, before it is cut off.
 
 Every merge call leaves an `llm_calls` row: Almanach's own ledger, never
 mixed with the figures noergler reports in `note_calls`.
@@ -118,7 +180,7 @@ mixed with the figures noergler reports in `note_calls`.
 
 `/api/...` serves the wiki as JSON, structs with stable field order:
 
-- `/api/projects`: every project with a note, newest merge first.
+- `/api/projects`: every project a note has arrived for, by key.
 - `/api/projects/{key}`: the project description, the repositories with
   the first sentence of their description, the problem areas, the recent
   notes.
@@ -155,3 +217,323 @@ read-only by design.
   not list the alias is a fault.
 - Logs are structured, one line per event. No secret, no DSN, no token ever
   appears in them; the startup config line prints addresses, model and caps.
+- Shutdown order: the HTTP server drains first (new deliveries get a
+  connection refused and noergler keeps them pending), then the worker is
+  asked to stop and finishes the fold in flight, up to a grace of the call
+  timeout plus fifteen seconds; only then does the pool close. Size the
+  pod's termination grace above that sum plus the HTTP drain.
+
+## 6. Package layout
+
+Everything lives under `backend/`, one Go module. The dependency direction
+is strictly downward: `cmd` wires, and a package below depends on another
+only for its types; where a test needs a fake, the consumer declares the
+interface it needs and the test satisfies it. llmwire is reached in two
+places: `inference` holds the client and the call, `consolidate` reads
+llmwire's error classes to tell a gateway failure from a call-specific
+one.
+
+| Package | Role | Depends on |
+| --- | --- | --- |
+| `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
+| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | config, httpapi, ingest, store, teamkeys |
+| `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
+| `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
+| `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
+| `internal/store` | PostgreSQL: pool, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes. | pgx, kit/migrate |
+| `internal/consolidate` | The worker: loop, hold, fold, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | config, inference, lang, prompts, store, llmwire (error classes) |
+| `internal/inference` | The llmwire client: startup checks, one `Merge` call with the strict schema, answer parsing, cost extraction. | llmwire |
+| `internal/prompts` | `almanach_merge.txt`, compiled in with `go:embed`. Never configurable. | nothing |
+| `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
+| `internal/config` | The environment, read once through kit's reader, every fault collected. | kit/env |
+
+The interfaces are declared where they are used (`api.Store`,
+`consolidate.Store`, `consolidate.Merger`) and satisfied by `*store.Store`
+and `*inference.Client`. That is what lets the api and consolidate tests
+run against in-memory fakes while the store has its own tests against a
+real PostgreSQL that ship starts for `make check`.
+
+## 7. Storage model
+
+Everything is in PostgreSQL, schema `backend/internal/store/migrations/`.
+The database records what happened; the descriptions are derived from it
+and rewritten by the merge call, revision by revision, never edited by
+hand. Four groups of tables:
+
+**What arrived.** `deliveries` keeps every webhook body whole, keyed by
+noergler's dedup id `pr_merged_note#<pr_key>#<source_commit>`. Append-only:
+a second delivery with the same id is a no-op, the first one stands. It is
+the audit trail and the raw material; everything below can be rebuilt
+from it.
+
+**The structure.** `teams`, `projects`, `repos` and `claims` are the
+Bitbucket structure as noergler knows it from its configuration, upserted
+from every delivery. A team is created the first time its token delivers;
+a project and a repo the first time a note names them; a claim (team owns
+project, or team owns one repo of a project) from the `claims` array. This
+is how the project page knows which repositories belong to it without
+Almanach ever calling Bitbucket.
+
+**The notes.** `notes` is one row per merged pull request, replaced when
+the same PR is delivered again (a reopen and re-merge) and then re-queued.
+Beside the note object itself (`note`, JSONB, verbatim) sit the facts
+noergler attached: ticket, change kind, commits, run id, the posted issue
+and suggestion counts, and two columns computed at ingest for the problem
+areas, `bugfix_area` (the longest directory every component file of a
+bugfix note shares) and `bugfix_component` (the first component's name).
+`consolidated_at` and `fold_attempts` are the worker's queue state: NULL
+means queued, the partial index `notes_queue_idx` makes the oldest queued
+note one cheap lookup. `note_calls` holds, per delivery, every lane the
+gateway reported for the round's note call plus the PR's round totals, as
+columns: the cache-hit rate and the cost per note are one query.
+
+**The wiki.** `revisions` is every version of every description:
+`scope` (repository or project), the keys, a per-page `revision` number,
+the `summary` prose, the `statements` array as JSONB (each with its id,
+kind, name, text, files and the sources code attached), the serialized
+size, the PR whose note produced it and the merge call behind it. The
+check `(scope = 'project') = (repo_slug IS NULL)` keeps the two scopes
+honest. `pages` is the current pointer per page: one row, one
+`current_revision_id`. Repointing it is a rollback; history is never
+rewritten. `llm_calls` is Almanach's own ledger, one row per merge call,
+never summed with `note_calls`.
+
+What is derived and what is kept: `deliveries` and `notes` are kept as
+they arrived. `bugfix_area`, the statements' `sources` and ids, the
+revision numbers and the page pointers are code's. The `summary` and the
+statements' text are the model's, within caps. The problem areas are not
+stored at all: they are a query over bugfix notes within a window, grouped
+by repository and `bugfix_area`.
+
+## 8. Design decisions
+
+Each of these was a choice with an alternative; the reasons are recorded
+so the choice is not undone as a cleanup.
+
+- **Notes are written at review time, not at merge.** The review already
+  paid for the files and the diff in the model's context; the note is one
+  more turn on that prompt. A merge-time call would read everything again.
+  The cost of this is that noergler keeps a note per round and replaces
+  it; Almanach only ever sees the last one.
+- **The bearer token is the team.** noergler has a team slug, but a slug in
+  a body is a claim anyone with the URL could make. The token is issued by
+  the Almanach operator per team and compared in constant time; a team
+  exists for Almanach the moment its token is in the keys file. Nothing
+  else identifies a sender.
+- **Deliveries are append-only and deduped on noergler's key.** noergler
+  marks a note sent only after a 2xx and resends a pending one on the
+  team's next merge, so a duplicate is the normal case after any blip. The
+  dedup makes a resend harmless; a lost note would be the real cost.
+- **One worker, serial.** Two folds of the same project would rewrite the
+  project description from two different bases and one would overwrite
+  the other's facts. The volume is one note per merged PR; a queue of
+  minutes is fine, a wrong description is not. The serial worker is what
+  keeps a fold's base current; the advisory lock in `InsertRevision` only
+  keeps revision numbers and the page pointer consistent, it does not
+  make concurrent folds safe. Parallelising the worker would need the
+  base revision checked at write time.
+- **Provenance is code's, never the model's.** The sources on a statement
+  (which PRs it was learned from) are what make a wiki trustworthy, and a
+  model asked to maintain them would invent PR numbers. So the model
+  returns statements with their ids and code carries the sources forward,
+  appending the current PR when the text changed. An id the page never
+  had is rejected as invented; a dropped id is never reissued.
+- **Caps are enforced in code, and a rewrite over a cap is rejected whole.**
+  The prompt tells the model the numbers, but prose grows unless something
+  refuses it. Truncating would produce a description that lies about the
+  system; rejecting keeps the previous revision, and the next PR that
+  gets it right corrects it.
+- **Problem areas group by directory, not by name.** Three spellings of one
+  component would be three areas. The shared directory of the bugfix's
+  component files is computed once at ingest and does not depend on the
+  model's wording.
+- **A gateway failure holds the worker; a call-specific failure marks the
+  note.** A dead gateway would otherwise consume every queued note within
+  minutes. The hold doubles up to ten minutes and the note keeps its
+  attempt count; after eight failures of one note it is given up so one
+  bad note cannot hold the queue forever. A 4xx or an off-schema answer is
+  about this note and is not retried: it would fail the same way.
+- **German, Swiss spelling, generic masculine.** The readers are German
+  speaking; the spelling is enforced in code (`lang.SwissSS`) on every
+  prose field because the model drifts to the sharp s. File paths are never
+  touched.
+- **No UI in this repository yet.** The read API is the contract
+  (`backend/api/openapi.yaml`); a UI reads it and nothing more, so it can
+  live anywhere and change independently.
+
+## 9. Rules and invariants
+
+The behaviour that is not obvious from a route or a table, collected in
+one place. Each is enforced in code and most have a test; they are the
+things a change must not undo by accident.
+
+### Identity and delivery
+
+- **The bearer is the team.** The token is compared in constant time
+  against every entry of the keys file, found or not, so timing reveals
+  neither which team matched nor how many there are. Whitespace around a
+  token is ignored. The file is re-read when its modification time changes
+  and only then; a file that does not parse, has an empty team or token,
+  two teams with one token, or no entries at all is refused and the last
+  good table stays, with the error on the next request's log line.
+- **The delivery id is noergler's**: `pr_merged_note#<pr_key, lowercased>#<source commit, lowercased>`.
+  A second delivery with that id answers `deduped`, writes nothing and
+  does not wake the worker. A delivery with the same PR but another
+  source commit (a reopen and re-merge) is a new delivery: it replaces
+  the note row, re-queues it and resets its fold attempts; the revisions
+  the old note produced stay.
+- **The envelope is strict, the note is verbatim.** An unknown key at the
+  top level or inside `note_call`, `rounds` or a claim, a missing required
+  field (`project_key`, `repo_slug`, `pr_key`, `pr_title`,
+  `source_commit_sha`, `merged_at`), `pr_id` below 1, a source commit
+  shorter than seven characters, a `merged_at` that is not RFC 3339, a
+  `note` that is null or not an object, a claim without a project key, or
+  a body that is not JSON at all: 422 naming what is wrong, in a fixed
+  order, never half-stored. The `note` object and `review_totals` are
+  kept as they came: a key noergler adds inside them is stored, not
+  refused, which is how the note can grow without a release here. A body
+  over one megabyte is 413.
+- **One `webhook_processed` line for every request that was read**, with
+  the outcome (`accepted`, `deduped`, `invalid`), the team and the
+  delivery id when one could be built. A request without a known bearer
+  is a 401 on the access log only; a delivery the database refused logs
+  `webhook_persist_failed` instead, with the 500, so the sender keeps the
+  note pending. Count the three lines together for a per-request total.
+- **Timestamps are stored in UTC**; `merged_at` is parsed in whatever
+  offset noergler sent and normalised.
+
+### What ingest derives from a note
+
+- `change_kind` comes from the payload; when the payload has none the
+  note object's own `change_kind` is taken.
+- The bugfix block is lifted only when the kind is `bugfix` *and* the
+  block is present and not null. A bugfix note without a block has no
+  `bugfix_area` and no cause: the problem areas still count it, under the
+  root area with cause `other`, because it is a bugfix of that repository
+  all the same.
+- `bugfix_area` is the longest directory every file of every component
+  shares: one file gives its directory, files that share nothing but the
+  root give `""` (which still groups, as the area "root"), no files give
+  `""`. `bugfix_component` is the first component's name, as the display
+  name only.
+- The `note_call` object is optional; without one an empty call row is
+  still written so the PR's round totals (`rounds`) are kept. A reported
+  lane the gateway did not send is NULL, never zero.
+- `review_totals` is not lifted into columns; it stays in the delivery's
+  raw payload.
+
+### The queue and the worker
+
+- The queue is `consolidated_at IS NULL`, oldest `received_at` first, then
+  the lowest PR id. One note is folded at a time; there is never a second
+  worker.
+- The worker wakes on an accepted delivery and polls every thirty seconds;
+  a wake that arrives while one is pending is the same wake.
+- Both current pages are read *before* the model call, and the repository
+  rewrite is applied before the project one. The project description is
+  folded from the note, not from the repository description.
+- A failure is classed, and the class decides everything:
+  - the model's answer off the schema, a 4xx from the gateway (context
+    overflow, rejected format), a 2xx of the wrong shape: specific to this
+    call, the note is marked consolidated with a log line and never
+    retried;
+  - a timeout, a 5xx, a transport failure, a refused key, a rate limit, a
+    proxy page where the answer should be: the gateway's, the worker holds
+    (thirty seconds, doubling to ten minutes, or the rate limit's
+    Retry-After when longer), the note keeps its place with its attempt
+    counted, and is tried again after the hold. Any answer from the
+    gateway, parsed or not, clears the hold. After eight gateway failures
+    of one note it is given up and marked.
+- A mark or a defer the store refuses pauses the drain until the next wake
+  or poll rather than paying for the same fold again.
+- Every model call leaves an `llm_calls` row, whatever its outcome, with
+  the tokens and the cost the gateway reported (cost NULL when it reported
+  none).
+- Shutdown lets the fold in flight finish for up to the call timeout plus
+  fifteen seconds, then cancels it. A fold cancelled this way leaves its
+  note queued (nothing was marked) and is folded again after the restart.
+
+### Rules of a rewrite
+
+A rewrite the model returns passes all of these or is rejected whole, with
+the reason in the log and the page unchanged:
+
+- A statement's `kind` is one of `component`, `rule`, `invariant`,
+  `entity`.
+- `name` and `text` are trimmed and Swiss-spelled before anything is
+  checked; an empty one rejects the rewrite.
+- A kept `id` must exist on the current page and may appear once. A
+  statement with no id is new and gets the next id past every id any
+  revision of this page ever used: `s1`, `s2`, ... with no gaps reused.
+- Sources: a kept statement whose name and text are unchanged keeps its
+  sources exactly; one whose name or text changed gains the current PR
+  once (never twice for the same PR); a new statement starts with the
+  current PR. The model never writes a source.
+- Caps, in this order after the spelling: the summary is not empty and
+  not over `ALMANACH_SUMMARY_MAX_CHARS` runes; the statement count is
+  within the scope's cap (`ALMANACH_REPO_MAX_STATEMENTS`,
+  `ALMANACH_PROJECT_MAX_STATEMENTS`); each text within
+  `ALMANACH_STATEMENT_MAX_CHARS` runes; each name within 80 runes; at most
+  5 files per statement, each within 200 runes and without whitespace.
+  Empty file strings are dropped before counting.
+- A rewrite identical to the current page (same summary, same statements
+  in the same order with the same ids, kinds, names, texts and files)
+  writes no revision.
+- `null` for a description means "no change" and writes nothing; a
+  rewrite of one scope can land while the other is rejected.
+- The revision's `chars` is the summary's runes plus the serialized
+  statements' runes, after the spelling.
+
+### The read side
+
+- The description of a page is `null` until its first revision exists.
+- Projects list alphabetically by key; a project's repositories list
+  alphabetically by slug; notes list newest merge first; revisions list
+  newest first. The project page shows the twenty most recent notes of the
+  project, a repository page its hundred most recent notes and fifty
+  revisions.
+- A repository's summary on the project page is its description's first
+  sentence: cut at the first `.`, `!` or `?` followed by a space or the
+  end, except after an abbreviation (`z.B.`, `bzw.`, `usw.`, ...) or a
+  dotted name (`config.yaml`, `2.0`) unless a capital follows.
+- A note's `items` is the count of its components, rules, invariants and
+  entities; a list that is null or not an array counts as empty and never
+  breaks a read.
+- Problem areas: bugfix notes of the project whose `merged_at` is within
+  the window (`?days=`, 1 to 3650, default `ALMANACH_PROBLEM_WINDOW_DAYS`),
+  grouped by repository and `bugfix_area`. Per area: the count, the most
+  frequent `cause_kind` (ties broken alphabetically; a missing kind counts
+  as `other`), the component name and PR of the most recent fix, and the
+  summed issue and suggestion counts noergler posted on those PRs. Ordered
+  by count, then by the most recent fix.
+- A note's detail shows the most recent `note_calls` row for the PR (the
+  last delivery's). A delivery without a `note_call` object still has a
+  row (empty outcome and status, the round totals filled), so on the wire
+  `note_call` is an object with empty strings, not `null`; `null` only
+  appears for a row that predates the delivery's call, which the current
+  ingest never produces.
+- Money: nano-USD integers in the store; on the wire a 3-decimal USD
+  string rounded half up, or omitted when the gateway did not price the
+  call. Never a float, never summed across `note_calls` and `llm_calls`.
+- `files` and every array are `[]` on the wire, never `null`.
+- In proxy mode the user header is written to the access log of every read
+  route and nowhere else; it gates nothing, and the webhook and the ping
+  never read it.
+
+### Startup and operations
+
+- Startup runs every check before aborting: the database answers and the
+  schema is current (the pending migration files are named), the keys file
+  loads with at least one team, the model profile supports strict JSON
+  schema output and the configured reasoning level, and the gateway lists
+  the model's alias. The listing is bounded to ten seconds. A gateway that
+  is unreachable or answers 5xx is a warning; a refused key, a 4xx, a body
+  that is not a listing, or an alias missing from it is a fault.
+- `serve` never migrates; `migrate` needs only the DSN. A schema behind the
+  binary refuses to start.
+- `/healthz` and `/readyz` answer a loopback caller without forwarding
+  headers only; through a router or the sidecar they are 404 by design.
+- In proxy mode the listener must be loopback (`127.0.0.1` or
+  `localhost`); any other `SERVER_HOST` is a startup fault.
+- Caps and the problem window must be positive integers; a zero or
+  negative value is a startup fault, not a disabled cap.
