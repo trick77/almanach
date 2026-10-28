@@ -6,5 +6,8 @@ go:
 postgres: compose:postgres
 steps:
   - { name: openapi lint, run: npx --yes @stoplight/spectral-cli@6.15.0 lint backend/api/openapi.yaml --ruleset .spectral.yaml }
+  # The wire contract is noergler's golden payload; our copy must be its
+  # master's byte for byte, or a regeneration there went uncopied.
+  - { name: golden in step with noergler, run: curl -fsSL https://raw.githubusercontent.com/trick77/noergler/master/backend/internal/almanach/testdata/pr_merged_note.json | diff - backend/internal/ingest/testdata/noergler_pr_merged_note.json }
 images:
   - {}

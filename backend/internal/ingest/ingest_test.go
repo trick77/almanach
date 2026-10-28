@@ -2,12 +2,31 @@ package ingest
 
 import (
 	"encoding/json"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/trick77/almanach/internal/store"
 )
 
 func ptr[T any](v T) *T { return &v }
+
+// compact is raw JSON re-encoded with sorted keys and no indentation, for
+// comparing.
+func compact(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var buf strings.Builder
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(&buf).Encode(v); err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(buf.String())
+}
 
 // fullPayload is a valid payload with every field set, note_call with every
 // lane, rounds, review totals and one claim with a null repo_slug.
@@ -143,6 +162,88 @@ func TestParseFullPayload(t *testing.T) {
 	}
 	if c.Rounds != 3 || c.RoundsInputTokens != 30_000 || c.RoundsOutputTokens != 4_000 {
 		t.Errorf("rounds = %d %d %d", c.Rounds, c.RoundsInputTokens, c.RoundsOutputTokens)
+	}
+}
+
+// The payload noergler's emitter produces for a full note, committed on
+// its side as backend/internal/almanach/testdata/pr_merged_note.json and
+// copied here: the contract pinned from both ends. Every lane is set and
+// every value distinct, so a field read off a sibling key fails here. The
+// gate's "golden in step with noergler" step diffs this copy against
+// noergler's master, so a regeneration there that was not copied fails
+// the next check here.
+func TestParseNoerglerGolden(t *testing.T) {
+	raw, err := os.ReadFile("testdata/noergler_pr_merged_note.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse(noergler payload): %v", err)
+	}
+	n, c := got.Note, got.Call
+	if c == nil {
+		t.Fatal("Call = nil, want the note call")
+	}
+	mergedAt := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	for _, f := range []struct {
+		name      string
+		got, want any
+	}{
+		{"DeliveryID", got.DeliveryID, "pr_merged_note#proj/repo#42#def5678def5678"},
+		{"ProjectKey", n.ProjectKey, "PROJ"}, {"RepoSlug", n.RepoSlug, "repo"}, {"PRID", n.PRID, 42},
+		{"PRKey", n.PRKey, "PROJ/repo#42"}, {"PRTitle", n.PRTitle, "Fix the upload retry"},
+		{"TicketKey", n.TicketKey, "PROJ-9"}, {"IssueType", n.IssueType, "Bug"}, {"ChangeKind", n.ChangeKind, "bugfix"},
+		{"ReviewedCommit", n.ReviewedCommit, "abc1234abc1234"}, {"SourceCommit", n.SourceCommit, "def5678def5678"},
+		{"MergeCommit", n.MergeCommit, "0123456789abcdef"}, {"MergedAt", n.MergedAt.Equal(mergedAt), true},
+		{"RunID", n.RunID, int64(77)}, {"ModelLabel", n.ModelLabel, "gpt-5.5-high"},
+		{"IssuesPosted", n.IssuesPosted, 2}, {"Suggestions", n.Suggestions, 1},
+		{"BugfixArea", n.BugfixArea, "internal/files"}, {"BugfixComponent", n.BugfixComponent, "Uploader"},
+		{"Bugfix", compact(t, n.Bugfix), `{"cause":"Retry ohne Backoff.","cause_kind":"logic","symptom":"Upload bricht ab."}`},
+		{"Claims", len(got.Claims), 2}, {"Claims[0]", got.Claims[0], store.Claim{ProjectKey: "PROJ"}},
+		{"Claims[1]", got.Claims[1], store.Claim{ProjectKey: "OTHER", RepoSlug: "x"}},
+		{"Call.Outcome", c.Outcome, "ok"}, {"Call.NoteStatus", c.NoteStatus, "written"},
+		{"Call.RunID", *c.RunID, int64(77)}, {"Call.Profile", c.Profile, "gpt-5.5-high"}, {"Call.Model", c.Model, "gpt-5.5"},
+		{"Call.Deployment", c.Deployment, "azure/gpt-5.5"}, {"Call.Reasoning", c.Reasoning, "high"}, {"Call.Finish", c.Finish, "stop"},
+		{"Call.CallID", c.CallID, "call-1"}, {"Call.GatewayVer", c.GatewayVer, "1.80.0"},
+		{"Call.InputTokens", *c.InputTokens, int64(100_000)}, {"Call.InputUncached", *c.InputUncached, int64(10_000)},
+		{"Call.CacheRead", *c.CacheRead, int64(90_000)}, {"Call.CacheWrite", *c.CacheWrite, int64(0)},
+		{"Call.OutputTokens", *c.OutputTokens, int64(800)}, {"Call.ReasoningTokens", *c.ReasoningTokens, int64(300)},
+		{"Call.Cost", *c.Cost, int64(12_300_000)}, {"Call.CostInput", *c.CostInput, int64(2_000_000)},
+		{"Call.CostCacheRead", *c.CostCacheRead, int64(9_000_000)}, {"Call.CostCacheWrite", *c.CostCacheWrite, int64(0)},
+		{"Call.CostOutput", *c.CostOutput, int64(1_000_000)}, {"Call.CostReasoning", *c.CostReasoning, int64(300_000)},
+		{"Call.CostTool", *c.CostTool, int64(0)}, {"Call.KeySpend", *c.KeySpend, int64(12_500_000_000)},
+		{"Call.HeadersMS", *c.HeadersMS, int64(320)}, {"Call.TotalMS", *c.TotalMS, int64(2100)},
+		{"Call.Warnings", strings.Join(c.Warnings, ","), "unaccounted"},
+		{"Call.Rounds", c.Rounds, 3}, {"Call.RoundsInputTokens", c.RoundsInputTokens, int64(300_000)},
+		{"Call.RoundsOutputTokens", c.RoundsOutputTokens, int64(2_400)}, {"Call.RoundsCost", *c.RoundsCost, int64(40_000_000)},
+	} {
+		if !reflect.DeepEqual(f.got, f.want) {
+			t.Errorf("%s = %v, want %v", f.name, f.got, f.want)
+		}
+	}
+
+	// Strict at every level: a key noergler adds, top-level or inside
+	// note_call, is refused here before it is half-stored.
+	for _, path := range []string{"", "note_call"} {
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if path == "" {
+			doc["new_lane"] = json.RawMessage(`1`)
+		} else {
+			var inner map[string]json.RawMessage
+			if err := json.Unmarshal(doc[path], &inner); err != nil {
+				t.Fatal(err)
+			}
+			inner["new_lane"] = json.RawMessage(`1`)
+			doc[path], _ = json.Marshal(inner)
+		}
+		b, _ := json.Marshal(doc)
+		if _, err := Parse(b); err == nil || !strings.Contains(err.Error(), "new_lane") {
+			t.Errorf("unknown key under %q: err = %v, want it named", path, err)
+		}
 	}
 }
 
