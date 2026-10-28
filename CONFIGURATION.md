@@ -26,8 +26,8 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_AUTH_MODE` | `none` | `none`: the read API names nobody. `proxy`: an OAuth sidecar in front sets `X-Forwarded-User`, logged as the reader; `serve` then refuses any `SERVER_HOST` but `127.0.0.1`, so the header can only come from the sidecar. The webhook and the ping never read the header in either mode. |
 | `ALMANACH_REPO_MAX_STATEMENTS` | `40` | Statements a repository description may hold. |
 | `ALMANACH_PROJECT_MAX_STATEMENTS` | `24` | Statements a project description may hold. |
-| `ALMANACH_SUMMARY_MAX_CHARS` | `1500` | Runes a summary may hold. |
-| `ALMANACH_STATEMENT_MAX_CHARS` | `300` | Runes a statement's text may hold. |
+| `ALMANACH_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
+| `ALMANACH_PROJECT_MAX_CHARS` | `40000` | The same for a project description. |
 | `ALMANACH_PROBLEM_WINDOW_DAYS` | `90` | How far back the problem areas look by default; `?days=` overrides per request. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `ALMANACH_ENV` | `dev` | Environment name in every log line. |

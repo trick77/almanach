@@ -22,13 +22,19 @@ const (
 	AuthProxy AuthMode = "proxy"
 )
 
-// Limits are the caps the merge call is held to. Over any of them the
-// rewrite is rejected whole and the page stays as it was: never truncated.
+// Limits are the ceilings the merge call is held to: how many statements a
+// description may hold and how large the whole description may be. There
+// is no cap on a statement's or the summary's own length: a description is
+// documentation, and its prose is as long as the thing needs; the whole
+// page is what must not grow without bound. Over any of them the rewrite
+// is rejected whole and the page stays as it was: never truncated.
 type Limits struct {
 	RepoMaxStatements    int
 	ProjectMaxStatements int
-	SummaryMaxChars      int
-	StatementMaxChars    int
+	// RepoMaxChars and ProjectMaxChars are the runes of a whole description:
+	// the summary and every statement's name and text.
+	RepoMaxChars    int
+	ProjectMaxChars int
 }
 
 // App is the whole configuration.
@@ -62,8 +68,8 @@ func Load(lookup func(string) string) (*App, error) {
 		Limits: Limits{
 			RepoMaxStatements:    positive(r, "ALMANACH_REPO_MAX_STATEMENTS", 40),
 			ProjectMaxStatements: positive(r, "ALMANACH_PROJECT_MAX_STATEMENTS", 24),
-			SummaryMaxChars:      positive(r, "ALMANACH_SUMMARY_MAX_CHARS", 1500),
-			StatementMaxChars:    positive(r, "ALMANACH_STATEMENT_MAX_CHARS", 300),
+			RepoMaxChars:         positive(r, "ALMANACH_REPO_MAX_CHARS", 60000),
+			ProjectMaxChars:      positive(r, "ALMANACH_PROJECT_MAX_CHARS", 40000),
 		},
 		ProblemWindow: positive(r, "ALMANACH_PROBLEM_WINDOW_DAYS", 90),
 		LogLevel:      r.String("LOG_LEVEL", "INFO"),
@@ -89,7 +95,7 @@ func positive(r *kitenv.Reader, name string, def int) int {
 
 // Summary is the config as the startup log prints it: no secret, no DSN.
 func (a *App) Summary() string {
-	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d, project %d, summary %d, statement %d} problem_window=%dd",
+	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars} problem_window=%dd",
 		a.Host, a.Port, a.AuthMode, a.Model, a.ReasoningEffort,
-		a.Limits.RepoMaxStatements, a.Limits.ProjectMaxStatements, a.Limits.SummaryMaxChars, a.Limits.StatementMaxChars, a.ProblemWindow)
+		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars, a.ProblemWindow)
 }

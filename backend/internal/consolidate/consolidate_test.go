@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	limits   = config.Limits{RepoMaxStatements: 3, ProjectMaxStatements: 2, SummaryMaxChars: 80, StatementMaxChars: 30}
+	limits   = config.Limits{RepoMaxStatements: 3, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200}
 	mergedAt = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 	older    = time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 )
@@ -277,7 +277,7 @@ func TestFoldKeptIDChangedAppendsPROnce(t *testing.T) {
 }
 
 func TestFoldRejections(t *testing.T) {
-	long := strings.Repeat("x", limits.StatementMaxChars+1)
+	long := strings.Repeat("x", limits.RepoMaxChars)
 	many := make([]inference.Statement, limits.RepoMaxStatements+1)
 	for i := range many {
 		many[i] = inference.Statement{Kind: "rule", Name: "n", Text: "t"}
@@ -292,8 +292,10 @@ func TestFoldRejections(t *testing.T) {
 			{ID: str("s1"), Kind: "rule", Name: "n", Text: "t"}, {ID: str("s1"), Kind: "rule", Name: "m", Text: "u"}}}},
 		{"empty statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: " ", Text: "t"}}}},
 		{"over the statement cap", &inference.Description{Summary: "s", Statements: many}},
-		{"statement text over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: long}}}},
-		{"summary over cap", &inference.Description{Summary: strings.Repeat("y", limits.SummaryMaxChars+1), Statements: nil}},
+		// The ceiling is the whole description: the summary and the names
+		// and texts together, never one statement by itself.
+		{"description over the cap by a statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: long}}}},
+		{"description over the cap by the summary", &inference.Description{Summary: strings.Repeat("y", limits.RepoMaxChars+1), Statements: nil}},
 		{"empty summary", &inference.Description{Summary: "  ", Statements: nil}},
 		{"name over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}},
 		{"too many files", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
@@ -486,13 +488,13 @@ func TestRender(t *testing.T) {
 	empty := store.Page{}
 	out := render(prompts.Merge, q, existingRepoPage(), empty, limits)
 	for _, ph := range []string{"{repo}", "{project}", "{pr_key}", "{ticket_key}", "{change_kind}", "{repo_max_statements}",
-		"{project_max_statements}", "{statement_max_chars}", "{summary_max_chars}", "{repo_description}", "{project_description}", "{note}"} {
+		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}", "{note}"} {
 		if strings.Contains(out, ph) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
 	}
 	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown", "at most 3 statements", "at most 2 statements",
-		"at most 30 characters", "at most 80", "Der Dienst speichert Dateien.", "- [s1] component: Uploader: Nimmt Dateien an. (internal/files/upload.go)",
+		"400 characters of prose in all", "200 characters in all", "Der Dienst speichert Dateien.", "- [s1] component: Uploader: Nimmt Dateien an. (internal/files/upload.go)",
 		"_None yet._", `{"components":[{"name":"x"}]}`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)

@@ -38,10 +38,13 @@ and tests included.
   `backend/api/openapi.yaml`, kept in step with `api.go`.
 - German always, Swiss spelling (`lang.SwissSS` on every prose field, never
   on paths), generic masculine. No `ß` anywhere, docs included.
-- Caps are code: statement counts and rune lengths from config, name and
-  file caps as constants. Checked on the stored (Swiss-spelled) text. Over
-  any cap the rewrite is rejected whole and the page stays; never
-  truncated. An identical rewrite is no revision.
+- A description is documentation, never a list of one-liners: a statement
+  is as long as its subject needs, no sentence or paragraph quota anywhere
+  (user, 2026-10-28). Ceilings are code: statement counts and whole-page
+  runes from config, name and file caps as constants, checked on the
+  stored (Swiss-spelled) text. Over a ceiling the rewrite is rejected
+  whole and the page stays; never truncated. An identical rewrite is no
+  revision.
 - Provenance is code's, never the model's: a statement's `sources` are
   carried forward by id and the current PR appended when its text changed.
   An id the page does not have is the model inventing one: rejected. A new
