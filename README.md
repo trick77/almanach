@@ -31,9 +31,23 @@ next pull request that gets a fact right corrects it.
   statistics of the call that wrote it (tokens, cache hits, cost).
 
 A read-only JSON API serves all of it; the UI comes later. The contract is
-[backend/api/openapi.yaml](backend/api/openapi.yaml). How the pieces fit:
-[HOW_IT_WORKS.md](HOW_IT_WORKS.md). Every knob:
-[CONFIGURATION.md](CONFIGURATION.md).
+[backend/api/openapi.yaml](backend/api/openapi.yaml).
+
+## How it is built
+
+One Go process and one PostgreSQL database. The process has three parts:
+the HTTP surface (the bearer-authenticated webhook noergler calls, and the
+read routes a browser reaches through an OAuth sidecar), the store (every
+query and transaction, PostgreSQL via pgx, embedded migrations), and the
+consolidation worker (one serial goroutine that folds each note into the
+descriptions with one model call and rules the model cannot bend: caps,
+spelling, provenance). Every delivery is kept whole and deduped on
+noergler's key; the descriptions are revisions with a current pointer, so
+history is never rewritten and a rollback is a repoint.
+
+The architecture, the package layout, the storage model and the design
+decisions with their reasons: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Every
+knob: [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Running it
 
