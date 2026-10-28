@@ -21,6 +21,7 @@ import (
 	"github.com/trick77/almanach/internal/ingest"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
+	"github.com/trick77/almanach/web"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
 )
@@ -58,6 +59,11 @@ type Deps struct {
 
 // Register mounts every route.
 func Register(s *httpapi.Server, d Deps) {
+	// The wiki SPA is the GET catch-all: Go's mux prefers the most specific
+	// pattern, so every explicit route below still wins, the SPA's own
+	// allowlist keeps /api, /auth and /webhooks typos a 404, and a wrong
+	// method on a real route stays the mux's 405 rather than falling in.
+	s.Handle("GET /", web.Handler())
 	s.HandleFunc("GET /auth/ping", d.ping)
 	s.Handle("POST /webhooks/noergler", httpx.MaxBody(maxBody)(http.HandlerFunc(d.webhook)))
 	s.HandleFunc("GET /api/projects", d.projects)
@@ -381,6 +387,10 @@ type repoDetailBody struct {
 	Description *descriptionBody `json:"description"`
 	Revisions   []revisionBody   `json:"revisions"`
 	Notes       []noteBody       `json:"notes"`
+	// NotesTotal is every note of the repository; Notes lists the newest
+	// hundred.
+	NotesTotal int        `json:"notes_total"`
+	LastMerge  *time.Time `json:"last_merge"`
 }
 
 func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
@@ -411,8 +421,20 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "notes")
 		return
 	}
+	// The repository's own row carries the whole count and the newest
+	// merge; the notes list above is capped.
+	repos, err := d.Store.Repos(ctx, key)
+	if err != nil {
+		httpx.ServerError(w, r, err, "repos")
+		return
+	}
 	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Notes: noteBodies(notes),
 		Revisions: make([]revisionBody, 0, len(revisions))}
+	for _, rp := range repos {
+		if rp.Slug == slug {
+			out.NotesTotal, out.LastMerge = rp.Notes, rp.LastMerge
+		}
+	}
 	for _, rv := range revisions {
 		out.Revisions = append(out.Revisions, revisionBody{Revision: rv.Revision, SourcePR: rv.SourcePR, Statements: rv.Statements, Chars: rv.Chars, CreatedAt: rv.CreatedAt})
 	}
@@ -427,8 +449,12 @@ type noteCallBody struct {
 	CacheReadTokens *int64 `json:"cache_read_tokens"`
 	OutputTokens    *int64 `json:"output_tokens"`
 	CostUSD         string `json:"cost_usd,omitempty"`
-	Rounds          int    `json:"rounds"`
-	RoundsCostUSD   string `json:"rounds_cost_usd,omitempty"`
+	// Rounds and its tokens are every note call the PR made, summed by
+	// the sender; the lanes above are this call alone.
+	Rounds             int    `json:"rounds"`
+	RoundsInputTokens  int64  `json:"rounds_input_tokens"`
+	RoundsOutputTokens int64  `json:"rounds_output_tokens"`
+	RoundsCostUSD      string `json:"rounds_cost_usd,omitempty"`
 }
 
 type noteDetailBody struct {
@@ -476,7 +502,7 @@ func (d Deps) note(w http.ResponseWriter, r *http.Request) {
 	if c := n.Call; c != nil {
 		out.Call = &noteCallBody{Outcome: c.Outcome, NoteStatus: c.NoteStatus, Model: c.Model, InputTokens: c.InputTokens,
 			CacheReadTokens: c.CacheReadTokens, OutputTokens: c.OutputTokens, CostUSD: usd(c.CostNanoUSD), Rounds: c.Rounds,
-			RoundsCostUSD: usd(c.RoundsCost)}
+			RoundsInputTokens: c.RoundsInputTokens, RoundsOutputTokens: c.RoundsOutputTokens, RoundsCostUSD: usd(c.RoundsCost)}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

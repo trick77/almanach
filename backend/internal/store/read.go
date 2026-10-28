@@ -200,8 +200,11 @@ type NoteCallRow struct {
 	CacheReadTokens *int64
 	OutputTokens    *int64
 	CostNanoUSD     *int64
-	Rounds          int
-	RoundsCost      *int64
+	// Rounds is every note call the PR made, summed by the sender.
+	Rounds             int
+	RoundsInputTokens  int64
+	RoundsOutputTokens int64
+	RoundsCost         *int64
 }
 
 // NoteByKey reads one note, ok false when none.
@@ -234,10 +237,10 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	var cm *string
 	err = s.pool.QueryRow(ctx, `
 		SELECT COALESCE(outcome, ''), COALESCE(note_status, ''), model, input_tokens, cache_read_tokens, output_tokens,
-		       cost_nano_usd, rounds, rounds_cost_nano_usd
+		       cost_nano_usd, rounds, rounds_input_tokens, rounds_output_tokens, rounds_cost_nano_usd
 		  FROM note_calls WHERE project_key = $1 AND repo_slug = $2 AND pr_id = $3 ORDER BY id DESC LIMIT 1`,
 		project, repo, prID).Scan(&c.Outcome, &c.NoteStatus, &cm, &c.InputTokens, &c.CacheReadTokens, &c.OutputTokens,
-		&c.CostNanoUSD, &c.Rounds, &c.RoundsCost)
+		&c.CostNanoUSD, &c.Rounds, &c.RoundsInputTokens, &c.RoundsOutputTokens, &c.RoundsCost)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 	case err != nil:

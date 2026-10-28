@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* Warm Editorial, dark: the token set ../rongo, ../noergler, ../loom and
+   ../peeq share, so the tools read as one family. Carried over, never
+   retuned: a change here forks the family. Components wear the generated
+   utilities (bg-panel, text-muted); nothing reaches for var(--color-…). */
+@theme {
+  --color-bg: #1f1f1e;
+  --color-panel: #1b1b1a;
+  --color-active: #2c2c2a;
+  --color-border: #323230;
+  --color-border-soft: #2a2a28;
+  --color-ink: #faf9f5;
+  --color-ink-dim: #e4e1d8;
+  /* Prose only. Brighter than ink-dim because the serif sets lighter than
+     the sans does; ../loom's value, for the same reason. */
+  --color-ink-prose: #f3f0e8;
+  --color-wordmark: #f4f0e8;
+  --color-muted: #9c9a92;
+  --color-faint: #6f6d66;
+  --color-accent: #c6613f;
+  --color-accent-strong: #d97757;
+  --color-accent-fill: #c25f34;
+  --color-accent-dim: #5a3527;
+  --color-online: #5aa06a;
+  --color-danger: #c14638;
+  --color-danger-ink: #ec7e7e;
+  --color-ochre: #d6a15a;
+  --color-ochre-wash: rgba(214, 161, 90, 0.14);
+  --color-elevated: #363632;
+  --color-elevated-border: #454540;
+  --color-elevated-ink: #f3f0e8;
+  --color-elevated-hover: #3f3f3a;
+
+  --font-sans:
+    "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-serif: "Anthropic Serif", Georgia, "Times New Roman", Times, serif;
+  --font-mono: "Anthropic Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-ui: 10px;
+  --radius-ui-sm: 8px;
+  --radius-ui-lg: 12px;
+}
+
+@font-face {
+  font-family: "Anthropic Sans";
+  src: url("./fonts/SansWebVariable-TextRegular.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Anthropic Serif";
+  src: url("./fonts/SerifWebVariable-TextRegular.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Anthropic Serif";
+  src: url("./fonts/SerifWebVariable-TextRegularItalic.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Anthropic Mono";
+  src: url("./fonts/MonoVariableVariable-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar thumb OPAQUE, never rgba(): a translucent thumb composites
+   differently over every surface it crosses. Global, because macOS hides
+   overlay bars and Windows does not. */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #383837 transparent;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@supports not (scrollbar-width: thin) {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: #383837;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: #4b4b4a;
+  }
+}
+
+@keyframes skeleton-fade {
+  50% {
+    opacity: 0.45;
+  }
+}
+.skeleton {
+  background: var(--color-active);
+  animation: skeleton-fade 1.4s ease-in-out infinite;
+}

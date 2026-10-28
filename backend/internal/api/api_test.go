@@ -282,6 +282,26 @@ func TestWebhook(t *testing.T) {
 	})
 }
 
+// The SPA is the GET catch-all only: a non-GET on an unknown or GET-only
+// route is the mux's 405, never the shell; an unknown GET path is the SPA
+// allowlist's 404. A GET on the POST-only webhook is a GET like any other
+// and lands in that allowlist too.
+func TestWrongMethodIs405NotTheSPA(t *testing.T) {
+	h := handler(t, newFakeStore(), nil, config.AuthNone)
+	for _, c := range []struct {
+		method, path string
+		want         int
+	}{
+		{"POST", "/api/projects", 405}, {"POST", "/nope", 405}, {"GET", "/nope", 404}, {"GET", "/webhooks/noergler", 404},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
+		if rec.Code != c.want {
+			t.Errorf("%s %s = %d, want %d", c.method, c.path, rec.Code, c.want)
+		}
+	}
+}
+
 func TestProjects(t *testing.T) {
 	st := newFakeStore()
 	h := handler(t, st, nil, config.AuthNone)
@@ -397,7 +417,8 @@ func TestProblems(t *testing.T) {
 func TestRepo(t *testing.T) {
 	st := newFakeStore()
 	st.teams["PLAT"] = "platform"
-	st.repos["PLAT"] = []store.RepoRow{{Slug: "files"}}
+	last := mergedAt
+	st.repos["PLAT"] = []store.RepoRow{{Slug: "files", Notes: 250, LastMerge: &last}}
 	h := handler(t, st, nil, config.AuthNone)
 	if code, body := do(t, h, "GET", "/api/projects/PLAT/repos/nope", "", "", nil); code != 404 || field(t, body, "error") != "unknown repository" {
 		t.Errorf("unknown: %d %v", code, body)
@@ -408,6 +429,11 @@ func TestRepo(t *testing.T) {
 	code, body := do(t, h, "GET", "/api/projects/PLAT/repos/files", "", "", nil)
 	if code != 200 || field(t, body, "project_key") != "PLAT" || field(t, body, "slug") != "files" {
 		t.Fatalf("code = %d, body %v", code, body)
+	}
+	// The whole count and the newest merge come from the repository row,
+	// not from the capped list.
+	if string(body["notes_total"]) != "250" || string(body["last_merge"]) == "null" {
+		t.Errorf("notes_total = %s, last_merge = %s", body["notes_total"], body["last_merge"])
 	}
 	var revs []map[string]any
 	if err := json.Unmarshal(body["revisions"], &revs); err != nil || len(revs) != 2 {
@@ -444,7 +470,8 @@ func TestNote(t *testing.T) {
 			Body: json.RawMessage(`{"components":[]}`), SourceCommit: "abcdef1234567", MergedAt: mergedAt, RunID: 9, IssuesPosted: 2},
 		Items:      3,
 		ReceivedAt: received,
-		Call:       &store.NoteCallRow{Outcome: "ok", NoteStatus: "posted", Model: "gpt-x", InputTokens: &in, CostNanoUSD: &cost, Rounds: 3, RoundsCost: &rounds},
+		Call: &store.NoteCallRow{Outcome: "ok", NoteStatus: "posted", Model: "gpt-x", InputTokens: &in, CostNanoUSD: &cost, Rounds: 3,
+			RoundsInputTokens: 300_000, RoundsOutputTokens: 2_400, RoundsCost: &rounds},
 	}
 	code, body := do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
 	if code != 200 {
@@ -466,7 +493,8 @@ func TestNote(t *testing.T) {
 		t.Fatalf("note_call = %s", body["note_call"])
 	}
 	if field(t, call, "outcome") != "ok" || field(t, call, "note_status") != "posted" || field(t, call, "model") != "gpt-x" ||
-		string(call["input_tokens"]) != "1000" || string(call["cache_read_tokens"]) != "null" || string(call["rounds"]) != "3" {
+		string(call["input_tokens"]) != "1000" || string(call["cache_read_tokens"]) != "null" || string(call["rounds"]) != "3" ||
+		string(call["rounds_input_tokens"]) != "300000" || string(call["rounds_output_tokens"]) != "2400" {
 		t.Errorf("note_call = %v", call)
 	}
 	if field(t, call, "cost_usd") != "1.235" || field(t, call, "rounds_cost_usd") != "0.001" {

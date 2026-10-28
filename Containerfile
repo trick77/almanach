@@ -1,10 +1,25 @@
-# Built with the repo root as context; the Go module is backend/. The prompt
-# is compiled into the binary.
+# Built with the repo root as context: the image also builds ui/, beside
+# backend/. Hence the backend/ prefix on Go paths. The prompt is compiled
+# into the binary.
+
+# The wiki SPA, built first: the Go stage embeds its output, so it has to
+# exist on disk before `go build` reads it.
+FROM node:26-alpine AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
 FROM golang:1.27-alpine AS builder
 WORKDIR /build
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
+# vite writes into backend/web/dist (ui/vite.config.ts), which in this stage
+# is /build/web/dist. Copied AFTER the source, or the COPY above would put
+# the tracked .gitkeep back over it.
+COPY --from=ui /backend/web/dist ./web/dist
 # ship release passes VERSION.
 ARG VERSION=dev
 # Static binary, no cgo: the image needs no runtime besides the CA bundle.

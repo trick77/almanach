@@ -33,14 +33,18 @@ next pull request that gets a fact right corrects it.
 - **Notes**: every merged pull request's note, with the full gateway
   statistics of the call that wrote it (tokens, cache hits, cost).
 
-A read-only JSON API serves all of it; the UI comes later. The contract is
+A read-only JSON API serves all of it, and a small German, read-only web
+UI (`ui/`, compiled into the binary) shows it: the projects, each project's
+description with its repositories and problem areas, each repository's
+description and revisions, each note. The API contract is
 [backend/api/openapi.yaml](backend/api/openapi.yaml).
 
 ## How it is built
 
 One Go process and one PostgreSQL database. The process has three parts:
-the HTTP surface (the bearer-authenticated webhook noergler calls, and the
-read routes a browser reaches through an OAuth sidecar), the store (every
+the HTTP surface (the bearer-authenticated webhook noergler calls, the
+read routes and the embedded UI a browser reaches through an OAuth
+sidecar), the store (every
 query and transaction, PostgreSQL via pgx, embedded migrations), and the
 consolidation worker (one serial goroutine that folds each note into the
 descriptions with one model call and rules the model cannot bend: caps,
