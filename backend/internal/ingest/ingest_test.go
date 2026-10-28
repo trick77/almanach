@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -143,6 +144,36 @@ func TestParseFullPayload(t *testing.T) {
 	}
 	if c.Rounds != 3 || c.RoundsInputTokens != 30_000 || c.RoundsOutputTokens != 4_000 {
 		t.Errorf("rounds = %d %d %d", c.Rounds, c.RoundsInputTokens, c.RoundsOutputTokens)
+	}
+}
+
+// The payload noergler's emitter produces for a full note, committed on
+// its side as testdata/pr_merged_note.json and copied here: the contract
+// pinned from both ends. A key renamed on either side fails this test or
+// theirs. Strict decoding, so an extra key noergler adds fails here first.
+func TestParseNoerglerGolden(t *testing.T) {
+	raw, err := os.ReadFile("testdata/noergler_pr_merged_note.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse(noergler payload): %v", err)
+	}
+	n := got.Note
+	if got.DeliveryID != "pr_merged_note#proj/repo#1#abc1234" || n.PRKey != "PROJ/repo#1" || n.ChangeKind != "bugfix" ||
+		n.TicketKey != "PROJ-9" || n.IssueType != "Bug" || n.MergeCommit != "" || n.RunID != 77 || n.ModelLabel != "gpt-5.5-high" ||
+		n.IssuesPosted != 2 || n.Suggestions != 1 || !n.MergedAt.Equal(time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)) {
+		t.Errorf("note = %+v", n)
+	}
+	if len(got.Claims) != 2 || got.Claims[0].RepoSlug != "" || got.Claims[1].RepoSlug != "x" {
+		t.Errorf("claims = %+v", got.Claims)
+	}
+	c := got.Call
+	if c == nil || c.Outcome != "ok" || c.NoteStatus != "written" || c.Model != "m" || c.InputTokens != nil ||
+		c.CacheRead == nil || *c.CacheRead != 90_000 || c.Cost == nil || *c.Cost != 12_300_000 || len(c.Warnings) != 0 ||
+		c.Rounds != 3 || c.RoundsInputTokens != 300_000 || c.RoundsCost == nil || *c.RoundsCost != 40_000_000 {
+		t.Errorf("call = %+v", c)
 	}
 }
 
