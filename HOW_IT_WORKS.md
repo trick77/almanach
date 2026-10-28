@@ -180,6 +180,8 @@ mixed with the figures noergler reports in `note_calls`.
 
 `/api/...` serves the wiki as JSON, structs with stable field order:
 
+- `/`: redirects to `/api/projects`, so the sidecar's login lands on
+  something until the UI lives here.
 - `/api/projects`: every project a note has arrived for, by key.
 - `/api/projects/{key}`: the project description, the repositories with
   the first sentence of their description, the problem areas, the recent

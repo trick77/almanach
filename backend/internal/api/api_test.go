@@ -282,6 +282,23 @@ func TestWebhook(t *testing.T) {
 	})
 }
 
+// The root, where the sidecar's login lands, redirects to the projects
+// list rather than 404; only the exact root, not every unknown path.
+func TestRootRedirects(t *testing.T) {
+	h := handler(t, newFakeStore(), nil, config.AuthNone)
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 302 || rec.Header().Get("Location") != "/api/projects" {
+		t.Errorf("GET / = %d to %q, want 302 to /api/projects", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/nope", nil))
+	if rec.Code != 404 {
+		t.Errorf("GET /nope = %d, want 404", rec.Code)
+	}
+}
+
 func TestProjects(t *testing.T) {
 	st := newFakeStore()
 	h := handler(t, st, nil, config.AuthNone)

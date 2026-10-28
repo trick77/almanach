@@ -37,6 +37,21 @@ tags:
     description: What the UI reads.
 
 paths:
+  /:
+    get:
+      tags: [wiki]
+      summary: Where a browser lands
+      description: Redirects to `/api/projects` until a UI lives at the root.
+      operationId: root
+      responses:
+        "302":
+          description: Redirect to the projects list.
+          headers:
+            Location:
+              schema:
+                type: string
+                const: /api/projects
+
   /auth/ping:
     get:
       tags: [feed]

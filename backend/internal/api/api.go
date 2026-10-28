@@ -58,6 +58,11 @@ type Deps struct {
 
 // Register mounts every route.
 func Register(s *httpapi.Server, d Deps) {
+	// Until the UI lives here, the root (where the sidecar's login lands)
+	// goes to the API's entry point rather than a 404.
+	s.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/projects", http.StatusFound)
+	})
 	s.HandleFunc("GET /auth/ping", d.ping)
 	s.Handle("POST /webhooks/noergler", httpx.MaxBody(maxBody)(http.HandlerFunc(d.webhook)))
 	s.HandleFunc("GET /api/projects", d.projects)
