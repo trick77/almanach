@@ -35,6 +35,14 @@ tags:
     description: What noergler calls.
   - name: wiki
     description: What the UI reads.
+  - name: sources
+    description: |
+      The clones: the projects whose code Almanach clones itself, a Bitbucket
+      project (repositories from its REST API) or a static folder
+      (repositories entered by hand). The only writes beside the webhook,
+      gated like the read routes by the sidecar. Off, every route but the
+      list answers 404, when `ALMANACH_REPOS_DIR` is unset. A token is sealed
+      on the way in and never returned: `has_token` is all a body carries.
 
 paths:
   /auth/ping:
@@ -210,6 +218,196 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/sources:
+    get:
+      tags: [sources]
+      summary: Every source with its repositories counted by state
+      description: Answers with enabled false and no sources when the feature is off.
+      operationId: listSources
+      responses:
+        "200":
+          description: Sources by key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sources"
+    post:
+      tags: [sources]
+      summary: Create a source
+      description: |
+        A Bitbucket source needs `host`; a static one must not have one.
+        `token_auth` defaults to bearer for Bitbucket and basic for static;
+        `token_user` goes with basic only. A token needs `ALMANACH_SECRET_KEY`
+        on the instance. The next sync cycle starts at once.
+      operationId: createSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewSource"
+      responses:
+        "201":
+          description: The source as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "404":
+          $ref: "#/components/responses/SourcesOff"
+        "409":
+          description: A source with this key exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/NotJSON"
+        "422":
+          $ref: "#/components/responses/Invalid"
+
+  /api/sources/{key}:
+    get:
+      tags: [sources]
+      summary: One source with its repositories
+      description: The source, its folder and size on disk, and every repository row with its state.
+      operationId: getSource
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+      responses:
+        "200":
+          description: The source, its folder and every repository row.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [sources]
+      summary: Change a source's host or token
+      description: Every field is optional; an omitted `token` keeps the stored one, an empty one clears it.
+      operationId: updateSource
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceAccess"
+      responses:
+        "200":
+          description: The source as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          $ref: "#/components/responses/NotJSON"
+        "422":
+          $ref: "#/components/responses/Invalid"
+    delete:
+      tags: [sources]
+      summary: Remove a source, its repositories and its folder on disk
+      description: The folder goes first, then the rows; descriptions from PR notes are untouched.
+      operationId: deleteSource
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+      responses:
+        "204":
+          description: Gone, clones included.
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/sources/{key}/sync:
+    post:
+      tags: [sources]
+      summary: Queue every repository of a source for the next cycle, and start it
+      description: A Bitbucket source is listed again first. Missing rows stay missing.
+      operationId: syncSource
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+      responses:
+        "202":
+          description: Queued; `repos` is how many rows moved to pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queued"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/sources/{key}/repos:
+    post:
+      tags: [sources]
+      summary: Add a repository to a static source
+      description: A Bitbucket source lists its repositories itself and answers 422.
+      operationId: addSourceRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewSourceRepo"
+      responses:
+        "201":
+          description: The source with the new row, pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A repository with this slug exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/NotJSON"
+        "422":
+          $ref: "#/components/responses/Invalid"
+
+  /api/sources/{key}/repos/{slug}:
+    delete:
+      tags: [sources]
+      summary: Remove one repository and its clone
+      description: The clone goes first, then the row. A listed repository returns with the next listing.
+      operationId: deleteSourceRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "204":
+          description: Gone, clone included.
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/sources/{key}/repos/{slug}/sync:
+    post:
+      tags: [sources]
+      summary: Queue one repository for the next cycle, and start it
+      description: Marks the row pending and nudges the poller.
+      operationId: syncSourceRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "202":
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queued"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     teamToken:
@@ -239,7 +437,25 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     NotFound:
-      description: Unknown project, repository or note.
+      description: Unknown project, repository, note or source.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SourcesOff:
+      description: The feature is off (`ALMANACH_REPOS_DIR` unset).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotJSON:
+      description: The body is not `application/json`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Invalid:
+      description: A field is wrong; `error` names it.
       content:
         application/json:
           schema:
@@ -252,6 +468,185 @@ components:
       properties:
         error:
           type: string
+
+    Sources:
+      type: object
+      required: [enabled, sources]
+      properties:
+        enabled:
+          type: boolean
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSummary"
+
+    SourceSummary:
+      type: object
+      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_error, created_at, updated_at]
+      properties:
+        project_key:
+          type: string
+        kind:
+          type: string
+          enum: [bitbucket, static]
+        host:
+          type: string
+          description: The Bitbucket base URL; empty for a static source.
+        has_token:
+          type: boolean
+        token_auth:
+          type: string
+          enum: [bearer, basic]
+        token_user:
+          type: string
+        repos:
+          type: integer
+        ready:
+          type: integer
+        active:
+          type: integer
+          description: Pending or syncing.
+        failed:
+          type: integer
+        missing:
+          type: integer
+        last_listed_at:
+          type: [string, "null"]
+          format: date-time
+        last_error:
+          type: string
+          description: The last listing's failure, or empty.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SourceDetail:
+      type: object
+      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
+      properties:
+        project_key:
+          type: string
+        kind:
+          type: string
+          enum: [bitbucket, static]
+        host:
+          type: string
+        has_token:
+          type: boolean
+        token_auth:
+          type: string
+          enum: [bearer, basic]
+        token_user:
+          type: string
+        dir:
+          type: string
+          description: The project's folder under the base.
+        disk_bytes:
+          type: integer
+        last_listed_at:
+          type: [string, "null"]
+          format: date-time
+        last_error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        repos:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceRepo"
+
+    SourceRepo:
+      type: object
+      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at]
+      properties:
+        slug:
+          type: string
+        clone_url:
+          type: string
+        origin:
+          type: string
+          enum: [listed, manual]
+        branch:
+          type: string
+          description: Empty until resolved from the remote.
+        head_commit:
+          type: string
+        state:
+          type: string
+          enum: [pending, syncing, ready, failed, missing]
+        last_synced_at:
+          type: [string, "null"]
+          format: date-time
+        last_error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    NewSource:
+      type: object
+      required: [project_key, kind]
+      properties:
+        project_key:
+          type: string
+          description: One path segment, Bitbucket's charset; becomes the folder name.
+        kind:
+          type: string
+          enum: [bitbucket, static]
+        host:
+          type: string
+        token:
+          type: string
+          description: Sealed on arrival, never returned.
+        token_auth:
+          type: string
+          enum: [bearer, basic]
+        token_user:
+          type: string
+
+    SourceAccess:
+      type: object
+      properties:
+        host:
+          type: string
+        token:
+          type: string
+          description: Omitted keeps the stored token; empty clears it.
+        token_auth:
+          type: string
+          enum: [bearer, basic]
+        token_user:
+          type: string
+
+    NewSourceRepo:
+      type: object
+      required: [slug, clone_url]
+      properties:
+        slug:
+          type: string
+        clone_url:
+          type: string
+          description: https, no credentials.
+        branch:
+          type: string
+          description: Empty resolves the remote's default branch.
+
+    Queued:
+      type: object
+      required: [status, repos]
+      properties:
+        status:
+          type: string
+          const: queued
+        repos:
+          type: integer
 
     Ping:
       type: object

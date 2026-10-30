@@ -28,10 +28,14 @@ import (
 	"github.com/trick77/ship/kit/version"
 
 	"github.com/trick77/almanach/internal/api"
+	"github.com/trick77/almanach/internal/bitbucket"
+	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/consolidate"
+	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
 )
@@ -96,6 +100,26 @@ func listenAddr() string {
 		port = "8080"
 	}
 	return net.JoinHostPort(strings.TrimSpace(os.Getenv("SERVER_HOST")), port)
+}
+
+// writableDir proves the base folder exists and takes a file: a volume
+// mounted read-only or owned by another user fails here, at startup, not at
+// the first clone.
+func writableDir(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("ALMANACH_REPOS_DIR: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("ALMANACH_REPOS_DIR: %s is not a directory", dir)
+	}
+	probe, err := os.CreateTemp(dir, ".almanach-probe-*")
+	if err != nil {
+		return fmt.Errorf("ALMANACH_REPOS_DIR: not writable: %w", err)
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	return os.Remove(name)
 }
 
 // migrate applies pending migrations and exits: the init container's job.
@@ -169,6 +193,34 @@ func serve(log *slog.Logger) error {
 	default:
 		log.Info("LLM: OK", "model", app.Model)
 	}
+	// The clone feature: git on PATH, a writable base folder, a usable key.
+	// Off when no folder is configured; every fault is a startup fault.
+	var gitBin string
+	var key secret.Key
+	if app.Sources.Enabled() {
+		var faults []string
+		if b, err := gitrepo.Resolve(); err != nil {
+			faults = append(faults, err.Error())
+		} else {
+			gitBin = b
+		}
+		if err := writableDir(app.Sources.ReposDir); err != nil {
+			faults = append(faults, err.Error())
+		}
+		if k, err := secret.Parse(app.Sources.SecretKey); err != nil {
+			faults = append(faults, "ALMANACH_SECRET_KEY: "+err.Error())
+		} else {
+			key = k
+		}
+		if len(faults) > 0 {
+			log.Error("Sources: " + strings.Join(faults, "; "))
+			checks = append(checks, "Sources")
+		} else {
+			log.Info("Sources: OK", "dir", app.Sources.ReposDir, "git", gitBin, "token_key", key.Enabled())
+		}
+	} else {
+		log.Info("Sources: off (ALMANACH_REPOS_DIR unset)")
+	}
 	if len(checks) > 0 {
 		return fmt.Errorf("startup aborted: %d check(s) failed: %s", len(checks), strings.Join(checks, ", "))
 	}
@@ -180,13 +232,28 @@ func serve(log *slog.Logger) error {
 	worker := consolidate.New(db, llm, app.Limits, log)
 	worker.Start(context.WithoutCancel(ctx))
 
+	// The poller too runs past the signal: the server drains first, then
+	// Stop cuts the clone in flight (the next cycle redoes it), before the
+	// pool closes.
+	var sources *api.SourcesDeps
+	var poller *clone.Poller
+	if app.Sources.Enabled() {
+		git := gitrepo.New(gitBin, app.Sources.ReposDir, app.Sources.GitCAFile)
+		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: bitbucket.New(nil), Key: key, Interval: app.Sources.SyncInterval, Log: log})
+		poller.Start(context.WithoutCancel(ctx))
+		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: git, Key: key}
+	}
+
 	srv := httpapi.New(db.Ping, log)
-	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Log: log})
+	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources, Log: log})
 
 	addr := net.JoinHostPort(app.Host, strconv.Itoa(app.Port))
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))
 	runErr := httpx.Serve(ctx, httpx.NewServer(addr, srv.Handler()), 15*time.Second)
 
+	if poller != nil {
+		poller.Stop()
+	}
 	worker.Stop(inference.CallTimeout + 15*time.Second)
 	if runErr != nil {
 		return runErr
