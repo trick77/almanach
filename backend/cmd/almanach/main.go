@@ -102,6 +102,28 @@ func listenAddr() string {
 	return net.JoinHostPort(strings.TrimSpace(os.Getenv("SERVER_HOST")), port)
 }
 
+// startModel builds the client of one llmwire profile and runs its startup
+// check: strict schema support, the reasoning level, the gateway's listing.
+// A gateway that does not answer is a warning; anything else is a fault,
+// ok false.
+func startModel(ctx context.Context, log *slog.Logger, label, model, effort string) (*inference.Client, bool) {
+	llm, err := inference.New(inference.Options{Model: model, ReasoningEffort: effort, Logger: log, Lookup: os.LookupEnv})
+	var warning string
+	if err == nil {
+		warning, err = llm.Startup(ctx)
+	}
+	switch {
+	case err != nil:
+		log.Error(label + ": " + err.Error())
+		return nil, false
+	case warning != "":
+		log.Warn(label + ": " + warning)
+	default:
+		log.Info(label+": OK", "model", model)
+	}
+	return llm, true
+}
+
 // writableDir proves the base folder exists and takes a file: a volume
 // mounted read-only or owned by another user fails here, at startup, not at
 // the first clone.
@@ -179,19 +201,17 @@ func serve(log *slog.Logger) error {
 	} else {
 		log.Info("Team keys: OK", "teams", keys.Teams())
 	}
-	llm, err := inference.New(inference.Options{Model: app.Model, ReasoningEffort: app.ReasoningEffort, Logger: log, Lookup: os.LookupEnv})
-	var warning string
-	if err == nil {
-		warning, err = llm.Startup(ctx)
-	}
-	switch {
-	case err != nil:
-		log.Error("LLM: " + err.Error())
+	llm, ok := startModel(ctx, log, "LLM", app.Model, app.ReasoningEffort)
+	if !ok {
 		checks = append(checks, "LLM")
-	case warning != "":
-		log.Warn("LLM: " + warning)
-	default:
-		log.Info("LLM: OK", "model", app.Model)
+	}
+	// The catalogue's own profile, when the baseline has one: checked like
+	// the first, at its balanced level (the merge model's level need not
+	// exist on a cheaper profile).
+	if app.Sources.Enabled() && app.Baseline.CatalogueModel != "" && app.Baseline.CatalogueModel != app.Model {
+		if _, ok := startModel(ctx, log, "LLM catalogue", app.Baseline.CatalogueModel, ""); !ok {
+			checks = append(checks, "LLM catalogue")
+		}
 	}
 	// The clone feature: git on PATH, a writable base folder, a usable key.
 	// Off when no folder is configured; every fault is a startup fault.

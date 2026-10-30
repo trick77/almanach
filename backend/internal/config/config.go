@@ -57,6 +57,25 @@ type Sources struct {
 // Enabled reports whether clones are configured at all.
 func (s Sources) Enabled() bool { return s.ReposDir != "" }
 
+// Baseline is how a run reads a clone and what it may spend. The caps are
+// checked before every call, so a run ends partial rather than over them.
+type Baseline struct {
+	// CatalogueModel is the llmwire profile of the catalogue step, the one
+	// that picks what to read; "" means Model.
+	CatalogueModel string
+	// MaxCalls is the model calls one run may make: catalogue, overview, one
+	// per subject, project.
+	MaxCalls int
+	// MaxBytes is the file content one run may read.
+	MaxBytes int
+	// Reconcile is how long after its last run a repository whose head
+	// moved is read again on its own; zero means the buttons only.
+	Reconcile time.Duration
+}
+
+// minBaselineCalls is a run with no subject: catalogue, overview, project.
+const minBaselineCalls = 3
+
 // App is the whole configuration.
 type App struct {
 	DatabaseURL  string
@@ -71,6 +90,7 @@ type App struct {
 	Limits          Limits
 	ProblemWindow   int
 	Sources         Sources
+	Baseline        Baseline
 	LogLevel        string
 }
 
@@ -99,10 +119,22 @@ func Load(lookup func(string) string) (*App, error) {
 			SyncInterval: r.Duration("ALMANACH_SYNC_INTERVAL", 30*time.Minute),
 			GitCAFile:    r.String("ALMANACH_GIT_CA_FILE", ""),
 		},
+		Baseline: Baseline{
+			CatalogueModel: r.String("ALMANACH_CATALOGUE_MODEL", ""),
+			MaxCalls:       positive(r, "ALMANACH_BASELINE_MAX_CALLS", 16),
+			MaxBytes:       positive(r, "ALMANACH_BASELINE_MAX_BYTES", 2_000_000),
+			Reconcile:      r.Duration("ALMANACH_BASELINE_RECONCILE", 720*time.Hour),
+		},
 		LogLevel: r.String("LOG_LEVEL", "INFO"),
 	}
 	if app.Sources.SyncInterval < 0 {
 		r.Fail("ALMANACH_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
+	}
+	if app.Baseline.MaxCalls > 0 && app.Baseline.MaxCalls < minBaselineCalls {
+		r.Fail("ALMANACH_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
+	}
+	if app.Baseline.Reconcile < 0 {
+		r.Fail("ALMANACH_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
 	}
 	// In proxy mode the header is the whole credential, so the listener must
 	// be reachable by the sidecar alone.
@@ -127,7 +159,13 @@ func positive(r *kitenv.Reader, name string, def int) int {
 func (a *App) Summary() string {
 	sources := "off"
 	if a.Sources.Enabled() {
-		sources = fmt.Sprintf("{dir %s, interval %s, token_key %v}", a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "")
+		catalogue := a.Baseline.CatalogueModel
+		if catalogue == "" {
+			catalogue = a.Model
+		}
+		sources = fmt.Sprintf("{dir %s, interval %s, token_key %v, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
+			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "",
+			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
 	}
 	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars} problem_window=%dd sources=%s",
 		a.Host, a.Port, a.AuthMode, a.Model, a.ReasoningEffort,
