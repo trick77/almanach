@@ -126,8 +126,13 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const sync = () =>
     act(async () => {
       setQueued(true);
-      await send("POST", `${path}/sync`);
-      window.setTimeout(() => setQueued(false), 1500);
+      try {
+        await send("POST", `${path}/sync`);
+        window.setTimeout(() => setQueued(false), 1500);
+      } catch (e) {
+        setQueued(false);
+        throw e;
+      }
     });
   const removeSource = () =>
     act(async () => {

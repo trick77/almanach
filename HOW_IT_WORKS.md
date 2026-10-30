@@ -674,7 +674,7 @@ the reason in the log and the page unchanged:
 
 - A key or slug is one path segment of Bitbucket's charset, never `.` or
   `..`; a clone URL is https without credentials; a Bitbucket source has a
-  host (http or https, no query, no credentials), a static one has none.
+  host (https, no query, no credentials), a static one has none.
   Checked on the way in (422 naming the field) and again before a removal.
 - `token_auth` defaults to `bearer` for Bitbucket and `basic` for static;
   `token_user` goes with `basic` only. An omitted token on PATCH keeps the

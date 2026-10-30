@@ -88,12 +88,13 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT s.project_key, s.kind, COALESCE(s.host, ''), s.token_auth, s.token_user, s.token_enc,
 		       s.created_at, s.updated_at, s.last_listed_at, s.last_error,
-		       (SELECT COUNT(*) FROM source_repos r WHERE r.project_key = s.project_key),
-		       (SELECT COUNT(*) FROM source_repos r WHERE r.project_key = s.project_key AND r.state = 'ready'),
-		       (SELECT COUNT(*) FROM source_repos r WHERE r.project_key = s.project_key AND r.state IN ('pending', 'syncing')),
-		       (SELECT COUNT(*) FROM source_repos r WHERE r.project_key = s.project_key AND r.state = 'failed'),
-		       (SELECT COUNT(*) FROM source_repos r WHERE r.project_key = s.project_key AND r.state = 'missing')
-		  FROM sources s ORDER BY s.project_key`)
+		       COUNT(r.slug),
+		       COUNT(r.slug) FILTER (WHERE r.state = 'ready'),
+		       COUNT(r.slug) FILTER (WHERE r.state IN ('pending', 'syncing')),
+		       COUNT(r.slug) FILTER (WHERE r.state = 'failed'),
+		       COUNT(r.slug) FILTER (WHERE r.state = 'missing')
+		  FROM sources s LEFT JOIN source_repos r ON r.project_key = s.project_key
+		 GROUP BY s.project_key ORDER BY s.project_key`)
 	if err != nil {
 		return nil, err
 	}

@@ -48,6 +48,7 @@ func TestListRepos_BasicAuthAndFailures(t *testing.T) {
 	status := http.StatusUnauthorized
 	var user, pass string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Basic goes as the standard header, the same value git is handed.
 		user, pass, _ = r.BasicAuth()
 		w.WriteHeader(status)
 		fmt.Fprint(w, `<html>login</html>`)

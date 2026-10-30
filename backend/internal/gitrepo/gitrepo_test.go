@@ -141,13 +141,10 @@ func TestEnsureCloned_ReplacesACutOffClone(t *testing.T) {
 	c := client(t)
 	remote := bareRemote(t)
 	dir, _ := c.Dir("PROJ", "repo")
-	// What a clone killed mid-transfer leaves behind: HEAD written, no refs.
-	if err := os.MkdirAll(filepath.Join(dir, "refs", "heads"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// What a clone killed mid-transfer leaves behind: a repository git had
+	// set up (HEAD, config, even refs), without the marker written after
+	// git returned.
+	gitRun(t, t.TempDir(), "clone", "-q", "--bare", remote, dir)
 	if err := os.WriteFile(filepath.Join(dir, "junk"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}

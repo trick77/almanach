@@ -109,16 +109,8 @@ func (l *Lister) page(ctx context.Context, base *url.URL, project string, a gitr
 		return page{}, err
 	}
 	req.Header.Set("Accept", "application/json")
-	if a.Token != "" {
-		if a.Auth == store.TokenBasic {
-			user := a.User
-			if user == "" {
-				user = "x-access-token"
-			}
-			req.SetBasicAuth(user, a.Token)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+a.Token)
-		}
+	if h := a.Authorization(); h != "" {
+		req.Header.Set("Authorization", h)
 	}
 	resp, err := l.client.Do(req)
 	if err != nil {

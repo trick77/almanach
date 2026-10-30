@@ -80,6 +80,16 @@ type Poller struct {
 	// cycle, so a job the cycle already listed is skipped.
 	disk    sync.Mutex
 	removed map[string]bool
+	// current is the sync holding disk, so a removal of that row or its
+	// project can cancel it instead of waiting out a long clone. Guarded
+	// by cur, which Remove takes before it waits on disk.
+	cur     sync.Mutex
+	current inFlight
+}
+
+type inFlight struct {
+	key, slug string
+	cancel    context.CancelFunc
 }
 
 // New builds a Poller.
@@ -100,20 +110,33 @@ func (p *Poller) Dir(key, slug string) (string, error) { return p.Git.Dir(key, s
 func (p *Poller) ProjectDir(key string) (string, error) { return p.Git.ProjectDir(key) }
 
 // Remove deletes one clone, never while a sync touches the disk, and
-// marks it so a cycle in flight skips the row.
+// marks it so a cycle in flight skips the row. A sync of this very row is
+// cancelled first, so the removal waits for git to die, not to finish.
 func (p *Poller) Remove(key, slug string) error {
+	p.cutIf(func(f inFlight) bool { return f.key == key && f.slug == slug })
 	p.disk.Lock()
 	defer p.disk.Unlock()
 	p.removed[key+"/"+slug] = true
 	return p.Git.Remove(key, slug)
 }
 
-// RemoveProject deletes a whole project folder under the same lock.
+// RemoveProject deletes a whole project folder under the same lock,
+// cancelling a sync of any of its repositories first.
 func (p *Poller) RemoveProject(key string) error {
+	p.cutIf(func(f inFlight) bool { return f.key == key })
 	p.disk.Lock()
 	defer p.disk.Unlock()
 	p.removed[key] = true
 	return p.Git.RemoveProject(key)
+}
+
+// cutIf cancels the sync in flight when it is one of the removal's.
+func (p *Poller) cutIf(match func(inFlight) bool) {
+	p.cur.Lock()
+	defer p.cur.Unlock()
+	if p.current.cancel != nil && match(p.current) {
+		p.current.cancel()
+	}
 }
 
 // gone reports whether a job's row or project was removed since the cycle
@@ -208,13 +231,16 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			p.list(ctx, s.ProjectSource)
 		}
 	}
+	// Forget the last cycle's removals before the rows are read, never
+	// after: a removal landing between the read and the reset would be
+	// lost, and the job it concerned would clone the folder back.
+	p.disk.Lock()
+	p.removed = map[string]bool{}
+	p.disk.Unlock()
 	jobs, err := p.Store.SyncJobs(ctx)
 	if err != nil {
 		return err
 	}
-	p.disk.Lock()
-	p.removed = map[string]bool{}
-	p.disk.Unlock()
 	p.Log.Info("sync cycle started", "sources", len(sources), "repositories", len(jobs))
 	var synced, unchanged, failed int
 	for _, j := range jobs {
@@ -229,12 +255,27 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			p.disk.Unlock()
 			continue
 		}
-		head, moved, err = p.sync(ctx, j)
+		// The sync runs on its own cancellable context, so a removal of
+		// this very row (or its project) can cut it short rather than wait
+		// behind a long clone.
+		jobCtx, cancel := context.WithCancel(ctx)
+		p.cur.Lock()
+		p.current = inFlight{key: j.Source.ProjectKey, slug: j.Repo.Slug, cancel: cancel}
+		p.cur.Unlock()
+		head, moved, err = p.sync(jobCtx, j)
+		cut := jobCtx.Err() != nil && ctx.Err() == nil
+		p.cur.Lock()
+		p.current = inFlight{}
+		p.cur.Unlock()
+		cancel()
 		p.disk.Unlock()
 		switch {
 		case err != nil && ctx.Err() != nil:
 			// The process is ending, not the repository failing.
 			return ctx.Err()
+		case cut:
+			// Removed under the sync: the row is going, nothing to record.
+			continue
 		case err != nil:
 			failed++
 			p.Log.Warn("repo_sync_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "took", took(repoStart), "err", err.Error())

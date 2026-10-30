@@ -134,15 +134,15 @@ func (c *Client) OriginURL(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// complete reports whether dir holds a clone that got to the end: a HEAD
-// file (git writes it before any transfer, so alone it proves nothing) that
-// resolves to a commit, which needs the refs written after the packfile. A
-// clone cut off by a shutdown fails this and is redone.
-func (c *Client) complete(ctx context.Context, dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
-		return false
-	}
-	_, err := c.run(ctx, dir, nil, "rev-parse", "--verify", "--quiet", "HEAD")
+// marker is the file EnsureCloned writes into a clone once git has
+// returned: git writes HEAD and config before any transfer, so their
+// presence proves nothing, and a resolvable HEAD would read an empty
+// repository as a cut-off clone forever.
+const marker = "almanach-complete"
+
+// complete reports whether dir holds a clone that got to the end.
+func (c *Client) complete(_ context.Context, dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, marker))
 	return err == nil
 }
 
@@ -163,8 +163,10 @@ func (c *Client) EnsureCloned(ctx context.Context, dir, cloneURL string, a Acces
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
 		return fmt.Errorf("create project directory: %w", err)
 	}
-	_, err := c.run(ctx, c.root, a.env(cloneURL), "clone", "--quiet", "--bare", cloneURL, dir)
-	return err
+	if _, err := c.run(ctx, c.root, a.env(cloneURL), "clone", "--quiet", "--bare", cloneURL, dir); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, marker), nil, 0o600)
 }
 
 // DefaultBranch asks the remote what HEAD points at. Never assume master.
@@ -290,23 +292,30 @@ func (a Access) env(cloneURL string) []string {
 	if a.Token == "" || !isHTTPURL(cloneURL) {
 		return nil
 	}
-	var header string
-	if a.Auth == "basic" {
-		user := a.User
-		if user == "" {
-			user = "x-access-token"
-		}
-		header = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+a.Token))
-	} else {
-		header = "Authorization: Bearer " + a.Token
-	}
 	n, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
 	i := strconv.Itoa(n)
 	return []string{
 		"GIT_CONFIG_COUNT=" + strconv.Itoa(n+1),
 		"GIT_CONFIG_KEY_" + i + "=http.extraHeader",
-		"GIT_CONFIG_VALUE_" + i + "=" + header,
+		"GIT_CONFIG_VALUE_" + i + "=Authorization: " + a.Authorization(),
 	}
+}
+
+// Authorization is the header value the token travels as, for git and for
+// the Bitbucket listing alike, so the two cannot disagree: "Bearer <token>"
+// or "Basic <base64 user:token>". "" without a token.
+func (a Access) Authorization() string {
+	if a.Token == "" {
+		return ""
+	}
+	if a.Auth == "basic" {
+		user := a.User
+		if user == "" {
+			user = "x-access-token"
+		}
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+a.Token))
+	}
+	return "Bearer " + a.Token
 }
 
 func isHTTPURL(raw string) bool {

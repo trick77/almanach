@@ -159,6 +159,7 @@ func TestSources_CreateValidatesAndSeals(t *testing.T) {
 		{`{"project_key":"..","kind":"static"}`, "project_key"},
 		{`{"project_key":"X","kind":"svn"}`, "kind"},
 		{`{"project_key":"X","kind":"bitbucket"}`, "host"},
+		{`{"project_key":"X","kind":"bitbucket","host":"http://forge.example.invalid"}`, "host"},
 		{`{"project_key":"X","kind":"static","host":"https://x"}`, "host"},
 		{`{"project_key":"X","kind":"static","token_auth":"digest"}`, "token_auth"},
 		{`{"project_key":"X","kind":"bitbucket","host":"https://x","token_user":"me"}`, "token_user"},
@@ -290,6 +291,12 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	}
 	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/nope/sync", "", "", nil); code != 404 {
 		t.Fatal("sync of an unknown repo was not a 404")
+	}
+	if code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos/f%C3%BCr/sync", "", "", nil); code != 404 || body == nil {
+		t.Fatalf("sync of a bad slug: %d %v, want a written 404", code, body)
+	}
+	if code, body := do(t, h, http.MethodDelete, "/api/sources/tools/repos/a%20b", "", "", nil); code != 404 || body == nil {
+		t.Fatalf("delete of a bad slug: %d %v, want a written 404", code, body)
 	}
 	if len(fs.synced) != 2 || fs.synced[0] != "tools/" || fs.synced[1] != "tools/cli" {
 		t.Fatalf("sync requests = %v", fs.synced)

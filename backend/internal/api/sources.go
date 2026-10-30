@@ -257,7 +257,7 @@ type createSourceBody struct {
 // validHost is an http(s) URL with a host and nothing after the path.
 func validHost(raw string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil
 }
 
 // validCloneURL is https with a host and no credentials: the token travels
@@ -321,7 +321,7 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "kind: bitbucket or static")
 		return
 	case in.Kind == store.SourceBitbucket && !validHost(in.Host):
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an http(s) URL is required for a Bitbucket source")
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an https URL is required for a Bitbucket source")
 		return
 	case in.Kind == store.SourceStatic && in.Host != "":
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: a static source has none")
@@ -348,9 +348,13 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(), "user", d.user(r))
 	d.Sources.Poller.Nudge()
-	stored, _, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
+	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
 	if err != nil {
 		httpx.ServerError(w, r, err, "source")
+		return
+	}
+	if !found {
+		httpx.WriteError(w, http.StatusNotFound, "unknown source")
 		return
 	}
 	out, err := d.sourceDetail(ctx, stored)
@@ -394,7 +398,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case src.Kind == store.SourceBitbucket && !validHost(host):
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an http(s) URL is required for a Bitbucket source")
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an https URL is required for a Bitbucket source")
 		return
 	case src.Kind == store.SourceStatic && host != "":
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: a static source has none")
@@ -414,15 +418,24 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := d.Sources.Store.UpdateSourceAccess(ctx, src.ProjectKey, host, auth, user, sealed, setToken); err != nil {
+	updated, err := d.Sources.Store.UpdateSourceAccess(ctx, src.ProjectKey, host, auth, user, sealed, setToken)
+	if err != nil {
 		httpx.ServerError(w, r, err, "update source")
+		return
+	}
+	if !updated {
+		httpx.WriteError(w, http.StatusNotFound, "unknown source")
 		return
 	}
 	d.Log.InfoContext(ctx, "source_updated", "project", src.ProjectKey, "token_changed", setToken, "user", d.user(r))
 	d.Sources.Poller.Nudge()
-	stored, _, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
+	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
 	if err != nil {
 		httpx.ServerError(w, r, err, "source")
+		return
+	}
+	if !found {
+		httpx.WriteError(w, http.StatusNotFound, "unknown source")
 		return
 	}
 	out, err := d.sourceDetail(ctx, stored)
@@ -564,7 +577,11 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
-	if !gitrepo.ValidSegment(slug) || !d.hasRepo(w, r, src.ProjectKey, slug) {
+	if !gitrepo.ValidSegment(slug) {
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	}
+	if !d.hasRepo(w, r, src.ProjectKey, slug) {
 		return
 	}
 	// The clone first, then the row (deleteSource's reason).
@@ -590,7 +607,11 @@ func (d Deps) syncRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
-	if !gitrepo.ValidSegment(slug) || !d.hasRepo(w, r, src.ProjectKey, slug) {
+	if !gitrepo.ValidSegment(slug) {
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	}
+	if !d.hasRepo(w, r, src.ProjectKey, slug) {
 		return
 	}
 	n, err := d.Sources.Store.RequestSync(r.Context(), src.ProjectKey, slug)
