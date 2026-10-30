@@ -105,17 +105,21 @@ func (s *Store) RepoExists(ctx context.Context, project, slug string) (bool, err
 
 // RevisionRow is one entry of a page's history.
 type RevisionRow struct {
-	Revision   int
-	SourcePR   string
-	Statements int
-	Chars      int
-	CreatedAt  time.Time
+	Revision int
+	// SourceKind says which of SourcePR and SourceCommit made the revision.
+	SourceKind   string
+	SourcePR     string
+	SourceCommit string
+	Statements   int
+	Chars        int
+	CreatedAt    time.Time
 }
 
 // Revisions is a page's history, newest first.
 func (s *Store) Revisions(ctx context.Context, scope, project, repo string, limit int) ([]RevisionRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT revision, source_pr_key, jsonb_array_length(statements), chars, created_at
+		SELECT revision, source_kind, COALESCE(source_pr_key, ''), COALESCE(source_commit, ''),
+		       jsonb_array_length(statements), chars, created_at
 		  FROM revisions WHERE scope = $1 AND project_key = $2 AND COALESCE(repo_slug, '') = $3
 		 ORDER BY revision DESC LIMIT $4`, scope, project, repo, limit)
 	if err != nil {
@@ -125,7 +129,7 @@ func (s *Store) Revisions(ctx context.Context, scope, project, repo string, limi
 	out := []RevisionRow{}
 	for rows.Next() {
 		var r RevisionRow
-		if err := rows.Scan(&r.Revision, &r.SourcePR, &r.Statements, &r.Chars, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.Revision, &r.SourceKind, &r.SourcePR, &r.SourceCommit, &r.Statements, &r.Chars, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
