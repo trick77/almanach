@@ -139,7 +139,7 @@ const detail: SourceDetail = {
         queued_at: when,
         started_at: when,
         finished_at: when,
-        documented_commit: "7e1d9a0abcdef",
+        documented_commit: "5c3b2a1abcdef",
         documented_at: when,
       },
     },
@@ -228,7 +228,7 @@ describe("SourcesPage", () => {
       screen.getByPlaceholderText("https://bitbucket.example.invalid"),
       { target: { value: "https://forge.example.invalid" } },
     );
-    const auto = screen.getByLabelText(/automatisch beschreiben/);
+    const auto = screen.getByLabelText(/Automatisch beschreiben/);
     expect(auto).toBeChecked();
     fireEvent.click(auto);
     fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
@@ -244,13 +244,19 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     expect(await screen.findByText("Beschrieben")).toBeInTheDocument();
-    expect(screen.getByText(/^Bei 7e1d9a0 · \$2\.418 · /)).toBeInTheDocument();
+    expect(screen.getByText(/^Bei 5c3b2a1 · \$2\.418 · /)).toBeInTheDocument();
     expect(screen.getByText("Noch nicht")).toBeInTheDocument();
     expect(screen.getByText(/1 beschrieben/)).toBeInTheDocument();
     // The clone without a head cannot be described yet.
     expect(screen.getByText("Beschreiben")).toBeDisabled();
 
     fireEvent.click(screen.getByText("Aktualisieren"));
+    // The row is locked while its request runs: no second POST.
+    expect(screen.getByText("Neu beschreiben")).toBeDisabled();
+    await waitFor(() => expect(writes).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByText("Neu beschreiben")).toBeEnabled(),
+    );
     fireEvent.click(screen.getByText("Neu beschreiben"));
     await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes).toEqual([
@@ -314,7 +320,7 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     fireEvent.click(await screen.findByText("Token"));
-    fireEvent.click(screen.getByLabelText(/automatisch beschreiben/));
+    fireEvent.click(screen.getByLabelText(/Automatisch beschreiben/));
     fireEvent.click(screen.getByText("Speichern"));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]?.body).toEqual({

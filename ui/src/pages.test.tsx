@@ -336,7 +336,7 @@ describe("RepoPage", () => {
                 { pr_key: "PAY/pay-clearing#77", merged_at: mergedAt },
                 base,
               ],
-              checked: "4e1f0c2abcdef",
+              checked: "9a8b7c6abcdef",
             },
           ],
         },
@@ -359,7 +359,7 @@ describe("RepoPage", () => {
         ?.closest("a")
         ?.getAttribute("href"),
     ).toBe("/projekte/PAY/repos/pay-clearing/notizen/77");
-    expect(screen.getByText("Geprüft 4e1f0c2")).toBeInTheDocument();
+    expect(screen.getByText("Geprüft 9a8b7c6")).toBeInTheDocument();
   });
 
   it("names the repository of a baseline source when it carries one", async () => {

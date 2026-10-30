@@ -33,14 +33,16 @@ export function Sep() {
 export function Link({
   to,
   className = "",
+  title,
   children,
 }: {
   to: string;
   className?: string;
+  title?: string;
   children: ReactNode;
 }) {
   return (
-    <a href={to} onClick={onNav(to)} className={className}>
+    <a href={to} onClick={onNav(to)} className={className} title={title}>
       {children}
     </a>
   );
@@ -70,7 +72,11 @@ export function Chip({
       </span>
     );
   return (
-    <Link to={to} className={cls + " hover:border-accent hover:text-ink"}>
+    <Link
+      to={to}
+      title={title}
+      className={cls + " hover:border-accent hover:text-ink"}
+    >
       {children}
     </Link>
   );

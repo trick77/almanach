@@ -372,7 +372,7 @@ function ReposTable({
 }: {
   data: SourceDetail;
   onSync: (slug: string) => void;
-  onDescribe: (slug: string, mode: "reconcile" | "full") => void;
+  onDescribe: (slug: string, mode: "reconcile" | "full") => Promise<void>;
   removing: string | null;
   onAskRemove: (slug: string | null) => void;
   onRemove: (slug: string) => void;
@@ -443,13 +443,25 @@ function RepoRow({
   r: SourceRepo;
   isStatic: boolean;
   onSync: () => void;
-  onDescribe: (mode: "reconcile" | "full") => void;
+  onDescribe: (mode: "reconcile" | "full") => Promise<void>;
   onAskRemove: () => void;
 }) {
   const running = r.state === "pending" || r.state === "syncing";
   const removable = isStatic || r.state === "missing";
   const documented = r.baseline !== null && r.baseline.documented_commit !== "";
-  const noRun = runOpen(r.baseline) || r.head_commit === "";
+  const [sending, setSending] = useState(false);
+  const noRun = sending || runOpen(r.baseline) || r.head_commit === "";
+  // A reconcile of a head already documented would read nothing.
+  const upToDate =
+    documented && r.baseline?.documented_commit === r.head_commit;
+  const describe = async (mode: "reconcile" | "full") => {
+    setSending(true);
+    try {
+      await onDescribe(mode);
+    } finally {
+      setSending(false);
+    }
+  };
   return (
     <>
       <tr>
@@ -489,8 +501,9 @@ function RepoRow({
             <button
               type="button"
               className={rowBtn}
-              disabled={noRun}
-              onClick={() => onDescribe("reconcile")}
+              disabled={noRun || upToDate}
+              title={upToDate ? S.baseline.upToDate : undefined}
+              onClick={() => describe("reconcile")}
             >
               {documented
                 ? S.baseline.actions.reconcile
@@ -502,7 +515,7 @@ function RepoRow({
               type="button"
               className={rowBtn}
               disabled={noRun}
-              onClick={() => onDescribe("full")}
+              onClick={() => describe("full")}
             >
               {S.baseline.actions.full}
             </button>
@@ -584,7 +597,9 @@ function baselineState(b: Baseline): { label: string; tone: Tone } {
     case "describing":
       return {
         label: S.baseline.state.describing(
-          b.step + 1,
+          // The worker saves the last step before it moves on to the project:
+          // the count never runs past its total.
+          Math.min(b.step + 1, Math.max(b.steps - 1, 1)),
           Math.max(b.steps - 1, 1),
         ),
         tone: "warn",

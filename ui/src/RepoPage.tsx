@@ -3,11 +3,10 @@ import type { RepoDetail } from "./api";
 import { DescriptionView, SourceChip } from "./Description";
 import { NotesTable } from "./NotesTable";
 import { day } from "./format";
-import { notePathFor, projectPath } from "./routing";
+import { projectPath } from "./routing";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import {
-  Chip,
   Crumbs,
   Empty,
   Failed,
@@ -85,6 +84,7 @@ function Body({ data }: { data: RepoDetail }) {
       <DescriptionView
         description={data.description}
         emptyHint={S.projects.firstDescription}
+        pageRepo={data.slug}
       />
 
       <div className={eyebrow}>{S.repo.revisions}</div>
@@ -102,15 +102,13 @@ function Body({ data }: { data: RepoDetail }) {
               </span>
               <span className="flex-1">
                 {S.repo.revisionFrom}{" "}
-                {r.source_kind === "baseline" ? (
-                  <SourceChip
-                    source={{ kind: "baseline", commit: r.source_commit }}
-                  />
-                ) : (
-                  <Chip to={notePathFor(r.source_pr_key)}>
-                    {r.source_pr_key}
-                  </Chip>
-                )}
+                <SourceChip
+                  source={{
+                    kind: r.source_kind,
+                    pr_key: r.source_pr_key,
+                    commit: r.source_commit,
+                  }}
+                />
                 <span className="ml-2 text-muted">
                   {S.repo.statements(r.statements)} {S.common.sep}{" "}
                   {S.repo.chars(r.chars)}

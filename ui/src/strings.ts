@@ -29,7 +29,7 @@ export const S = {
     revision: (n: number) => `Revision ${n}`,
     noDescription: "noch keine Beschreibung",
     firstDescription:
-      "Die erste Beschreibung entsteht mit dem nächsten gemergten Pull Request.",
+      "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Klon bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
     problems: (n: number) =>
       n === 0
@@ -44,7 +44,7 @@ export const S = {
     description: "Beschreibung",
     noDescription: "Noch keine Beschreibung.",
     noDescriptionHint:
-      "Die erste Beschreibung entsteht mit dem nächsten gemergten Pull Request dieses Projekts.",
+      "Die erste Beschreibung entsteht, wenn Almanach ein Repository dieses Projekts aus dem Code beschreibt oder ein Pull Request gemergt wird.",
     descriptionRevision: (n: number) => `Beschreibung Revision ${n}`,
     repos: "Repositories",
     repoHeaders: ["Repository", "Beschreibung", "Notizen", "Letzter Merge"],
@@ -319,15 +319,17 @@ export const S = {
     skipped: (n: number) =>
       n === 1 ? "1 Thema übersprungen" : `${n} Themen übersprungen`,
     failedRun: "Beschreibung fehlgeschlagen:",
+    upToDate:
+      "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",
     described: (n: number) => `${n} beschrieben`,
     actions: {
       describe: "Beschreiben",
       reconcile: "Aktualisieren",
       full: "Neu beschreiben",
     },
-    auto: "Neue Repositories automatisch beschreiben",
+    auto: "Automatisch beschreiben",
     autoHint:
-      "Beim ersten Klon, danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Knöpfe.",
+      "Ein Repository beim ersten Klon (ein Fehlschlag einen Tag später erneut), danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Knöpfe, für alle Repositories dieser Quelle.",
   },
   faq: {
     title: "FAQ",
@@ -336,7 +338,7 @@ export const S = {
       "Almanach ist das lebende Wiki, das noergler beim Reviewen füttert: nach jedem Review schreibt das Modell eine Notiz, was der Pull Request über das Repository lehrt, und beim Merge kommt sie hierher. Almanach fügt jede Notiz in die Beschreibung des Repositorys und des Projekts ein, als Dokumentation mit Quellen, nie von Hand geschrieben.",
     who: "Wer schreibt hier?",
     whoText:
-      "Niemand. Eine Beschreibung ändert sich nur, wenn ein gemergter Pull Request sie ändert; der nächste, der es richtig macht, korrigiert sie. Jede Revision bleibt erhalten.",
+      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Klon und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Lauf oder Pull Request. Jede Revision bleibt erhalten.",
     sources: "Woher kommt eine Aussage?",
     sourcesText:
       "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",
