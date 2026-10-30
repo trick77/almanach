@@ -25,6 +25,8 @@ type fakeSources struct {
 	runs       map[string]store.RepoRuns
 	enqueued   []string
 	enqueueErr error
+	// noerglerKeys are the project keys noergler delivered.
+	noerglerKeys []string
 }
 
 func newFakeSources() *fakeSources {
@@ -110,6 +112,14 @@ func (f *fakeSources) SetAutoDescribe(_ context.Context, key string, on bool) (b
 		f.sources[key] = s
 	}
 	return ok, nil
+}
+func (f *fakeSources) ProjectSpelledOtherwise(_ context.Context, key string) (string, bool, error) {
+	for _, known := range f.noerglerKeys {
+		if strings.EqualFold(known, key) && known != key {
+			return known, true, nil
+		}
+	}
+	return "", false, nil
 }
 func (f *fakeSources) SourceRuns(_ context.Context, key string) (map[string]store.RepoRuns, error) {
 	out := map[string]store.RepoRuns{}

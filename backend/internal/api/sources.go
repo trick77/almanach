@@ -33,6 +33,7 @@ type SourceStore interface {
 	DeleteSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RequestSync(ctx context.Context, key, slug string) (int, error)
 	SetAutoDescribe(ctx context.Context, key string, on bool) (bool, error)
+	ProjectSpelledOtherwise(ctx context.Context, key string) (string, bool, error)
 	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
@@ -296,7 +297,7 @@ type createSourceBody struct {
 	Token      string `json:"token"`
 	TokenAuth  string `json:"token_auth"`
 	TokenUser  string `json:"token_user"`
-	// AutoDescribe omitted is on.
+	// AutoDescribe omitted is on, stored with the source in one write.
 	AutoDescribe *bool `json:"auto_describe"`
 }
 
@@ -383,7 +384,20 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, problem)
 		return
 	}
-	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed}
+	// The key is how noergler's notes find the source, exactly: a key that
+	// differs from one noergler delivers only by case would have every note
+	// of the project ignored.
+	known, clash, err := d.Sources.Store.ProjectSpelledOtherwise(ctx, in.ProjectKey)
+	if err != nil {
+		httpx.ServerError(w, r, err, "project key")
+		return
+	}
+	if clash {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
+		return
+	}
+	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed,
+		AutoDescribe: in.AutoDescribe == nil || *in.AutoDescribe}
 	if err := d.Sources.Store.CreateSource(ctx, src); err != nil {
 		if errors.Is(err, store.ErrExists) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
@@ -392,17 +406,8 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
-	// The column defaults on; off is one more write, and a failure of it a
-	// 500 with the source already there, which the form shows and the
-	// access form can retry.
-	if in.AutoDescribe != nil && !*in.AutoDescribe {
-		if _, err := d.Sources.Store.SetAutoDescribe(ctx, src.ProjectKey, false); err != nil {
-			httpx.ServerError(w, r, err, "auto describe")
-			return
-		}
-	}
 	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(),
-		"auto_describe", in.AutoDescribe == nil || *in.AutoDescribe, "user", d.user(r))
+		"auto_describe", src.AutoDescribe, "user", d.user(r))
 	d.Sources.Poller.Nudge()
 	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
 	if err != nil {

@@ -156,9 +156,11 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	if d.Sources != nil {
 		known, err := d.Store.IsSourceRepo(ctx, in.Note.ProjectKey, in.Note.RepoSlug)
 		if err != nil {
-			d.Log.ErrorContext(ctx, "webhook_persist_failed", "webhook_source", "noergler", "team", team,
+			// A read, not a write: its own line, the same 500, so noergler
+			// keeps the note pending and sends it again.
+			d.Log.ErrorContext(ctx, "webhook_source_check_failed", "webhook_source", "noergler", "team", team,
 				"delivery_id", in.DeliveryID, logging.Err(err))
-			httpx.WriteError(w, http.StatusInternalServerError, "persist failed")
+			httpx.WriteError(w, http.StatusInternalServerError, "source check failed")
 			return
 		}
 		if !known {

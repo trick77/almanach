@@ -7,11 +7,11 @@ import (
 )
 
 func bitbucketSource(key string) ProjectSource {
-	return ProjectSource{ProjectKey: key, Kind: SourceBitbucket, Host: "https://forge.example.invalid", TokenAuth: TokenBearer, TokenEnc: []byte("sealed")}
+	return ProjectSource{ProjectKey: key, Kind: SourceBitbucket, Host: "https://forge.example.invalid", TokenAuth: TokenBearer, TokenEnc: []byte("sealed"), AutoDescribe: true}
 }
 
 func staticSource(key string) ProjectSource {
-	return ProjectSource{ProjectKey: key, Kind: SourceStatic, TokenAuth: TokenBasic, TokenUser: "x-access-token"}
+	return ProjectSource{ProjectKey: key, Kind: SourceStatic, TokenAuth: TokenBasic, TokenUser: "x-access-token", AutoDescribe: true}
 }
 
 func TestSources_CreateListUpdateDelete(t *testing.T) {

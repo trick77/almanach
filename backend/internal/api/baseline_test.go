@@ -170,9 +170,17 @@ func TestSourceBody_BaselineAndAutoDescribe(t *testing.T) {
 	if code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"other","kind":"static","auto_describe":false}`, jsonHdr); code != 201 || string(body["auto_describe"]) != "false" {
 		t.Fatalf("POST with auto_describe off: %d %v", code, body)
 	}
-	if code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"third","kind":"static"}`, jsonHdr); code != 201 || fs.sources["third"].AutoDescribe {
-		// The fake has no column default: omitted writes nothing.
-		t.Fatalf("POST without auto_describe: %d %v, want no extra write", code, body)
+	if code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"third","kind":"static"}`, jsonHdr); code != 201 || !fs.sources["third"].AutoDescribe {
+		t.Fatalf("POST without auto_describe: %d %v, want it on", code, body)
+	}
+	// A key noergler spells otherwise would have every note ignored.
+	fs.noerglerKeys = []string{"PLAT"}
+	if code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"plat","kind":"static"}`, jsonHdr); code != 422 ||
+		!strings.Contains(field(t, body, "error"), "noergler delivers this project as PLAT") {
+		t.Fatalf("POST of a key spelled otherwise: %d %v", code, body)
+	}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"PLAT","kind":"static"}`, jsonHdr); code != 201 {
+		t.Fatalf("POST of noergler's spelling: %d", code)
 	}
 	if code, body := do(t, h, http.MethodGet, "/api/sources", "", "", nil); code != 200 || !strings.Contains(string(body["sources"]), `"auto_describe":false`) {
 		t.Fatalf("list: %d %v", code, body)
