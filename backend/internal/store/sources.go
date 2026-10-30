@@ -53,6 +53,9 @@ type ProjectSource struct {
 	UpdatedAt    time.Time
 	LastListedAt *time.Time
 	LastError    string
+	// AutoDescribe: runs start on their own (a clone's first ready, the
+	// monthly reconcile); off, only the buttons start one.
+	AutoDescribe bool
 }
 
 // HasToken reports whether a credential is stored.
@@ -87,7 +90,7 @@ type SourceRepo struct {
 func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT s.project_key, s.kind, COALESCE(s.host, ''), s.token_auth, s.token_user, s.token_enc,
-		       s.created_at, s.updated_at, s.last_listed_at, s.last_error,
+		       s.created_at, s.updated_at, s.last_listed_at, s.last_error, s.auto_describe,
 		       COUNT(r.slug),
 		       COUNT(r.slug) FILTER (WHERE r.state = 'ready'),
 		       COUNT(r.slug) FILTER (WHERE r.state IN ('pending', 'syncing')),
@@ -103,7 +106,7 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 	for rows.Next() {
 		var r SourceRow
 		if err := rows.Scan(&r.ProjectKey, &r.Kind, &r.Host, &r.TokenAuth, &r.TokenUser, &r.TokenEnc,
-			&r.CreatedAt, &r.UpdatedAt, &r.LastListedAt, &r.LastError,
+			&r.CreatedAt, &r.UpdatedAt, &r.LastListedAt, &r.LastError, &r.AutoDescribe,
 			&r.Repos, &r.Ready, &r.Active, &r.Failed, &r.Missing); err != nil {
 			return nil, err
 		}
@@ -117,10 +120,10 @@ func (s *Store) SourceByKey(ctx context.Context, key string) (ProjectSource, boo
 	var src ProjectSource
 	err := s.pool.QueryRow(ctx, `
 		SELECT project_key, kind, COALESCE(host, ''), token_auth, token_user, token_enc,
-		       created_at, updated_at, last_listed_at, last_error
+		       created_at, updated_at, last_listed_at, last_error, auto_describe
 		  FROM sources WHERE project_key = $1`, key).
 		Scan(&src.ProjectKey, &src.Kind, &src.Host, &src.TokenAuth, &src.TokenUser, &src.TokenEnc,
-			&src.CreatedAt, &src.UpdatedAt, &src.LastListedAt, &src.LastError)
+			&src.CreatedAt, &src.UpdatedAt, &src.LastListedAt, &src.LastError, &src.AutoDescribe)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ProjectSource{}, false, nil
 	}
@@ -151,6 +154,24 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// SetAutoDescribe turns a source's automatic runs on or off. Reports
+// whether the source exists.
+func (s *Store) SetAutoDescribe(ctx context.Context, key string, on bool) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE sources SET auto_describe = $2, updated_at = now() WHERE project_key = $1`, key, on)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// IsSourceRepo reports whether (key, slug) is a source repository: the
+// starting point of a page, before which noergler's notes are ignored.
+func (s *Store) IsSourceRepo(ctx context.Context, key, slug string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM source_repos WHERE project_key = $1 AND slug = $2)`, key, slug).Scan(&ok)
+	return ok, err
 }
 
 // DeleteSource removes a source and, by cascade, its repos. Reports whether
@@ -300,7 +321,7 @@ type SyncJob struct {
 func (s *Store) SyncJobs(ctx context.Context) ([]SyncJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT s.project_key, s.kind, COALESCE(s.host, ''), s.token_auth, s.token_user, s.token_enc,
-		       s.created_at, s.updated_at, s.last_listed_at, s.last_error,
+		       s.created_at, s.updated_at, s.last_listed_at, s.last_error, s.auto_describe,
 		       r.slug, r.clone_url, r.origin, COALESCE(r.branch, ''), r.head_commit, r.state,
 		       r.last_synced_at, r.last_error, r.created_at
 		  FROM source_repos r JOIN sources s ON s.project_key = r.project_key
@@ -314,7 +335,7 @@ func (s *Store) SyncJobs(ctx context.Context) ([]SyncJob, error) {
 	for rows.Next() {
 		var j SyncJob
 		if err := rows.Scan(&j.Source.ProjectKey, &j.Source.Kind, &j.Source.Host, &j.Source.TokenAuth, &j.Source.TokenUser, &j.Source.TokenEnc,
-			&j.Source.CreatedAt, &j.Source.UpdatedAt, &j.Source.LastListedAt, &j.Source.LastError,
+			&j.Source.CreatedAt, &j.Source.UpdatedAt, &j.Source.LastListedAt, &j.Source.LastError, &j.Source.AutoDescribe,
 			&j.Repo.Slug, &j.Repo.CloneURL, &j.Repo.Origin, &j.Repo.Branch, &j.Repo.HeadCommit, &j.Repo.State,
 			&j.Repo.LastSyncedAt, &j.Repo.LastError, &j.Repo.CreatedAt); err != nil {
 			return nil, err
