@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trick77/almanach/internal/gitrepo"
@@ -46,12 +47,43 @@ type Checkouts interface {
 }
 
 // SourcesDeps is the clone feature as the routes see it; nil in Deps means
-// the feature is off.
+// the feature is off. Git is the poller in production: removals go through
+// its lock so a sync in flight cannot recreate a folder the row has lost.
 type SourcesDeps struct {
 	Store  SourceStore
 	Poller Nudger
 	Git    Checkouts
 	Key    secret.Key
+	sizes  sizeCache
+}
+
+// sizeCache remembers a project folder's size for a short while: the
+// source page polls every three seconds while a clone runs, and a full
+// walk of every clone per poll would compete with the clone for the disk.
+type sizeCache struct {
+	mu   sync.Mutex
+	seen map[string]sizedAt
+}
+
+type sizedAt struct {
+	bytes int64
+	at    time.Time
+}
+
+const sizeTTL = 30 * time.Second
+
+func (c *sizeCache) size(dir string) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen == nil {
+		c.seen = map[string]sizedAt{}
+	}
+	if s, ok := c.seen[dir]; ok && time.Since(s.at) < sizeTTL {
+		return s.bytes
+	}
+	n := gitrepo.DirSize(dir)
+	c.seen[dir] = sizedAt{bytes: n, at: time.Now()}
+	return n
 }
 
 // maxSourceBody bounds a sources write: a few fields.
@@ -168,7 +200,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError, CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt,
 		Repos: make([]sourceRepoBody, 0, len(repos))}
 	if dir, err := d.Sources.Git.ProjectDir(src.ProjectKey); err == nil {
-		out.Dir, out.DiskBytes = dir, gitrepo.DirSize(dir)
+		out.Dir, out.DiskBytes = dir, d.Sources.sizes.size(dir)
 	}
 	for _, rp := range repos {
 		out.Repos = append(out.Repos, sourceRepoBody{Slug: rp.Slug, CloneURL: rp.CloneURL, Origin: rp.Origin, Branch: rp.Branch, HeadCommit: rp.HeadCommit,
@@ -426,6 +458,23 @@ func (d Deps) deleteSource(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// hasRepo is whether the source has the slug, or false with the 404 (or
+// 500) written. The slug is validated by the caller.
+func (d Deps) hasRepo(w http.ResponseWriter, r *http.Request, key, slug string) bool {
+	repos, err := d.Sources.Store.SourceRepos(r.Context(), key)
+	if err != nil {
+		httpx.ServerError(w, r, err, "source repos")
+		return false
+	}
+	for _, rp := range repos {
+		if rp.Slug == slug {
+			return true
+		}
+	}
+	httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+	return false
+}
+
 type queuedBody struct {
 	Status string `json:"status"`
 	Repos  int    `json:"repos"`
@@ -515,24 +564,10 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
-	if !gitrepo.ValidSegment(slug) {
-		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+	if !gitrepo.ValidSegment(slug) || !d.hasRepo(w, r, src.ProjectKey, slug) {
 		return
 	}
-	repos, err := d.Sources.Store.SourceRepos(ctx, src.ProjectKey)
-	if err != nil {
-		httpx.ServerError(w, r, err, "source repos")
-		return
-	}
-	known := false
-	for _, rp := range repos {
-		known = known || rp.Slug == slug
-	}
-	if !known {
-		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
-		return
-	}
-	// The checkout first, then the row (deleteSource's reason).
+	// The clone first, then the row (deleteSource's reason).
 	if err := d.Sources.Git.Remove(src.ProjectKey, slug); err != nil {
 		httpx.ServerError(w, r, err, "remove clone")
 		return
@@ -555,8 +590,7 @@ func (d Deps) syncRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
-	if !gitrepo.ValidSegment(slug) {
-		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+	if !gitrepo.ValidSegment(slug) || !d.hasRepo(w, r, src.ProjectKey, slug) {
 		return
 	}
 	n, err := d.Sources.Store.RequestSync(r.Context(), src.ProjectKey, slug)

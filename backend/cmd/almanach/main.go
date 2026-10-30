@@ -238,10 +238,14 @@ func serve(log *slog.Logger) error {
 	var sources *api.SourcesDeps
 	var poller *clone.Poller
 	if app.Sources.Enabled() {
-		git := gitrepo.New(gitBin, app.Sources.ReposDir, app.Sources.GitCAFile)
+		git, err := gitrepo.New(gitBin, app.Sources.ReposDir, app.Sources.GitCAFile)
+		if err != nil {
+			return err
+		}
 		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: bitbucket.New(nil), Key: key, Interval: app.Sources.SyncInterval, Log: log})
 		poller.Start(context.WithoutCancel(ctx))
-		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: git, Key: key}
+		// Removals go through the poller, under its disk lock.
+		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: poller, Key: key}
 	}
 
 	srv := httpapi.New(db.Ping, log)

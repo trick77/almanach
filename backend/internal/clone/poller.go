@@ -39,12 +39,14 @@ type Store interface {
 // Git is what the poller needs of gitrepo.
 type Git interface {
 	Dir(key, slug string) (string, error)
+	ProjectDir(key string) (string, error)
 	OriginURL(ctx context.Context, dir string) (string, error)
 	EnsureCloned(ctx context.Context, dir, cloneURL string, a gitrepo.Access) error
 	DefaultBranch(ctx context.Context, cloneURL string, a gitrepo.Access) (string, error)
 	Fetch(ctx context.Context, dir, cloneURL string, a gitrepo.Access) error
 	HeadSHA(ctx context.Context, dir, branch string) (string, error)
 	Remove(key, slug string) error
+	RemoveProject(key string) error
 }
 
 // Lister lists a Bitbucket project's repositories.
@@ -72,6 +74,12 @@ type Poller struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	mu     sync.Mutex
+	// disk serialises the cycle's work on a clone with a removal from the
+	// API: a folder deleted under a running sync would be recreated by the
+	// sync and then belong to no row. removed collects what went during a
+	// cycle, so a job the cycle already listed is skipped.
+	disk    sync.Mutex
+	removed map[string]bool
 }
 
 // New builds a Poller.
@@ -82,7 +90,36 @@ func New(d Deps) *Poller {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
-	return &Poller{Deps: d, wake: make(chan struct{}, 1)}
+	return &Poller{Deps: d, wake: make(chan struct{}, 1), removed: map[string]bool{}}
+}
+
+// Dir and ProjectDir are gitrepo's, for the API's bodies.
+func (p *Poller) Dir(key, slug string) (string, error) { return p.Git.Dir(key, slug) }
+
+// ProjectDir is the project's folder.
+func (p *Poller) ProjectDir(key string) (string, error) { return p.Git.ProjectDir(key) }
+
+// Remove deletes one clone, never while a sync touches the disk, and
+// marks it so a cycle in flight skips the row.
+func (p *Poller) Remove(key, slug string) error {
+	p.disk.Lock()
+	defer p.disk.Unlock()
+	p.removed[key+"/"+slug] = true
+	return p.Git.Remove(key, slug)
+}
+
+// RemoveProject deletes a whole project folder under the same lock.
+func (p *Poller) RemoveProject(key string) error {
+	p.disk.Lock()
+	defer p.disk.Unlock()
+	p.removed[key] = true
+	return p.Git.RemoveProject(key)
+}
+
+// gone reports whether a job's row or project was removed since the cycle
+// listed it.
+func (p *Poller) gone(key, slug string) bool {
+	return p.removed[key] || p.removed[key+"/"+slug]
 }
 
 // Nudge starts the next cycle now rather than at the end of the wait.
@@ -175,6 +212,9 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	p.disk.Lock()
+	p.removed = map[string]bool{}
+	p.disk.Unlock()
 	p.Log.Info("sync cycle started", "sources", len(sources), "repositories", len(jobs))
 	var synced, unchanged, failed int
 	for _, j := range jobs {
@@ -182,7 +222,15 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			return ctx.Err()
 		}
 		repoStart := time.Now()
-		head, moved, err := p.sync(ctx, j)
+		p.disk.Lock()
+		var head string
+		var moved bool
+		if p.gone(j.Source.ProjectKey, j.Repo.Slug) {
+			p.disk.Unlock()
+			continue
+		}
+		head, moved, err = p.sync(ctx, j)
+		p.disk.Unlock()
 		switch {
 		case err != nil && ctx.Err() != nil:
 			// The process is ending, not the repository failing.
@@ -271,7 +319,7 @@ func (p *Poller) sync(ctx context.Context, j store.SyncJob) (string, bool, error
 		return "", false, err
 	}
 	if origin != "" && origin != j.Repo.CloneURL {
-		p.Log.Info("checkout points at a different remote; re-cloning", "project", key, "repo", slug, "checkout_origin", origin, "configured", j.Repo.CloneURL)
+		p.Log.Info("clone points at a different remote; re-cloning", "project", key, "repo", slug, "clone_origin", gitrepo.Redact(origin), "configured", j.Repo.CloneURL)
 		if err := p.Git.Remove(key, slug); err != nil {
 			return "", false, err
 		}

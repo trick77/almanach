@@ -69,3 +69,23 @@ func TestListRepos_BasicAuthAndFailures(t *testing.T) {
 		t.Fatal("non-http host accepted")
 	}
 }
+
+func TestListRepos_NoHTTPLinksIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"values":[{"slug":"ui","archived":false,"links":{"clone":[{"href":"ssh://git@x/shop/ui.git","name":"ssh"}]}}],"isLastPage":true}`)
+	}))
+	defer srv.Close()
+	_, err := New(srv.Client()).ListRepos(context.Background(), srv.URL, "SHOP", gitrepo.Access{})
+	if err == nil || !strings.Contains(err.Error(), "none with an http clone link") {
+		t.Fatalf("err = %v", err)
+	}
+	// An empty project is simply empty.
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"values":[],"isLastPage":true}`)
+	}))
+	defer empty.Close()
+	got, err := New(empty.Client()).ListRepos(context.Background(), empty.URL, "SHOP", gitrepo.Access{})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty project: %v %v", got, err)
+	}
+}

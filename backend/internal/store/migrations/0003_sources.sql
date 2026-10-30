@@ -18,9 +18,10 @@ CREATE TABLE sources (
     last_error TEXT NOT NULL DEFAULT ''
 );
 
--- One row per clone. origin says who put it here (the listing or the
--- operator); state is the poller's: pending (queued for the next cycle),
--- syncing, ready (the checkout holds head_commit of branch), failed
+-- One row per clone (bare: an object store, no working tree). origin says
+-- who put it here (the listing or the operator); state is the poller's:
+-- pending (queued for the next cycle), syncing, ready (the clone's
+-- remote-tracking ref of branch is head_commit), failed
 -- (last_error says why, retried next cycle), missing (the listing no longer
 -- names it; the checkout stays until the operator removes it). A NULL
 -- branch is resolved from the remote's HEAD and written back.

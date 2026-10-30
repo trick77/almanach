@@ -288,6 +288,9 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/cli/sync", "", "", nil); code != 202 {
 		t.Fatal("sync repo")
 	}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/nope/sync", "", "", nil); code != 404 {
+		t.Fatal("sync of an unknown repo was not a 404")
+	}
 	if len(fs.synced) != 2 || fs.synced[0] != "tools/" || fs.synced[1] != "tools/cli" {
 		t.Fatalf("sync requests = %v", fs.synced)
 	}

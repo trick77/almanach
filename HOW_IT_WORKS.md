@@ -237,26 +237,34 @@ volume claim.
 Git is the binary, after ../rongo's `gitrepo`, never a Go library: proven on
 any repository size, and every rule here was paid for there.
 
-- A clone is full history; `git clone` persists its URL, credentials and
-  all, in `.git/config`, so the bare URL is written back right after and
-  every later remote command passes its own URL. The default branch is
-  asked of the remote (`ls-remote --symref`), never assumed; a fetch uses
-  explicit refspecs with `--prune`; the head is the remote-tracking ref,
-  and a branch the remote no longer has is a loud failure on the row, never
-  a silent stop. No working-tree checkout or reset: phase 2 reads from the
-  object store at `head_commit`.
-- The token reaches git for one command only: as an `Authorization: Bearer`
-  header through `GIT_CONFIG_*` in the environment (argv would show in the
-  process list) for `bearer`, or as `user:token` in that command's URL for
-  `basic`. The username defaults to `x-access-token`, which GitHub ignores
-  and Bitbucket Data Center checks (project and repository tokens as
-  `x-token-auth`, personal ones as the user's own name). git's stderr is
-  redacted of any URL credentials before it reaches a log or a row.
-- The origin URL is the identity, the directory name a label: a checkout
+- A clone is bare and full history: an object store, no working tree, so
+  nothing on disk can go stale between the recorded head and the files,
+  and phase 2 reads `git show <head>:<path>` as ../rongo's reader does. The
+  default branch is asked of the remote (`ls-remote --symref`), never
+  assumed; a fetch uses explicit refspecs with `--prune`; the head is the
+  remote-tracking ref, and a branch the remote no longer has is a loud
+  failure on the row, never a silent stop.
+- The token reaches git for one command only, always as a header through
+  `GIT_CONFIG_*` in the environment: `Authorization: Bearer` for `bearer`,
+  `Authorization: Basic` of `user:token` for `basic`. Never in a URL: git
+  persists a URL in the clone's config, prints it in its errors and shows
+  it in the process list. The username defaults to `x-access-token`, which
+  GitHub ignores and Bitbucket Data Center checks (project and repository
+  tokens as `x-token-auth`, personal ones as the user's own name). git's
+  stderr is still redacted of any URL credentials before it reaches a log
+  or a row, the belt to that brace. A cancelled command is given ten
+  seconds for its helpers before its pipes are cut, so a shutdown cannot
+  hang on `git-remote-https`.
+- The origin URL is the identity, the directory name a label: a clone
   whose origin differs from the row's clone URL is removed and cloned
   again, so a corrected URL never serves the old code under the new name.
-  A directory without `.git/HEAD` (a clone cut off by a shutdown) is
-  removed and cloned again too.
+  A clone is complete only when its `HEAD` resolves to a commit; git
+  writes `HEAD` before any transfer, so a clone cut off by a shutdown has
+  one and no refs, fails that check, and is removed and cloned again.
+- A removal from the API goes through the poller's disk lock: never while
+  a sync touches a clone, and a row removed mid-cycle is skipped by the
+  cycle that listed it, so a deleted folder is not cloned back as an
+  orphan.
 - Keys and slugs are validated as single path segments (Bitbucket's
   charset, never `.` or `..`) and the resulting path checked with
   `filepath.Rel` against the base, both on the way in and again before any
@@ -673,9 +681,10 @@ the reason in the log and the page unchanged:
   stored one, an empty one clears it. A token without `ALMANACH_SECRET_KEY`
   is a 422; a stored token the key cannot open fails the source's
   repositories with a line naming the key.
-- The clone URL is written back bare after the clone; `.git/config` never
-  holds a credential. git's stderr is redacted of URL credentials before
-  a log line or a row.
+- The token is a header per command, never a URL; the clone's config never
+  holds a credential. git's stderr is redacted of URL credentials before a
+  log line or a row. The base folder is made absolute at startup: git
+  resolves a clone's destination against the command's directory.
 - A removal takes the folder first, then the row: a folder left behind by
   a failed row delete is re-cloned by the next cycle, harmless; a row gone
   with the folder still there would be an orphan.

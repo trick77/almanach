@@ -64,9 +64,9 @@ func (l *Lister) ListRepos(ctx context.Context, host, project string, a gitrepo.
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
 		return nil, errors.New("host is not an http(s) URL")
 	}
-	var out []store.ListedRepo
-	start := 0
-	for i := 0; i < maxPages; i++ {
+	out := []store.ListedRepo{}
+	start, live, ended := 0, 0, false
+	for i := 0; i < maxPages && !ended; i++ {
 		p, err := l.page(ctx, base, project, a, start)
 		if err != nil {
 			return nil, err
@@ -75,6 +75,7 @@ func (l *Lister) ListRepos(ctx context.Context, host, project string, a gitrepo.
 			if v.Archived {
 				continue
 			}
+			live++
 			for _, c := range v.Links.Clone {
 				if c.Name == "http" {
 					out = append(out, store.ListedRepo{Slug: v.Slug, CloneURL: c.Href})
@@ -82,12 +83,19 @@ func (l *Lister) ListRepos(ctx context.Context, host, project string, a gitrepo.
 				}
 			}
 		}
-		if p.IsLastPage || p.NextPageStart <= start {
-			return out, nil
-		}
+		ended = p.IsLastPage || p.NextPageStart <= start
 		start = p.NextPageStart
 	}
-	return nil, fmt.Errorf("listing did not end after %d pages", maxPages)
+	if !ended {
+		return nil, fmt.Errorf("listing did not end after %d pages", maxPages)
+	}
+	// Repositories without an http clone link (the instance has them
+	// switched off) would otherwise read as "the project is empty" and mark
+	// every row missing without a word: an error names the cause instead.
+	if live > 0 && len(out) == 0 {
+		return nil, fmt.Errorf("list repositories: %d repositories, none with an http clone link", live)
+	}
+	return out, nil
 }
 
 func (l *Lister) page(ctx context.Context, base *url.URL, project string, a gitrepo.Access, start int) (page, error) {

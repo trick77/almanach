@@ -80,6 +80,7 @@ type fakeGit struct {
 	fetchErr map[string]error
 	calls    []string
 	access   []gitrepo.Access
+	onClone  func(dir string)
 }
 
 func newFakeGit() *fakeGit {
@@ -101,6 +102,9 @@ func (g *fakeGit) EnsureCloned(_ context.Context, dir, url string, a gitrepo.Acc
 		g.calls = append(g.calls, "clone "+dir)
 		g.origins[dir] = url
 	}
+	if g.onClone != nil {
+		g.onClone(dir)
+	}
 	return nil
 }
 func (g *fakeGit) DefaultBranch(context.Context, string, gitrepo.Access) (string, error) {
@@ -117,10 +121,15 @@ func (g *fakeGit) HeadSHA(_ context.Context, dir, branch string) (string, error)
 	}
 	return "", gitrepo.ErrBranchGone
 }
+func (g *fakeGit) ProjectDir(key string) (string, error) { return "/base/" + key, nil }
 func (g *fakeGit) Remove(key, slug string) error {
 	dir := "/base/" + key + "/" + slug
 	g.calls = append(g.calls, "remove "+dir)
 	delete(g.origins, dir)
+	return nil
+}
+func (g *fakeGit) RemoveProject(key string) error {
+	g.calls = append(g.calls, "remove-project /base/"+key)
 	return nil
 }
 
@@ -256,6 +265,49 @@ func TestCycle_TokenWithoutKeyFailsTheRepo(t *testing.T) {
 	}
 	if len(g.calls) != 0 {
 		t.Fatalf("git was called without a usable token: %v", g.calls)
+	}
+}
+
+func TestRemove_SkipsTheRowInTheRunningCycle(t *testing.T) {
+	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
+	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
+	s.jobs = []store.SyncJob{job("tools", "a", "https://x/a.git", "main", "", src), job("tools", "b", "https://x/b.git", "main", "", src)}
+	g.heads["/base/tools/a@main"] = "aaa"
+	g.heads["/base/tools/b@main"] = "bbb"
+	p := poller(s, g, l, k)
+	// b is removed while the cycle works on a (inside the disk lock, as a
+	// real Remove would be once it got the lock): the cycle, which listed
+	// b before, must skip it rather than clone it back.
+	g.onClone = func(dir string) {
+		if strings.HasSuffix(dir, "/a") {
+			p.removed["tools/b"] = true
+		}
+	}
+	if err := p.CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.states["a"] != store.RepoReady {
+		t.Fatalf("a: %s", s.states["a"])
+	}
+	if _, touched := s.states["b"]; touched || strings.Contains(strings.Join(g.calls, ","), "/tools/b") {
+		t.Fatalf("b was synced after its removal: states=%v calls=%v", s.states, g.calls)
+	}
+	// Remove during a sync waits for the disk lock.
+	done := make(chan struct{})
+	p.disk.Lock()
+	go func() {
+		_ = p.Remove("tools", "a")
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("Remove did not wait for the disk lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+	p.disk.Unlock()
+	<-done
+	if !strings.Contains(strings.Join(g.calls, ","), "remove /base/tools/a") {
+		t.Fatalf("remove not forwarded: %v", g.calls)
 	}
 }
 

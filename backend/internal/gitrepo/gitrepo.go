@@ -1,14 +1,17 @@
 // Package gitrepo drives the git binary for the clones under the base
 // folder, after ../rongo's package of the same name. The binary, not a Go
 // library: proven on any repository size, and every rule below was paid
-// for there. The token reaches git for one command only (a header or the
-// URL of that command) and is never written to disk; a stored remote URL is
-// always the bare one.
+// for there. The clones are bare: nothing reads a working tree, phase 2
+// reads the object store at the recorded head, and a bare clone has no
+// tree to go stale. The token reaches git as an Authorization header
+// through the environment of one command and is never in a URL, in argv
+// or on disk.
 package gitrepo
 
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -18,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ErrBranchGone is a configured branch the remote no longer has. Named so
@@ -28,17 +32,25 @@ var ErrBranchGone = errors.New("configured branch not found on the remote")
 // ErrBadSegment is a key or slug that is not one safe path segment.
 var ErrBadSegment = errors.New("not a single path segment")
 
+// waitDelay bounds how long a cancelled git command may keep its pipes
+// open: git's helpers (git-remote-https, index-pack) inherit them and
+// outlive the parent the context killed, and without a bound a shutdown
+// would wait on them forever.
+const waitDelay = 10 * time.Second
+
 // Access is what one command needs to reach a remote. Token "" is an
-// anonymous remote. Auth is "bearer" (an Authorization header, no username)
-// or "basic" (User and Token in the URL of that one command; User defaults
-// to x-access-token, which GitHub ignores and Bitbucket DC checks).
+// anonymous remote. Auth is "bearer" (Authorization: Bearer) or "basic"
+// (Authorization: Basic of User and Token; User defaults to x-access-token,
+// which GitHub ignores and Bitbucket DC checks). Either way a header, never
+// a URL: a URL is persisted by git, printed in its errors and shown in the
+// process list.
 type Access struct {
 	Token string
 	Auth  string
 	User  string
 }
 
-// Client runs git against checkouts under root.
+// Client runs git against clones under root.
 type Client struct {
 	git    string
 	root   string
@@ -54,13 +66,19 @@ func Resolve() (string, error) {
 	return p, nil
 }
 
-// New builds a Client over root. caFile, when set, is handed to git as
+// New builds a Client over root, made absolute: git resolves a clone's
+// destination against the command's directory, so a relative root would
+// nest the clones under themselves. caFile, when set, is handed to git as
 // GIT_SSL_CAINFO for a forge behind an internal CA.
-func New(gitBin, root, caFile string) *Client {
-	return &Client{git: gitBin, root: root, caFile: caFile}
+func New(gitBin, root, caFile string) (*Client, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("repos dir: %w", err)
+	}
+	return &Client{git: gitBin, root: abs, caFile: caFile}, nil
 }
 
-// Root is the base folder.
+// Root is the base folder, absolute.
 func (c *Client) Root() string { return c.root }
 
 // segment is what a key or slug may look like: Bitbucket's charset, the
@@ -101,12 +119,12 @@ func (c *Client) under(parent, dir string) (string, error) {
 	return dir, nil
 }
 
-// OriginURL is the remote a checkout was made from, "" when there is no
-// checkout. The name of a directory is a label; the origin is the identity,
-// so a changed clone URL is caught before the old code answers under the
-// new name.
+// OriginURL is the remote a clone was made from, "" when there is no
+// complete clone. The name of a directory is a label; the origin is the
+// identity, so a changed clone URL is caught before the old code answers
+// under the new name.
 func (c *Client) OriginURL(ctx context.Context, dir string) (string, error) {
-	if !hasCheckout(dir) {
+	if !c.complete(ctx, dir) {
 		return "", nil
 	}
 	out, err := c.run(ctx, dir, nil, "remote", "get-url", "origin")
@@ -116,20 +134,25 @@ func (c *Client) OriginURL(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// hasCheckout is a directory with a .git/HEAD: a clone that got as far as
-// writing its repository. A directory without one is a cut-off clone.
-func hasCheckout(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".git", "HEAD"))
+// complete reports whether dir holds a clone that got to the end: a HEAD
+// file (git writes it before any transfer, so alone it proves nothing) that
+// resolves to a commit, which needs the refs written after the packfile. A
+// clone cut off by a shutdown fails this and is redone.
+func (c *Client) complete(ctx context.Context, dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
+		return false
+	}
+	_, err := c.run(ctx, dir, nil, "rev-parse", "--verify", "--quiet", "HEAD")
 	return err == nil
 }
 
-// EnsureCloned clones when dir holds no checkout. Full history. A directory
-// that exists without a checkout (a clone cut off by a shutdown) is removed
-// first: git refuses to clone into a non-empty one. git persists the clone
-// URL, credentials and all, as remote.origin.url, so the bare URL is written
-// back right after; every later remote command passes its own URL.
+// EnsureCloned clones, bare and with full history, when dir holds no
+// complete clone. A directory that exists without one (a clone cut off by
+// a shutdown) is removed first: git refuses to clone into a non-empty one.
+// The credential is a header for this command, so the URL git persists as
+// remote.origin.url is the bare one.
 func (c *Client) EnsureCloned(ctx context.Context, dir, cloneURL string, a Access) error {
-	if hasCheckout(dir) {
+	if c.complete(ctx, dir) {
 		return nil
 	}
 	if _, err := os.Stat(dir); err == nil {
@@ -140,20 +163,13 @@ func (c *Client) EnsureCloned(ctx context.Context, dir, cloneURL string, a Acces
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
 		return fmt.Errorf("create project directory: %w", err)
 	}
-	if _, err := c.run(ctx, c.root, a.env(cloneURL), "clone", "--quiet", a.remoteURL(cloneURL), dir); err != nil {
-		return err
-	}
-	if a.Token != "" {
-		if _, err := c.run(ctx, dir, nil, "remote", "set-url", "origin", cloneURL); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := c.run(ctx, c.root, a.env(cloneURL), "clone", "--quiet", "--bare", cloneURL, dir)
+	return err
 }
 
 // DefaultBranch asks the remote what HEAD points at. Never assume master.
 func (c *Client) DefaultBranch(ctx context.Context, cloneURL string, a Access) (string, error) {
-	out, err := c.run(ctx, c.root, a.env(cloneURL), "ls-remote", "--symref", a.remoteURL(cloneURL), "HEAD")
+	out, err := c.run(ctx, c.root, a.env(cloneURL), "ls-remote", "--symref", cloneURL, "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -172,13 +188,13 @@ func (c *Client) DefaultBranch(ctx context.Context, cloneURL string, a Access) (
 // Fetch updates the remote-tracking refs and the tags, pruning what the
 // remote dropped, by explicit refspecs rather than the persisted config.
 func (c *Client) Fetch(ctx context.Context, dir, cloneURL string, a Access) error {
-	_, err := c.run(ctx, dir, a.env(cloneURL), "fetch", "--quiet", "--prune", a.remoteURL(cloneURL),
+	_, err := c.run(ctx, dir, a.env(cloneURL), "fetch", "--quiet", "--prune", cloneURL,
 		"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
 	return err
 }
 
 // HeadSHA is the commit the branch points at on the remote-tracking side.
-// An absent ref is ErrBranchGone; an unreadable checkout is its own error.
+// An absent ref is ErrBranchGone; an unreadable clone is its own error.
 func (c *Client) HeadSHA(ctx context.Context, dir, branch string) (string, error) {
 	out, err := c.run(ctx, dir, nil, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch)
 	if err != nil {
@@ -195,7 +211,7 @@ func (c *Client) HeadSHA(ctx context.Context, dir, branch string) (string, error
 	return "", fmt.Errorf("branch %q: %w", branch, ErrBranchGone)
 }
 
-// Remove deletes one checkout. The segments are validated again here even
+// Remove deletes one clone. The segments are validated again here even
 // though the API did: the operation is RemoveAll and the cost of being wrong
 // is deleting outside the base.
 func (c *Client) Remove(key, slug string) error {
@@ -238,11 +254,13 @@ func DirSize(dir string) int64 {
 // run is one git command to completion: the ownership exemption for dir,
 // no prompting, the CA file, and extra for the remote's auth. stderr is
 // redacted before it reaches an error, since git quotes the remote it
-// failed against, credentials included.
+// failed against; the header keeps credentials out of it, the redaction is
+// the belt to that brace.
 func (c *Client) run(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
 	full := append([]string{"-c", "safe.directory=" + dir}, args...)
 	cmd := exec.CommandContext(ctx, c.git, full...) //nolint:gosec // argv, no shell; paths come from validated segments
 	cmd.Dir = dir
+	cmd.WaitDelay = waitDelay
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if c.caFile != "" {
 		cmd.Env = append(cmd.Env, "GIT_SSL_CAINFO="+c.caFile)
@@ -251,7 +269,7 @@ func (c *Client) run(ctx context.Context, dir string, extra []string, args ...st
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(redact(stderr.String())))
+		return stdout.String(), fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(Redact(stderr.String())))
 	}
 	return stdout.String(), nil
 }
@@ -264,37 +282,30 @@ func exitCode(err error) int {
 	return -1
 }
 
-// remoteURL is the URL one command reaches the remote at: bare for bearer
-// or anonymous, with the credentials for basic.
-func (a Access) remoteURL(cloneURL string) string {
-	if a.Token == "" || a.Auth == "bearer" {
-		return cloneURL
-	}
-	u, err := url.Parse(cloneURL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
-		return cloneURL
-	}
-	user := a.User
-	if user == "" {
-		user = "x-access-token"
-	}
-	u.User = url.UserPassword(user, a.Token)
-	return u.String()
-}
-
-// env is the Authorization header for bearer, through git's environment
-// config rather than -c (argv shows in the process list), appended after
-// whatever GIT_CONFIG_* the process already carries.
+// env is the Authorization header for this one command, through git's
+// environment config rather than -c (argv shows in the process list),
+// appended after whatever GIT_CONFIG_* the process already carries.
+// Nothing for an anonymous remote or a non-http one.
 func (a Access) env(cloneURL string) []string {
-	if a.Token == "" || a.Auth != "bearer" || !isHTTPURL(cloneURL) {
+	if a.Token == "" || !isHTTPURL(cloneURL) {
 		return nil
+	}
+	var header string
+	if a.Auth == "basic" {
+		user := a.User
+		if user == "" {
+			user = "x-access-token"
+		}
+		header = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+a.Token))
+	} else {
+		header = "Authorization: Bearer " + a.Token
 	}
 	n, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
 	i := strconv.Itoa(n)
 	return []string{
 		"GIT_CONFIG_COUNT=" + strconv.Itoa(n+1),
 		"GIT_CONFIG_KEY_" + i + "=http.extraHeader",
-		"GIT_CONFIG_VALUE_" + i + "=Authorization: Bearer " + a.Token,
+		"GIT_CONFIG_VALUE_" + i + "=" + header,
 	}
 }
 
@@ -306,10 +317,10 @@ func isHTTPURL(raw string) bool {
 // credentialInURL matches the userinfo of any URL-shaped substring.
 var credentialInURL = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@`)
 
-// redact strips the userinfo from anything URL-shaped in text about to be
+// Redact strips the userinfo from anything URL-shaped in text about to be
 // logged. On the raw string, not via url.Parse: git wraps the remote in
 // quotes and appends a colon, so the field is not a parseable URL.
-func redact(s string) string {
+func Redact(s string) string {
 	return credentialInURL.ReplaceAllString(s, "${1}REDACTED@")
 }
 

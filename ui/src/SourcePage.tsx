@@ -167,13 +167,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
 
       {data.last_error !== "" && (
         <Panel tone="danger">
-          <b className="font-medium text-ink">
-            {S.sources.listingError(
-              data.last_listed_at === null
-                ? S.sources.neverListed
-                : dayTime(data.updated_at),
-            )}
-          </b>{" "}
+          <b className="font-medium text-ink">{S.sources.listingError}</b>{" "}
           <span className={mono}>{data.last_error}</span>{" "}
           {S.sources.listingErrorHint}
         </Panel>
@@ -509,7 +503,8 @@ function AccessForm({
         token_user: auth === "basic" ? user.trim() : "",
       };
       if (data.kind === "bitbucket") body.host = host.trim();
-      if (mode === "replace") body.token = token.trim();
+      // An empty replacement keeps the stored token: only Löschen clears.
+      if (mode === "replace" && token.trim() !== "") body.token = token.trim();
       if (mode === "clear") body.token = "";
       await send(
         "PATCH",

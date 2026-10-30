@@ -289,9 +289,9 @@ export const S = {
         "Nur https. Das Token der Quelle wird beim Klonen mitgegeben, nie in die URL geschrieben.",
       add: "Hinzufügen und klonen",
     },
-    listingError: (when: string) => `Listing fehlgeschlagen (${when}):`,
+    listingError: "Letztes Listing fehlgeschlagen:",
     listingErrorHint:
-      "Die Repository-Liste wurde nicht verändert; bekannte Repositories werden weiter synchronisiert.",
+      "Die Repository-Liste ist die des letzten erfolgreichen Listings; bekannte Repositories werden weiter synchronisiert.",
   },
   faq: {
     title: "FAQ",

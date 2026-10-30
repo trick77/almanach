@@ -84,11 +84,13 @@ and tests included.
   never go-git (rejected 2026-10-30); image is debian-slim with git. Clones
   only at `ALMANACH_REPOS_DIR/<project>/<slug>`; key and slug single path
   segments, `filepath.Rel`-checked before any `RemoveAll`. Clone URLs https,
-  no credentials. Token to git per command only (bearer via `GIT_CONFIG_*`
-  env, basic in that command's URL), bare URL written back after clone,
-  stderr redacted; sealed AES-GCM under `ALMANACH_SECRET_KEY`, never
-  returned or logged. Origin URL is identity: mismatch re-clones. One
-  sequential poller; a repo's failure goes on its row. Unset
+  no credentials. Clones are bare (phase 2 reads the object store). Token
+  to git per command as a header via `GIT_CONFIG_*` env (Bearer or Basic),
+  never in a URL; stderr redacted; sealed AES-GCM under
+  `ALMANACH_SECRET_KEY`, never returned or logged. Origin URL is identity:
+  mismatch re-clones; a clone whose HEAD resolves to nothing is cut off and
+  redone. One sequential poller; a repo's failure goes on its row;
+  removals take the poller's disk lock. Unset
   `ALMANACH_REPOS_DIR` = feature off (list `enabled: false`, rest 404).
   Removal: folder first, then row. UI copy: capital only when the first
   char is a letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel".
