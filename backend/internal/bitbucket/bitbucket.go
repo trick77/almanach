@@ -116,7 +116,7 @@ func (l *Lister) page(ctx context.Context, base *url.URL, project string, a gitr
 	if err != nil {
 		return page{}, fmt.Errorf("list repositories: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return page{}, fmt.Errorf("list repositories: read: %w", err)

@@ -2,6 +2,7 @@ package secret
 
 import (
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -61,7 +62,7 @@ func TestParse(t *testing.T) {
 	if _, err := Parse(base64.StdEncoding.EncodeToString([]byte("short"))); err == nil || !strings.Contains(err.Error(), "want 32") {
 		t.Fatalf("short key: %v", err)
 	}
-	if _, err := (Key{}).Seal("x"); err != ErrNoKey {
+	if _, err := (Key{}).Seal("x"); !errors.Is(err, ErrNoKey) {
 		t.Fatalf("zero key Seal: %v", err)
 	}
 }

@@ -306,7 +306,7 @@ func jittered(d time.Duration) time.Duration {
 	if d <= 0 {
 		return 0
 	}
-	return d + time.Duration(rand.Int64N(int64(d)/10+1))
+	return d + time.Duration(rand.Int64N(int64(d)/10+1)) //nolint:gosec // schedule jitter, not a secret
 }
 
 // took renders a duration as a string: the JSON handler would print a

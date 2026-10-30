@@ -219,7 +219,12 @@ func (c *Client) RemoveProject(key string) error {
 func DirSize(dir string) int64 {
 	var n int64
 	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			// An unreadable entry is skipped, not a failure: the size is a
+			// figure on a page, and a missing directory is simply zero.
+			return nil //nolint:nilerr // skipping is the intent
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if info, err := d.Info(); err == nil {
