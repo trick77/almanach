@@ -11,8 +11,10 @@ import (
 // A step answers with a patch over the page: an id it does not name stays
 // as it is, an edit keeps the statement's id and with it its sources, and a
 // statement a PR taught may be dropped only when the code no longer has any
-// of its files. Anything else rejects the patch whole, like an id the page
-// does not have.
+// of its files. An edit of one may correct its text and add files, but
+// keeps every file of it the tree still has: otherwise the next run would
+// find it resting on nothing and drop it after all. Anything else rejects
+// the patch whole, like an id the page does not have.
 
 // Applied is a patch turned into the whole proposal a fold checks: every
 // statement of the page in its order with edits in place and drops gone,
@@ -45,6 +47,11 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		}
 		if _, twice := edits[id]; twice {
 			return Applied{}, "statement id used twice " + id
+		}
+		if old := byID[id]; fromPR(old) {
+			if lost := shed(old.Files, st.Files, exists); lost != "" {
+				return Applied{}, "edit of " + id + ", which a pull request taught, drops its file " + lost + " the tree still has"
+			}
 		}
 		edits[id] = st
 	}
@@ -105,6 +112,21 @@ func fromPR(s store.Statement) bool {
 		}
 	}
 	return false
+}
+
+// shed is the first old file an edit leaves out that the tree still has,
+// "" when it keeps them all.
+func shed(old, edited []string, exists func(string) bool) string {
+	kept := make(map[string]bool, len(edited))
+	for _, f := range edited {
+		kept[normPath(f)] = true
+	}
+	for _, f := range old {
+		if !kept[normPath(f)] && exists(f) {
+			return f
+		}
+	}
+	return ""
 }
 
 // gone reports whether a statement's files have all left the tree. A

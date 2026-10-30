@@ -39,17 +39,20 @@ type File struct {
 }
 
 // blockedDirs are directory names whose content is someone else's code or
-// build output: never read, wherever they sit in the tree.
+// a tool's cache: never read, wherever they sit in the tree.
 var blockedDirs = map[string]bool{
-	"vendor": true, "node_modules": true, "third_party": true, "dist": true, "build": true, "target": true,
-	".git": true, ".idea": true, ".vscode": true, "__pycache__": true, "coverage": true, ".gradle": true,
-	".next": true, "bower_components": true,
+	"vendor": true, "node_modules": true, "third_party": true, ".git": true, ".idea": true, ".vscode": true,
+	"__pycache__": true, ".gradle": true, ".next": true, "bower_components": true,
 }
 
-// blockedNames are lockfiles: long, generated and without a fact in them.
+// blockedRootDirs are build output by convention at the repository's root
+// only: deeper down, internal/build or cmd/target is a package like any.
+var blockedRootDirs = map[string]bool{"dist": true, "build": true, "target": true, "coverage": true, "out": true}
+
+// blockedNames are lockfiles the .lock extension does not catch: long,
+// generated and without a fact in them.
 var blockedNames = map[string]bool{
-	"package-lock.json": true, "yarn.lock": true, "pnpm-lock.yaml": true, "go.sum": true, "Cargo.lock": true,
-	"poetry.lock": true, "composer.lock": true, "Gemfile.lock": true, "Pipfile.lock": true, "gradle.lockfile": true,
+	"package-lock.json": true, "pnpm-lock.yaml": true, "go.sum": true, "gradle.lockfile": true,
 }
 
 // blockedExts are binary, media, archive and font files, and compiled or
@@ -69,6 +72,9 @@ var blockedSuffixes = []string{".min.js", ".min.css", ".pb.go", ".pb.gw.go", "_p
 // binary or generated, by its name alone.
 func Blocked(p string) bool {
 	dirs := strings.Split(path.Dir(p), "/")
+	if blockedRootDirs[dirs[0]] {
+		return true
+	}
 	for _, d := range dirs {
 		if blockedDirs[d] {
 			return true
@@ -103,6 +109,37 @@ func Files(entries []gitrepo.Entry) []File {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// Exists is a tree as a lookup a statement's files are checked against:
+// the whole tree, not the readable part (a statement may rest on a lockfile
+// or a large one), with a path forgiven its "./" or "/" and a directory
+// present while any file under it is.
+func Exists(entries []gitrepo.Entry) func(string) bool {
+	files := make(map[string]bool, len(entries))
+	dirs := map[string]bool{}
+	for _, e := range entries {
+		if e.Deleted {
+			continue
+		}
+		files[e.Path] = true
+		for d := path.Dir(e.Path); d != "."; d = path.Dir(d) {
+			if dirs[d] {
+				break
+			}
+			dirs[d] = true
+		}
+	}
+	return func(p string) bool {
+		p = normPath(p)
+		return p != "" && (files[p] || dirs[p])
+	}
+}
+
+// normPath is a path as a statement may carry it, made comparable to the
+// tree's: no surrounding space, no "./" or "/" in front, no "/" behind.
+func normPath(p string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(p), "./"), "/"), "/")
 }
 
 // Binary reports whether content read as a file is no text: a NUL byte in

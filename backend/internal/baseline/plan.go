@@ -105,12 +105,18 @@ type index struct {
 	sorted []File
 }
 
+// newIndex takes the files as Files returns them, in path order; another
+// order is sorted on a copy.
 func newIndex(files []File) index {
-	ix := index{byPath: make(map[string]File, len(files)), sorted: append([]File(nil), files...)}
+	ix := index{byPath: make(map[string]File, len(files)), sorted: files}
 	for _, f := range files {
 		ix.byPath[f.Path] = f
 	}
-	sort.Slice(ix.sorted, func(i, j int) bool { return ix.sorted[i].Path < ix.sorted[j].Path })
+	byPath := func(i, j int) bool { return ix.sorted[i].Path < ix.sorted[j].Path }
+	if !sort.SliceIsSorted(ix.sorted, byPath) {
+		ix.sorted = append([]File(nil), files...)
+		sort.Slice(ix.sorted, byPath)
+	}
 	return ix
 }
 
@@ -168,19 +174,22 @@ func BuildPlan(proposed []inference.Subject, files []File, maxSubjects int) Plan
 }
 
 // MergePlan is BuildPlan onto an existing plan, a reconcile's catalogue
-// step: the old subjects keep their files (re-sized from the tree, those
-// gone dropped), a proposal naming an old subject adds its files to it, a
-// new name opens a new subject while fewer than maxSubjects exist.
+// step: the old subjects keep their files, re-sized from the tree and held
+// to StepMaxBytes again in their order (files grow), those gone or no
+// longer readable dropped; a proposal naming an old subject adds its files
+// to it, a new name opens a new subject while fewer than maxSubjects exist.
 func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects int) Plan {
 	ix := newIndex(files)
 	out := Plan{Subjects: []Subject{}}
 	for _, s := range old.Subjects {
 		kept := Subject{Name: s.Name, Purpose: s.Purpose}
+		paths := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
-			if now, ok := ix.byPath[f.Path]; ok {
-				kept.Files = append(kept.Files, now)
+			if _, ok := ix.byPath[f.Path]; ok {
+				paths = append(paths, f.Path)
 			}
 		}
+		ix.add(&kept, paths)
 		if len(kept.Files) > 0 {
 			out.Subjects = append(out.Subjects, kept)
 		}

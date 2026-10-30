@@ -18,7 +18,9 @@ func TestBlocked(t *testing.T) {
 		"docs/plans/x.html":                false,
 		"vendor/github.com/x/y.go":         true,
 		"ui/node_modules/react/index.js":   true,
-		"backend/web/dist/app.js":          true,
+		"dist/app.js":                      true,
+		"internal/build/info.go":           false,
+		"cmd/target/main.go":               false,
 		"go.sum":                           true,
 		"ui/package-lock.json":             true,
 		"assets/logo.PNG":                  true,
@@ -67,6 +69,7 @@ func TestDocs_OrderAndLimit(t *testing.T) {
 		{"docs/guide.md", 30}, {"docs/img.txt", 5}, {"internal/x.go", 10}, {"AGENTS.md", 20}, {"README.md", 40},
 		{"backend/go.mod", 8}, {"Makefile", 6}, {"HOW_IT_WORKS.md", 50}, {"backend/README.md", 12}, {"docs/deep/a.md", 7},
 		{"backend/internal/README.md", 9}, {"compose.yaml", 4}, {"api/openapi.yaml", 11},
+		{"src/Configuration.java", 3}, {"design.go", 2},
 	}
 	got := Docs(files, 1000)
 	var paths []string
@@ -177,6 +180,13 @@ func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	if p.Skipped != nil {
 		t.Errorf("Skipped = %v, want a new plan's own", p.Skipped)
 	}
+	// Files that grew are held to the step budget again, in their order.
+	grown := Plan{Subjects: []Subject{{Name: "Big", Files: []File{{"a.go", 100}, {"b.go", 100}, {"c.go", 10}}}}}
+	half := StepMaxBytes / 2
+	now := []File{{"a.go", int64(half)}, {"b.go", int64(half) + 1}, {"c.go", 10}}
+	if got := names(MergePlan(grown, nil, now, 5)); !reflect.DeepEqual(got, []string{"Big:a.go,c.go"}) {
+		t.Errorf("grown subject = %v, want b.go past the budget left out", got)
+	}
 }
 
 func TestReconcile_SiftTouchedResting(t *testing.T) {
@@ -186,28 +196,31 @@ func TestReconcile_SiftTouchedResting(t *testing.T) {
 		{Path: "jobs/new.go", Mode: "100644", Size: 40},
 		{Path: "go.sum", Mode: "100644", Size: 900},
 		{Path: "link", Mode: "120000", Size: 3},
+		{Path: "billing/huge.go", Mode: "100644", Size: FileMaxBytes + 1},
 	}
 	c := Sift(diff)
-	if len(c.Changed) != 2 || c.Deleted[0] != "auth/old.go" || c.Bytes() != 160 {
+	if len(c.Changed) != 2 || !reflect.DeepEqual(c.Gone, []string{"auth/old.go", "go.sum", "link", "billing/huge.go"}) {
 		t.Fatalf("Sift = %+v", c)
 	}
 	plan := Plan{Subjects: []Subject{
 		{Name: "Auth", Files: []File{{"auth/old.go", 50}, {"auth/session.go", 400}}},
-		{Name: "Billing", Files: []File{{"billing/run.go", 300}}},
+		{Name: "Billing", Files: []File{{"billing/run.go", 300}, {"billing/huge.go", 90}}},
 		{Name: "Docs", Files: []File{{"README.md", 30}}},
+		{Name: "Quiet", Files: []File{{"quiet.go", 10}}},
 	}, Skipped: []string{"Docs"}}
 	touched, unplaced := Touched(plan, c)
-	if !reflect.DeepEqual(touched, []int{0, 2}) {
-		t.Errorf("touched = %v, want Auth (a deleted file) and Docs (skipped last time)", touched)
+	if !reflect.DeepEqual(touched, []string{"Auth", "Billing", "Docs"}) {
+		t.Errorf("touched = %v, want Auth (deleted), Billing (grown past the cap) and Docs (skipped last time)", touched)
 	}
 	if len(unplaced) != 2 || unplaced[0].Path != "auth/login.go" || unplaced[1].Path != "jobs/new.go" {
 		t.Errorf("unplaced = %v", unplaced)
 	}
+	// 160 changed plus 140 catalogued gone, of 880.
 	if FullInstead(plan, c) {
-		t.Error("160 changed of 780 catalogued read as a full run")
+		t.Error("300 of 880 read as a full run")
 	}
-	if !FullInstead(plan, Changes{Changed: []File{{"x", 391}}}) || !FullInstead(Plan{}, c) {
-		t.Error("over half changed, or an empty plan, did not ask for a full run")
+	if !FullInstead(plan, Changes{Changed: []File{{"x", 300}}, Gone: []string{"auth/session.go"}}) || !FullInstead(Plan{}, c) {
+		t.Error("over half moved counting a deletion, or an empty plan, did not ask for a full run")
 	}
 	statements := []store.Statement{
 		{ID: "s1", Files: []string{"auth/session.go"}},
@@ -233,12 +246,26 @@ func page() []store.Statement {
 	}
 }
 
+// inTree is Exists over a tree holding these files.
 func inTree(paths ...string) func(string) bool {
-	set := map[string]bool{}
+	entries := make([]gitrepo.Entry, 0, len(paths))
 	for _, p := range paths {
-		set[p] = true
+		entries = append(entries, gitrepo.Entry{Path: p, Mode: "100644", Size: 1})
 	}
-	return func(p string) bool { return set[p] }
+	return Exists(entries)
+}
+
+func TestExists_ForgivesSpellingKnowsDirectories(t *testing.T) {
+	exists := Exists([]gitrepo.Entry{{Path: "internal/store/wiki.go"}, {Path: "go.sum"}, {Path: "old.go", Deleted: true}})
+	for p, want := range map[string]bool{
+		"internal/store/wiki.go": true, "./internal/store/wiki.go": true, "/internal/store/wiki.go": true,
+		"internal/store/": true, "internal": true, " go.sum ": true,
+		"internal/stor": false, "old.go": false, "": false, "./": false,
+	} {
+		if got := exists(p); got != want {
+			t.Errorf("exists(%q) = %v, want %v", p, got, want)
+		}
+	}
 }
 
 func TestApplyPatch_EditsDropsConfirmsAppends(t *testing.T) {
@@ -286,13 +313,15 @@ func TestApplyPatch_Rejections(t *testing.T) {
 		reason string
 	}{
 		"invented id":          {inference.Patch{Statements: []inference.Statement{{ID: id("s9"), Name: "x", Text: "y"}}}, everything, "unknown statement id s9"},
-		"edited twice":         {inference.Patch{Statements: []inference.Statement{{ID: id("s1")}, {ID: id("s1")}}}, everything, "used twice s1"},
+		"edited twice":         {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}, {ID: id("s3")}}}, everything, "used twice s3"},
 		"drop of an invented":  {inference.Patch{Drop: []string{"s9"}}, everything, "drop of unknown statement id s9"},
 		"edited and dropped":   {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}}, Drop: []string{"s3"}}, everything, "both edited and dropped"},
 		"PR fact, files there": {inference.Patch{Drop: []string{"s1"}}, everything, "drop of s1, which a pull request taught"},
 		"PR fact, no files":    {inference.Patch{Drop: []string{"s4"}}, inTree(), "drop of s4"},
 		"confirm invented":     {inference.Patch{Confirmed: []string{"s7"}}, everything, "confirmation of unknown statement id s7"},
 		"confirmed and gone":   {inference.Patch{Drop: []string{"s3"}, Confirmed: []string{"s3"}}, everything, "both confirmed and dropped"},
+		"PR fact edited off its file": {inference.Patch{Statements: []inference.Statement{{ID: id("s1"), Kind: "component", Name: "Auth",
+			Text: "Moved.", Files: []string{"elsewhere.go"}}}}, everything, "edit of s1, which a pull request taught, drops its file auth/login.go"},
 	} {
 		if _, reason := ApplyPatch(page(), c.p, c.exists); !strings.Contains(reason, c.reason) {
 			t.Errorf("%s: reason = %q, want %q", name, reason, c.reason)
@@ -301,5 +330,23 @@ func TestApplyPatch_Rejections(t *testing.T) {
 	a, reason := ApplyPatch(page(), inference.Patch{Drop: []string{"s1"}}, inTree("jobs/retry.go"))
 	if reason != "" || len(a.Statements) != 3 {
 		t.Errorf("PR fact whose files are gone: reason %q, %d statements, want it dropped", reason, len(a.Statements))
+	}
+	// An edit may add files and correct the text, keeping the ones the tree
+	// has, however spelled; a file that left the tree may go.
+	kept := inference.Patch{Statements: []inference.Statement{{ID: id("s1"), Kind: "component", Name: "Auth", Text: "Login, two steps.",
+		Files: []string{"./auth/login.go", "auth/otp.go"}}}}
+	if _, reason := ApplyPatch(page(), kept, everything); reason != "" {
+		t.Errorf("edit keeping the file: %s", reason)
+	}
+	moved := inference.Patch{Statements: []inference.Statement{{ID: id("s2"), Kind: "rule", Name: "Retry", Text: "Moved.",
+		Files: []string{"jobs/backoff.go"}}}}
+	if _, reason := ApplyPatch(page(), moved, inTree("auth/login.go")); reason != "" {
+		t.Errorf("edit away from a file that left the tree: %s", reason)
+	}
+	// A statement whose file is named as its directory still rests on code.
+	dir := page()
+	dir[0].Files = []string{"auth/"}
+	if _, reason := ApplyPatch(dir, inference.Patch{Drop: []string{"s1"}}, everything); !strings.Contains(reason, "drop of s1") {
+		t.Errorf("drop of a PR fact named by its directory: reason %q", reason)
 	}
 }

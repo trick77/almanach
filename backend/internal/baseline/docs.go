@@ -17,6 +17,10 @@ func docRank(p string) int {
 	base := strings.ToLower(path.Base(p))
 	depth := strings.Count(p, "/")
 	stem := strings.TrimSuffix(base, path.Ext(base))
+	// A named doc is prose: design.go or Configuration.java are code.
+	if !docText(base) && path.Ext(base) != "" {
+		stem = ""
+	}
 	switch {
 	case depth == 0 && stem == "readme":
 		return 0
