@@ -210,7 +210,7 @@
 </div><figcaption>No new goroutine and no second writer. The poller only enqueues (a row in <code>baseline_runs</code>) and wakes the worker; the worker runs one step at a time between notes, reads the clone under the poller's disk lock for the read only (never across a model call), and writes revisions through the same <code>attach</code>/<code>check</code>/<code>InsertRevision</code> path the notes use. The API's describe button is another enqueue.</figcaption></figure>
 
 <h2 id="run">3. A run, step by step</h2>
-<p>A <b>run</b> documents one repository at one commit, pinned when the run is enqueued. Each step is at most one model call, so a step is the unit the worker interleaves with notes, retries after a gateway hold, and resumes after a restart. A full run on a mid-sized repository is about eight calls; the cap is <code>ALMANACH_BASELINE_MAX_CALLS</code>.</p>
+<p>A <b>run</b> documents one repository at one commit, pinned when the run starts (the clone's head then). Each step is at most one model call, so a step is the unit the worker interleaves with notes, retries after a gateway hold, and resumes after a restart. A full run on a mid-sized repository is about eight calls; the cap is <code>ALMANACH_BASELINE_MAX_CALLS</code>.</p>
 
 <h3>Step 0: list the tree (no call)</h3>
 <ul>
@@ -280,7 +280,7 @@
   <!-- states -->
   <circle cx="32" cy="120" r="6" fill="#faf9f5"/>
   <rect x="64" y="92" width="104" height="56" rx="8" fill="#1b1b1a" stroke="#9c9a92" stroke-width="1"/>
-  <text class="nname" x="116" y="118" text-anchor="middle">queued</text><text class="nsub" x="116" y="133" text-anchor="middle">commit pinned</text>
+  <text class="nname" x="116" y="118" text-anchor="middle">queued</text><text class="nsub" x="116" y="133" text-anchor="middle">holds no note</text>
   <rect x="240" y="92" width="128" height="56" rx="8" fill="#1b1b1a" stroke="#9c9a92" stroke-width="1"/>
   <text class="nname" x="304" y="118" text-anchor="middle">cataloguing</text><text class="nsub" x="304" y="133" text-anchor="middle">cheap model</text>
   <rect x="440" y="92" width="136" height="56" rx="8" fill="rgba(217,119,87,.10)" stroke="#d97757" stroke-width="1.2"/>
@@ -324,7 +324,7 @@
 <p>PR notes and clones meet on one key, <code>(project_key, slug)</code>. The rule that keeps the two from fighting is simple: <b>a repository exists for Almanach once it is a source repository, and only from then on are noergler's deltas folded</b>. The baseline describes it as it stands; the notes refine that.</p>
 <ol>
   <li><b>No source repository, no note.</b> A delivery whose <code>(project_key, repo_slug)</code> names no row in <code>source_repos</code> is answered 202 <code>{"status":"ignored"}</code> and logged as <code>webhook_processed outcome=ignored</code> with project and repository, so a misspelled key shows up in the log. Nothing is stored: not the delivery, not the note, not the structure. The envelope is still checked first (a bad body is a 422 as before), and noergler marks a 2xx as sent, so an ignored note is never resent.</li>
-  <li><b>A repository's notes wait while one of its runs is open.</b> The worker takes the oldest queued note whose repository has no queued or running run (D6). A note that arrives during a run stays queued until the run is done.</li>
+  <li><b>A repository's notes wait while its run is running.</b> A run pins its commit when it starts. From then until it is done the worker skips that repository's notes (D6); a note that arrives meanwhile stays queued. A run still queued holds nothing, so a long queue of runs never holds the notes for hours, and a note folded before the run starts is older than the code the run will read.</li>
   <li><b>After a run, every waiting note is folded.</b> Even one whose PR the run's commit already contains: a note carries what the code cannot show (the rule's reason, the ticket, the intent the review saw), and the PR data is never dropped. Folding a fact the page already holds is an identical rewrite, no revision; it costs one call per waiting note.</li>
   <li><b>No run open, no wait.</b> A note for a repository whose clone is still on its way, or whose source has <code>auto_describe</code> off and was never described, folds onto the page as it is. The first run later folds into that page (D1).</li>
 </ol>
@@ -401,7 +401,7 @@
 <p><b>Cost:</b> one call per run, and N repositories described in a row rewrite the project page N times. It is a small call (summaries, not code), and serial, so the N folds do not race.</p></div>
 
 <div class="decision"><span class="tag">D6 · Notes first, except their own repository's run</span>
-<p><b>Recommend</b> the worker takes the oldest queued note whose repository has no open run; when there is none, one step of the oldest open run; then it looks at the notes again. A note of a repository with an open run waits for it and is folded after it (section 5a). Runs among themselves: oldest first, one run to its end before the next starts, so pages are not left half described across many repositories.</p>
+<p><b>Recommend</b> the worker takes the oldest queued note whose repository has no running run; when there is none, one step of the oldest open run; then it looks at the notes again. A note of a repository whose run is running waits for it and is folded after it (section 5a). Runs among themselves: oldest first, one run to its end before the next starts, so pages are not left half described across many repositories.</p>
 <p><b>Options:</b> this order (recommended), or strict oldest first across notes and steps, where a burst of 60 first runs (about 8 calls and several minutes each) holds every merge's note back for an hour or more.</p>
 <p><b>Cost:</b> it bends "oldest first" for the queue as a whole; AGENTS.md and HOW_IT_WORKS change their wording with it. A note is a small, timely delta; a run is minutes of calls, and 60 queued runs would otherwise hold every merge's note back for an hour. Serial still holds: one fold or step at a time, each reading the current page, and no step ever sees a fact newer than its commit.</p></div>
 
@@ -510,7 +510,7 @@ CREATE TABLE baseline_runs (
     mode TEXT NOT NULL CHECK (mode IN ('full', 'reconcile')),
     trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'first_ready', 'monthly')),
     base_commit TEXT NOT NULL DEFAULT '',        -- reconcile: the documented commit
-    commit TEXT NOT NULL,                         -- pinned at enqueue
+    commit TEXT NOT NULL,                         -- pinned when the run starts
     state TEXT NOT NULL CHECK (state IN ('queued', 'cataloguing', 'describing', 'project', 'done', 'failed')),
     step INTEGER NOT NULL DEFAULT 0,
     steps INTEGER NOT NULL DEFAULT 0,

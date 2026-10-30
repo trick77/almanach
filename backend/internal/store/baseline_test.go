@@ -60,9 +60,27 @@ func TestEnqueueRun_OneOpenPerRepository(t *testing.T) {
 	if _, err := s.EnqueueRun(ctx, "tools", "nope", RunFull, TriggerManual, "", "beef"); !errors.Is(err, ErrNoRepo) {
 		t.Fatalf("unknown repository: err = %v, want ErrNoRepo", err)
 	}
-	finish(t, s, r, RunFailed)
+	failed := finish(t, s, r, RunFailed)
 	if _, err := s.EnqueueRun(ctx, "tools", "svc", RunFull, TriggerManual, "", "beef"); err != nil {
 		t.Fatalf("after the run failed: %v", err)
+	}
+	// A run that is over is never written again, so a stale copy cannot
+	// reopen it beside the new one.
+	failed.State = RunDescribing
+	if ok, err := s.SaveRun(ctx, failed); err != nil || ok {
+		t.Fatalf("SaveRun of a failed run: ok=%v err=%v, want nothing written", ok, err)
+	}
+	if got, _, _ := s.RunByID(ctx, failed.ID); got.State != RunFailed {
+		t.Fatalf("failed run state = %s, want failed kept", got.State)
+	}
+}
+
+// A reconcile reads from the documented commit: without one it is refused.
+func TestEnqueueRun_ReconcileNeedsABase(t *testing.T) {
+	s := testStore(t)
+	sourceRepo(t, s, "tools", "svc")
+	if _, err := s.EnqueueRun(context.Background(), "tools", "svc", RunReconcile, TriggerMonthly, "", "beef"); err == nil {
+		t.Fatal("a reconcile without a base commit was queued")
 	}
 }
 
@@ -82,7 +100,7 @@ func TestNextRun_StartedBeforeQueued(t *testing.T) {
 		t.Fatalf("both queued: next=%d ok=%v err=%v, want the older %d", next.ID, ok, err, a.ID)
 	}
 	now := time.Now().UTC()
-	b.State, b.StartedAt, b.Step, b.Steps = RunDescribing, &now, 2, 5
+	b.State, b.StartedAt, b.Step, b.Steps, b.Commit = RunDescribing, &now, 2, 5, "pinned"
 	b.Plan = json.RawMessage(`{"subjects":[]}`)
 	if ok, err := s.SaveRun(ctx, b); err != nil || !ok {
 		t.Fatalf("SaveRun: ok=%v err=%v", ok, err)
@@ -91,8 +109,8 @@ func TestNextRun_StartedBeforeQueued(t *testing.T) {
 	if err != nil || !ok || next.ID != b.ID {
 		t.Fatalf("b started: next=%d ok=%v err=%v, want %d", next.ID, ok, err, b.ID)
 	}
-	if next.Step != 2 || next.Steps != 5 || next.StartedAt == nil || string(next.Plan) != `{"subjects": []}` {
-		t.Fatalf("saved progress = step %d/%d started %v plan %s", next.Step, next.Steps, next.StartedAt, next.Plan)
+	if next.Step != 2 || next.Steps != 5 || next.StartedAt == nil || next.Commit != "pinned" || string(next.Plan) != `{"subjects": []}` {
+		t.Fatalf("saved progress = step %d/%d started %v commit %s plan %s", next.Step, next.Steps, next.StartedAt, next.Commit, next.Plan)
 	}
 	finish(t, s, next, RunDone)
 	finish(t, s, a, RunDone)
@@ -166,6 +184,14 @@ func TestApplyBaselineStep_RevisionAndProgressTogether(t *testing.T) {
 	if err := s.pool.QueryRow(ctx, `SELECT baseline_run_id FROM revisions`).Scan(&runID); err != nil || runID == nil || *runID != r.ID {
 		t.Fatalf("baseline_run_id = %v err=%v, want %d", runID, err, r.ID)
 	}
+	// The page's history reads a revision without a PR key.
+	revs, err := s.Revisions(ctx, ScopeRepository, "tools", "svc", 10)
+	if err != nil || len(revs) != 1 {
+		t.Fatalf("Revisions = %+v %v", revs, err)
+	}
+	if rv := revs[0]; rv.SourceKind != FromBaseline || rv.SourceCommit != "c0ffee" || rv.SourcePR != "" || rv.Statements != 1 {
+		t.Fatalf("revision row = %+v", rv)
+	}
 }
 
 // Exactly one of the PR key and the commit names a revision's source.
@@ -191,16 +217,23 @@ func TestInsertRevision_SourceKindChecks(t *testing.T) {
 	}
 }
 
-// A note of a repository with an open run waits for the run; notes of
-// other repositories do not.
-func TestNextQueued_WaitsForTheRepositorysOpenRun(t *testing.T) {
+// A note of a repository whose run has started waits for the run; a run
+// still queued holds nothing, nor do runs of other repositories.
+func TestNextQueued_WaitsForTheRepositorysStartedRun(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	ingest(t, s, noteFor("PRJ", "svc", 1))
 	sourceRepo(t, s, "PRJ", "svc")
 	r := enqueue(t, s, "PRJ", "svc")
+	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 1 {
+		t.Fatalf("queued run: pr=%d ok=%v err=%v, want the note handed out", q.PRID, ok, err)
+	}
+	r.State = RunCataloguing
+	if ok, err := s.SaveRun(ctx, r); err != nil || !ok {
+		t.Fatalf("SaveRun: ok=%v err=%v", ok, err)
+	}
 	if _, ok, err := s.NextQueued(ctx); err != nil || ok {
-		t.Fatalf("open run: ok=%v err=%v, want the note held", ok, err)
+		t.Fatalf("started run: ok=%v err=%v, want the note held", ok, err)
 	}
 	ingest(t, s, noteFor("PRJ", "other", 2))
 	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 2 {
@@ -226,6 +259,7 @@ func TestSourceRuns_LastDocumentedAndCost(t *testing.T) {
 		t.Fatalf("no runs: %v %v", runs, err)
 	}
 	done := finish(t, s, enqueue(t, s, "tools", "a"), RunDone)
+	// The newest run's calls: priced but one, summed over the priced.
 	failed := finish(t, s, enqueue(t, s, "tools", "a"), RunFailed)
 	for _, cost := range []*int64{i64(1_000_000), nil, i64(2_500_000)} {
 		if _, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "tools", RepoSlug: "a", SourceKind: FromBaseline, SourceCommit: "c0ffee",
@@ -245,12 +279,6 @@ func TestSourceRuns_LastDocumentedAndCost(t *testing.T) {
 	}
 	if b.Last.ID != open.ID || b.Documented != "" || b.DocumentedAt != nil || b.LastCost != nil {
 		t.Fatalf("b = last %d documented %q cost %v", b.Last.ID, b.Documented, b.LastCost)
-	}
-	if cost, err := s.RunCost(ctx, failed.ID); err != nil || cost == nil || *cost != 3_500_000 {
-		t.Fatalf("RunCost = %v %v", cost, err)
-	}
-	if cost, err := s.RunCost(ctx, done.ID); err != nil || cost != nil {
-		t.Fatalf("RunCost of an unpriced run = %v %v, want nil", cost, err)
 	}
 	if last, ok, err := s.LastRun(ctx, "tools", "a"); err != nil || !ok || last.ID != failed.ID {
 		t.Fatalf("LastRun = %d %v %v", last.ID, ok, err)

@@ -84,8 +84,10 @@ type QueuedNote struct {
 }
 
 // NextQueued is the oldest note not yet consolidated, ok false when none. A
-// note of a repository with an open baseline run waits for the run: no step
-// may read a page holding facts newer than the commit it is shown.
+// note of a repository whose baseline run has started waits for the run:
+// the run pins its commit when it starts, and no step may read a page
+// holding facts newer than that commit. A run still queued holds nothing; a
+// long queue of runs must not hold the notes for hours.
 func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 	var q QueuedNote
 	var bugfix, note []byte
@@ -97,7 +99,7 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 		       run_id, model_label, issues_posted, suggestions_posted, received_at
 		  FROM notes n WHERE consolidated_at IS NULL
 		   AND NOT EXISTS (SELECT 1 FROM baseline_runs b WHERE b.project_key = n.project_key AND b.slug = n.repo_slug
-		                      AND b.state NOT IN ('done', 'failed'))
+		                      AND b.state NOT IN ('queued', 'done', 'failed'))
 		 ORDER BY received_at, pr_id LIMIT 1`).Scan(
 		&q.ProjectKey, &q.RepoSlug, &q.PRID, &q.Team, &q.PRKey, &q.PRTitle, &ticket, &issueType, &kind,
 		&bugfix, &area, &comp, &note, &reviewed, &q.SourceCommit, &merge, &q.MergedAt,

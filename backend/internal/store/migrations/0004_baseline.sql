@@ -1,15 +1,17 @@
 -- The baseline: Almanach reads a cloned repository at a commit and writes
 -- the description it should have had from the start; the PR notes refine it
 -- from then on. A run documents one repository at one commit, pinned when
--- it is queued, one model call per step, so the worker can interleave steps
--- with notes, hold after a gateway failure and resume after a restart.
+-- the run starts, one model call per step, so the worker can interleave
+-- steps with notes, hold after a gateway failure and resume after a
+-- restart.
 
 -- auto_describe: the first run on a clone's first ready and the monthly
 -- reconcile happen on their own; off, only the buttons start a run.
 ALTER TABLE sources ADD COLUMN auto_describe BOOLEAN NOT NULL DEFAULT true;
 
 -- mode: full reads the repository with a fresh catalogue, reconcile reads
--- what changed since base_commit (the documented commit). plan is the
+-- what changed since base_commit (the documented commit). commit is the
+-- head when the run was queued until the run starts and pins it. plan is the
 -- catalogue: the subjects with their files and sizes. attempts counts the
 -- gateway failures of the current step; calls and bytes are what the run
 -- spent against its caps; skipped counts the subjects it could not fold.
@@ -33,7 +35,8 @@ CREATE TABLE baseline_runs (
     queued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
-    FOREIGN KEY (project_key, slug) REFERENCES source_repos (project_key, slug) ON DELETE CASCADE
+    FOREIGN KEY (project_key, slug) REFERENCES source_repos (project_key, slug) ON DELETE CASCADE,
+    CHECK (mode = 'full' OR base_commit <> '')
 );
 -- One open run per repository: a second click is a conflict, not a second
 -- writer of the same page.

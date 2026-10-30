@@ -69,11 +69,14 @@ func (r BaselineRun) Open() bool { return r.State != RunDone && r.State != RunFa
 const runColumns = `id, project_key, slug, mode, trigger, base_commit, commit, state, step, steps, plan,
 	attempts, calls, bytes, skipped, error, queued_at, started_at, finished_at`
 
-func scanRun(row pgx.Row) (BaselineRun, error) {
+// scanRun reads runColumns, then extra destinations for whatever a query
+// selects after them.
+func scanRun(row pgx.Row, extra ...any) (BaselineRun, error) {
 	var r BaselineRun
 	var plan []byte
-	err := row.Scan(&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
-		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, &r.QueuedAt, &r.StartedAt, &r.FinishedAt)
+	dest := append([]any{&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
+		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, &r.QueuedAt, &r.StartedAt, &r.FinishedAt}, extra...)
+	err := row.Scan(dest...)
 	if len(plan) > 0 {
 		r.Plan = json.RawMessage(plan)
 	}
@@ -135,8 +138,10 @@ func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRu
 		WHERE project_key = $1 AND slug = $2 AND state = 'done' ORDER BY id DESC LIMIT 1`, key, slug)
 }
 
-// SaveRun writes a run's progress: state, step, plan, counters, error and
-// times. Reports false when the run is gone, its repository removed.
+// SaveRun writes a run's progress: the commit it pinned, state, step, plan,
+// counters, error and times. A run that is over is never written again:
+// reports false when the run is done, failed or gone (its repository
+// removed), and writes nothing.
 func (s *Store) SaveRun(ctx context.Context, r BaselineRun) (bool, error) {
 	return saveRun(ctx, s.pool, r)
 }
@@ -152,9 +157,9 @@ func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 	}
 	tag, err := db.Exec(ctx, `
 		UPDATE baseline_runs SET state = $2, step = $3, steps = $4, plan = $5, attempts = $6, calls = $7, bytes = $8,
-		       skipped = $9, error = $10, started_at = $11, finished_at = $12
-		 WHERE id = $1`,
-		r.ID, r.State, r.Step, r.Steps, plan, r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error, r.StartedAt, r.FinishedAt)
+		       skipped = $9, error = $10, started_at = $11, finished_at = $12, commit = $13
+		 WHERE id = $1 AND state NOT IN ('done', 'failed')`,
+		r.ID, r.State, r.Step, r.Steps, plan, r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error, r.StartedAt, r.FinishedAt, r.Commit)
 	if err != nil {
 		return false, err
 	}
@@ -164,7 +169,7 @@ func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 // ApplyBaselineStep writes a step's revision and the run's progress in one
 // transaction: a crash between the two would fold the same subject twice
 // after the restart. Returns the revision number; ok false, and nothing
-// written, when the run is gone.
+// written, when the run is over or gone.
 func (s *Store) ApplyBaselineStep(ctx context.Context, rev NewRevision, r BaselineRun) (int, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -182,16 +187,9 @@ func (s *Store) ApplyBaselineStep(ctx context.Context, rev NewRevision, r Baseli
 	return n, true, tx.Commit(ctx)
 }
 
-// RunCost sums what the gateway priced of a run's calls; nil when it priced
-// none of them.
-func (s *Store) RunCost(ctx context.Context, runID int64) (*int64, error) {
-	var cost *int64
-	err := s.pool.QueryRow(ctx, `SELECT SUM(cost_nano_usd) FROM llm_calls WHERE baseline_run_id = $1`, runID).Scan(&cost)
-	return cost, err
-}
-
 // RepoRuns is what the source page shows of one repository's runs: the
-// newest run and the commit last documented.
+// newest run, what the gateway priced of its calls (nil when it priced
+// none) and the commit last documented.
 type RepoRuns struct {
 	Last         BaselineRun
 	LastCost     *int64
@@ -217,19 +215,13 @@ func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns
 	out := map[string]RepoRuns{}
 	for rows.Next() {
 		var rr RepoRuns
-		var plan []byte
 		var documented *string
-		r := &rr.Last
-		if err := rows.Scan(&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
-			&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, &r.QueuedAt, &r.StartedAt, &r.FinishedAt,
-			&rr.LastCost, &documented, &rr.DocumentedAt); err != nil {
+		last, err := scanRun(rows, &rr.LastCost, &documented, &rr.DocumentedAt)
+		if err != nil {
 			return nil, err
 		}
-		if len(plan) > 0 {
-			r.Plan = json.RawMessage(plan)
-		}
-		rr.Documented = deref(documented)
-		out[r.Slug] = rr
+		rr.Last, rr.Documented = last, deref(documented)
+		out[last.Slug] = rr
 	}
 	return out, rows.Err()
 }
