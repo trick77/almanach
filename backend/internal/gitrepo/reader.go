@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -20,8 +21,9 @@ import (
 //
 // It is for a step that reads its files and ends: the process holds the
 // object store open, so a Reader is closed when the step is over and never
-// kept. The context given to NewReader bounds every read; ending it kills
-// the process. Reads are answered one at a time.
+// kept. The context given to NewReader is the only bound on a read: ending
+// it kills the process, which ends a read blocked on the stream. Reads are
+// answered one at a time.
 type Reader struct {
 	c   *Client
 	ctx context.Context
@@ -76,7 +78,7 @@ func (l *lockedBuffer) String() string {
 // Close, or until ctx ends.
 func (c *Client) NewReader(ctx context.Context, dir string) (*Reader, error) {
 	r := &Reader{c: c, ctx: ctx, dir: dir}
-	r.cmd = c.command(ctx, dir, nil, "cat-file", "--batch")
+	r.cmd = c.command(ctx, dir, inRepo(dir), "cat-file", "--batch")
 	r.cmd.Stderr = &r.stderr
 	in, err := r.cmd.StdinPipe()
 	if err != nil {
@@ -95,10 +97,14 @@ func (c *Client) NewReader(ctx context.Context, dir string) (*Reader, error) {
 
 // ReadFile reads one path at one commit, refusing a blob over limit bytes
 // with a *TooLargeError before holding it. Zero means no limit. A path
-// holding a newline is read the slow way and unlimited: it would end the
-// request early and leave every later answer one file out of step.
-func (r *Reader) ReadFile(ctx context.Context, sha, path string, limit int64) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
+// holding a newline is asked of git by argument instead: on the batch's
+// input it would end the request early and leave every later answer one
+// file out of step.
+func (r *Reader) ReadFile(sha, path string, limit int64) ([]byte, error) {
+	if err := checkSHA(sha); err != nil {
+		return nil, err
+	}
+	if err := r.ctx.Err(); err != nil {
 		return nil, fmt.Errorf("read %s at %s: %w", path, ShortSHA(sha), err)
 	}
 	r.mu.Lock()
@@ -109,8 +115,12 @@ func (r *Reader) ReadFile(ctx context.Context, sha, path string, limit int64) ([
 	if r.broken != nil {
 		return nil, fmt.Errorf("read %s at %s: %w", path, ShortSHA(sha), r.broken)
 	}
-	if strings.Contains(sha+path, "\n") {
-		return r.c.showFile(ctx, r.dir, sha, path)
+	if strings.Contains(path, "\n") {
+		body, err := r.c.readByArgument(r.ctx, r.dir, sha+":"+path, limit)
+		if err != nil {
+			return nil, fmt.Errorf("read %s at %s: %w", path, ShortSHA(sha), err)
+		}
+		return body, nil
 	}
 	body, err := r.read(sha+":"+path, limit)
 	if err != nil {
@@ -192,13 +202,31 @@ func (r *Reader) Close() error {
 	return nil
 }
 
-// showFile is the slow way, one `git show` for one path. Unlimited: a size
-// asked of cat-file would meet the same newline. The caller sized the path
-// from the tree listing before it asked, so the limit held there.
-func (c *Client) showFile(ctx context.Context, dir, sha, path string) ([]byte, error) {
-	out, err := c.runIn(ctx, dir, nil, nil, "show", sha+":"+path)
+// readByArgument is the slow way for one object: its type, its size and
+// its bytes asked of cat-file with the object in argv, where a newline is
+// just a byte. Same refusals as the batch: no object, not a file, over the
+// limit.
+func (c *Client) readByArgument(ctx context.Context, dir, object string, limit int64) ([]byte, error) {
+	kind, err := c.run(ctx, dir, inRepo(dir), "cat-file", "-t", object)
 	if err != nil {
-		return nil, fmt.Errorf("read %s at %s: %w", path, ShortSHA(sha), err)
+		if exitCode(err) == 128 {
+			return nil, fmt.Errorf("%w: %w", errNoObject, err)
+		}
+		return nil, err
 	}
-	return out, nil
+	if kind = strings.TrimSpace(kind); kind != "blob" {
+		return nil, fmt.Errorf("not a file at that commit: it is a %s", kind)
+	}
+	sized, err := c.run(ctx, dir, inRepo(dir), "cat-file", "-s", object)
+	if err != nil {
+		return nil, err
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(sized), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("unparseable size %q", strings.TrimSpace(sized))
+	}
+	if limit > 0 && size > limit {
+		return nil, &TooLargeError{Size: size}
+	}
+	return c.runIn(ctx, dir, nil, inRepo(dir), "cat-file", "blob", object)
 }

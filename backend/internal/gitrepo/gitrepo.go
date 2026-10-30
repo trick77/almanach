@@ -204,8 +204,8 @@ func (c *Client) HeadSHA(ctx context.Context, dir, branch string) (string, error
 		if exitCode(err) != 1 {
 			return "", err
 		}
-		if _, checkErr := c.run(ctx, dir, nil, "rev-parse", "--git-dir"); checkErr != nil {
-			return "", fmt.Errorf("repository unreadable: %w", checkErr)
+		if checkErr := c.readable(ctx, dir); checkErr != nil {
+			return "", checkErr
 		}
 	}
 	if sha := strings.TrimSpace(out); sha != "" {
@@ -271,14 +271,26 @@ func (c *Client) runIn(ctx context.Context, dir string, stdin io.Reader, extra [
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.Bytes(), fmt.Errorf("git %s: %w: %s", subcommand(args), err, strings.TrimSpace(Redact(stderr.String())))
+		return stdout.Bytes(), fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(Redact(stderr.String())))
 	}
 	return stdout.Bytes(), nil
 }
 
-// command is one git process in dir, every rule of run applied, not started.
+// readable tells "the thing asked for is absent" from "the clone cannot be
+// read at all": a command that answered no is followed by this probe, so a
+// broken clone is never mistaken for a missing branch or commit.
+func (c *Client) readable(ctx context.Context, dir string) error {
+	if _, err := c.run(ctx, dir, inRepo(dir), "rev-parse", "--git-dir"); err != nil {
+		return fmt.Errorf("repository unreadable: %w", err)
+	}
+	return nil
+}
+
+// command is one git process in dir, every rule of run applied, not
+// started. core.quotePath is off for every command: by default git C-quotes
+// any path with a non-ASCII byte, and the quoted form is no path.
 func (c *Client) command(ctx context.Context, dir string, extra []string, args ...string) *exec.Cmd {
-	full := append([]string{"-c", "safe.directory=" + dir}, args...)
+	full := append([]string{"-c", "safe.directory=" + dir, "-c", "core.quotePath=false"}, args...)
 	cmd := exec.CommandContext(ctx, c.git, full...) //nolint:gosec // argv, no shell; paths come from validated segments
 	cmd.Dir = dir
 	cmd.WaitDelay = waitDelay
@@ -288,19 +300,6 @@ func (c *Client) command(ctx context.Context, dir string, extra []string, args .
 	}
 	cmd.Env = append(cmd.Env, extra...)
 	return cmd
-}
-
-// subcommand names a command in an error: the first argument that is not a
-// -c pair, so "git -c core.quotePath=false diff" reads as diff.
-func subcommand(args []string) string {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-c" {
-			i++
-			continue
-		}
-		return args[i]
-	}
-	return "git"
 }
 
 func exitCode(err error) int {

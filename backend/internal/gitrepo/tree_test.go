@@ -10,10 +10,15 @@ import (
 	"time"
 )
 
+// bigSize is past the reader's 64 KiB buffer, so a refusal and a read both
+// cross refills of the stream.
+const bigSize = 200_000
+
 // history is a bare repository with two commits on main: the first holds a
-// file with an umlaut in its path, an executable, a symlink, a submodule
-// pointer and a file of 3000 bytes; the second edits one file, deletes
-// another and adds a third. Returns the bare path and both commits.
+// file with an umlaut in its path, one with a newline in its name, an
+// executable, a symlink, a submodule pointer and a file of bigSize bytes;
+// the second edits one file, deletes another and adds a third. Returns the
+// bare path and both commits.
 func history(t *testing.T) (dir, first, second string) {
 	t.Helper()
 	base := t.TempDir()
@@ -29,8 +34,9 @@ func history(t *testing.T) (dir, first, second string) {
 		}
 	}
 	write("docs/für.md", "Umlaut\n", 0o600)
+	write("odd\nname.txt", "newline\n", 0o600)
 	write("run.sh", "#!/bin/sh\n", 0o700)
-	write("big.txt", strings.Repeat("x", 3000), 0o600)
+	write("big.txt", strings.Repeat("x", bigSize), 0o600)
 	write("gone.txt", "bye\n", 0o600)
 	if err := os.Symlink("run.sh", filepath.Join(work, "link")); err != nil {
 		t.Fatal(err)
@@ -69,10 +75,13 @@ func TestListEntries_ModesSizesUmlauts(t *testing.T) {
 	if e := got["docs/für.md"]; e.Mode != "100644" || e.Size != 7 || !Indexable(e.Mode) {
 		t.Errorf("umlaut file = %+v, want 100644 of 7 bytes under its own name", e)
 	}
+	if e := got["odd\nname.txt"]; e.Size != 8 {
+		t.Errorf("newline file = %+v, want listed under its own name", e)
+	}
 	if e := got["run.sh"]; e.Mode != "100755" || !Indexable(e.Mode) {
 		t.Errorf("executable = %+v", e)
 	}
-	if e := got["big.txt"]; e.Size != 3000 {
+	if e := got["big.txt"]; e.Size != bigSize {
 		t.Errorf("big.txt size = %d", e.Size)
 	}
 	if e := got["link"]; e.Mode != "120000" || Indexable(e.Mode) {
@@ -134,9 +143,6 @@ func TestAncestryCommitsAndTime(t *testing.T) {
 	if ok, err := c.HasCommit(ctx, dir, missing); err != nil || ok {
 		t.Errorf("HasCommit(missing) = %v %v", ok, err)
 	}
-	if _, err := c.HasCommit(ctx, t.TempDir(), first); err == nil {
-		t.Error("HasCommit in a directory that is no clone succeeded")
-	}
 	at, err := c.CommitTime(ctx, dir, second)
 	if err != nil || at.Location() != time.UTC || time.Since(at) > time.Hour || time.Since(at) < -time.Minute {
 		t.Errorf("CommitTime = %v %v, want about now in UTC", at, err)
@@ -146,33 +152,61 @@ func TestAncestryCommitsAndTime(t *testing.T) {
 	}
 }
 
-func TestReader_ReadsRefusesAndStaysInStep(t *testing.T) {
+// A folder that is no repository fails every read, even inside another
+// repository: git must never walk up to a parent's.
+func TestReads_PinnedToTheClone(t *testing.T) {
 	ctx := context.Background()
 	c := client(t)
 	dir, first, second := history(t)
-	r, err := c.NewReader(ctx, dir)
+	notRepo := filepath.Join(dir, "objects")
+	if _, err := c.HasCommit(ctx, notRepo, first); err == nil {
+		t.Error("HasCommit in a folder that is no repository succeeded")
+	}
+	if _, err := c.ListEntries(ctx, notRepo, first); err == nil {
+		t.Error("ListEntries in a folder that is no repository succeeded")
+	}
+	for name, err := range map[string]error{
+		"ListEntries":    func() error { _, err := c.ListEntries(ctx, dir, "--output=x"); return err }(),
+		"ChangedEntries": func() error { _, err := c.ChangedEntries(ctx, dir, first[:7], second); return err }(),
+		"IsAncestor":     func() error { _, err := c.IsAncestor(ctx, dir, first, "HEAD"); return err }(),
+		"HasCommit":      func() error { _, err := c.HasCommit(ctx, dir, "-v"); return err }(),
+		"CommitTime":     func() error { _, err := c.CommitTime(ctx, dir, ""); return err }(),
+	} {
+		if !errors.Is(err, ErrBadSHA) {
+			t.Errorf("%s with no full commit id: err = %v, want ErrBadSHA", name, err)
+		}
+	}
+}
+
+func TestReader_ReadsRefusesAndStaysInStep(t *testing.T) {
+	c := client(t)
+	dir, first, second := history(t)
+	r, err := c.NewReader(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body, err := r.ReadFile(ctx, second, "docs/für.md", 0); err != nil || string(body) != "Umlaut, edited\n" {
+	if body, err := r.ReadFile(second, "docs/für.md", 0); err != nil || string(body) != "Umlaut, edited\n" {
 		t.Fatalf("read = %q %v", body, err)
 	}
 	var tooLarge *TooLargeError
-	if _, err := r.ReadFile(ctx, first, "big.txt", 1000); !errors.As(err, &tooLarge) || tooLarge.Size != 3000 {
-		t.Fatalf("over the limit: err = %v, want TooLargeError of 3000", err)
+	if _, err := r.ReadFile(first, "big.txt", 1000); !errors.As(err, &tooLarge) || tooLarge.Size != bigSize {
+		t.Fatalf("over the limit: err = %v, want TooLargeError of %d", err, bigSize)
 	}
-	if _, err := r.ReadFile(ctx, first, "docs", 0); err == nil || !strings.Contains(err.Error(), "tree") {
+	if body, err := r.ReadFile(first, "big.txt", 0); err != nil || len(body) != bigSize {
+		t.Fatalf("big read = %d bytes %v", len(body), err)
+	}
+	if _, err := r.ReadFile(first, "docs", 0); err == nil || !strings.Contains(err.Error(), "tree") {
 		t.Fatalf("a directory: err = %v, want refused as a tree", err)
 	}
-	if _, err := r.ReadFile(ctx, second, "gone.txt", 0); !errors.Is(err, errNoObject) {
+	if _, err := r.ReadFile(second, "gone.txt", 0); !errors.Is(err, errNoObject) {
 		t.Fatalf("a deleted path: err = %v, want no such object", err)
 	}
-	// Every refusal consumed its answer: the next read is still this file's.
-	if body, err := r.ReadFile(ctx, first, "run.sh", 100); err != nil || string(body) != "#!/bin/sh\n" {
-		t.Fatalf("after the refusals = %q %v", body, err)
+	if _, err := r.ReadFile("HEAD", "run.sh", 0); !errors.Is(err, ErrBadSHA) {
+		t.Fatalf("a ref for a commit: err = %v, want ErrBadSHA", err)
 	}
-	if _, err := r.ReadFile(ctx, first, "no\nsuch", 0); err == nil {
-		t.Fatal("a newline path that does not exist was read")
+	// Every refusal consumed its answer: the next read is still this file's.
+	if body, err := r.ReadFile(first, "run.sh", 100); err != nil || string(body) != "#!/bin/sh\n" {
+		t.Fatalf("after the refusals = %q %v", body, err)
 	}
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
@@ -180,8 +214,35 @@ func TestReader_ReadsRefusesAndStaysInStep(t *testing.T) {
 	if err := r.Close(); err != nil {
 		t.Fatalf("second close: %v", err)
 	}
-	if _, err := r.ReadFile(ctx, first, "run.sh", 0); err == nil || !strings.Contains(err.Error(), "closed") {
+	if _, err := r.ReadFile(first, "run.sh", 0); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("read after close: err = %v", err)
+	}
+}
+
+// A newline in a path is asked by argument, with the batch's refusals.
+func TestReader_NewlinePathByArgument(t *testing.T) {
+	c := client(t)
+	dir, first, second := history(t)
+	r, err := c.NewReader(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if body, err := r.ReadFile(first, "odd\nname.txt", 0); err != nil || string(body) != "newline\n" {
+		t.Fatalf("newline path = %q %v", body, err)
+	}
+	var tooLarge *TooLargeError
+	if _, err := r.ReadFile(first, "odd\nname.txt", 3); !errors.As(err, &tooLarge) || tooLarge.Size != 8 {
+		t.Fatalf("newline path over the limit: err = %v", err)
+	}
+	if _, err := r.ReadFile(second, "no\nsuch", 0); !errors.Is(err, errNoObject) {
+		t.Fatalf("missing newline path: err = %v, want no such object", err)
+	}
+	if body, err := r.ReadFile(first, "run.sh", 0); err != nil || string(body) != "#!/bin/sh\n" {
+		t.Fatalf("batch after the slow way = %q %v", body, err)
+	}
+	if _, err := c.readByArgument(context.Background(), dir, first+":docs", 0); err == nil || !strings.Contains(err.Error(), "tree") {
+		t.Fatalf("a directory by argument: err = %v, want refused as a tree", err)
 	}
 }
 
@@ -194,11 +255,11 @@ func TestReader_CancelledStepBreaksIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = r.Close() }()
-	if _, err := r.ReadFile(ctx, first, "run.sh", 0); err != nil {
+	if _, err := r.ReadFile(first, "run.sh", 0); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
-	if _, err := r.ReadFile(ctx, first, "run.sh", 0); !errors.Is(err, context.Canceled) {
+	if _, err := r.ReadFile(first, "run.sh", 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("read on a cancelled step: err = %v", err)
 	}
 	// A read that reaches the dead process marks the reader broken, once and
@@ -206,20 +267,8 @@ func TestReader_CancelledStepBreaksIt(t *testing.T) {
 	if _, err := r.read(first+":run.sh", 0); !errors.Is(err, ErrReaderBroken) {
 		t.Fatalf("read past the kill: err = %v, want ErrReaderBroken", err)
 	}
-	if _, err := r.ReadFile(context.Background(), first, "run.sh", 0); !errors.Is(err, ErrReaderBroken) {
+	r.ctx = context.Background()
+	if _, err := r.ReadFile(first, "run.sh", 0); !errors.Is(err, ErrReaderBroken) {
 		t.Fatalf("after breaking: err = %v, want ErrReaderBroken", err)
-	}
-}
-
-func TestSubcommand_SkipsConfigPairs(t *testing.T) {
-	for args, want := range map[string]string{
-		"diff":                         "diff",
-		"-c core.quotePath=false diff": "diff",
-		"-c a=b -c c=d ls-tree":        "ls-tree",
-		"-c":                           "git",
-	} {
-		if got := subcommand(strings.Fields(args)); got != want {
-			t.Errorf("subcommand(%q) = %q, want %q", args, got, want)
-		}
 	}
 }

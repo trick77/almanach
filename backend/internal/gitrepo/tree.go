@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,9 +12,11 @@ import (
 
 // The reads a baseline run makes of a clone, all at a commit of the object
 // store, after ../rongo's package: the tree with modes and sizes, what
-// changed between two commits, ancestry, a commit's time. core.quotePath is
-// off everywhere: by default git C-quotes any path with a non-ASCII byte,
-// and the quoted form is no path, so every umlaut file would drop out.
+// changed between two commits, ancestry, a commit's time. Plumbing only: a
+// porcelain command's output follows the host's git config (a signature
+// shown, a pager, a diff driver), plumbing's does not. Every read pins the
+// repository with GIT_DIR: a clone folder that is no repository must fail,
+// never send git up the parents to another one.
 
 // Entry is one path at a commit (or in a diff, at the newer commit).
 type Entry struct {
@@ -34,9 +37,30 @@ func Indexable(mode string) bool {
 	return mode == "100644" || mode == "100755"
 }
 
+// ErrBadSHA is a commit id that is no full hex object id. Checked before
+// it reaches argv: a value starting with "-" would be read as an option.
+var ErrBadSHA = errors.New("not a full commit id")
+
+var fullSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+func checkSHA(shas ...string) error {
+	for _, s := range shas {
+		if !fullSHA.MatchString(s) {
+			return fmt.Errorf("%q: %w", s, ErrBadSHA)
+		}
+	}
+	return nil
+}
+
+// inRepo is the environment that pins a read to the clone at dir.
+func inRepo(dir string) []string { return []string{"GIT_DIR=" + dir} }
+
 // ListEntries lists every tracked entry at a commit with its mode and size.
 func (c *Client) ListEntries(ctx context.Context, dir, sha string) ([]Entry, error) {
-	out, err := c.run(ctx, dir, nil, "-c", "core.quotePath=false", "ls-tree", "-z", "-r", "-l", sha)
+	if err := checkSHA(sha); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, dir, inRepo(dir), "ls-tree", "-z", "-r", "-l", sha)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +73,13 @@ func (c *Client) ListEntries(ctx context.Context, dir, sha string) ([]Entry, err
 		if !ok || len(fields) != 4 {
 			return nil, fmt.Errorf("unparseable tree record %q", line)
 		}
-		size, _ := strconv.ParseInt(fields[3], 10, 64)
+		var size int64
+		if fields[3] != "-" {
+			size, err = strconv.ParseInt(fields[3], 10, 64)
+			if err != nil || size < 0 {
+				return nil, fmt.Errorf("unparseable size in tree record %q", line)
+			}
+		}
 		entries = append(entries, Entry{Path: path, Mode: fields[0], Size: size})
 	}
 	return entries, nil
@@ -58,12 +88,12 @@ func (c *Client) ListEntries(ctx context.Context, dir, sha string) ([]Entry, err
 // ChangedEntries is what differs between two commits, each path with
 // whether the newer commit still has it, its mode and its size there.
 // --no-renames: a rename is a delete and an add, so the old path is named
-// too. --raw carries the modes; the sizes come from one cat-file by the
-// full object id (an abbreviation is a revision to cat-file, where a ref of
-// that name would win).
+// too. The sizes come from one cat-file by the full object id.
 func (c *Client) ChangedEntries(ctx context.Context, dir, fromSHA, toSHA string) ([]Entry, error) {
-	out, err := c.run(ctx, dir, nil, "-c", "core.quotePath=false",
-		"diff", "-z", "--raw", "--no-renames", "--no-abbrev", fromSHA+".."+toSHA)
+	if err := checkSHA(fromSHA, toSHA); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, dir, inRepo(dir), "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", fromSHA, toSHA)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +125,7 @@ func (c *Client) ChangedEntries(ctx context.Context, dir, fromSHA, toSHA string)
 	if len(blobs) == 0 {
 		return changes, nil
 	}
-	sized, err := c.runIn(ctx, dir, strings.NewReader(oids.String()), nil, "cat-file", "--batch-check")
+	sized, err := c.runIn(ctx, dir, strings.NewReader(oids.String()), inRepo(dir), "cat-file", "--batch-check")
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +147,10 @@ func (c *Client) ChangedEntries(ctx context.Context, dir, fromSHA, toSHA string)
 // is "no"; anything else (128: a missing object) is an error the caller
 // must not read as "diverged".
 func (c *Client) IsAncestor(ctx context.Context, dir, ancestor, descendant string) (bool, error) {
-	_, err := c.run(ctx, dir, nil, "merge-base", "--is-ancestor", ancestor, descendant)
+	if err := checkSHA(ancestor, descendant); err != nil {
+		return false, err
+	}
+	_, err := c.run(ctx, dir, inRepo(dir), "merge-base", "--is-ancestor", ancestor, descendant)
 	if err == nil {
 		return true, nil
 	}
@@ -128,34 +161,51 @@ func (c *Client) IsAncestor(ctx context.Context, dir, ancestor, descendant strin
 }
 
 // HasCommit reports whether the clone holds sha as a commit: a documented
-// commit of a rewritten branch may be gone after a prune.
+// commit of a rewritten branch may be gone after a prune. --verify --quiet
+// exits 1 with no output when the commit is simply absent; anything else,
+// a corrupt pack included, is an error, never "absent".
 func (c *Client) HasCommit(ctx context.Context, dir, sha string) (bool, error) {
-	_, err := c.run(ctx, dir, nil, "cat-file", "-e", sha+"^{commit}")
+	if err := checkSHA(sha); err != nil {
+		return false, err
+	}
+	_, err := c.run(ctx, dir, inRepo(dir), "rev-parse", "--verify", "--quiet", sha+"^{commit}")
 	if err == nil {
 		return true, nil
 	}
-	if exitCode(err) == 128 || exitCode(err) == 1 {
-		// "Not a valid object name": absent, not broken. A clone that
-		// cannot be read at all fails the next command loudly.
-		if _, checkErr := c.run(ctx, dir, nil, "rev-parse", "--git-dir"); checkErr != nil {
-			return false, fmt.Errorf("repository unreadable: %w", checkErr)
-		}
-		return false, nil
+	if exitCode(err) != 1 {
+		return false, err
 	}
-	return false, err
+	if checkErr := c.readable(ctx, dir); checkErr != nil {
+		return false, checkErr
+	}
+	return false, nil
 }
 
-// CommitTime is a commit's committer time, UTC.
+// CommitTime is a commit's committer time, UTC, read from the commit
+// object itself.
 func (c *Client) CommitTime(ctx context.Context, dir, sha string) (time.Time, error) {
-	out, err := c.run(ctx, dir, nil, "show", "-s", "--format=%ct", sha+"^{commit}")
+	if err := checkSHA(sha); err != nil {
+		return time.Time{}, err
+	}
+	out, err := c.run(ctx, dir, inRepo(dir), "cat-file", "commit", sha)
 	if err != nil {
 		return time.Time{}, err
 	}
-	secs, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("commit time of %s: %q", ShortSHA(sha), strings.TrimSpace(out))
+	// "committer <name> <<email>> <unix seconds> <zone>" in the header,
+	// which ends at the first blank line.
+	header, _, _ := strings.Cut(out, "\n\n")
+	for _, line := range strings.Split(header, "\n") {
+		if !strings.HasPrefix(line, "committer ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			if secs, err := strconv.ParseInt(fields[len(fields)-2], 10, 64); err == nil {
+				return time.Unix(secs, 0).UTC(), nil
+			}
+		}
 	}
-	return time.Unix(secs, 0).UTC(), nil
+	return time.Time{}, fmt.Errorf("commit %s has no readable committer line", ShortSHA(sha))
 }
 
 // errNoObject is git saying the request names nothing it can read.
