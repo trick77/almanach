@@ -8,8 +8,10 @@ the decisions behind it.
 
 ## Architecture overview
 
-Almanach is one Go process and one PostgreSQL database. Nothing else is
-needed, nothing else is called except the LLM gateway.
+Almanach is one Go process and one PostgreSQL database. The wiki feed calls
+nothing but the LLM gateway; the sources feature (section 4a) reaches a
+Bitbucket project's repository listing and git remotes with the operator's
+token, and nothing else.
 
 ```
   noergler ──POST /webhooks/noergler (bearer)──▶ ┌──────────────────────┐
@@ -81,8 +83,9 @@ note per pull request. At `pr:merged` it stamps the note final and sends it
 here with everything it knows beside it: the project key, the repository
 slug, the pull request, the ticket, the commits, the counts of issues and
 suggestions it posted, the team's project claims, and every figure the
-gateway reported for the note call. That is the whole feed. Almanach never
-calls Bitbucket, Jira or noergler.
+gateway reported for the note call. That is the whole feed. The feed never
+calls Bitbucket, Jira or noergler; the clones of section 4a are a separate
+path with their own credentials.
 
 Why at review time and not at merge: the review already paid for the files
 and the diff in the model's context. The extra turn rides on that prompt,
@@ -196,6 +199,7 @@ mixed with the figures noergler reports in `note_calls`.
 - `/api/projects/{key}/repos/{slug}/notes/{pr}`: one note with its facts
   and the recorded note call (tokens, cache hits, cost, rounds).
 - `/api/projects/{key}/problems?days=90`: the problem areas of the window.
+- `/api/sources` and below: the clones, read and written (section 4a).
 
 Problem areas are bugfix notes grouped by repository and `bugfix_area`. The
 grouping is by directory, never by the model's component name: three
@@ -208,6 +212,88 @@ who reaches it and sets the user header, which only the access log reads;
 `serve` then refuses to listen anywhere but loopback so the header can come
 from nowhere else. Nothing is written through the read API; the wiki is
 read-only by design.
+
+## 4a. The sources
+
+The descriptions above are built from deltas: what each merged pull request
+taught. What they lack is the baseline, a description of the repository as
+it stands, and the baseline needs the code itself. The sources feature is
+the first half of that: Almanach clones every repository of a project into
+a base folder and keeps the clones current. Reading them and writing the
+baseline description with the model is the second half, a later step; the
+clones already record the head commit each checkout holds, so that step can
+diff since the last commit it described instead of re-reading everything.
+
+A **source** is a project. Two kinds: a **Bitbucket project**, whose
+repositories are listed from the Bitbucket Server REST API
+(`/rest/api/1.0/projects/{key}/repos`, paged, archived ones skipped) on
+every cycle; and a **static folder**, a project key the operator chooses
+with repositories entered by hand as clone URLs, for example the
+repositories of one GitHub organisation. Both land as
+`<ALMANACH_REPOS_DIR>/<project_key>/<slug>`; nothing else is ever written
+there. In compose that folder is the `repos` volume, in a deployment a
+volume claim.
+
+Git is the binary, after ../rongo's `gitrepo`, never a Go library: proven on
+any repository size, and every rule here was paid for there.
+
+- A clone is full history; `git clone` persists its URL, credentials and
+  all, in `.git/config`, so the bare URL is written back right after and
+  every later remote command passes its own URL. The default branch is
+  asked of the remote (`ls-remote --symref`), never assumed; a fetch uses
+  explicit refspecs with `--prune`; the head is the remote-tracking ref,
+  and a branch the remote no longer has is a loud failure on the row, never
+  a silent stop. No working-tree checkout or reset: phase 2 reads from the
+  object store at `head_commit`.
+- The token reaches git for one command only: as an `Authorization: Bearer`
+  header through `GIT_CONFIG_*` in the environment (argv would show in the
+  process list) for `bearer`, or as `user:token` in that command's URL for
+  `basic`. The username defaults to `x-access-token`, which GitHub ignores
+  and Bitbucket Data Center checks (project and repository tokens as
+  `x-token-auth`, personal ones as the user's own name). git's stderr is
+  redacted of any URL credentials before it reaches a log or a row.
+- The origin URL is the identity, the directory name a label: a checkout
+  whose origin differs from the row's clone URL is removed and cloned
+  again, so a corrected URL never serves the old code under the new name.
+  A directory without `.git/HEAD` (a clone cut off by a shutdown) is
+  removed and cloned again too.
+- Keys and slugs are validated as single path segments (Bitbucket's
+  charset, never `.` or `..`) and the resulting path checked with
+  `filepath.Rel` against the base, both on the way in and again before any
+  `RemoveAll`: the cost of being wrong is deleting outside the base.
+
+One poller, in process, sequential: a stampede of parallel clones against
+one forge is how a token gets rate-limited. The first cycle runs thirty
+seconds after start (announced in the log, so "not yet" reads apart from
+"broken"), then every `ALMANACH_SYNC_INTERVAL`, jittered, and at once on a
+nudge from the API. A cycle lists every Bitbucket source (a new slug is a
+pending row, a vanished one `missing` with its clone kept, a failed listing
+leaves the rows alone and goes on the source), then syncs every repository
+that is not missing. One repository's failure is recorded on its row with
+the redacted error and the cycle continues; only the store not answering
+stops a cycle. Cycle start and finish log their counts; an unchanged
+repository is a debug line. A shutdown cuts the clone in flight; the next
+cycle finds the half directory and redoes it.
+
+The token at rest is sealed with AES-256-GCM under `ALMANACH_SECRET_KEY`,
+a fresh nonce per seal, stdlib only. Without the key a public source still
+works and saving a token is a 422 naming the variable; a stored token the
+key cannot open (the key changed) fails that source's repositories with a
+line saying so. The token is never returned by any route (`has_token` is
+all a body carries), never logged, never in `.git/config`.
+
+The routes under `/api/sources` are the first writes beside the webhook.
+They are gated exactly like the read routes: by the sidecar's login in
+proxy mode, by nobody in none; the forwarded user is logged on every write
+and decides nothing. A write needs `Content-Type: application/json`, which
+a cross-site form cannot send without a preflight. With
+`ALMANACH_REPOS_DIR` unset the feature is off: no poller, the list route
+answers `enabled: false`, every other route 404, and the UI hides the
+entry. The UI section "Quellen" is the one read-write part of the SPA: the
+sources list with a create form, a source page with its repositories, their
+states, inline forms for the token and for adding a repository to a static
+source, and inline confirms for removals that name the folder that goes.
+It polls every three seconds while a clone runs and otherwise not at all.
 
 ## 5. Operations
 
@@ -255,6 +341,10 @@ one.
 | `internal/consolidate` | The worker: loop, hold, fold, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | config, inference, lang, prompts, store, llmwire (error classes) |
 | `internal/inference` | The llmwire client: startup checks, one `Merge` call with the strict schema, answer parsing, cost extraction. | llmwire |
 | `internal/prompts` | `almanach_merge.txt`, compiled in with `go:embed`. Never configurable. | nothing |
+| `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | nothing |
+| `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only. | gitrepo (Access), store (types only) |
+| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row. Declares the `Store`, `Git` and `Lister` interfaces it needs. | gitrepo, secret, store |
+| `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
 | `internal/config` | The environment, read once through kit's reader, every fault collected. | kit/env |
 
@@ -283,7 +373,19 @@ from every delivery. A team is created the first time its token delivers;
 a project and a repo the first time a note names them; a claim (team owns
 project, or team owns one repo of a project) from the `claims` array. This
 is how the project page knows which repositories belong to it without
-Almanach ever calling Bitbucket.
+the feed ever calling Bitbucket.
+
+**The sources.** `sources` and `source_repos` are the clone feature's,
+apart from the feed's tables on purpose: a source has no team, a token, and
+a folder on disk. `sources` is one row per project key with its kind
+(`bitbucket` or `static`), the Bitbucket host, how a token travels
+(`bearer` or `basic` with `token_user`), the token sealed with AES-GCM
+(`token_enc`, NULL for a public source), and the last listing's time and
+error. `source_repos` is one row per clone: the clone URL, who put it here
+(`listed` by the API or `manual`), the branch (NULL until resolved from
+the remote), the head commit the checkout holds, the poller's `state`
+(`pending`, `syncing`, `ready`, `failed`, `missing`) and the last sync's
+time and error. Phase 2 joins the two groups on `(project_key, slug)`.
 
 **The notes.** `notes` is one row per merged pull request, replaced when
 the same PR is delivered again (a reopen and re-merge) and then re-queued.
@@ -369,14 +471,34 @@ so the choice is not undone as a cleanup.
   speaking; the spelling is enforced in code (`lang.SwissSS`) on every
   prose field because the model drifts to the sharp s. File paths are never
   touched.
-- **The UI is in the binary, but only as a reader.** It ships with the
-  process so a deployment is one image and one sidecar, yet it talks to
-  the read API alone (`backend/api/openapi.yaml`); nothing in it knows a
-  team, a token or a user, and nothing in the backend knows the UI beyond
-  the route allowlist. It is German only, read-only, with no settings and
-  no login of its own: the sidecar authenticates, the UI shows. Statement
-  text is rendered as paragraphs split on blank lines, never as markdown,
-  so a model that emits markup cannot change the page's shape.
+- **The UI is in the binary, and reads the wiki, writes only the sources.**
+  It ships with the process so a deployment is one image and one sidecar,
+  and it talks to `/api/...` alone (`backend/api/openapi.yaml`); nothing in
+  it knows a team or a bearer, and nothing in the backend knows the UI
+  beyond the route allowlist. It is German only, with no settings and no
+  login of its own: the sidecar authenticates, the UI shows. The wiki
+  pages are read-only; the Quellen section configures the clones, and is
+  the only place a browser writes. Statement text is rendered as
+  paragraphs split on blank lines, never as markdown, so a model that
+  emits markup cannot change the page's shape.
+- **Almanach clones, noergler reviews.** noergler is the pull request
+  agent; it never indexes a repository, that would make no sense for a
+  review tool. The code lives with Almanach, which is the one that will
+  describe it (user, 2026-10-30). The premise "Almanach never calls
+  Bitbucket" therefore holds for the feed only.
+- **The git binary, not a Go library.** go-git was considered and
+  rejected: memory and speed on large repositories, partial submodule and
+  LFS support, a working-tree half with a bug history; the binary is
+  proven on any size and every rule of ../rongo's `gitrepo` transfers. The
+  price is a runtime image with a userland (debian-slim with git) instead
+  of distroless.
+- **The token is typed in the UI and sealed in the database**, not an
+  environment variable name as in ../rongo's `repos.yaml`. A new token is a
+  form, not a redeploy; `ALMANACH_SECRET_KEY` is what makes that safe, and
+  without it no token is stored at all.
+- **Origin is identity.** A checkout is named after its row, and a row's
+  clone URL can be corrected; comparing `remote.origin.url` on every cycle
+  is what keeps the old code from answering under the new name.
 
 ## 9. Rules and invariants
 
@@ -539,6 +661,33 @@ the reason in the log and the page unchanged:
 - In proxy mode the user header is written to the access log of every read
   route and nowhere else; it gates nothing, and the webhook and the ping
   never read it.
+
+### The sources
+
+- A key or slug is one path segment of Bitbucket's charset, never `.` or
+  `..`; a clone URL is https without credentials; a Bitbucket source has a
+  host (http or https, no query, no credentials), a static one has none.
+  Checked on the way in (422 naming the field) and again before a removal.
+- `token_auth` defaults to `bearer` for Bitbucket and `basic` for static;
+  `token_user` goes with `basic` only. An omitted token on PATCH keeps the
+  stored one, an empty one clears it. A token without `ALMANACH_SECRET_KEY`
+  is a 422; a stored token the key cannot open fails the source's
+  repositories with a line naming the key.
+- The clone URL is written back bare after the clone; `.git/config` never
+  holds a credential. git's stderr is redacted of URL credentials before
+  a log line or a row.
+- A removal takes the folder first, then the row: a folder left behind by
+  a failed row delete is re-cloned by the next cycle, harmless; a row gone
+  with the folder still there would be an orphan.
+- A listed repository the API no longer names is `missing`: not synced, its
+  clone kept, removable by hand; named again, it is pending once more. A
+  hand-entered row is never touched by a listing.
+- `RequestSync` moves every row but a missing one to pending and nudges the
+  poller; the cycle in flight finishes first, the next one serves it.
+- The feature off (`ALMANACH_REPOS_DIR` unset): no poller, `GET /api/sources`
+  answers `enabled: false`, every other sources route 404, the UI hides the
+  entry. On: git on PATH, the folder present and writable (a probe file),
+  and the key, if set, 32 bytes of base64, all checked at startup.
 
 ### Startup and operations
 

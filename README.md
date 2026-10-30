@@ -32,12 +32,18 @@ next pull request that gets a fact right corrects it.
   thing over and over.
 - **Notes**: every merged pull request's note, with the full gateway
   statistics of the call that wrote it (tokens, cache hits, cost).
+- **Quellen** (sources): the projects whose code Almanach clones itself, a
+  Bitbucket project listed from its API or a static folder of repositories
+  entered by hand, kept current by a poller. The baseline for the
+  descriptions above, which today are built from deltas alone; reading the
+  clones and writing that baseline is the next step.
 
-A read-only JSON API serves all of it, and a small German, read-only web
-UI (`ui/`, compiled into the binary) shows it: the projects, each project's
-description with its repositories and problem areas, each repository's
-description and revisions, each note. The API contract is
-[backend/api/openapi.yaml](backend/api/openapi.yaml).
+A JSON API serves all of it, and a small German web UI (`ui/`, compiled
+into the binary) shows it: the projects, each project's description with
+its repositories and problem areas, each repository's description and
+revisions, each note, and the sources with their clones. The wiki is
+read-only; the sources are the one thing the UI configures. The API
+contract is [backend/api/openapi.yaml](backend/api/openapi.yaml).
 
 ## How it is built
 
