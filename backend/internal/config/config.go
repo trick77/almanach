@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	kitenv "github.com/trick77/ship/kit/env"
 )
@@ -37,6 +38,25 @@ type Limits struct {
 	ProjectMaxChars int
 }
 
+// Sources is the clone feature: off when ReposDir is empty.
+type Sources struct {
+	// ReposDir is the base folder every clone lands under, as
+	// <ReposDir>/<project_key>/<slug>. "" switches the feature off: no
+	// poller, the routes answer 404, the UI hides the entry.
+	ReposDir string
+	// SecretKey is ALMANACH_SECRET_KEY as given (base64 of 32 bytes), parsed
+	// by the secret package; "" means no token can be stored.
+	SecretKey string
+	// SyncInterval is the poller's cycle; zero means manual only.
+	SyncInterval time.Duration
+	// GitCAFile is a PEM bundle for a forge behind an internal CA, handed
+	// to git as GIT_SSL_CAINFO; "" keeps the system store.
+	GitCAFile string
+}
+
+// Enabled reports whether clones are configured at all.
+func (s Sources) Enabled() bool { return s.ReposDir != "" }
+
 // App is the whole configuration.
 type App struct {
 	DatabaseURL  string
@@ -50,6 +70,7 @@ type App struct {
 	ReasoningEffort string
 	Limits          Limits
 	ProblemWindow   int
+	Sources         Sources
 	LogLevel        string
 }
 
@@ -72,7 +93,16 @@ func Load(lookup func(string) string) (*App, error) {
 			ProjectMaxChars:      positive(r, "ALMANACH_PROJECT_MAX_CHARS", 40000),
 		},
 		ProblemWindow: positive(r, "ALMANACH_PROBLEM_WINDOW_DAYS", 90),
-		LogLevel:      r.String("LOG_LEVEL", "INFO"),
+		Sources: Sources{
+			ReposDir:     r.String("ALMANACH_REPOS_DIR", ""),
+			SecretKey:    r.String("ALMANACH_SECRET_KEY", ""),
+			SyncInterval: r.Duration("ALMANACH_SYNC_INTERVAL", 30*time.Minute),
+			GitCAFile:    r.String("ALMANACH_GIT_CA_FILE", ""),
+		},
+		LogLevel: r.String("LOG_LEVEL", "INFO"),
+	}
+	if app.Sources.SyncInterval < 0 {
+		r.Fail("ALMANACH_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
 	}
 	// In proxy mode the header is the whole credential, so the listener must
 	// be reachable by the sidecar alone.
@@ -95,7 +125,11 @@ func positive(r *kitenv.Reader, name string, def int) int {
 
 // Summary is the config as the startup log prints it: no secret, no DSN.
 func (a *App) Summary() string {
-	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars} problem_window=%dd",
+	sources := "off"
+	if a.Sources.Enabled() {
+		sources = fmt.Sprintf("{dir %s, interval %s, token_key %v}", a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "")
+	}
+	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars} problem_window=%dd sources=%s",
 		a.Host, a.Port, a.AuthMode, a.Model, a.ReasoningEffort,
-		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars, a.ProblemWindow)
+		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars, a.ProblemWindow, sources)
 }
