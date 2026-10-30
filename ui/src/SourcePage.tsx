@@ -6,7 +6,15 @@ import {
   type SourceRepo,
   type TokenAuth,
 } from "./api";
-import { bytes, dayTime, shortSHA, stateLabel, stateTone } from "./format";
+import {
+  bytes,
+  clock,
+  day,
+  dayTime,
+  shortSHA,
+  stateLabel,
+  stateTone,
+} from "./format";
 import { navigateTo, sourcesPath } from "./routing";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
@@ -190,8 +198,14 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           />
           <Tile
             label={S.sources.tiles.lastSync}
-            value={lastSync ? dayTime(lastSync) : S.common.never}
-            note={active > 0 ? S.sources.tiles.running : undefined}
+            value={lastSync ? clock(lastSync) : S.common.never}
+            note={
+              active > 0
+                ? S.sources.tiles.running
+                : lastSync
+                  ? day(lastSync)
+                  : undefined
+            }
           />
           <Tile
             label={S.sources.tiles.disk}
@@ -285,7 +299,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         </Panel>
       )}
 
-      <div className={eyebrow}>
+      <div className={eyebrow + " flex items-baseline gap-3"}>
         {S.sources.repos}
         <span className="ml-auto font-normal tracking-normal normal-case">
           {S.sources.reposNote[data.kind]}

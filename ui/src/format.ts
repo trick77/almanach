@@ -16,6 +16,14 @@ export function dayTime(iso: string): string {
   return `${day(iso)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** clock is the time of day alone: 14:03, for a tile whose note has the
+ *  date. */
+export function clock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** shortDay is the day without the year, for a dense table: 24.10. */
 export function shortDay(iso: string): string {
   const d = new Date(iso);
