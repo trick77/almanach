@@ -59,7 +59,7 @@ func docsDir(p string) bool {
 
 func docText(base string) bool {
 	switch path.Ext(base) {
-	case ".md", ".adoc", ".rst", ".txt":
+	case ".md", ".markdown", ".mdx", ".adoc", ".asciidoc", ".rst", ".org", ".textile", ".txt":
 		return true
 	}
 	return false

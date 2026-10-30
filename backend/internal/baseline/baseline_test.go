@@ -20,6 +20,8 @@ func TestBlocked(t *testing.T) {
 		"ui/node_modules/react/index.js":   true,
 		"dist/app.js":                      true,
 		"internal/build/info.go":           false,
+		"packages/web/dist/index.js":       true,
+		"action/coverage/lcov.info":        true,
 		"cmd/target/main.go":               false,
 		"go.sum":                           true,
 		"ui/package-lock.json":             true,
@@ -90,6 +92,19 @@ func TestDocs_OrderAndLimit(t *testing.T) {
 	}
 	if !reflect.DeepEqual(paths, []string{"README.md", "AGENTS.md", "compose.yaml"}) {
 		t.Fatalf("Docs under a limit = %v", paths)
+	}
+}
+
+// A README is the README whatever its markup.
+func TestDocs_ReadmeInAnyMarkup(t *testing.T) {
+	for _, name := range []string{"README", "README.markdown", "readme.org", "README.asciidoc", "README.textile", "README.rst"} {
+		got := Docs([]File{{"main.go", 1}, {name, 5}}, 100)
+		if len(got) != 1 || got[0].Path != name {
+			t.Errorf("Docs with %s = %v, want it read", name, got)
+		}
+	}
+	if got := Docs([]File{{"readme.go", 5}}, 100); len(got) != 0 {
+		t.Errorf("readme.go read as a doc: %v", got)
 	}
 }
 

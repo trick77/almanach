@@ -43,11 +43,14 @@ type File struct {
 var blockedDirs = map[string]bool{
 	"vendor": true, "node_modules": true, "third_party": true, ".git": true, ".idea": true, ".vscode": true,
 	"__pycache__": true, ".gradle": true, ".next": true, "bower_components": true,
+	// Bundles and reports, never source: packages/*/dist of a monorepo and
+	// a committed action's dist/ included.
+	"dist": true, "coverage": true,
 }
 
 // blockedRootDirs are build output by convention at the repository's root
 // only: deeper down, internal/build or cmd/target is a package like any.
-var blockedRootDirs = map[string]bool{"dist": true, "build": true, "target": true, "coverage": true, "out": true}
+var blockedRootDirs = map[string]bool{"build": true, "target": true, "out": true}
 
 // blockedNames are lockfiles the .lock extension does not catch: long,
 // generated and without a fact in them.
