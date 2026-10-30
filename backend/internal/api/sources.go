@@ -32,6 +32,11 @@ type SourceStore interface {
 	AddSourceRepo(ctx context.Context, r store.SourceRepo) error
 	DeleteSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RequestSync(ctx context.Context, key, slug string) (int, error)
+	SetAutoDescribe(ctx context.Context, key string, on bool) (bool, error)
+	ProjectSpelledOtherwise(ctx context.Context, key string) (string, bool, error)
+	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
+	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
+	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
 }
 
 // Nudger starts the next sync cycle now.
@@ -99,6 +104,7 @@ func (d Deps) registerSources(s *httpapi.Server) {
 	s.HandleFunc("POST /api/sources/{key}/repos", d.addRepo)
 	s.HandleFunc("DELETE /api/sources/{key}/repos/{slug}", d.deleteRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/sync", d.syncRepo)
+	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/describe", d.describeRepo)
 }
 
 // enabled answers the 404 of a switched-off feature itself.
@@ -134,6 +140,7 @@ type sourceSummaryBody struct {
 	Missing      int        `json:"missing"`
 	LastListedAt *time.Time `json:"last_listed_at"`
 	LastError    string     `json:"last_error"`
+	AutoDescribe bool       `json:"auto_describe"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
@@ -158,7 +165,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 	for _, s := range rows {
 		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, Host: s.Host, HasToken: s.HasToken(),
 			TokenAuth: s.TokenAuth, TokenUser: s.TokenUser, Repos: s.Repos, Ready: s.Ready, Active: s.Active, Failed: s.Failed, Missing: s.Missing,
-			LastListedAt: s.LastListedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
+			LastListedAt: s.LastListedAt, LastError: s.LastError, AutoDescribe: s.AutoDescribe, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -173,6 +180,35 @@ type sourceRepoBody struct {
 	LastSyncedAt *time.Time `json:"last_synced_at"`
 	LastError    string     `json:"last_error"`
 	CreatedAt    time.Time  `json:"created_at"`
+	// Baseline is the newest run and the commit last documented, null
+	// before the first run.
+	Baseline *baselineBody `json:"baseline"`
+}
+
+// baselineBody is what the source page shows of a repository's runs.
+type baselineBody struct {
+	RunID            int64      `json:"run_id"`
+	State            string     `json:"state"`
+	Mode             string     `json:"mode"`
+	Trigger          string     `json:"trigger"`
+	Commit           string     `json:"commit"`
+	Step             int        `json:"step"`
+	Steps            int        `json:"steps"`
+	Skipped          int        `json:"skipped"`
+	CostUSD          string     `json:"cost_usd,omitempty"`
+	Error            string     `json:"error"`
+	QueuedAt         time.Time  `json:"queued_at"`
+	StartedAt        *time.Time `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+	DocumentedCommit string     `json:"documented_commit"`
+	DocumentedAt     *time.Time `json:"documented_at"`
+}
+
+func baselineOf(rr store.RepoRuns) *baselineBody {
+	r := rr.Last
+	return &baselineBody{RunID: r.ID, State: r.State, Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, Step: r.Step, Steps: r.Steps,
+		Skipped: r.Skipped, CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt}
 }
 
 type sourceDetailBody struct {
@@ -186,6 +222,7 @@ type sourceDetailBody struct {
 	DiskBytes    int64            `json:"disk_bytes"`
 	LastListedAt *time.Time       `json:"last_listed_at"`
 	LastError    string           `json:"last_error"`
+	AutoDescribe bool             `json:"auto_describe"`
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`
 	Repos        []sourceRepoBody `json:"repos"`
@@ -196,15 +233,23 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 	if err != nil {
 		return sourceDetailBody{}, err
 	}
+	runs, err := d.Sources.Store.SourceRuns(ctx, src.ProjectKey)
+	if err != nil {
+		return sourceDetailBody{}, err
+	}
 	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
-		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError, CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt,
-		Repos: make([]sourceRepoBody, 0, len(repos))}
+		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError, AutoDescribe: src.AutoDescribe,
+		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos))}
 	if dir, err := d.Sources.Git.ProjectDir(src.ProjectKey); err == nil {
 		out.Dir, out.DiskBytes = dir, d.Sources.sizes.size(dir)
 	}
 	for _, rp := range repos {
-		out.Repos = append(out.Repos, sourceRepoBody{Slug: rp.Slug, CloneURL: rp.CloneURL, Origin: rp.Origin, Branch: rp.Branch, HeadCommit: rp.HeadCommit,
-			State: rp.State, LastSyncedAt: rp.LastSyncedAt, LastError: rp.LastError, CreatedAt: rp.CreatedAt})
+		body := sourceRepoBody{Slug: rp.Slug, CloneURL: rp.CloneURL, Origin: rp.Origin, Branch: rp.Branch, HeadCommit: rp.HeadCommit,
+			State: rp.State, LastSyncedAt: rp.LastSyncedAt, LastError: rp.LastError, CreatedAt: rp.CreatedAt}
+		if rr, ok := runs[rp.Slug]; ok {
+			body.Baseline = baselineOf(rr)
+		}
+		out.Repos = append(out.Repos, body)
 	}
 	return out, nil
 }
@@ -252,6 +297,8 @@ type createSourceBody struct {
 	Token      string `json:"token"`
 	TokenAuth  string `json:"token_auth"`
 	TokenUser  string `json:"token_user"`
+	// AutoDescribe omitted is on, stored with the source in one write.
+	AutoDescribe *bool `json:"auto_describe"`
 }
 
 // validHost is an http(s) URL with a host and nothing after the path.
@@ -337,7 +384,20 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, problem)
 		return
 	}
-	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed}
+	// The key is how noergler's notes find the source, exactly: a key that
+	// differs from one noergler delivers only by case would have every note
+	// of the project ignored.
+	known, clash, err := d.Sources.Store.ProjectSpelledOtherwise(ctx, in.ProjectKey)
+	if err != nil {
+		httpx.ServerError(w, r, err, "project key")
+		return
+	}
+	if clash {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
+		return
+	}
+	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed,
+		AutoDescribe: in.AutoDescribe == nil || *in.AutoDescribe}
 	if err := d.Sources.Store.CreateSource(ctx, src); err != nil {
 		if errors.Is(err, store.ErrExists) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
@@ -346,7 +406,8 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
-	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(), "user", d.user(r))
+	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(),
+		"auto_describe", src.AutoDescribe, "user", d.user(r))
 	d.Sources.Poller.Nudge()
 	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
 	if err != nil {
@@ -366,10 +427,11 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateSourceBody struct {
-	Host      *string `json:"host"`
-	Token     *string `json:"token"`
-	TokenAuth *string `json:"token_auth"`
-	TokenUser *string `json:"token_user"`
+	Host         *string `json:"host"`
+	Token        *string `json:"token"`
+	TokenAuth    *string `json:"token_auth"`
+	TokenUser    *string `json:"token_user"`
+	AutoDescribe *bool   `json:"auto_describe"`
 }
 
 func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
@@ -426,6 +488,12 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	if !updated {
 		httpx.WriteError(w, http.StatusNotFound, "unknown source")
 		return
+	}
+	if in.AutoDescribe != nil {
+		if _, err := d.Sources.Store.SetAutoDescribe(ctx, src.ProjectKey, *in.AutoDescribe); err != nil {
+			httpx.ServerError(w, r, err, "auto describe")
+			return
+		}
 	}
 	d.Log.InfoContext(ctx, "source_updated", "project", src.ProjectKey, "token_changed", setToken, "user", d.user(r))
 	d.Sources.Poller.Nudge()
@@ -621,4 +689,99 @@ func (d Deps) syncRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Sources.Poller.Nudge()
 	httpx.WriteJSON(w, http.StatusAccepted, queuedBody{Status: "queued", Repos: n})
+}
+
+type describeBody struct {
+	// Mode is reconcile (the default: read what changed since the commit
+	// last documented, or everything before the first run) or full (read
+	// the repository afresh with a new catalogue).
+	Mode string `json:"mode"`
+}
+
+type describedBody struct {
+	Status string `json:"status"`
+	RunID  int64  `json:"run_id"`
+	Mode   string `json:"mode"`
+}
+
+// describeRepo queues a baseline run of one repository at its clone's head
+// and wakes the worker. One open run per repository: a second is a 409.
+func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	d.reader(r)
+	if !d.enabled(w) {
+		return
+	}
+	src, ok := d.lookupSource(w, r)
+	if !ok {
+		return
+	}
+	slug := r.PathValue("slug")
+	if !gitrepo.ValidSegment(slug) {
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	}
+	var in describeBody
+	if !jsonBody(w, r, &in) {
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(in.Mode))
+	if mode == "" {
+		mode = store.RunReconcile
+	}
+	if mode != store.RunReconcile && mode != store.RunFull {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "mode: reconcile or full")
+		return
+	}
+	repos, err := d.Sources.Store.SourceRepos(ctx, src.ProjectKey)
+	if err != nil {
+		httpx.ServerError(w, r, err, "source repos")
+		return
+	}
+	var head string
+	found := false
+	for _, rp := range repos {
+		if rp.Slug == slug {
+			found, head = true, rp.HeadCommit
+		}
+	}
+	if !found {
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	}
+	if head == "" {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "the clone has no head yet: describe it once it is synced")
+		return
+	}
+	base := ""
+	if mode == store.RunReconcile {
+		doc, ok, err := d.Sources.Store.DocumentedRun(ctx, src.ProjectKey, slug)
+		if err != nil {
+			httpx.ServerError(w, r, err, "documented run")
+			return
+		}
+		if ok {
+			base = doc.Commit
+		} else {
+			mode = store.RunFull
+		}
+	}
+	id, err := d.Sources.Store.EnqueueRun(ctx, src.ProjectKey, slug, mode, store.TriggerManual, base, head)
+	switch {
+	case errors.Is(err, store.ErrExists):
+		httpx.WriteError(w, http.StatusConflict, "a run of this repository is open")
+		return
+	case errors.Is(err, store.ErrNoRepo):
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	case err != nil:
+		httpx.ServerError(w, r, err, "enqueue run")
+		return
+	}
+	d.Log.InfoContext(ctx, "baseline_queued", "project", src.ProjectKey, "repo", slug, "run_id", id, "mode", mode,
+		"head", gitrepo.ShortSHA(head), "user", d.user(r))
+	if d.Worker != nil {
+		d.Worker.Wake()
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, describedBody{Status: "queued", RunID: id, Mode: mode})
 }

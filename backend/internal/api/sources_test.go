@@ -21,6 +21,12 @@ type fakeSources struct {
 	sources map[string]store.ProjectSource
 	repos   map[string][]store.SourceRepo
 	synced  []string
+	// runs is by slug; enqueued records "key slug mode trigger base commit".
+	runs       map[string]store.RepoRuns
+	enqueued   []string
+	enqueueErr error
+	// noerglerKeys are the project keys noergler delivered.
+	noerglerKeys []string
 }
 
 func newFakeSources() *fakeSources {
@@ -99,6 +105,45 @@ func (f *fakeSources) RequestSync(_ context.Context, key, slug string) (int, err
 	f.synced = append(f.synced, key+"/"+slug)
 	return len(f.repos[key]), nil
 }
+func (f *fakeSources) SetAutoDescribe(_ context.Context, key string, on bool) (bool, error) {
+	s, ok := f.sources[key]
+	if ok {
+		s.AutoDescribe = on
+		f.sources[key] = s
+	}
+	return ok, nil
+}
+func (f *fakeSources) ProjectSpelledOtherwise(_ context.Context, key string) (string, bool, error) {
+	for _, known := range f.noerglerKeys {
+		if strings.EqualFold(known, key) && known != key {
+			return known, true, nil
+		}
+	}
+	return "", false, nil
+}
+func (f *fakeSources) SourceRuns(_ context.Context, key string) (map[string]store.RepoRuns, error) {
+	out := map[string]store.RepoRuns{}
+	for slug, rr := range f.runs {
+		if rr.Last.ProjectKey == key {
+			out[slug] = rr
+		}
+	}
+	return out, nil
+}
+func (f *fakeSources) DocumentedRun(_ context.Context, key, slug string) (store.BaselineRun, bool, error) {
+	rr, ok := f.runs[slug]
+	if !ok || rr.Documented == "" || rr.Last.ProjectKey != key {
+		return store.BaselineRun{}, false, nil
+	}
+	return store.BaselineRun{Commit: rr.Documented, State: store.RunDone}, true, nil
+}
+func (f *fakeSources) EnqueueRun(_ context.Context, key, slug, mode, trigger, base, commit string) (int64, error) {
+	if f.enqueueErr != nil {
+		return 0, f.enqueueErr
+	}
+	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, mode, trigger, base, commit}, " "))
+	return int64(len(f.enqueued)), nil
+}
 
 type fakeNudger struct{ nudges int }
 
@@ -121,6 +166,14 @@ func (c *fakeCheckouts) RemoveProject(key string) error {
 
 func sourcesHandler(t *testing.T, fs *fakeSources, withKey bool) (http.Handler, *fakeNudger, *fakeCheckouts) {
 	t.Helper()
+	h, nudger, checkouts := sourcesHandlerWith(t, fs, newFakeStore(), &fakeWaker{}, withKey)
+	return h, nudger, checkouts
+}
+
+// sourcesHandlerWith is sourcesHandler with the wiki's store and the
+// worker's waker given, for the routes where the two features meet.
+func sourcesHandlerWith(t *testing.T, fs *fakeSources, st *fakeStore, w *fakeWaker, withKey bool) (http.Handler, *fakeNudger, *fakeCheckouts) {
+	t.Helper()
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httpapi.New(func(context.Context) error { return nil }, discard)
 	var key secret.Key
@@ -132,7 +185,7 @@ func sourcesHandler(t *testing.T, fs *fakeSources, withKey bool) (http.Handler, 
 		}
 	}
 	nudger, checkouts := &fakeNudger{}, &fakeCheckouts{}
-	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), AuthMode: config.AuthNone, ProblemWindow: 90, Log: discard,
+	Register(srv, Deps{Store: st, Keys: keysFile(t), Worker: w, AuthMode: config.AuthNone, ProblemWindow: 90, Log: discard,
 		Sources: &SourcesDeps{Store: fs, Poller: nudger, Git: checkouts, Key: key}})
 	return srv.Handler(), nudger, checkouts
 }

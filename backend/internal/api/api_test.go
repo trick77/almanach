@@ -41,6 +41,10 @@ type fakeStore struct {
 	problems   []store.ProblemArea
 	daysAsked  []int
 	problemErr error
+
+	sourceRepos  map[string]bool
+	sourceErr    error
+	sourcedAsked []bool
 }
 
 func newFakeStore() *fakeStore {
@@ -59,18 +63,25 @@ func (f *fakeStore) Ingest(_ context.Context, d store.Delivery, n store.Note, ca
 	return f.accepted, nil
 }
 
-func (f *fakeStore) Projects(context.Context) ([]store.ProjectRow, error) { return f.projects, nil }
+func (f *fakeStore) Projects(_ context.Context, sourced bool) ([]store.ProjectRow, error) {
+	f.sourcedAsked = append(f.sourcedAsked, sourced)
+	return f.projects, nil
+}
 
-func (f *fakeStore) ProjectExists(_ context.Context, key string) (string, bool, error) {
+func (f *fakeStore) IsSourceRepo(_ context.Context, key, slug string) (bool, error) {
+	return f.sourceRepos[key+"/"+slug], f.sourceErr
+}
+
+func (f *fakeStore) ProjectExists(_ context.Context, key string, _ bool) (string, bool, error) {
 	team, ok := f.teams[key]
 	return team, ok, nil
 }
 
-func (f *fakeStore) Repos(_ context.Context, project string) ([]store.RepoRow, error) {
+func (f *fakeStore) Repos(_ context.Context, project string, _ bool) ([]store.RepoRow, error) {
 	return f.repos[project], nil
 }
 
-func (f *fakeStore) RepoExists(_ context.Context, project, slug string) (bool, error) {
+func (f *fakeStore) RepoExists(_ context.Context, project, slug string, _ bool) (bool, error) {
 	for _, r := range f.repos[project] {
 		if r.Slug == slug {
 			return true, nil

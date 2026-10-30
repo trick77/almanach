@@ -347,6 +347,30 @@ func TestAutoDescribeAndIsSourceRepo(t *testing.T) {
 	}
 }
 
+// A source is created with its switch in one write; a key noergler spells
+// otherwise is found.
+func TestCreateSource_AutoDescribeAndSpelling(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	src := staticSource("quiet")
+	src.AutoDescribe = false
+	if err := s.CreateSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.SourceByKey(ctx, "quiet"); got.AutoDescribe {
+		t.Fatal("created with auto_describe off, read back on")
+	}
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	if known, ok, err := s.ProjectSpelledOtherwise(ctx, "prj"); err != nil || !ok || known != "PRJ" {
+		t.Errorf("ProjectSpelledOtherwise(prj) = %q %v %v", known, ok, err)
+	}
+	for _, key := range []string{"PRJ", "other"} {
+		if _, ok, err := s.ProjectSpelledOtherwise(ctx, key); err != nil || ok {
+			t.Errorf("ProjectSpelledOtherwise(%s) = %v %v, want no clash", key, ok, err)
+		}
+	}
+}
+
 // A source stored before baselines existed reads as a PR; a baseline
 // source carries its commit and none of a PR's fields.
 func TestSource_JSONShapes(t *testing.T) {

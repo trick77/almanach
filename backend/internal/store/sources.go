@@ -133,13 +133,27 @@ func (s *Store) SourceByKey(ctx context.Context, key string) (ProjectSource, boo
 	return src, true, nil
 }
 
-// CreateSource inserts a source; ErrExists when the key is taken.
+// CreateSource inserts a source with its auto_describe as given, in one
+// write; ErrExists when the key is taken.
 func (s *Store) CreateSource(ctx context.Context, src ProjectSource) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO sources (project_key, kind, host, token_auth, token_user, token_enc)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6)`,
-		src.ProjectKey, src.Kind, src.Host, src.TokenAuth, src.TokenUser, src.TokenEnc)
+		INSERT INTO sources (project_key, kind, host, token_auth, token_user, token_enc, auto_describe)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7)`,
+		src.ProjectKey, src.Kind, src.Host, src.TokenAuth, src.TokenUser, src.TokenEnc, src.AutoDescribe)
 	return uniqueAsExists(err)
+}
+
+// ProjectSpelledOtherwise is the spelling noergler delivers a project key
+// in when it differs from key only by case, ok false when it does not: a
+// source must match noergler's key exactly, or every note of the project
+// is ignored.
+func (s *Store) ProjectSpelledOtherwise(ctx context.Context, key string) (string, bool, error) {
+	var known string
+	err := s.pool.QueryRow(ctx, `SELECT key FROM projects WHERE lower(key) = lower($1) AND key <> $1 ORDER BY key LIMIT 1`, key).Scan(&known)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return known, err == nil, err
 }
 
 // UpdateSourceAccess changes a source's host and token settings. The token
