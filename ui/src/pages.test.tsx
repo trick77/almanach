@@ -208,6 +208,16 @@ describe("ProjectsPage", () => {
       "/projekte/PAY",
     );
   });
+  it("leaves out the team of a project known only as a source", async () => {
+    serve({
+      projects: {
+        projects: [{ ...projects.projects[0]!, key: "tools", team: "" }],
+      },
+    });
+    render(<ProjectsPage />);
+    expect(await screen.findByText("tools")).toBeInTheDocument();
+    expect(screen.queryByText(/Team/)).not.toBeInTheDocument();
+  });
   it("shows the empty and the failed state", async () => {
     serve({ projects: { projects: [] } });
     render(<ProjectsPage />);

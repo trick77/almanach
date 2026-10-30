@@ -467,7 +467,12 @@ function RepoRow({
       <tr>
         <td className={tdMono}>
           {r.slug}
-          <div className="mt-0.5 text-[11.5px] text-faint">{r.clone_url}</div>
+          <div
+            className="mt-0.5 max-w-[220px] truncate text-[11.5px] text-faint"
+            title={r.clone_url}
+          >
+            {r.clone_url}
+          </div>
         </td>
         <td className={tdMono}>{r.branch === "" ? "—" : r.branch}</td>
         <td className={tdMono}>
@@ -484,53 +489,57 @@ function RepoRow({
         <td className={td}>
           <BaselineCell b={r.baseline} />
         </td>
-        <td className={td + " text-right whitespace-nowrap"}>
-          {r.state !== "missing" && (
-            <button
-              type="button"
-              className={rowBtn}
-              disabled={running}
-              onClick={onSync}
-            >
-              {r.state === "failed"
-                ? S.sources.repoActions.retry
-                : S.sources.repoActions.sync}
-            </button>
-          )}
-          {r.state !== "missing" && (
-            <button
-              type="button"
-              className={rowBtn}
-              disabled={noRun || upToDate}
-              title={upToDate ? S.baseline.upToDate : undefined}
-              onClick={() => describe("reconcile")}
-            >
-              {documented
-                ? S.baseline.actions.reconcile
-                : S.baseline.actions.describe}
-            </button>
-          )}
-          {r.state !== "missing" && documented && (
-            <button
-              type="button"
-              className={rowBtn}
-              disabled={noRun}
-              onClick={() => describe("full")}
-            >
-              {S.baseline.actions.full}
-            </button>
-          )}
-          {removable && (
-            <button
-              type="button"
-              className={rowBtn + " hover:text-danger-ink"}
-              onClick={onAskRemove}
-            >
-              {r.state === "missing"
-                ? S.sources.repoActions.removeClone
-                : S.sources.repoActions.remove}
-            </button>
-          )}
+        <td className={td + " text-right"}>
+          {/* Stacked: four actions side by side push the table past the
+              column on a source with long clone URLs. */}
+          <div className="flex flex-col items-end gap-0.5 whitespace-nowrap">
+            {r.state !== "missing" && (
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={running}
+                onClick={onSync}
+              >
+                {r.state === "failed"
+                  ? S.sources.repoActions.retry
+                  : S.sources.repoActions.sync}
+              </button>
+            )}
+            {r.state !== "missing" && (
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={noRun || upToDate}
+                title={upToDate ? S.baseline.upToDate : undefined}
+                onClick={() => describe("reconcile")}
+              >
+                {documented
+                  ? S.baseline.actions.reconcile
+                  : S.baseline.actions.describe}
+              </button>
+            )}
+            {r.state !== "missing" && documented && (
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={noRun}
+                onClick={() => describe("full")}
+              >
+                {S.baseline.actions.full}
+              </button>
+            )}
+            {removable && (
+              <button
+                type="button"
+                className={rowBtn + " hover:text-danger-ink"}
+                onClick={onAskRemove}
+              >
+                {r.state === "missing"
+                  ? S.sources.repoActions.removeClone
+                  : S.sources.repoActions.remove}
+              </button>
+            )}
+          </div>
         </td>
       </tr>
       {r.state === "failed" && r.last_error !== "" && (
@@ -639,7 +648,7 @@ function BaselineCell({ b }: { b: Baseline | null }) {
         {label}
       </Pill>
       {parts.length > 0 && (
-        <div className="mt-0.5 text-[11.5px] whitespace-nowrap text-faint">
+        <div className="mt-0.5 max-w-[190px] text-[11.5px] text-faint">
           {parts.join(` ${S.common.sep} `)}
         </div>
       )}

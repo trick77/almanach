@@ -19,7 +19,7 @@ export const S = {
   },
   projects: {
     title: "Projekte",
-    lede: "Was noergler beim Reviewen über jedes Projekt gelernt hat: pro Repository und pro Projekt eine Beschreibung, aus den Notizen gemergter Pull Requests, nie von Hand geschrieben.",
+    lede: "Was Almanach über jedes Projekt weiss: pro Repository und pro Projekt eine Beschreibung, aus dem Code gelesen und mit den Notizen gemergter Pull Requests fortgeschrieben, nie von Hand.",
     what: "die Projekte",
     empty:
       "Noch kein Projekt: die erste Notiz kommt mit dem ersten gemergten Pull Request eines Teams mit almanach-Block.",

@@ -42,8 +42,13 @@ export function ProjectsPage() {
                   {p.key}
                 </h3>
                 <div className="mt-1 text-[13px] text-muted">
-                  {S.projects.team} {p.team}
-                  <Sep />
+                  {/* A project known only as a source has no team. */}
+                  {p.team !== "" && (
+                    <>
+                      {S.projects.team} {p.team}
+                      <Sep />
+                    </>
+                  )}
                   {S.projects.repos(p.repos)}
                   <Sep />
                   {S.projects.notes(p.notes)}
