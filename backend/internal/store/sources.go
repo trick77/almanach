@@ -290,8 +290,8 @@ func (s *Store) RequestSync(ctx context.Context, key, slug string) (int, error) 
 // SyncJob is one repo with the source it belongs to, as the poller needs
 // it: the token travels encrypted and is opened only for the git process.
 type SyncJob struct {
-	ProjectSource ProjectSource
-	Repo          SourceRepo
+	Source ProjectSource
+	Repo   SourceRepo
 }
 
 // SyncJobs is every repo a cycle must look at (everything but missing), by
@@ -312,13 +312,13 @@ func (s *Store) SyncJobs(ctx context.Context) ([]SyncJob, error) {
 	out := []SyncJob{}
 	for rows.Next() {
 		var j SyncJob
-		if err := rows.Scan(&j.ProjectSource.ProjectKey, &j.ProjectSource.Kind, &j.ProjectSource.Host, &j.ProjectSource.TokenAuth, &j.ProjectSource.TokenUser, &j.ProjectSource.TokenEnc,
-			&j.ProjectSource.CreatedAt, &j.ProjectSource.UpdatedAt, &j.ProjectSource.LastListedAt, &j.ProjectSource.LastError,
+		if err := rows.Scan(&j.Source.ProjectKey, &j.Source.Kind, &j.Source.Host, &j.Source.TokenAuth, &j.Source.TokenUser, &j.Source.TokenEnc,
+			&j.Source.CreatedAt, &j.Source.UpdatedAt, &j.Source.LastListedAt, &j.Source.LastError,
 			&j.Repo.Slug, &j.Repo.CloneURL, &j.Repo.Origin, &j.Repo.Branch, &j.Repo.HeadCommit, &j.Repo.State,
 			&j.Repo.LastSyncedAt, &j.Repo.LastError, &j.Repo.CreatedAt); err != nil {
 			return nil, err
 		}
-		j.Repo.ProjectKey = j.ProjectSource.ProjectKey
+		j.Repo.ProjectKey = j.Source.ProjectKey
 		out = append(out, j)
 	}
 	return out, rows.Err()

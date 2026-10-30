@@ -92,7 +92,7 @@ func TestSourceRepos_ManualAndStates(t *testing.T) {
 	}
 
 	jobs, err := s.SyncJobs(ctx)
-	if err != nil || len(jobs) != 1 || jobs[0].ProjectSource.ProjectKey != "tools" || jobs[0].Repo.Slug != "cli" || jobs[0].Repo.ProjectKey != "tools" {
+	if err != nil || len(jobs) != 1 || jobs[0].Source.ProjectKey != "tools" || jobs[0].Repo.Slug != "cli" || jobs[0].Repo.ProjectKey != "tools" {
 		t.Fatalf("jobs = %+v, %v", jobs, err)
 	}
 

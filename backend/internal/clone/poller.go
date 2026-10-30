@@ -1,0 +1,320 @@
+// Package clone keeps every source's checkouts current: one goroutine,
+// sequential, a cycle per interval and on a nudge, after ../rongo's
+// indexer poller. Sequential on purpose: a stampede of parallel clones
+// against one forge is how a token gets rate-limited. One repository's
+// failure is recorded on its row and the cycle goes on; only a shutdown
+// stops it.
+package clone
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand/v2"
+	"sync"
+	"time"
+
+	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/secret"
+	"github.com/trick77/almanach/internal/store"
+)
+
+// FirstDelay is the wait before the first cycle: short, so a fresh
+// deployment shows its first clone while the operator is still watching,
+// and announced in the log so "not yet" reads apart from "broken".
+const FirstDelay = 30 * time.Second
+
+// Store is what the poller needs of the store.
+type Store interface {
+	Sources(ctx context.Context) ([]store.SourceRow, error)
+	ApplyListing(ctx context.Context, key string, listed []store.ListedRepo) (store.ListingResult, error)
+	MarkSourceListed(ctx context.Context, key, errText string) error
+	SyncJobs(ctx context.Context) ([]store.SyncJob, error)
+	MarkRepoSyncing(ctx context.Context, key, slug string) error
+	MarkRepoReady(ctx context.Context, key, slug, branch, head string) error
+	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
+}
+
+// Git is what the poller needs of gitrepo.
+type Git interface {
+	Dir(key, slug string) (string, error)
+	OriginURL(ctx context.Context, dir string) (string, error)
+	EnsureCloned(ctx context.Context, dir, cloneURL string, a gitrepo.Access) error
+	DefaultBranch(ctx context.Context, cloneURL string, a gitrepo.Access) (string, error)
+	Fetch(ctx context.Context, dir, cloneURL string, a gitrepo.Access) error
+	HeadSHA(ctx context.Context, dir, branch string) (string, error)
+	Remove(key, slug string) error
+}
+
+// Lister lists a Bitbucket project's repositories.
+type Lister interface {
+	ListRepos(ctx context.Context, host, project string, a gitrepo.Access) ([]store.ListedRepo, error)
+}
+
+// Deps are the poller's collaborators.
+type Deps struct {
+	Store  Store
+	Git    Git
+	Lister Lister
+	Key    secret.Key
+	// Interval is the cycle; zero means cycles run on a nudge only.
+	Interval time.Duration
+	// FirstDelay overrides the constant; tests set it.
+	FirstDelay time.Duration
+	Log        *slog.Logger
+}
+
+// Poller is the worker.
+type Poller struct {
+	Deps
+	wake   chan struct{}
+	cancel context.CancelFunc
+	done   chan struct{}
+	mu     sync.Mutex
+}
+
+// New builds a Poller.
+func New(d Deps) *Poller {
+	if d.FirstDelay <= 0 {
+		d.FirstDelay = FirstDelay
+	}
+	if d.Log == nil {
+		d.Log = slog.Default()
+	}
+	return &Poller{Deps: d, wake: make(chan struct{}, 1)}
+}
+
+// Nudge starts the next cycle now rather than at the end of the wait.
+// Buffered by one: a nudge that lands mid-cycle starts another right after.
+func (p *Poller) Nudge() {
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Start runs the loop until Stop.
+func (p *Poller) Start(ctx context.Context) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ctx, p.cancel = context.WithCancel(ctx)
+	p.done = make(chan struct{})
+	go func() {
+		defer close(p.done)
+		p.run(ctx)
+	}()
+}
+
+// Stop cancels the cycle in flight and waits for the loop to end. A clone
+// cut off here leaves a directory without a checkout, which the next cycle
+// removes and clones again.
+func (p *Poller) Stop() {
+	p.mu.Lock()
+	cancel, done := p.cancel, p.done
+	p.mu.Unlock()
+	if cancel == nil {
+		return
+	}
+	cancel()
+	<-done
+}
+
+func (p *Poller) run(ctx context.Context) {
+	delay := jittered(p.FirstDelay)
+	p.Log.Info("sync scheduled", "first_cycle_in", delay.Round(time.Second).String(), "interval", p.Interval.String())
+	for {
+		if !p.wait(ctx, delay) {
+			return
+		}
+		if err := p.CycleOnce(ctx); err != nil && ctx.Err() == nil {
+			p.Log.Error("sync cycle failed", "err", err.Error())
+		}
+		delay = jittered(p.Interval)
+	}
+}
+
+// wait sleeps for d (forever when d is zero), or until the context ends or
+// a nudge arrives. False when the context ended.
+func (p *Poller) wait(ctx context.Context, d time.Duration) bool {
+	var timer <-chan time.Time
+	if d > 0 {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		timer = t.C
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer:
+		return true
+	case <-p.wake:
+		return true
+	}
+}
+
+// CycleOnce lists every Bitbucket source, then syncs every repository that
+// is not missing. It returns an error only for a failure that stops the
+// whole cycle (the store not answering); one source's or repository's
+// failure is recorded on its row and the loop continues.
+func (p *Poller) CycleOnce(ctx context.Context) error {
+	started := time.Now()
+	sources, err := p.Store.Sources(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range sources {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if s.Kind == store.SourceBitbucket {
+			p.list(ctx, s.ProjectSource)
+		}
+	}
+	jobs, err := p.Store.SyncJobs(ctx)
+	if err != nil {
+		return err
+	}
+	p.Log.Info("sync cycle started", "sources", len(sources), "repositories", len(jobs))
+	var synced, unchanged, failed int
+	for _, j := range jobs {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		repoStart := time.Now()
+		head, moved, err := p.sync(ctx, j)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			// The process is ending, not the repository failing.
+			return ctx.Err()
+		case err != nil:
+			failed++
+			p.Log.Warn("repo_sync_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "took", took(repoStart), "err", err.Error())
+			if markErr := p.Store.MarkRepoFailed(ctx, j.Source.ProjectKey, j.Repo.Slug, err.Error()); markErr != nil {
+				p.Log.Error("recording the failure failed too", "repo", j.Repo.Slug, "err", markErr.Error())
+			}
+		case moved:
+			synced++
+			p.Log.Info("repo_synced", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head), "took", took(repoStart))
+		default:
+			unchanged++
+			p.Log.Debug("repo_unchanged", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head), "took", took(repoStart))
+		}
+	}
+	p.Log.Info("sync cycle finished", "checked", len(jobs), "synced", synced, "unchanged", unchanged, "failed", failed, "took", took(started))
+	return nil
+}
+
+// list reconciles one Bitbucket source's repositories with the API.
+func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
+	a, err := p.access(s)
+	if err == nil {
+		var listed []store.ListedRepo
+		listed, err = p.Lister.ListRepos(ctx, s.Host, s.ProjectKey, a)
+		if err == nil {
+			var res store.ListingResult
+			res, err = p.Store.ApplyListing(ctx, s.ProjectKey, listed)
+			if err == nil {
+				p.Log.Info("source_listed", "project", s.ProjectKey, "repositories", len(listed), "added", res.Added, "missing", res.Missing)
+			}
+		}
+	}
+	errText := ""
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		errText = err.Error()
+		p.Log.Warn("source_listing_failed", "project", s.ProjectKey, "err", errText)
+	}
+	if markErr := p.Store.MarkSourceListed(ctx, s.ProjectKey, errText); markErr != nil {
+		p.Log.Error("recording the listing failed", "project", s.ProjectKey, "err", markErr.Error())
+	}
+}
+
+// access opens the source's token for one command's worth of use.
+func (p *Poller) access(s store.ProjectSource) (gitrepo.Access, error) {
+	a := gitrepo.Access{Auth: s.TokenAuth, User: s.TokenUser}
+	if !s.HasToken() {
+		return a, nil
+	}
+	tok, err := p.Key.Open(s.TokenEnc)
+	if err != nil {
+		if errors.Is(err, secret.ErrNoKey) {
+			return a, errors.New("a token is stored but ALMANACH_SECRET_KEY is not set")
+		}
+		return a, fmt.Errorf("stored token cannot be opened (key changed?): %w", err)
+	}
+	a.Token = tok
+	return a, nil
+}
+
+// sync is one repository's cycle: origin check, clone, branch, fetch,
+// head. Reports the head and whether it moved.
+func (p *Poller) sync(ctx context.Context, j store.SyncJob) (string, bool, error) {
+	key, slug := j.Source.ProjectKey, j.Repo.Slug
+	a, err := p.access(j.Source)
+	if err != nil {
+		return "", false, err
+	}
+	dir, err := p.Git.Dir(key, slug)
+	if err != nil {
+		return "", false, err
+	}
+	if err := p.Store.MarkRepoSyncing(ctx, key, slug); err != nil {
+		return "", false, err
+	}
+	// The directory is a label; the origin is the identity. A corrected
+	// clone URL must not go on serving the old code under the new name.
+	origin, err := p.Git.OriginURL(ctx, dir)
+	if err != nil {
+		return "", false, err
+	}
+	if origin != "" && origin != j.Repo.CloneURL {
+		p.Log.Info("checkout points at a different remote; re-cloning", "project", key, "repo", slug, "checkout_origin", origin, "configured", j.Repo.CloneURL)
+		if err := p.Git.Remove(key, slug); err != nil {
+			return "", false, err
+		}
+	}
+	if err := p.Git.EnsureCloned(ctx, dir, j.Repo.CloneURL, a); err != nil {
+		return "", false, err
+	}
+	branch := j.Repo.Branch
+	if branch == "" {
+		branch, err = p.Git.DefaultBranch(ctx, j.Repo.CloneURL, a)
+		if err != nil {
+			return "", false, err
+		}
+		p.Log.Info("branch resolved from the remote", "project", key, "repo", slug, "branch", branch)
+	}
+	if err := p.Git.Fetch(ctx, dir, j.Repo.CloneURL, a); err != nil {
+		return "", false, err
+	}
+	head, err := p.Git.HeadSHA(ctx, dir, branch)
+	if err != nil {
+		return "", false, err
+	}
+	if err := p.Store.MarkRepoReady(ctx, key, slug, branch, head); err != nil {
+		return "", false, err
+	}
+	return head, head != j.Repo.HeadCommit, nil
+}
+
+// jittered is d plus up to ten percent, so a fleet coming up together does
+// not reach one forge in the same second. Zero stays zero.
+func jittered(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	return d + time.Duration(rand.Int64N(int64(d)/10+1))
+}
+
+// took renders a duration as a string: the JSON handler would print a
+// Duration as nanoseconds.
+func took(start time.Time) string {
+	d := time.Since(start)
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(100 * time.Millisecond).String()
+}
