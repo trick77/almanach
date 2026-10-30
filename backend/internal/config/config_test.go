@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func lookup(m map[string]string) func(string) string {
@@ -118,6 +119,53 @@ func TestNonPositiveCap(t *testing.T) {
 	env["ALMANACH_REPO_MAX_CHARS"] = "lots"
 	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `ALMANACH_REPO_MAX_CHARS: "lots" is not an integer`) {
 		t.Errorf("non-integer cap: error = %v", err)
+	}
+}
+
+func TestBaselineDefaultsAndChecks(t *testing.T) {
+	app, err := Load(lookup(minimal()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Baseline{MaxCalls: 16, MaxBytes: 2_000_000, Reconcile: 720 * time.Hour}
+	if app.Baseline != want {
+		t.Fatalf("Baseline = %+v, want %+v", app.Baseline, want)
+	}
+	env := minimal()
+	env["ALMANACH_CATALOGUE_MODEL"] = "cheap"
+	env["ALMANACH_BASELINE_MAX_CALLS"] = "3"
+	env["ALMANACH_BASELINE_RECONCILE"] = "0"
+	app, err = Load(lookup(env))
+	if err != nil || app.Baseline.CatalogueModel != "cheap" || app.Baseline.MaxCalls != 3 || app.Baseline.Reconcile != 0 {
+		t.Fatalf("overrides = %+v %v", app.Baseline, err)
+	}
+	for name, c := range map[string]struct{ value, fault string }{
+		"ALMANACH_BASELINE_MAX_CALLS": {"2", "a run needs at least 3 calls"},
+		"ALMANACH_BASELINE_MAX_BYTES": {"0", "must be a positive integer"},
+		"ALMANACH_BASELINE_RECONCILE": {"-1h", "must not be negative"},
+	} {
+		env := minimal()
+		env[name] = c.value
+		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), name+": "+c.fault) {
+			t.Errorf("%s=%s: error = %v", name, c.value, err)
+		}
+	}
+}
+
+func TestSummaryNamesTheCatalogueModel(t *testing.T) {
+	env := minimal()
+	env["ALMANACH_REPOS_DIR"] = "/repos"
+	app, err := Load(lookup(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := app.Summary(); !strings.Contains(s, "baseline {catalogue gpt-x, 16 calls / 2000000 bytes a run, reconcile 720h0m0s}") {
+		t.Errorf("Summary = %s", s)
+	}
+	env["ALMANACH_CATALOGUE_MODEL"] = "cheap"
+	app, _ = Load(lookup(env))
+	if s := app.Summary(); !strings.Contains(s, "catalogue cheap,") {
+		t.Errorf("Summary with a catalogue model = %s", s)
 	}
 }
 

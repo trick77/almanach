@@ -230,28 +230,12 @@ const SystemMessage = "You maintain a knowledge base about a software system. Ev
 
 // Merge runs one fold.
 func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
-	resp, _, err := c.wire.Chat(ctx, llmwire.ChatRequest{
-		Model:          c.model,
-		Reasoning:      c.reasoning(),
-		Messages:       []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(req.Prompt)},
-		ResponseFormat: mergeFormat(),
-	})
-	if err != nil {
-		out := MergeResult{Outcome: OutcomeError, Err: err}
-		if errors.Is(err, llmwire.ErrCallCap) || errors.Is(err, llmwire.ErrNoResponseHeaders) || errors.Is(err, context.DeadlineExceeded) {
-			out.Outcome = OutcomeTimedOut
-		}
+	content, call := c.call(ctx, req.Prompt, mergeFormat())
+	out := MergeResult{Outcome: call.Outcome, Cost: call.Cost, Err: call.Err}
+	if out.Outcome != OutcomeOK {
 		return out
 	}
-	out := MergeResult{Cost: costFrom(resp)}
-	if resp.FinishReason == "length" {
-		// Cut by the model's output cap, so the JSON is incomplete: say so,
-		// rather than reporting the cut as an answer off the schema.
-		out.Outcome = OutcomeTooLong
-		out.Err = errors.New("the answer was cut by the model's output limit")
-		return out
-	}
-	m, ok := ParseMerge(resp.Content)
+	m, ok := ParseMerge(content)
 	if !ok {
 		out.Outcome = OutcomeUnparseable
 		return out
@@ -260,8 +244,52 @@ func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
 	return out
 }
 
+// Call is how one call ended, whatever it asked for: what a worker needs to
+// class a failure and to write the ledger row.
+type Call struct {
+	Outcome Outcome
+	Cost    CallCost
+	Err     error
+}
+
+// call is one Chat with a strict schema, never streaming, no retry. The
+// content is the answer to parse when the outcome is ok.
+func (c *Client) call(ctx context.Context, prompt string, format llmwire.ResponseFormat) (string, Call) {
+	resp, _, err := c.wire.Chat(ctx, llmwire.ChatRequest{
+		Model:          c.model,
+		Reasoning:      c.reasoning(),
+		Messages:       []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(prompt)},
+		ResponseFormat: format,
+	})
+	if err != nil {
+		out := Call{Outcome: OutcomeError, Err: err}
+		if errors.Is(err, llmwire.ErrCallCap) || errors.Is(err, llmwire.ErrNoResponseHeaders) || errors.Is(err, context.DeadlineExceeded) {
+			out.Outcome = OutcomeTimedOut
+		}
+		return "", out
+	}
+	out := Call{Cost: costFrom(resp)}
+	if resp.FinishReason == "length" {
+		// Cut by the model's output cap, so the JSON is incomplete: say so,
+		// rather than reporting the cut as an answer off the schema.
+		out.Outcome = OutcomeTooLong
+		out.Err = errors.New("the answer was cut by the model's output limit")
+		return "", out
+	}
+	return resp.Content, out
+}
+
 // ParseMerge reads the model's answer. A bare null is a non-answer.
 func ParseMerge(content string) (Merge, bool) {
+	var m *Merge
+	if !parse(content, &m) || m == nil {
+		return Merge{}, false
+	}
+	return *m, true
+}
+
+// parse reads a JSON answer into dst, a fence around it tolerated.
+func parse(content string, dst any) bool {
 	content = strings.TrimSpace(content)
 	if strings.HasPrefix(content, "```") {
 		lines := strings.Split(content, "\n")
@@ -273,11 +301,7 @@ func ParseMerge(content string) (Merge, bool) {
 		}
 		content = strings.Join(lines, "\n")
 	}
-	var m *Merge
-	if json.Unmarshal([]byte(content), &m) != nil || m == nil {
-		return Merge{}, false
-	}
-	return *m, true
+	return json.Unmarshal([]byte(content), dst) == nil
 }
 
 func costFrom(resp *llmwire.ChatResponse) CallCost {
@@ -306,21 +330,27 @@ func description() map[string]any {
 		"additionalProperties": false,
 		"required":             []any{"summary", "statements"},
 		"properties": map[string]any{
-			"summary": map[string]any{"type": "string", "minLength": 1},
-			"statements": map[string]any{
-				"type": "array",
-				"items": map[string]any{
-					"type":                 "object",
-					"additionalProperties": false,
-					"required":             []any{"id", "kind", "name", "text", "files"},
-					"properties": map[string]any{
-						"id":    map[string]any{"type": []any{"string", "null"}},
-						"kind":  map[string]any{"type": "string", "enum": []any{"component", "rule", "invariant", "entity"}},
-						"name":  map[string]any{"type": "string", "minLength": 1},
-						"text":  map[string]any{"type": "string", "minLength": 1},
-						"files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-					},
-				},
+			"summary":    map[string]any{"type": "string", "minLength": 1},
+			"statements": statements(),
+		},
+	}
+}
+
+// statements is the array of statements as a description or a patch
+// carries them: id null for a new one.
+func statements() map[string]any {
+	return map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []any{"id", "kind", "name", "text", "files"},
+			"properties": map[string]any{
+				"id":    map[string]any{"type": []any{"string", "null"}},
+				"kind":  map[string]any{"type": "string", "enum": []any{"component", "rule", "invariant", "entity"}},
+				"name":  map[string]any{"type": "string", "minLength": 1},
+				"text":  map[string]any{"type": "string", "minLength": 1},
+				"files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
 		},
 	}
