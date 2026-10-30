@@ -29,6 +29,10 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
 | `ALMANACH_PROJECT_MAX_CHARS` | `40000` | The same for a project description. |
 | `ALMANACH_PROBLEM_WINDOW_DAYS` | `90` | How far back the problem areas look by default; `?days=` overrides per request. |
+| `ALMANACH_REPOS_DIR` | unset | The clones (the Quellen pages). Unset: the feature is off, no poller, the routes answer 404, the UI hides the entry. Set: the base folder every clone lands under as `<dir>/<project>/<slug>`; must exist and be writable (checked with a probe file at startup), and `git` must be on PATH. compose gives its container `/app/repos` on the `repos` volume; a deployment needs a volume claim there, owned by uid 1000 (fsGroup or an init chown). |
+| `ALMANACH_SECRET_KEY` | unset | Base64 of 32 random bytes (`openssl rand -base64 32`). Seals the sources' tokens in the database with AES-GCM. Unset, public repositories still clone and saving a token is a 422. Changing it orphans every stored token: the affected sources fail with a line naming the key until the token is entered again. |
+| `ALMANACH_SYNC_INTERVAL` | `30m` | The poller's cycle: every Bitbucket source listed, every clone fetched. `0` means on demand only (the Synchronisieren buttons). The first cycle runs thirty seconds after start whatever the interval. |
+| `ALMANACH_GIT_CA_FILE` | unset | A PEM bundle git trusts for https (`GIT_SSL_CAINFO`), for a forge behind an internal CA. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `ALMANACH_ENV` | `dev` | Environment name in every log line. |
 
@@ -42,7 +46,9 @@ In `proxy` mode, machine traffic must still reach the webhook and the ping
 without a browser login. The sidecar skips authentication for exactly
 `/healthz`, `/auth/ping` and `/webhooks/noergler`; those routes are bearer
 only and read no user header, so a client header on a skipped path has
-nowhere to land. Everything under `/api/` goes through the login.
+nowhere to land. Everything under `/api/` goes through the login, the
+sources' write routes included: whoever the sidecar lets in may configure
+the clones, and the forwarded user is on the log line of every write.
 
 ## Commands
 

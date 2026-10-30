@@ -55,9 +55,15 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - ALMANACH_AUTH_MODE=none
+      # The clones live on the repos volume; the host's view of the folder
+      # (a path outside compose) must not reach the container.
+      - ALMANACH_REPOS_DIR=/app/repos
     volumes:
       # One token per team; see team-keys.example.json.
       - ./team-keys.json:/app/team-keys.json:ro
+      # Every source's clones, <project>/<slug>. Owned by uid 1000 from the
+      # image's own /app/repos on first mount.
+      - repos:/app/repos
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -65,3 +71,4 @@ services:
 
 volumes:
   pgdata:
+  repos:

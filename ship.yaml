@@ -14,3 +14,5 @@ steps:
   - { name: golden in step with noergler, run: curl -fsSL https://raw.githubusercontent.com/trick77/noergler/master/backend/internal/almanach/testdata/pr_merged_note.json | diff - backend/internal/ingest/testdata/noergler_pr_merged_note.json }
 images:
   - {}
+allow:
+  - { rule: distroless, image: "", why: "almanach shells out to git for the clones, which needs a userland" }

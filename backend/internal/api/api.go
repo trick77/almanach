@@ -54,7 +54,10 @@ type Deps struct {
 	Worker        Waker
 	AuthMode      config.AuthMode
 	ProblemWindow int
-	Log           *slog.Logger
+	// Sources is the clone feature; nil when ALMANACH_REPOS_DIR is unset,
+	// and the routes then say so.
+	Sources *SourcesDeps
+	Log     *slog.Logger
 }
 
 // Register mounts every route.
@@ -71,6 +74,7 @@ func Register(s *httpapi.Server, d Deps) {
 	s.HandleFunc("GET /api/projects/{key}/problems", d.problems)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
+	d.registerSources(s)
 }
 
 // team is the caller's team by its bearer, or "" with the 401 written.

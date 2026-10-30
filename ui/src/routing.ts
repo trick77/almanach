@@ -7,7 +7,9 @@ export type Route =
   | { page: "faq" }
   | { page: "project"; key: string }
   | { page: "repo"; key: string; slug: string }
-  | { page: "note"; key: string; slug: string; pr: number };
+  | { page: "note"; key: string; slug: string; pr: number }
+  | { page: "sources" }
+  | { page: "source"; key: string };
 
 // A project key and a repository slug are what Bitbucket allows: letters,
 // digits, dot, dash, underscore, and the tilde of a personal project
@@ -20,6 +22,7 @@ const PROJECT = new RegExp(`^/projekte/(${KEY})$`);
 const REPO = new RegExp(`^/projekte/(${KEY})/repos/(${SLUG})$`);
 const NOTE = new RegExp(`^/projekte/(${KEY})/repos/(${SLUG})/notizen/(${PR})$`);
 const PR_KEY = new RegExp(`^(${KEY})/(${SLUG})#(${PR})$`);
+const SOURCE = new RegExp(`^/quellen/(${KEY})$`);
 
 export function routeFromPath(path: string): Route {
   let m = NOTE.exec(path);
@@ -28,8 +31,17 @@ export function routeFromPath(path: string): Route {
   if (m) return { page: "repo", key: m[1], slug: m[2] };
   m = PROJECT.exec(path);
   if (m) return { page: "project", key: m[1] };
+  m = SOURCE.exec(path);
+  if (m) return { page: "source", key: m[1] };
+  if (path === "/quellen") return { page: "sources" };
   if (path === "/faq") return { page: "faq" };
   return { page: "projects" };
+}
+
+export const sourcesPath = "/quellen";
+
+export function sourcePath(key: string): string {
+  return `/quellen/${encodeURIComponent(key)}`;
 }
 
 // Encoded, so a key the server would not serve becomes a visible 404

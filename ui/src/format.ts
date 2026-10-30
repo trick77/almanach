@@ -16,6 +16,14 @@ export function dayTime(iso: string): string {
   return `${day(iso)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** clock is the time of day alone: 14:03, for a tile whose note has the
+ *  date. */
+export function clock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** shortDay is the day without the year, for a dense table: 24.10. */
 export function shortDay(iso: string): string {
   const d = new Date(iso);
@@ -78,4 +86,40 @@ export function causeLabel(kind: string): string {
  *  three and more is red. */
 export function problemTone(n: number): Tone {
   return n >= 3 ? "fail" : n === 2 ? "warn" : "none";
+}
+
+/** stateTone colours a clone's state: ready is green, a run is ochre, a
+ *  failure red, a vanished repository quiet. */
+export function stateTone(state: string): Tone {
+  switch (state) {
+    case "ready":
+      return "ok";
+    case "pending":
+    case "syncing":
+      return "warn";
+    case "failed":
+      return "fail";
+    default:
+      return "quiet";
+  }
+}
+
+/** stateLabel is the German word for a clone's state. */
+export function stateLabel(state: string): string {
+  const table: Record<string, string> = S.sources.state;
+  return table[state] ?? state;
+}
+
+/** bytes renders a size the way a disk is talked about: 1.4 GB, 320 MB,
+ *  12 kB; one decimal from a megabyte up. */
+export function bytes(n: number): string {
+  if (n < 1000) return `${n} B`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)} kB`;
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)} MB`;
+  return `${(n / 1_000_000_000).toFixed(1)} GB`;
+}
+
+/** shortSHA is the seven-character form of a commit. */
+export function shortSHA(sha: string): string {
+  return sha.length > 7 ? sha.slice(0, 7) : sha;
 }

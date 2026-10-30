@@ -27,10 +27,23 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X github.com/trick77/ship/kit/version.Version=${VERSION}" \
     -o /out/almanach ./cmd/almanach
 
-# No shell, no package manager; CA bundle included. Runs as nonroot (65532).
-FROM gcr.io/distroless/static-debian13:nonroot
+# Not distroless any more: the clones are git's, and git needs a userland.
+# Debian's git and CA bundle, nothing else; no ssh (https remotes only). The
+# passwd entry is for git, which looks its own uid up. /app/repos exists in
+# the image so an empty named volume mounted there takes its ownership, and
+# the uid-1000 process can write to it on first start; a PVC needs fsGroup
+# 1000 or an init chown for the same reason. The upgrade takes Debian fixes
+# the base tag has not caught up with.
+FROM debian:13-slim
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && apt-get install -y --no-install-recommends ca-certificates git \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --uid 1000 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin almanach \
+ && mkdir -p /app/repos && chown 1000:1000 /app /app/repos
 WORKDIR /app
 COPY --from=builder /out/almanach /almanach
+USER 1000:1000
 EXPOSE 8080
 # The binary probes its own /healthz (SERVER_HOST/SERVER_PORT as serve binds).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
