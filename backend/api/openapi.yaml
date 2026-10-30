@@ -408,6 +408,45 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/sources/{key}/repos/{slug}/describe:
+    post:
+      tags: [sources]
+      summary: Queue a baseline run of one repository
+      description: >-
+        Reads the clone at its head and folds what the code teaches into the
+        repository's page. reconcile (the default) reads what changed since
+        the commit last documented, or everything before the first run; full
+        reads the repository afresh with a new catalogue. Wakes the worker.
+      operationId: describeSourceRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Describe"
+      responses:
+        "202":
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Described"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The repository has an open run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/NotJSON"
+        "422":
+          $ref: "#/components/responses/Invalid"
+
 components:
   securitySchemes:
     teamToken:
@@ -482,7 +521,7 @@ components:
 
     SourceSummary:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_error, created_at, updated_at]
+      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_error, auto_describe, created_at, updated_at]
       properties:
         project_key:
           type: string
@@ -516,6 +555,9 @@ components:
         last_error:
           type: string
           description: The last listing's failure, or empty.
+        auto_describe:
+          type: boolean
+          description: Runs start on their own (a clone's first ready, the monthly reconcile).
         created_at:
           type: string
           format: date-time
@@ -525,7 +567,7 @@ components:
 
     SourceDetail:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
+      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, auto_describe, created_at, updated_at, repos]
       properties:
         project_key:
           type: string
@@ -551,6 +593,8 @@ components:
           format: date-time
         last_error:
           type: string
+        auto_describe:
+          type: boolean
         created_at:
           type: string
           format: date-time
@@ -564,7 +608,7 @@ components:
 
     SourceRepo:
       type: object
-      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at]
+      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at, baseline]
       properties:
         slug:
           type: string
@@ -589,6 +633,77 @@ components:
         created_at:
           type: string
           format: date-time
+        baseline:
+          oneOf:
+            - $ref: "#/components/schemas/Baseline"
+            - type: "null"
+
+    Baseline:
+      type: object
+      description: The repository's newest baseline run and the commit last documented.
+      required: [run_id, state, mode, trigger, commit, step, steps, skipped, error, queued_at, started_at, finished_at, documented_commit, documented_at]
+      properties:
+        run_id:
+          type: integer
+        state:
+          type: string
+          enum: [queued, cataloguing, describing, project, done, failed]
+        mode:
+          type: string
+          enum: [full, reconcile]
+        trigger:
+          type: string
+          enum: [manual, first_ready, monthly]
+        commit:
+          type: string
+          description: The head when queued, pinned when the run starts.
+        step:
+          type: integer
+        steps:
+          type: integer
+        skipped:
+          type: integer
+          description: Subjects the run could not fold; the next reconcile reads them again.
+        cost_usd:
+          type: string
+          description: What the gateway priced of the run's calls, 3 decimals; omitted when it priced none.
+        error:
+          type: string
+        queued_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        documented_commit:
+          type: string
+          description: The commit of the newest done run, empty before one.
+        documented_at:
+          type: [string, "null"]
+          format: date-time
+
+    Describe:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [reconcile, full]
+
+    Described:
+      type: object
+      required: [status, run_id, mode]
+      properties:
+        status:
+          type: string
+          const: queued
+        run_id:
+          type: integer
+        mode:
+          type: string
+          enum: [reconcile, full]
 
     NewSource:
       type: object
@@ -610,6 +725,9 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
+        auto_describe:
+          type: boolean
+          description: Omitted is on.
 
     SourceAccess:
       type: object
@@ -624,6 +742,9 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
+        auto_describe:
+          type: boolean
+          description: Omitted keeps it.
 
     NewSourceRepo:
       type: object
@@ -664,7 +785,8 @@ components:
       properties:
         status:
           type: string
-          enum: [accepted, deduped]
+          enum: [accepted, deduped, ignored]
+          description: ignored is a note for a repository that is no source repository, with the sources on; nothing is stored.
 
     Money:
       type: [string, "null"]
@@ -916,9 +1038,15 @@ components:
 
     Source:
       type: object
-      description: The PR a statement was learned from or last changed by.
-      required: [pr_key, merged_at]
+      description: >-
+        What a statement was learned from or last changed by: a PR (pr_key,
+        merged_at) or a baseline run that read the code at a commit (commit,
+        committed_at).
+      required: [kind]
       properties:
+        kind:
+          type: string
+          enum: [pr, baseline]
         pr_key:
           type: string
         ticket_key:
@@ -926,10 +1054,15 @@ components:
         merged_at:
           type: string
           format: date-time
+        commit:
+          type: string
+        committed_at:
+          type: string
+          format: date-time
 
     Statement:
       type: object
-      required: [id, kind, name, text, files, sources]
+      required: [id, kind, name, text, files, sources, checked]
       properties:
         id:
           type: string
@@ -948,11 +1081,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Source"
+        checked:
+          type: string
+          description: The commit a baseline run last confirmed the statement against; empty when none has.
 
     Description:
       type: object
       description: The current revision of a page.
-      required: [revision, summary, statements, source_pr_key, updated_at]
+      required: [revision, summary, statements, source_kind, source_pr_key, source_commit, updated_at]
       properties:
         revision:
           type: integer
@@ -962,9 +1098,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Statement"
+        source_kind:
+          type: string
+          enum: [pr, baseline]
         source_pr_key:
           type: string
-          description: The PR whose note produced this revision.
+          description: The PR whose note produced this revision; empty for a baseline.
+        source_commit:
+          type: string
+          description: The commit a baseline run read; empty for a PR.
         updated_at:
           type: string
           format: date-time
@@ -1081,11 +1223,16 @@ components:
 
     Revision:
       type: object
-      required: [revision, source_pr_key, statements, chars, created_at]
+      required: [revision, source_kind, source_pr_key, source_commit, statements, chars, created_at]
       properties:
         revision:
           type: integer
+        source_kind:
+          type: string
+          enum: [pr, baseline]
         source_pr_key:
+          type: string
+        source_commit:
           type: string
         statements:
           type: integer

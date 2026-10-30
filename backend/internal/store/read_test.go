@@ -23,7 +23,7 @@ func TestProjectsAndRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ps, err := s.Projects(ctx)
+	ps, err := s.Projects(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestProjectsAndRepos(t *testing.T) {
 		t.Errorf("ZED = %+v, want revision 0, 1 repo, 1 note", ps[1])
 	}
 
-	rs, err := s.Repos(ctx, "PRJ")
+	rs, err := s.Repos(ctx, "PRJ", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestProjectsAndRepos(t *testing.T) {
 	if rs[1].Revision != 1 || rs[1].Summary != "svc summary" || rs[1].Notes != 2 || rs[1].LastMerge == nil || !rs[1].LastMerge.Equal(mergedBase.Add(2*time.Minute)) {
 		t.Errorf("svc = %+v", rs[1])
 	}
-	if rs, err := s.Repos(ctx, "NONE"); err != nil || len(rs) != 0 {
+	if rs, err := s.Repos(ctx, "NONE", false); err != nil || len(rs) != 0 {
 		t.Errorf("Repos(NONE) = %v, %v, want empty", rs, err)
 	}
 }
@@ -63,21 +63,58 @@ func TestExists(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	ingest(t, s, noteFor("PRJ", "svc", 1))
-	team, ok, err := s.ProjectExists(ctx, "PRJ")
+	team, ok, err := s.ProjectExists(ctx, "PRJ", false)
 	if err != nil || !ok || team != "alpha" {
 		t.Errorf("ProjectExists(PRJ) = %q, %v, %v; want alpha, true", team, ok, err)
 	}
-	if team, ok, err := s.ProjectExists(ctx, "NONE"); err != nil || ok || team != "" {
+	if team, ok, err := s.ProjectExists(ctx, "NONE", false); err != nil || ok || team != "" {
 		t.Errorf("ProjectExists(NONE) = %q, %v, %v; want false", team, ok, err)
 	}
-	if ok, err := s.RepoExists(ctx, "PRJ", "svc"); err != nil || !ok {
+	if ok, err := s.RepoExists(ctx, "PRJ", "svc", false); err != nil || !ok {
 		t.Errorf("RepoExists(PRJ, svc) = %v, %v; want true", ok, err)
 	}
-	if ok, err := s.RepoExists(ctx, "PRJ", "none"); err != nil || ok {
+	if ok, err := s.RepoExists(ctx, "PRJ", "none", false); err != nil || ok {
 		t.Errorf("RepoExists(PRJ, none) = %v, %v; want false", ok, err)
 	}
-	if ok, err := s.RepoExists(ctx, "NONE", "svc"); err != nil || ok {
+	if ok, err := s.RepoExists(ctx, "NONE", "svc", false); err != nil || ok {
 		t.Errorf("RepoExists(NONE, svc) = %v, %v; want false", ok, err)
+	}
+}
+
+// With the sources on, the wiki is the sources: a project noergler named
+// without a source is not listed, a source no note ever named is, with the
+// team only where noergler delivered.
+func TestSourcedLists(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("OLD", "gone", 2))
+	sourceRepo(t, s, "PRJ", "svc")
+	sourceRepo(t, s, "PRJ", "web")
+	sourceRepo(t, s, "tools", "cli")
+
+	ps, err := s.Projects(ctx, true)
+	if err != nil || len(ps) != 2 {
+		t.Fatalf("Projects = %+v %v", ps, err)
+	}
+	if ps[0].Key != "PRJ" || ps[0].Team != "alpha" || ps[0].Repos != 2 || ps[0].Notes != 1 || ps[1].Key != "tools" || ps[1].Team != "" || ps[1].Repos != 1 {
+		t.Fatalf("Projects = %+v", ps)
+	}
+	rs, err := s.Repos(ctx, "PRJ", true)
+	if err != nil || len(rs) != 2 || rs[0].Slug != "svc" || rs[0].Notes != 1 || rs[1].Slug != "web" {
+		t.Fatalf("Repos = %+v %v", rs, err)
+	}
+	if team, ok, err := s.ProjectExists(ctx, "tools", true); err != nil || !ok || team != "" {
+		t.Errorf("ProjectExists(tools) = %q %v %v", team, ok, err)
+	}
+	if _, ok, err := s.ProjectExists(ctx, "OLD", true); err != nil || ok {
+		t.Errorf("ProjectExists(OLD) = %v %v, want unlisted without a source", ok, err)
+	}
+	if ok, err := s.RepoExists(ctx, "tools", "cli", true); err != nil || !ok {
+		t.Errorf("RepoExists(tools, cli) = %v %v", ok, err)
+	}
+	if ok, err := s.RepoExists(ctx, "OLD", "gone", true); err != nil || ok {
+		t.Errorf("RepoExists(OLD, gone) = %v %v, want unlisted", ok, err)
 	}
 }
 

@@ -33,10 +33,11 @@ const maxBody = 1 << 20
 // Store is what the handlers need of the store.
 type Store interface {
 	Ingest(ctx context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error)
-	Projects(ctx context.Context) ([]store.ProjectRow, error)
-	ProjectExists(ctx context.Context, key string) (string, bool, error)
-	Repos(ctx context.Context, project string) ([]store.RepoRow, error)
-	RepoExists(ctx context.Context, project, slug string) (bool, error)
+	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
+	Projects(ctx context.Context, sourced bool) ([]store.ProjectRow, error)
+	ProjectExists(ctx context.Context, key string, sourced bool) (string, bool, error)
+	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
+	RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
 	Revisions(ctx context.Context, scope, project, repo string, limit int) ([]store.RevisionRow, error)
 	Notes(ctx context.Context, project, repo string, limit int) ([]store.NoteRow, error)
@@ -117,8 +118,8 @@ type acceptedBody struct {
 // webhook takes one noergler note. Strict: an unknown field or a missing
 // required one is a 422 naming it; our own contract, so an invalid body is
 // a bug on one side and must not be swallowed. Exactly one
-// webhook_processed line per request, outcome accepted, deduped or
-// invalid, always with the delivery id when one could be built.
+// webhook_processed line per request, outcome accepted, deduped, ignored
+// or invalid, always with the delivery id when one could be built.
 func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	team := d.team(w, r)
@@ -148,6 +149,26 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Note.Team = team
+	// With the sources on, a repository exists for Almanach once it is a
+	// source repository: the baseline is its starting point and only the
+	// deltas after it are folded. A note for any other is answered and
+	// logged, never stored, so noergler marks it sent and does not resend.
+	if d.Sources != nil {
+		known, err := d.Store.IsSourceRepo(ctx, in.Note.ProjectKey, in.Note.RepoSlug)
+		if err != nil {
+			d.Log.ErrorContext(ctx, "webhook_persist_failed", "webhook_source", "noergler", "team", team,
+				"delivery_id", in.DeliveryID, logging.Err(err))
+			httpx.WriteError(w, http.StatusInternalServerError, "persist failed")
+			return
+		}
+		if !known {
+			d.Log.InfoContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", "ignored", "team", team,
+				"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "project", in.Note.ProjectKey, "repo", in.Note.RepoSlug,
+				"reason", "no source repository")
+			httpx.WriteJSON(w, http.StatusAccepted, acceptedBody{Status: "ignored"})
+			return
+		}
+	}
 	delivery := store.Delivery{ID: in.DeliveryID, Team: team, EventType: in.EventType, Payload: raw}
 	accepted, err := d.Store.Ingest(ctx, delivery, in.Note, in.Call, in.Claims)
 	if err != nil {
@@ -205,7 +226,7 @@ type projectsBody struct {
 func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
-	rows, err := d.Store.Projects(ctx)
+	rows, err := d.Store.Projects(ctx, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "projects")
 		return
@@ -217,10 +238,16 @@ func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// sourceBody is one source of a statement: a PR with its key, ticket and
+// merge time, or a baseline run's commit with the commit's time. kind is
+// always set; a source stored before baselines existed is a PR.
 type sourceBody struct {
-	PRKey     string    `json:"pr_key"`
-	TicketKey string    `json:"ticket_key,omitempty"`
-	MergedAt  time.Time `json:"merged_at"`
+	Kind        string    `json:"kind"`
+	PRKey       string    `json:"pr_key,omitempty"`
+	TicketKey   string    `json:"ticket_key,omitempty"`
+	MergedAt    time.Time `json:"merged_at,omitzero"`
+	Commit      string    `json:"commit,omitempty"`
+	CommittedAt time.Time `json:"committed_at,omitzero"`
 }
 
 type statementBody struct {
@@ -230,29 +257,44 @@ type statementBody struct {
 	Text    string       `json:"text"`
 	Files   []string     `json:"files"`
 	Sources []sourceBody `json:"sources"`
+	// Checked is the commit a baseline run last confirmed the statement
+	// against, "" when none has.
+	Checked string `json:"checked"`
 }
 
 type descriptionBody struct {
-	Revision   int             `json:"revision"`
-	Summary    string          `json:"summary"`
-	Statements []statementBody `json:"statements"`
-	SourcePR   string          `json:"source_pr_key"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	Revision     int             `json:"revision"`
+	Summary      string          `json:"summary"`
+	Statements   []statementBody `json:"statements"`
+	SourceKind   string          `json:"source_kind"`
+	SourcePR     string          `json:"source_pr_key"`
+	SourceCommit string          `json:"source_commit"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+}
+
+// sourceKind is a kind as the wire says it: "" stored is a PR.
+func sourceKind(kind string) string {
+	if kind == "" {
+		return store.FromPR
+	}
+	return kind
 }
 
 func describe(p store.Page, ok bool) *descriptionBody {
 	if !ok {
 		return nil
 	}
-	out := &descriptionBody{Revision: p.Revision, Summary: p.Summary, SourcePR: p.SourcePR, UpdatedAt: p.UpdatedAt,
-		Statements: make([]statementBody, 0, len(p.Statements))}
+	out := &descriptionBody{Revision: p.Revision, Summary: p.Summary, SourceKind: sourceKind(p.SourceKind), SourcePR: p.SourcePR,
+		SourceCommit: p.SourceCommit, UpdatedAt: p.UpdatedAt, Statements: make([]statementBody, 0, len(p.Statements))}
 	for _, s := range p.Statements {
-		sb := statementBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Sources: make([]sourceBody, 0, len(s.Sources))}
+		sb := statementBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Checked: s.Checked,
+			Sources: make([]sourceBody, 0, len(s.Sources))}
 		if sb.Files == nil {
 			sb.Files = []string{}
 		}
 		for _, src := range s.Sources {
-			sb.Sources = append(sb.Sources, sourceBody{PRKey: src.PRKey, TicketKey: src.TicketKey, MergedAt: src.MergedAt})
+			sb.Sources = append(sb.Sources, sourceBody{Kind: sourceKind(src.Kind), PRKey: src.PRKey, TicketKey: src.TicketKey,
+				MergedAt: src.MergedAt, Commit: src.Commit, CommittedAt: src.CommittedAt})
 		}
 		out.Statements = append(out.Statements, sb)
 	}
@@ -307,7 +349,7 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key := r.PathValue("key")
-	team, ok, err := d.Store.ProjectExists(ctx, key)
+	team, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project")
 		return
@@ -321,7 +363,7 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "project page")
 		return
 	}
-	repos, err := d.Store.Repos(ctx, key)
+	repos, err := d.Store.Repos(ctx, key, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "repos")
 		return
@@ -362,7 +404,7 @@ func (d Deps) problems(w http.ResponseWriter, r *http.Request) {
 		}
 		days = n
 	}
-	if _, ok, err := d.Store.ProjectExists(ctx, key); err != nil {
+	if _, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil); err != nil {
 		httpx.ServerError(w, r, err, "project")
 		return
 	} else if !ok {
@@ -378,11 +420,13 @@ func (d Deps) problems(w http.ResponseWriter, r *http.Request) {
 }
 
 type revisionBody struct {
-	Revision   int       `json:"revision"`
-	SourcePR   string    `json:"source_pr_key"`
-	Statements int       `json:"statements"`
-	Chars      int       `json:"chars"`
-	CreatedAt  time.Time `json:"created_at"`
+	Revision     int       `json:"revision"`
+	SourceKind   string    `json:"source_kind"`
+	SourcePR     string    `json:"source_pr_key"`
+	SourceCommit string    `json:"source_commit"`
+	Statements   int       `json:"statements"`
+	Chars        int       `json:"chars"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type repoDetailBody struct {
@@ -401,7 +445,7 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key, slug := r.PathValue("key"), r.PathValue("slug")
-	ok, err := d.Store.RepoExists(ctx, key, slug)
+	ok, err := d.Store.RepoExists(ctx, key, slug, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "repo")
 		return
@@ -427,7 +471,7 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	}
 	// The repository's own row carries the whole count and the newest
 	// merge; the notes list above is capped.
-	repos, err := d.Store.Repos(ctx, key)
+	repos, err := d.Store.Repos(ctx, key, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "repos")
 		return
@@ -440,7 +484,8 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, rv := range revisions {
-		out.Revisions = append(out.Revisions, revisionBody{Revision: rv.Revision, SourcePR: rv.SourcePR, Statements: rv.Statements, Chars: rv.Chars, CreatedAt: rv.CreatedAt})
+		out.Revisions = append(out.Revisions, revisionBody{Revision: rv.Revision, SourceKind: sourceKind(rv.SourceKind), SourcePR: rv.SourcePR,
+			SourceCommit: rv.SourceCommit, Statements: rv.Statements, Chars: rv.Chars, CreatedAt: rv.CreatedAt})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

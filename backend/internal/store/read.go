@@ -21,17 +21,36 @@ type ProjectRow struct {
 	LastMerge *time.Time
 }
 
+// What the wiki lists. With the sources on (sourced), a project is a source
+// and a repository a source repository: the source is the starting point,
+// and a project noergler named without one is no page anyone reaches. The
+// team is noergler's, shown when it has delivered for the key. With the
+// sources off, the wiki is noergler's projects and repositories, as before.
+func projectsFrom(sourced bool) string {
+	if sourced {
+		return `(SELECT s.project_key AS key, COALESCE(p.team, '') AS team FROM sources s LEFT JOIN projects p ON p.key = s.project_key)`
+	}
+	return `(SELECT key, team FROM projects)`
+}
+
+func reposFrom(sourced bool) string {
+	if sourced {
+		return `(SELECT project_key, slug FROM source_repos)`
+	}
+	return `(SELECT project_key, slug FROM repos)`
+}
+
 // Projects lists every project with its repo and note counts and its
 // current project-revision number (0 when none).
-func (s *Store) Projects(ctx context.Context) ([]ProjectRow, error) {
+func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.key, p.team,
-		       (SELECT COUNT(*) FROM repos r WHERE r.project_key = p.key),
+		       (SELECT COUNT(*) FROM `+reposFrom(sourced)+` r WHERE r.project_key = p.key),
 		       (SELECT COUNT(*) FROM notes n WHERE n.project_key = p.key),
 		       COALESCE((SELECT rv.revision FROM pages pg JOIN revisions rv ON rv.id = pg.current_revision_id
 		                  WHERE pg.scope = 'project' AND pg.project_key = p.key AND pg.repo_slug = ''), 0),
 		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.project_key = p.key)
-		  FROM projects p ORDER BY p.key`)
+		  FROM `+projectsFrom(sourced)+` p ORDER BY p.key`)
 	if err != nil {
 		return nil, err
 	}
@@ -58,13 +77,13 @@ type RepoRow struct {
 
 // Repos lists a project's repositories with the first line of their current
 // description.
-func (s *Store) Repos(ctx context.Context, project string) ([]RepoRow, error) {
+func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]RepoRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT r.slug,
 		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
 		       (SELECT COUNT(*) FROM notes n WHERE n.project_key = r.project_key AND n.repo_slug = r.slug),
 		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.project_key = r.project_key AND n.repo_slug = r.slug)
-		  FROM repos r
+		  FROM `+reposFrom(sourced)+` r
 		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_key = r.project_key AND pg.repo_slug = r.slug
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
 		 WHERE r.project_key = $1 ORDER BY r.slug`, project)
@@ -83,20 +102,20 @@ func (s *Store) Repos(ctx context.Context, project string) ([]RepoRow, error) {
 	return out, rows.Err()
 }
 
-// ProjectExists reports whether the project is known.
-func (s *Store) ProjectExists(ctx context.Context, key string) (string, bool, error) {
+// ProjectExists reports whether the project is listed, and its team.
+func (s *Store) ProjectExists(ctx context.Context, key string, sourced bool) (string, bool, error) {
 	var team string
-	err := s.pool.QueryRow(ctx, `SELECT team FROM projects WHERE key = $1`, key).Scan(&team)
+	err := s.pool.QueryRow(ctx, `SELECT team FROM `+projectsFrom(sourced)+` p WHERE key = $1`, key).Scan(&team)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
 	return team, err == nil, err
 }
 
-// RepoExists reports whether the repo is known.
-func (s *Store) RepoExists(ctx context.Context, project, slug string) (bool, error) {
+// RepoExists reports whether the repo is listed.
+func (s *Store) RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error) {
 	var one int
-	err := s.pool.QueryRow(ctx, `SELECT 1 FROM repos WHERE project_key = $1 AND slug = $2`, project, slug).Scan(&one)
+	err := s.pool.QueryRow(ctx, `SELECT 1 FROM `+reposFrom(sourced)+` r WHERE project_key = $1 AND slug = $2`, project, slug).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
