@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -203,8 +204,8 @@ func (c *Client) HeadSHA(ctx context.Context, dir, branch string) (string, error
 		if exitCode(err) != 1 {
 			return "", err
 		}
-		if _, checkErr := c.run(ctx, dir, nil, "rev-parse", "--git-dir"); checkErr != nil {
-			return "", fmt.Errorf("repository unreadable: %w", checkErr)
+		if checkErr := c.readable(ctx, dir); checkErr != nil {
+			return "", checkErr
 		}
 	}
 	if sha := strings.TrimSpace(out); sha != "" {
@@ -259,7 +260,37 @@ func DirSize(dir string) int64 {
 // failed against; the header keeps credentials out of it, the redaction is
 // the belt to that brace.
 func (c *Client) run(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
-	full := append([]string{"-c", "safe.directory=" + dir}, args...)
+	out, err := c.runIn(ctx, dir, nil, extra, args...)
+	return string(out), err
+}
+
+// runIn is run with stdin and the raw bytes: a file's content is not text.
+func (c *Client) runIn(ctx context.Context, dir string, stdin io.Reader, extra []string, args ...string) ([]byte, error) {
+	cmd := c.command(ctx, dir, extra, args...)
+	cmd.Stdin = stdin
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.Bytes(), fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(Redact(stderr.String())))
+	}
+	return stdout.Bytes(), nil
+}
+
+// readable tells "the thing asked for is absent" from "the clone cannot be
+// read at all": a command that answered no is followed by this probe, so a
+// broken clone is never mistaken for a missing branch or commit.
+func (c *Client) readable(ctx context.Context, dir string) error {
+	if _, err := c.run(ctx, dir, inRepo(dir), "rev-parse", "--git-dir"); err != nil {
+		return fmt.Errorf("repository unreadable: %w", err)
+	}
+	return nil
+}
+
+// command is one git process in dir, every rule of run applied, not
+// started. core.quotePath is off for every command: by default git C-quotes
+// any path with a non-ASCII byte, and the quoted form is no path.
+func (c *Client) command(ctx context.Context, dir string, extra []string, args ...string) *exec.Cmd {
+	full := append([]string{"-c", "safe.directory=" + dir, "-c", "core.quotePath=false"}, args...)
 	cmd := exec.CommandContext(ctx, c.git, full...) //nolint:gosec // argv, no shell; paths come from validated segments
 	cmd.Dir = dir
 	cmd.WaitDelay = waitDelay
@@ -268,12 +299,7 @@ func (c *Client) run(ctx context.Context, dir string, extra []string, args ...st
 		cmd.Env = append(cmd.Env, "GIT_SSL_CAINFO="+c.caFile)
 	}
 	cmd.Env = append(cmd.Env, extra...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(Redact(stderr.String())))
-	}
-	return stdout.String(), nil
+	return cmd
 }
 
 func exitCode(err error) int {
