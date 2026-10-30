@@ -163,7 +163,9 @@ func TestSummaryNamesTheCatalogueModel(t *testing.T) {
 		t.Errorf("Summary = %s", s)
 	}
 	env["ALMANACH_CATALOGUE_MODEL"] = "cheap"
-	app, _ = Load(lookup(env))
+	if app, err = Load(lookup(env)); err != nil {
+		t.Fatal(err)
+	}
 	if s := app.Summary(); !strings.Contains(s, "catalogue cheap,") {
 		t.Errorf("Summary with a catalogue model = %s", s)
 	}

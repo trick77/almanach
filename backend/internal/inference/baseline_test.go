@@ -86,7 +86,7 @@ func TestDescribe(t *testing.T) {
 	if res := testClient(srv.Client()).Describe(context.Background(), "p"); res.Outcome != OutcomeOK || res.Description != nil {
 		t.Errorf("no change = %+v, want ok and nil", res)
 	}
-	for _, reply := range []string{"null", "Gerne!"} {
+	for _, reply := range []string{"null", "Gerne!", "{}", `{"other": 1}`, `{"description": {"summary": "x"}}`, `{"description": 3}`} {
 		srv.SetReply(reply)
 		if res := testClient(srv.Client()).Describe(context.Background(), "p"); res.Outcome != OutcomeUnparseable {
 			t.Errorf("reply %q: Outcome = %s, want unparseable", reply, res.Outcome)

@@ -141,8 +141,8 @@ func (m *fakeMerger) Merge(_ context.Context, req inference.MergeRequest) infere
 
 func okResult(repo, project *inference.Description) inference.MergeResult {
 	nano := int64(2_000_000)
-	return inference.MergeResult{Outcome: inference.OutcomeOK, Merge: inference.Merge{Repository: repo, Project: project},
-		Cost: inference.CallCost{Model: "gpt-x", CallID: "call-9", InputTokens: 100, CachedTokens: 20, OutputTokens: 10, NanoUSD: &nano, Answered: true}}
+	return inference.MergeResult{Merge: inference.Merge{Repository: repo, Project: project}, Call: inference.Call{Outcome: inference.OutcomeOK,
+		Cost: inference.CallCost{Model: "gpt-x", CallID: "call-9", InputTokens: 100, CachedTokens: 20, OutputTokens: 10, NanoUSD: &nano, Answered: true}}}
 }
 
 func queued(prKey string) store.QueuedNote {
@@ -359,7 +359,7 @@ func TestFoldProjectScope(t *testing.T) {
 // withDescription is a failed result that still carries a rewrite, so a
 // gate that fell through to apply() would show as a revision.
 func failed(outcome inference.Outcome, err error) inference.MergeResult {
-	return inference.MergeResult{Outcome: outcome, Err: err,
+	return inference.MergeResult{Call: inference.Call{Outcome: outcome, Err: err},
 		Merge: inference.Merge{Repository: &inference.Description{Summary: "s", Statements: nil}}}
 }
 

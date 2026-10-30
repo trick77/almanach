@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 
 	"github.com/trick77/llmwire"
@@ -88,14 +89,24 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 	if call.Outcome != OutcomeOK {
 		return out
 	}
+	// The key must be there: {} is no answer, not "no change". A rewrite
+	// must carry its statements, or the page would lose them all.
 	var answer *struct {
-		Description *Description `json:"description"`
+		Description json.RawMessage `json:"description"`
 	}
-	if !parse(content, &answer) || answer == nil {
+	if !parse(content, &answer) || answer == nil || answer.Description == nil {
 		out.Outcome = OutcomeUnparseable
 		return out
 	}
-	out.Description = answer.Description
+	if string(answer.Description) == "null" {
+		return out
+	}
+	var d Description
+	if json.Unmarshal(answer.Description, &d) != nil || d.Statements == nil {
+		out.Outcome = OutcomeUnparseable
+		return out
+	}
+	out.Description = &d
 	return out
 }
 
@@ -138,8 +149,8 @@ func catalogueFormat() llmwire.ResponseFormat {
 				"required":             []any{"name", "purpose", "paths"},
 				"properties": map[string]any{
 					"name":    map[string]any{"type": "string", "minLength": 1},
-					"purpose": map[string]any{"type": "string"},
-					"paths":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"purpose": map[string]any{"type": "string", "minLength": 1},
+					"paths":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 1}},
 				},
 			},
 		},
@@ -149,7 +160,7 @@ func catalogueFormat() llmwire.ResponseFormat {
 func patchFormat() llmwire.ResponseFormat {
 	ids := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	return strict(PatchSchemaName, map[string]any{
-		"summary":    map[string]any{"type": []any{"string", "null"}},
+		"summary":    map[string]any{"type": []any{"string", "null"}, "minLength": 1},
 		"statements": statements(),
 		"drop":       ids,
 		"confirmed":  ids,
