@@ -75,6 +75,51 @@ func TestEnqueueRun_OneOpenPerRepository(t *testing.T) {
 	}
 }
 
+// A reconcile that reads afresh is saved as full: the worker reads the row
+// back each step, and a mode kept in memory only would send it round the
+// same switch for ever.
+func TestSaveRun_KeepsTheMode(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "tools", "svc")
+	id, err := s.EnqueueRun(ctx, "tools", "svc", RunReconcile, TriggerMonthly, "c0ffee", "beef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _, _ := s.RunByID(ctx, id)
+	r.Mode, r.State = RunFull, RunCataloguing
+	if ok, err := s.SaveRun(ctx, r); err != nil || !ok {
+		t.Fatalf("SaveRun: %v %v", ok, err)
+	}
+	if got, _, _ := s.RunByID(ctx, id); got.Mode != RunFull {
+		t.Fatalf("mode = %s, want full saved", got.Mode)
+	}
+}
+
+// Failed runs count since the newest done one.
+func TestFailedRuns_SinceTheLastDone(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "tools", "svc")
+	count := func() int {
+		n, err := s.FailedRuns(ctx, "tools", "svc")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
+	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
+	if n := count(); n != 2 {
+		t.Fatalf("FailedRuns = %d, want 2", n)
+	}
+	finish(t, s, enqueue(t, s, "tools", "svc"), RunDone)
+	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
+	if n := count(); n != 1 {
+		t.Fatalf("FailedRuns after a done run = %d, want 1", n)
+	}
+}
+
 // A reconcile reads from the documented commit: without one it is refused.
 func TestEnqueueRun_ReconcileNeedsABase(t *testing.T) {
 	s := testStore(t)

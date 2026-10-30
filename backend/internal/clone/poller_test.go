@@ -32,6 +32,7 @@ type fakeStore struct {
 	last       store.BaselineRun
 	documented store.BaselineRun
 	runErr     error
+	failed     int
 }
 
 func newFakeStore() *fakeStore {
@@ -86,6 +87,9 @@ func (f *fakeStore) LastRun(context.Context, string, string) (store.BaselineRun,
 }
 func (f *fakeStore) DocumentedRun(context.Context, string, string) (store.BaselineRun, bool, error) {
 	return f.documented, f.documented.ID != 0, f.runErr
+}
+func (f *fakeStore) FailedRuns(context.Context, string, string) (int, error) {
+	return f.failed, f.runErr
 }
 
 // state reads a repo's state under the lock, for a test that polls while

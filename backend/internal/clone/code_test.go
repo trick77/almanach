@@ -83,16 +83,23 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 func TestDescribe_RetriesAFailedFirstRun(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	for name, c := range map[string]struct {
-		last store.BaselineRun
-		want string
+		last       store.BaselineRun
+		documented string
+		failed     int
+		want       string
 	}{
-		"failed a day ago":   {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "tools cli full first_ready  h1"},
-		"failed an hour ago": {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-time.Hour))}, ""},
-		"never ran":          {store.BaselineRun{}, ""},
+		"failed a day ago":   {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "", 1, "tools cli full first_ready  h1"},
+		"failed an hour ago": {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-time.Hour))}, "", 1, ""},
+		"failed three times": {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "", 3, ""},
+		"reconcile failed":   {store.BaselineRun{ID: 2, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "d0", 1, "tools cli reconcile monthly d0 h1"},
+		"never ran":          {store.BaselineRun{}, "", 0, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
-			s.last = c.last
+			s.last, s.failed = c.last, c.failed
+			if c.documented != "" {
+				s.documented = store.BaselineRun{ID: 1, Commit: c.documented, State: store.RunDone}
+			}
 			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
 			g.origins["/base/tools/cli"] = "https://x/cli.git"
 			g.heads["/base/tools/cli@main"] = "h1"

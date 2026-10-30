@@ -417,9 +417,13 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 	}
 	r.Plan, r.Step, r.Steps = raw, 0, plan.steps()+1
 	if plan.steps() == 0 {
+		// Nothing to read again; the project step still runs, and folds
+		// when the last run skipped it.
 		w.log.InfoContext(ctx, "baseline: nothing to read again")
-		return w.finish(ctx, r, plan)
+		r.State = store.RunProject
+		return w.save(ctx, *r)
 	}
+
 	r.State = store.RunDescribing
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %d subjects catalogued, %d to read, overview %v", len(plan.Subjects), len(plan.Read), plan.Overview))
 	return w.save(ctx, *r)
@@ -568,6 +572,11 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	return nil
 }
 
+// newerSlack is how much later than the read commit a pull request may
+// have been merged and still count as in it: the PR whose merge commit is
+// the head is recorded as merged a moment after the commit is made.
+const newerSlack = 2 * time.Minute
+
 // newerThan reports whether a pull request among a statement's sources was
 // merged after the commit a run reads: the run pins the clone's last
 // synced head, and a note merged since may have been folded before the run
@@ -577,7 +586,7 @@ func newerThan(s store.Statement, at time.Time) bool {
 		return false
 	}
 	for _, src := range s.Sources {
-		if !src.IsBaseline() && src.MergedAt.After(at) {
+		if !src.IsBaseline() && src.MergedAt.After(at.Add(newerSlack)) {
 			return true
 		}
 	}

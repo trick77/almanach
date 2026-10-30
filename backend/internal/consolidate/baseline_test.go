@@ -368,6 +368,21 @@ func TestRun_Reconcile(t *testing.T) {
 		t.Fatalf("quiet reconcile = %+v", r)
 	}
 
+	// The same quiet reconcile after a run that skipped its project step
+	// folds the project nonetheless.
+	q := newWorld(t, 16)
+	skipped := runPlan{Plan: baseline.Plan{Subjects: old.Subjects, Skipped: []string{projectName}}}
+	raw, _ = json.Marshal(skipped)
+	q.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	q.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
+	q.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
+	q.queue(store.RunReconcile, older40)
+	q.models.project = inference.DescriptionResult{Call: called}
+	q.w.drain(context.Background())
+	if r := q.run(); r.State != store.RunDone || r.Calls != 1 || q.st.calls[0].Purpose != store.PurposeProject {
+		t.Fatalf("quiet reconcile after a skipped project = %+v", r)
+	}
+
 	// A rewritten branch: the documented commit is gone, a full read.
 	z := newWorld(t, 16)
 	z.code.contains = false
