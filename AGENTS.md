@@ -9,9 +9,8 @@ and tests included.
 ## Commands
 
 - Module in `backend/` (go commands there); `ui/` (npm commands there),
-  docs, `compose.yaml`, `make` at the root. The prompt is
-  `backend/internal/prompts/almanach_merge.txt`, compiled in, never
-  configurable. `make fe-build` writes `backend/web/dist`, which `go
+  docs, `compose.yaml`, `make` at the root. Prompts in
+  `backend/internal/prompts/`, compiled in, never configurable. `make fe-build` writes `backend/web/dist`, which `go
   build` embeds; the UI is German only (`ui/src/strings.ts`), read-only,
   reads `/api/...` and nothing else; its routes are mirrored in
   `backend/web/embed.go`, statements render as paragraphs, never markdown.
@@ -84,7 +83,7 @@ and tests included.
   never go-git (rejected 2026-10-30); image is debian-slim with git. Clones
   only at `ALMANACH_REPOS_DIR/<project>/<slug>`; key and slug single path
   segments, `filepath.Rel`-checked before any `RemoveAll`. Clone URLs https,
-  no credentials. Clones are bare (phase 2 reads the object store). Token
+  no credentials. Clones are bare (runs read the object store). Token
   to git per command as a header via `GIT_CONFIG_*` env (Bearer or Basic),
   never in a URL; stderr redacted; sealed AES-GCM under
   `ALMANACH_SECRET_KEY`, never returned or logged. Origin URL is identity:
@@ -94,3 +93,9 @@ and tests included.
   `ALMANACH_REPOS_DIR` = feature off (list `enabled: false`, rest 404).
   Removal: folder first, then row. UI copy: capital only when the first
   char is a letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel".
+- Baseline (HOW_IT_WORKS 4b): sources on = the source is the starting
+  point; a note for a non-source repo is 202 `ignored`, never stored (user,
+  2026-10-30). Runs are steps of the one worker, notes first, one call per
+  step, commit pinned at start; a repo's notes wait while its run runs. A
+  step answers a patch: unnamed ids kept, a PR statement dropped only when
+  its files left the tree. Never `git checkout`, never a parallel writer.
