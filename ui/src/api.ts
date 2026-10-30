@@ -164,6 +164,65 @@ export interface NoteDetail extends NoteSummary {
   note_call: NoteCall | null;
 }
 
+// The sources: what Almanach clones itself. Mirrors api/sources.go.
+
+export type SourceKind = "bitbucket" | "static";
+export type TokenAuth = "bearer" | "basic";
+export type RepoState = "pending" | "syncing" | "ready" | "failed" | "missing";
+
+export interface SourceSummary {
+  project_key: string;
+  kind: SourceKind;
+  host: string;
+  has_token: boolean;
+  token_auth: TokenAuth;
+  token_user: string;
+  repos: number;
+  ready: number;
+  /** Pending or syncing. */
+  active: number;
+  failed: number;
+  missing: number;
+  last_listed_at: string | null;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Sources {
+  enabled: boolean;
+  sources: SourceSummary[];
+}
+
+export interface SourceRepo {
+  slug: string;
+  clone_url: string;
+  origin: "listed" | "manual";
+  /** Empty until resolved from the remote. */
+  branch: string;
+  head_commit: string;
+  state: RepoState;
+  last_synced_at: string | null;
+  last_error: string;
+  created_at: string;
+}
+
+export interface SourceDetail {
+  project_key: string;
+  kind: SourceKind;
+  host: string;
+  has_token: boolean;
+  token_auth: TokenAuth;
+  token_user: string;
+  dir: string;
+  disk_bytes: number;
+  last_listed_at: string | null;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+  repos: SourceRepo[];
+}
+
 /** get fetches one API path. A non-2xx is an error: the pages show their
  *  failed state rather than an empty one. */
 export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -172,4 +231,47 @@ export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
     throw new Error(`${path}: HTTP ${res.status}`);
   }
   return (await res.json()) as T;
+}
+
+/** parseJSON is JSON.parse that answers null for an empty or non-JSON
+ *  body (a proxy's error page) rather than throwing. */
+function parseJSON(text: string): unknown {
+  if (text === "") return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** ApiError carries the server's own message, which names the field for a
+ *  422, so a form can show it as it is. */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** send is a write: JSON in, JSON or nothing out. The server's `error` is
+ *  the message of the rejection. */
+export async function send<T>(
+  method: "POST" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<T | null> {
+  const res = await fetch(`/api/${path}`, {
+    method,
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 204) return null;
+  const parsed = parseJSON(await res.text());
+  if (!res.ok) {
+    const err = parsed as { error?: string } | null;
+    throw new ApiError(res.status, err?.error ?? `HTTP ${res.status}`);
+  }
+  return parsed as T;
 }

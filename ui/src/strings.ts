@@ -4,7 +4,12 @@
 
 export const S = {
   app: "Almanach",
-  nav: { label: "Seiten", projects: "Projekte", faq: "FAQ" },
+  nav: {
+    label: "Seiten",
+    projects: "Projekte",
+    sources: "Quellen",
+    faq: "FAQ",
+  },
   common: {
     loading: "Lädt …",
     failed: (what: string) => `${what} konnte nicht geladen werden.`,
@@ -133,6 +138,161 @@ export const S = {
     unpriced: "nicht bepreist",
     files: "Dateien",
   },
+  sources: {
+    title: "Quellen",
+    lede: "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Die Klone sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.",
+    what: "die Quellen",
+    whatOne: "die Quelle",
+    empty: "Noch keine Quelle.",
+    disabled:
+      "Quellen sind auf dieser Instanz nicht konfiguriert (ALMANACH_REPOS_DIR).",
+    headers: [
+      "Slug",
+      "Art",
+      "Host",
+      "Token",
+      "Repos",
+      "Zustand",
+      "Letzter Lauf",
+    ],
+    kind: { bitbucket: "bitbucket", static: "statisch" } as Record<
+      string,
+      string
+    >,
+    kindLabel: {
+      bitbucket: "Bitbucket-Projekt",
+      static: "Statischer Ordner",
+    } as Record<string, string>,
+    kindHint: {
+      bitbucket:
+        "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Lauf neu gelistet.",
+      static:
+        "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation.",
+    } as Record<string, string>,
+    tokenStored: "Hinterlegt",
+    tokenNone: "Öffentlich",
+    tokenAs: (auth: string, user: string) =>
+      auth === "basic" ? `Basic als ${user || "x-access-token"}` : "Bearer",
+    listingFailed: "Listing fehlgeschlagen",
+    listedAt: "gelistet",
+    neverListed: "noch nie gelistet",
+    manual: "Repositories von Hand eingetragen",
+    counts: {
+      ready: (n: number) => `${n} bereit`,
+      active: (n: number) => `${n} läuft`,
+      failed: (n: number) => `${n} fehlgeschlagen`,
+      missing: (n: number) => `${n} verschwunden`,
+      none: "Keine Repositories",
+    },
+    newSource: "Neue Quelle",
+    form: {
+      kind: "Art",
+      slug: "Slug",
+      slugHint:
+        "Wird der Ordnername unter dem Basisordner. Buchstaben, Ziffern, Punkt, Strich, Unterstrich, Tilde.",
+      host: "Bitbucket-Host",
+      hostHint:
+        "Nur https. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen.",
+      token: "Personal Access Token",
+      optional: "(optional)",
+      tokenPlaceholder: "Leer lassen für öffentliche Repositories",
+      tokenHint:
+        "Nur nötig für private Repositories oder ein privates Bitbucket-Projekt. Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.",
+      tokenAs: "Token senden als",
+      bearerHint:
+        "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center die sichere Wahl.",
+      basicHint:
+        "Basic: Benutzername und Token in der URL für genau diesen einen git-Aufruf. Für GitHub die übliche Wahl.",
+      user: "Benutzername",
+      userHint:
+        "GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).",
+      create: "Anlegen und synchronisieren",
+      cancel: "Abbrechen",
+      save: "Speichern",
+      replace: "Ersetzen",
+      clear: "Löschen",
+      storedHint:
+        "Das gespeicherte Token wird nie angezeigt. Ersetzen überschreibt es, Löschen macht die Quelle öffentlich.",
+      newToken: "Neues Token",
+      saving: "Speichert …",
+    },
+    tiles: {
+      repos: "Repositories",
+      reposNote: {
+        bitbucket: "aus der API",
+        static: "von Hand eingetragen",
+      } as Record<string, string>,
+      ready: "Bereit",
+      lastSync: "Letzter Sync",
+      running: "läuft gerade",
+      disk: "Auf der Platte",
+    },
+    actions: {
+      sync: "Synchronisieren",
+      queued: "Angestossen …",
+      addRepo: "Repository hinzufügen",
+      access: { bitbucket: "Host und Token", static: "Token" } as Record<
+        string,
+        string
+      >,
+      remove: "Quelle entfernen",
+    },
+    confirmRemove: (key: string, repos: number, dir: string) =>
+      `Quelle ${key} entfernen? Löscht die Quelle, ihre ${repos} Repository-Einträge und den Ordner ${dir}. Beschreibungen aus Pull-Request-Notizen bleiben; sie hängen am Projekt, nicht an der Quelle.`,
+    confirmRemoveRepo: (slug: string, dir: string) =>
+      `Repository ${slug} entfernen? Löscht den Eintrag und den Klon unter ${dir}. Der Eintrag kann jederzeit neu angelegt werden; der Klon wird dann neu geholt.`,
+    yesRemove: "Ja, entfernen",
+    repos: "Repositories",
+    reposNote: {
+      bitbucket: "Reihenfolge der API, archivierte übersprungen",
+      static: "alphabetisch",
+    } as Record<string, string>,
+    polling: "Seite aktualisiert alle 3 s, solange etwas läuft",
+    repoHeaders: [
+      "Repository",
+      "Branch",
+      "Head",
+      "Zustand",
+      "Letzter Sync",
+      "",
+    ],
+    noRepos: {
+      bitbucket:
+        "Noch kein Repository: das erste Listing läuft mit dem nächsten Zyklus.",
+      static: "Noch kein Repository. Trag eines ein.",
+    } as Record<string, string>,
+    listedOnly:
+      "Bei einer Bitbucket-Quelle werden Repositories nicht von Hand hinzugefügt: die Liste ist die der API. Ein Repository, das die API nicht mehr liefert, wird als «verschwunden» markiert und sein Klon bleibt, bis du ihn entfernst.",
+    state: {
+      pending: "Ausstehend",
+      syncing: "Läuft",
+      ready: "Bereit",
+      failed: "Fehlgeschlagen",
+      missing: "Verschwunden",
+    } as Record<string, string>,
+    repoActions: {
+      sync: "Synchronisieren",
+      retry: "Erneut",
+      remove: "Entfernen",
+      removeClone: "Klon entfernen",
+    },
+    addForm: {
+      title: "Repository hinzufügen",
+      slug: "Slug",
+      slugHint: (dir: string) => `Der Ordnername unter ${dir}.`,
+      branch: "Branch",
+      branchPlaceholder: "(Default-Branch des Remotes)",
+      branchHint:
+        "Leer: wird mit ls-remote vom Remote gelesen und hier eingetragen.",
+      url: "Clone-URL",
+      urlHint:
+        "Nur https. Das Token der Quelle wird beim Klonen mitgegeben, nie in die URL geschrieben.",
+      add: "Hinzufügen und klonen",
+    },
+    listingError: (when: string) => `Listing fehlgeschlagen (${when}):`,
+    listingErrorHint:
+      "Die Repository-Liste wurde nicht verändert; bekannte Repositories werden weiter synchronisiert.",
+  },
   faq: {
     title: "FAQ",
     what: "Was ist Almanach?",
@@ -144,6 +304,9 @@ export const S = {
     sources: "Woher kommt eine Aussage?",
     sourcesText:
       "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips. Die Quellen setzt der Code, nie das Modell.",
+    clones: "Was sind die Quellen?",
+    clonesText:
+      "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Heute werden die Klone nur aktuell gehalten; in einem nächsten Schritt liest Almanach sie und schreibt daraus die Grundbeschreibung jedes Repositorys, die die Notizen dann fortschreiben.",
   },
 } as const;
 

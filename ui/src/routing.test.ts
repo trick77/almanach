@@ -5,6 +5,7 @@ import {
   projectPath,
   repoPath,
   routeFromPath,
+  sourcePath,
 } from "./routing";
 
 describe("routeFromPath", () => {
@@ -26,6 +27,13 @@ describe("routeFromPath", () => {
       slug: "files",
       pr: 42,
     });
+    expect(routeFromPath("/quellen")).toEqual({ page: "sources" });
+    expect(routeFromPath("/quellen/~jan")).toEqual({
+      page: "source",
+      key: "~jan",
+    });
+    expect(routeFromPath("/quellen/a b")).toEqual({ page: "projects" });
+    expect(sourcePath("a b")).toBe("/quellen/a%20b");
     for (const p of [
       "/nope",
       "/projekte",

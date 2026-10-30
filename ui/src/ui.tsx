@@ -153,6 +153,75 @@ export const td =
 export const tdNum = td + " text-right tabular-nums whitespace-nowrap";
 export const tdMono = td + " " + mono + " whitespace-nowrap";
 
+/** Buttons, the Quellen pages' only ones: a quiet default, one primary
+ *  per row, a dangerous one that only reddens on hover. */
+export const btn =
+  "inline-flex items-center gap-2 rounded-ui-sm border border-border bg-panel px-3 py-1.5 text-[13.5px] text-ink-dim hover:border-elevated-border hover:bg-active hover:text-ink disabled:cursor-default disabled:opacity-50";
+export const btnPrimary =
+  "inline-flex items-center gap-2 rounded-ui-sm border border-accent-fill bg-accent-fill px-3 py-1.5 text-[13.5px] text-white hover:border-accent-strong hover:bg-accent-strong disabled:cursor-default disabled:opacity-50";
+export const btnDanger = btn + " hover:border-danger hover:text-danger-ink";
+/** Row actions: text buttons in a table cell. */
+export const rowBtn =
+  "rounded-[6px] px-2 py-0.5 text-[12.5px] text-muted hover:bg-active hover:text-ink disabled:cursor-default disabled:opacity-50";
+
+/** Form fields: a label over an input, a hint under it. */
+export const fieldLabel = "mb-1 block text-[12px] text-muted";
+export const fieldHint = "mt-1 block text-[12px] text-faint";
+export const input =
+  "w-full rounded-ui-sm border border-border bg-bg px-2.5 py-[7px] text-[14px] text-ink placeholder:text-faint focus:border-accent focus:outline-none";
+
+/** Segmented is a two-or-more way switch, the form's radio. */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="inline-flex overflow-hidden rounded-ui-sm border border-border">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={o.value === value}
+          onClick={() => onChange(o.value)}
+          className={
+            "px-3 py-1.5 text-[13.5px] " +
+            (o.value === value ? "bg-active text-ink" : "text-muted")
+          }
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Panel is an inline form or confirm box, opened in place, never a modal. */
+export function Panel({
+  tone = "plain",
+  children,
+}: {
+  tone?: "plain" | "danger";
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={
+        "mt-3 rounded-ui border px-4 py-3.5 text-[13.5px] " +
+        (tone === "danger"
+          ? "border-danger bg-danger/8 text-ink-dim"
+          : "border-border bg-panel")
+      }
+    >
+      {children}
+    </div>
+  );
+}
+
 /** Empty is what a section says when there is nothing, a real state here. */
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="py-1.5 text-[13.5px] text-faint">{children}</p>;

@@ -10,6 +10,7 @@ export function FaqPage() {
     [S.faq.what, S.faq.whatText],
     [S.faq.who, S.faq.whoText],
     [S.faq.sources, S.faq.sourcesText],
+    [S.faq.clones, S.faq.clonesText],
   ];
   return (
     <div className={page}>

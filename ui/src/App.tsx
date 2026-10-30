@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
+import type { Sources } from "./api";
 import { FaqPage } from "./FaqPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
-import { routeFromPath, type Route } from "./routing";
+import { SourcePage } from "./SourcePage";
+import { SourcesPage } from "./SourcesPage";
+import { routeFromPath, sourcesPath, type Route } from "./routing";
 import { S } from "./strings";
+import { useFetch } from "./useFetch";
 import { Link } from "./ui";
 
 /** The shell: a fixed header over one scrolling page. A top nav, not
@@ -26,6 +30,12 @@ export default function App() {
     if (route.page === "projects")
       document.title = `${S.projects.title} ${S.common.sep} ${S.app}`;
   }, [route]);
+
+  // The Quellen entry shows only on an instance that has the feature; the
+  // list route answers enabled either way.
+  const { data: sources } = useFetch<Sources>("sources");
+  const sourcesOn = sources?.enabled ?? false;
+  const inSources = route.page === "sources" || route.page === "source";
 
   const nav = (label: string, to: string, current: boolean) => (
     <Link
@@ -54,7 +64,8 @@ export default function App() {
           className="flex flex-1 flex-wrap items-center gap-0.5"
           aria-label={S.nav.label}
         >
-          {nav(S.nav.projects, "/", route.page !== "faq")}
+          {nav(S.nav.projects, "/", route.page !== "faq" && !inSources)}
+          {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
           {nav(S.nav.faq, "/faq", route.page === "faq")}
         </nav>
         <span className="text-[13px] text-muted" data-slot="reader" />
@@ -63,6 +74,10 @@ export default function App() {
       <main className="min-h-0 min-w-0">
         {route.page === "projects" && <ProjectsPage />}
         {route.page === "faq" && <FaqPage />}
+        {route.page === "sources" && <SourcesPage />}
+        {route.page === "source" && (
+          <SourcePage key={route.key} projectKey={route.key} />
+        )}
         {route.page === "project" && (
           <ProjectPage key={route.key} projectKey={route.key} />
         )}
