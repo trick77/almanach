@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -221,7 +222,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	if r.State != store.RunDone || r.Commit != head || r.Calls != 5 || r.Skipped != 0 || r.Steps != 4 || r.FinishedAt == nil {
 		t.Fatalf("run = %+v", r)
 	}
-	if r.Bytes != 20+30+40 {
+	if r.Bytes != 5+20+30+40 {
 		t.Errorf("bytes = %d, want the docs and both subjects", r.Bytes)
 	}
 	p := x.plan(t)
@@ -450,10 +451,92 @@ func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
 	y.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
 	y.queue(store.RunReconcile, older40)
 	y.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "B", Purpose: "p", Paths: []string{"billing/run.go"}}}}}}
+	y.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Lauf", "Monatlich.", "billing/run.go")}}}}
 	y.w.drain(context.Background())
 	p := y.plan(t)
-	if len(p.Unplaced) != 0 || len(p.Subjects) != 2 || p.Subjects[1].Name != "B" || !strings.Contains(y.models.prompts[0], "billing/run.go") {
+	if len(p.Unplaced) != 0 || len(p.Subjects) != 2 || p.Subjects[1].Name != "B" || !reflect.DeepEqual(p.Read, []string{"B"}) || !strings.Contains(y.models.prompts[0], "billing/run.go") {
 		t.Fatalf("second reconcile plan = %+v", p)
+	}
+}
+
+// A statement a pull request merged after the read commit taught is the
+// prompt's to leave alone and the patch's never to touch; paths a model
+// invents for what it writes are dropped.
+func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
+		Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "Neu", Text: "Aus einem jüngeren PR.", Files: []string{"billing/x.go"},
+			Sources: []store.Source{{PRKey: "tools/svc#42", MergedAt: mergedAt.Add(time.Hour)}}}}}
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Drop: []string{"s1"}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "component", "Login", "Anmeldung.", "auth/login.go", "made/up.go", "./README.md")}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	if !strings.Contains(x.models.prompts[1], "newer than the code shown") {
+		t.Errorf("the overview prompt does not mark s1 as newer:\n%s", x.models.prompts[1])
+	}
+	r := x.run()
+	if r.State != store.RunDone || r.Skipped != 1 {
+		t.Fatalf("run = %+v, want the overview's drop of s1 refused and skipped", r)
+	}
+	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
+	if len(page.Statements) != 2 || page.Statements[0].ID != "s1" {
+		t.Fatalf("page = %+v, want s1 kept", page.Statements)
+	}
+	if got := page.Statements[1].Files; !reflect.DeepEqual(got, []string{"auth/login.go", "./README.md"}) {
+		t.Errorf("files = %v, want the invented path dropped", got)
+	}
+	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{overviewName}) {
+		t.Errorf("skipped = %v, want the overview named for the next reconcile", p.Skipped)
+	}
+}
+
+// What the last run could not do, the next reconcile does: a failed
+// overview reads the docs again, a skipped project step folds again, and a
+// file the placing left out stays unplaced.
+func TestRun_ReconcileRetriesWhatTheLastRunSkipped(t *testing.T) {
+	x := newWorld(t, 16)
+	old := runPlan{Plan: baseline.Plan{
+		Subjects: []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 300}}}},
+		Skipped:  []string{overviewName, projectName},
+	}}
+	raw, _ := json.Marshal(old)
+	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 40}}
+	x.queue(store.RunReconcile, older40)
+	// The placing answers without the new file.
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}}}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	p := x.plan(t)
+	if !reflect.DeepEqual(p.Unplaced, []string{"billing/run.go"}) || !p.Overview || !p.SummaryChanged {
+		t.Fatalf("plan = %+v, want the file unplaced, the overview and the project again", p)
+	}
+	purposes := []string{}
+	for _, c := range x.st.calls {
+		purposes = append(purposes, c.Purpose)
+	}
+	if !reflect.DeepEqual(purposes, []string{"catalogue", "overview", "project"}) {
+		t.Errorf("calls = %v", purposes)
+	}
+}
+
+// A project rewrite the rules refuse counts as a skipped part.
+func TestRun_ProjectSkippedWhenRefused(t *testing.T) {
+	x := newWorld(t, 3)
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "x", Statements: []inference.Statement{{Kind: "nope", Name: "n", Text: "t"}}}}
+	x.w.drain(context.Background())
+	r := x.run()
+	if r.State != store.RunDone || r.Skipped != 1 || !slices.Contains(x.plan(t).Skipped, projectName) {
+		t.Fatalf("run = %+v plan %+v, want the refused project rewrite skipped", r, x.plan(t))
 	}
 }
 

@@ -263,17 +263,24 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 		return readErr(err)
 	}
 	files := baseline.Files(tree)
+	// The commit's time before any paid call: a busy clone here defers the
+	// step without throwing a call away.
+	at, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
+	if err != nil {
+		return readErr(err)
+	}
 	if r.Mode == store.RunReconcile {
 		plan, next, err := w.reconcilePlan(ctx, r, files)
 		if err != nil || !next {
 			return err
 		}
+		plan.CommittedAt = at
 		return w.planned(ctx, r, plan)
 	}
 	if r.Calls >= w.base.Limits.MaxCalls {
 		return errors.New("no call left for the catalogue")
 	}
-	docs, err := w.readDocs(ctx, r, files, baseline.CatalogueDocsBytes)
+	docs, size, err := w.readDocs(ctx, r, files, baseline.CatalogueDocsBytes)
 	if err != nil {
 		return err
 	}
@@ -283,11 +290,12 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
+	r.Bytes += size
 	if !ok {
 		return fmt.Errorf("the catalogue failed: %s", res.Outcome)
 	}
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
-	plan := runPlan{Plan: p, Overview: true}
+	plan := runPlan{Plan: p, Overview: true, CommittedAt: at}
 	for _, s := range p.Subjects {
 		plan.Read = append(plan.Read, s.Name)
 	}
@@ -326,30 +334,39 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	unplaced = append(unplaced, evicted(old.Plan, merged, files)...)
 	unplaced = append(unplaced, stillReadable(old.Unplaced, files, unplaced)...)
 	plan := runPlan{}
-	if len(unplaced) > 0 {
-		placed := false
-		if r.Calls < w.base.Limits.MaxCalls {
-			placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
-				"Place each: name an existing subject to add it there, or a new subject. Existing subjects:\n\n" + subjectList(old.Plan)
-			res := w.base.Catalogue.Catalogue(ctx, renderCatalogue(*r, baseline.Listing(unplaced), "_None._", placing, w.maxSubjects()))
-			ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
-			if err != nil {
-				return runPlan{}, false, err
-			}
-			if ok {
-				merged = baseline.MergePlan(old.Plan, res.Catalogue.Subjects, files, len(old.Subjects)+w.maxSubjects())
-				placed = true
-			}
+	if len(unplaced) > 0 && r.Calls < w.base.Limits.MaxCalls {
+		placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
+			"Place each: name an existing subject to add it there, or a new subject. Existing subjects:\n\n" + subjectList(old.Plan)
+		res := w.base.Catalogue.Catalogue(ctx, renderCatalogue(*r, baseline.Listing(unplaced), "_None._", placing, w.maxSubjects()))
+		ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
+		if err != nil {
+			return runPlan{}, false, err
 		}
-		if !placed {
-			for _, f := range unplaced {
-				plan.Unplaced = append(plan.Unplaced, f.Path)
-			}
+		if ok {
+			merged = baseline.MergePlan(old.Plan, res.Catalogue.Subjects, files, len(old.Subjects)+w.maxSubjects())
+		}
+	}
+	// What no subject holds after the placing (no call left, the call
+	// failed, the model left a file out, a subject had no room) stays on
+	// the plan for the next reconcile; what it placed is read now, like a
+	// change, whether or not the diff named it.
+	held := map[string]bool{}
+	for _, s := range merged.Subjects {
+		for _, f := range s.Files {
+			held[f.Path] = true
+		}
+	}
+	reading := changes
+	for _, f := range unplaced {
+		if held[f.Path] {
+			reading.Changed = append(reading.Changed, f)
+		} else {
+			plan.Unplaced = append(plan.Unplaced, f.Path)
 		}
 	}
 	// Touched over the merged plan with the last run's skipped names, the
 	// new plan starting with none of its own.
-	touched, _ := baseline.Touched(baseline.Plan{Subjects: merged.Subjects, Skipped: old.Skipped}, changes)
+	touched, _ := baseline.Touched(baseline.Plan{Subjects: merged.Subjects, Skipped: old.Skipped}, reading)
 	merged.Skipped = nil
 	plan.Plan, plan.Read = merged, touched
 	changed := changes.Paths()
@@ -357,6 +374,10 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 		plan.Changed = append(plan.Changed, p)
 	}
 	slices.Sort(plan.Changed)
+	// The overview reads the docs again when one changed or the last run's
+	// failed; the project step folds again when the last run's did not.
+	plan.Overview = slices.Contains(old.Skipped, overviewName)
+	plan.SummaryChanged = slices.Contains(old.Skipped, projectName)
 	for _, d := range baseline.Docs(files, baseline.DocsMaxBytes) {
 		if changed[d.Path] {
 			plan.Overview = true
@@ -390,11 +411,6 @@ func stillReadable(paths []string, files, already []baseline.File) []baseline.Fi
 // straight to its end when there is nothing to read. The pinned commit's
 // time is read here, once.
 func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
-	at, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
-	if err != nil {
-		return readErr(err)
-	}
-	plan.CommittedAt = at
 	raw, err := json.Marshal(plan)
 	if err != nil {
 		return err
@@ -410,13 +426,17 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 }
 
 // readDocs reads the docs and manifests and renders them for a prompt.
-func (w *Worker) readDocs(ctx context.Context, r *store.BaselineRun, files []baseline.File, limit int64) (string, error) {
+func (w *Worker) readDocs(ctx context.Context, r *store.BaselineRun, files []baseline.File, limit int64) (string, int64, error) {
 	docs := baseline.Docs(files, limit)
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, docs)
 	if err != nil {
-		return "", readErr(err)
+		return "", 0, readErr(err)
 	}
-	return renderFiles(docs, bodies), nil
+	var size int64
+	for _, b := range bodies {
+		size += int64(len(b))
+	}
+	return renderFiles(docs, bodies), size, nil
 }
 
 // describeStep reads one part, the overview or a subject, and folds its
@@ -469,7 +489,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		return errStop
 	}
 	focus := w.focus(plan, page)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies))
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), plan.CommittedAt)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -485,9 +505,19 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 // foldPatch applies a step's patch to the page under the rules of a fold
 // and writes the revision with the run's progress in one transaction.
 func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool) error {
+	if id := touchesNewer(page.Statements, patch, plan.CommittedAt); id != "" {
+		return w.skipPart(ctx, r, plan, name, "patch refused: "+id+" was taught by a pull request newer than the commit read")
+	}
 	applied, reason := baseline.ApplyPatch(page.Statements, patch, exists)
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
+	}
+	// A path the model names for a statement it wrote is held to the tree,
+	// forgiven its spelling: a path the tree does not have is invented.
+	for i := range applied.Statements {
+		if applied.Checked[i] {
+			applied.Statements[i].Files = inTree(applied.Statements[i].Files, exists)
+		}
 	}
 	next, err := w.store.NextStatementID(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
@@ -538,12 +568,66 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	return nil
 }
 
+// newerThan reports whether a pull request among a statement's sources was
+// merged after the commit a run reads: the run pins the clone's last
+// synced head, and a note merged since may have been folded before the run
+// started. Such a statement describes code the run cannot see.
+func newerThan(s store.Statement, at time.Time) bool {
+	if at.IsZero() {
+		return false
+	}
+	for _, src := range s.Sources {
+		if !src.IsBaseline() && src.MergedAt.After(at) {
+			return true
+		}
+	}
+	return false
+}
+
+// touchesNewer is the first id a patch edits, drops or confirms that a
+// newer pull request taught; "" when it touches none.
+func touchesNewer(current []store.Statement, p inference.Patch, at time.Time) string {
+	newer := map[string]bool{}
+	for _, s := range current {
+		if newerThan(s, at) {
+			newer[s.ID] = true
+		}
+	}
+	if len(newer) == 0 {
+		return ""
+	}
+	for _, st := range p.Statements {
+		if st.ID != nil && newer[*st.ID] {
+			return *st.ID
+		}
+	}
+	for _, ids := range [][]string{p.Drop, p.Confirmed} {
+		for _, id := range ids {
+			if newer[id] {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// inTree keeps the files the tree has.
+func inTree(files []string, exists func(string) bool) []string {
+	out := []string{}
+	for _, f := range files {
+		if exists(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // skipPart counts a part the run could not fold and moves on; the next
 // reconcile reads it again.
 func (w *Worker) skipPart(ctx context.Context, r *store.BaselineRun, plan *runPlan, name, why string) error {
 	w.log.WarnContext(ctx, "baseline: "+name+" skipped: "+why)
 	r.Skipped++
-	if !slices.Contains(plan.Skipped, name) && name != overviewName {
+	if !slices.Contains(plan.Skipped, name) {
 		plan.Skipped = append(plan.Skipped, name)
 	}
 	r.Step++
@@ -559,7 +643,7 @@ func (w *Worker) endReading(ctx context.Context, r *store.BaselineRun, plan *run
 	w.log.WarnContext(ctx, "baseline: reading ends: "+why)
 	for i := r.Step; i < plan.steps(); i++ {
 		r.Skipped++
-		if name := partName(*plan, i); name != overviewName && !slices.Contains(plan.Skipped, name) {
+		if name := partName(*plan, i); !slices.Contains(plan.Skipped, name) {
 			plan.Skipped = append(plan.Skipped, name)
 		}
 	}
@@ -570,9 +654,13 @@ func (w *Worker) endReading(ctx context.Context, r *store.BaselineRun, plan *run
 	return w.save(ctx, *r)
 }
 
-// overviewName is the overview step's name in the log; it is never a
-// skipped subject, the next run reads the docs anew.
-const overviewName = "the overview"
+// The overview and the project step by name in the plan's skipped list:
+// the next reconcile reads the docs again, or folds the project again,
+// when the last run could not.
+const (
+	overviewName = "the overview"
+	projectName  = "the project"
+)
 
 func partName(plan runPlan, i int) string {
 	if plan.Overview {
@@ -657,8 +745,11 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return fmt.Errorf("the run's plan: %w", err)
 	}
-	if (r.Mode == store.RunReconcile && !plan.SummaryChanged) || r.Calls >= w.base.Limits.MaxCalls {
+	if r.Mode == store.RunReconcile && !plan.SummaryChanged {
 		return w.finish(ctx, r, plan)
+	}
+	if r.Calls >= w.base.Limits.MaxCalls {
+		return w.skipProject(ctx, r, plan, "the run's calls are spent")
 	}
 	repoPage, ok, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
@@ -679,17 +770,20 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
-	if !okCall || res.Description == nil {
-		if !okCall {
-			r.Skipped++
-		}
+	if !okCall {
+		return w.skipProject(ctx, r, plan, "the call failed: "+res.Outcome.String())
+	}
+	if res.Description == nil {
 		return w.finish(ctx, r, plan)
 	}
-	rev, err := w.projectRevision(ctx, r, plan, projectPage, res.Description)
-	if err != nil || rev == nil {
-		if err != nil {
-			return err
-		}
+	rev, refused, err := w.projectRevision(ctx, r, plan, projectPage, res.Description)
+	if err != nil {
+		return err
+	}
+	if refused != "" {
+		return w.skipProject(ctx, r, plan, "rewrite refused: "+refused)
+	}
+	if rev == nil {
 		return w.finish(ctx, r, plan)
 	}
 	// The project revision and the run's end in one transaction: a crash
@@ -711,11 +805,11 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 // projectRevision is the project description a run's last step returned,
 // held to the same rules as a note's fold of it; nil when it is refused or
 // identical.
-func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description) (*store.NewRevision, error) {
+func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
-		return nil, errStop
+		return nil, "", errStop
 	}
 	statements, reason := attach(page.Statements, d.Statements, runSource(*r, plan), next)
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
@@ -724,18 +818,28 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		reason = capReason
 	}
 	if reason != "" {
-		w.log.WarnContext(ctx, fmt.Sprintf("baseline: project rewrite rejected (%s), page unchanged", reason))
-		return nil, nil
+		return nil, reason, nil
 	}
 	if summary == page.Summary && sameStatements(statements, page.Statements) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
-		return nil, nil
+		return nil, "", nil
 	}
 	runID := r.ID
 	return &store.NewRevision{
 		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: summary, Statements: statements, Chars: chars,
 		SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID,
-	}, nil
+	}, "", nil
+}
+
+// skipProject ends the run without its project step, counted as a skipped
+// part and named on the plan, so the next reconcile folds the project.
+func (w *Worker) skipProject(ctx context.Context, r *store.BaselineRun, plan runPlan, why string) error {
+	w.log.WarnContext(ctx, "baseline: "+projectName+" skipped: "+why)
+	r.Skipped++
+	if !slices.Contains(plan.Skipped, projectName) {
+		plan.Skipped = append(plan.Skipped, projectName)
+	}
+	return w.finish(ctx, r, plan)
 }
 
 // runSource is the source a run attaches: its commit, the commit's time and
@@ -813,13 +917,13 @@ func renderCatalogue(r store.BaselineRun, listing, docs, placing string, maxSubj
 	).Replace(prompts.Catalogue)
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, part, focus, files string) string {
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, part, focus, files string, at time.Time) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
-		"{repo_description}", describeSourced(page), "{files}", files,
+		"{repo_description}", describeSourced(page, at), "{files}", files,
 	).Replace(prompts.Describe)
 }
 
@@ -834,7 +938,7 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, l conf
 
 // describeSourced is describe with each statement's provenance: a step
 // must know which statements a pull request taught.
-func describeSourced(p store.Page) string {
+func describeSourced(p store.Page, at time.Time) string {
 	if p.RevisionID == 0 {
 		return "_None yet._"
 	}
@@ -854,6 +958,9 @@ func describeSourced(p store.Page) string {
 		}
 		if len(prs) > 0 {
 			fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
+		}
+		if newerThan(s, at) {
+			b.WriteString("\nA pull request newer than the code shown taught this: leave it as it is, do not edit, drop or confirm it.\n")
 		}
 	}
 	return b.String()
