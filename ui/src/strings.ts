@@ -254,6 +254,7 @@ export const S = {
       "Head",
       "Zustand",
       "Letzter Sync",
+      "Beschreibung",
       "",
     ],
     noRepos: {
@@ -293,6 +294,41 @@ export const S = {
     listingErrorHint:
       "Die Repository-Liste ist die des letzten erfolgreichen Listings; bekannte Repositories werden weiter synchronisiert.",
   },
+  baseline: {
+    chip: (sha: string, repo?: string) =>
+      repo ? `Basis ${repo} ${sha}` : `Basis ${sha}`,
+    chipTitle: (sha: string, date: string) =>
+      date === ""
+        ? `Basis bei Commit ${sha}`
+        : `Basis bei Commit ${sha}, ${date}`,
+    checked: (sha: string) => `Geprüft ${sha}`,
+    checkedTitle: (sha: string) => `Gegen den Code bei Commit ${sha} geprüft`,
+    state: {
+      none: "Noch nicht",
+      queued: "Wartet",
+      cataloguing: "Katalog",
+      describing: (step: number, steps: number) =>
+        `Beschreibt ${step}/${steps}`,
+      project: "Projekt",
+      done: "Beschrieben",
+      partial: "Teilweise",
+      failed: "Fehlgeschlagen",
+    },
+    at: (sha: string) => `Bei ${sha}`,
+    soFar: "bisher",
+    skipped: (n: number) =>
+      n === 1 ? "1 Thema übersprungen" : `${n} Themen übersprungen`,
+    failedRun: "Beschreibung fehlgeschlagen:",
+    described: (n: number) => `${n} beschrieben`,
+    actions: {
+      describe: "Beschreiben",
+      reconcile: "Aktualisieren",
+      full: "Neu beschreiben",
+    },
+    auto: "Neue Repositories automatisch beschreiben",
+    autoHint:
+      "Beim ersten Klon, danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Knöpfe.",
+  },
   faq: {
     title: "FAQ",
     what: "Was ist Almanach?",
@@ -303,10 +339,10 @@ export const S = {
       "Niemand. Eine Beschreibung ändert sich nur, wenn ein gemergter Pull Request sie ändert; der nächste, der es richtig macht, korrigiert sie. Jede Revision bleibt erhalten.",
     sources: "Woher kommt eine Aussage?",
     sourcesText:
-      "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips. Die Quellen setzt der Code, nie das Modell.",
+      "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",
     clones: "Was sind die Quellen?",
     clonesText:
-      "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Heute werden die Klone nur aktuell gehalten; in einem nächsten Schritt liest Almanach sie und schreibt daraus die Grundbeschreibung jedes Repositorys, die die Notizen dann fortschreiben.",
+      "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Almanach liest jeden Klon und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
   },
 } as const;
 

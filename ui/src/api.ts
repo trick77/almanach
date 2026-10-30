@@ -17,10 +17,17 @@ export interface Projects {
   projects: Project[];
 }
 
+/** What a statement rests on: a PR, or a baseline run that read the code
+ *  at a commit. kind is absent on a body from before baselines: a PR. */
 export interface Source {
-  pr_key: string;
+  kind?: "pr" | "baseline";
+  pr_key?: string;
   ticket_key?: string;
-  merged_at: string;
+  merged_at?: string;
+  commit?: string;
+  committed_at?: string;
+  /** The repository whose commit a baseline source is. */
+  repo?: string;
 }
 
 export type Kind = "component" | "rule" | "invariant" | "entity";
@@ -33,13 +40,17 @@ export interface Statement {
   text: string;
   files: string[];
   sources: Source[];
+  /** The commit a baseline run last confirmed it against, "" when none. */
+  checked?: string;
 }
 
 export interface Description {
   revision: number;
   summary: string;
   statements: Statement[];
+  source_kind?: "pr" | "baseline";
   source_pr_key: string;
+  source_commit?: string;
   updated_at: string;
 }
 
@@ -89,7 +100,9 @@ export interface ProjectDetail {
 
 export interface Revision {
   revision: number;
+  source_kind?: "pr" | "baseline";
   source_pr_key: string;
+  source_commit?: string;
   statements: number;
   chars: number;
   created_at: string;
@@ -185,6 +198,7 @@ export interface SourceSummary {
   missing: number;
   last_listed_at: string | null;
   last_error: string;
+  auto_describe: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -205,6 +219,31 @@ export interface SourceRepo {
   last_synced_at: string | null;
   last_error: string;
   created_at: string;
+  /** The newest baseline run, null before the first. */
+  baseline: Baseline | null;
+}
+
+export type RunState =
+  "queued" | "cataloguing" | "describing" | "project" | "done" | "failed";
+
+/** A repository's newest baseline run and the commit last documented. */
+export interface Baseline {
+  run_id: number;
+  state: RunState;
+  mode: "full" | "reconcile";
+  trigger: "manual" | "first_ready" | "monthly";
+  commit: string;
+  step: number;
+  steps: number;
+  skipped: number;
+  /** 3 decimals; absent when the gateway priced none of its calls. */
+  cost_usd?: string;
+  error: string;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  documented_commit: string;
+  documented_at: string | null;
 }
 
 export interface SourceDetail {
@@ -218,6 +257,7 @@ export interface SourceDetail {
   disk_bytes: number;
   last_listed_at: string | null;
   last_error: string;
+  auto_describe: boolean;
   created_at: string;
   updated_at: string;
   repos: SourceRepo[];

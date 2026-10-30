@@ -1,5 +1,5 @@
-import type { Description, Kind, Statement } from "./api";
-import { day } from "./format";
+import type { Description, Kind, Source, Statement } from "./api";
+import { day, shortSHA } from "./format";
 import { notePathFor } from "./routing";
 import { S } from "./strings";
 import { Chip, Empty, Prose, Summary, eyebrow, mono } from "./ui";
@@ -52,6 +52,40 @@ export function DescriptionView({
   );
 }
 
+/** sourceKey names a source once: a PR by its key, a baseline by its
+ *  commit. A source without a kind is a PR. */
+function sourceKey(src: Source): string {
+  return src.kind === "baseline" ? `b:${src.commit}` : `p:${src.pr_key}`;
+}
+
+/** SourceChip is a statement's source: a PR links to its note; a baseline
+ *  run's commit has no page and is a quiet chip. */
+export function SourceChip({ source: src }: { source: Source }) {
+  if (src.kind === "baseline") {
+    const sha = shortSHA(src.commit ?? "");
+    return (
+      <Chip
+        to={null}
+        quiet
+        title={S.baseline.chipTitle(
+          sha,
+          src.committed_at ? day(src.committed_at) : "",
+        )}
+      >
+        {S.baseline.chip(sha, src.repo)}
+      </Chip>
+    );
+  }
+  const key = src.pr_key ?? "";
+  return (
+    <span
+      title={`${src.ticket_key ?? ""} ${src.merged_at ? day(src.merged_at) : ""}`.trim()}
+    >
+      <Chip to={notePathFor(key)}>{key}</Chip>
+    </span>
+  );
+}
+
 /** StatementBlock is one statement: documentation, not a line. */
 export function StatementBlock({ statement: s }: { statement: Statement }) {
   return (
@@ -74,13 +108,16 @@ export function StatementBlock({ statement: s }: { statement: Statement }) {
           </span>
         )}
         {s.sources.map((src) => (
-          <span
-            key={src.pr_key}
-            title={`${src.ticket_key ?? ""} ${day(src.merged_at)}`.trim()}
-          >
-            <Chip to={notePathFor(src.pr_key)}>{src.pr_key}</Chip>
-          </span>
+          <SourceChip key={sourceKey(src)} source={src} />
         ))}
+        {s.checked !== undefined && s.checked !== "" && (
+          <span
+            className={mono + " text-faint"}
+            title={S.baseline.checkedTitle(shortSHA(s.checked))}
+          >
+            {S.baseline.checked(shortSHA(s.checked))}
+          </span>
+        )}
       </div>
     </article>
   );

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { RepoDetail } from "./api";
-import { DescriptionView } from "./Description";
+import { DescriptionView, SourceChip } from "./Description";
 import { NotesTable } from "./NotesTable";
 import { day } from "./format";
 import { notePathFor, projectPath } from "./routing";
@@ -102,7 +102,15 @@ function Body({ data }: { data: RepoDetail }) {
               </span>
               <span className="flex-1">
                 {S.repo.revisionFrom}{" "}
-                <Chip to={notePathFor(r.source_pr_key)}>{r.source_pr_key}</Chip>
+                {r.source_kind === "baseline" ? (
+                  <SourceChip
+                    source={{ kind: "baseline", commit: r.source_commit }}
+                  />
+                ) : (
+                  <Chip to={notePathFor(r.source_pr_key)}>
+                    {r.source_pr_key}
+                  </Chip>
+                )}
                 <span className="ml-2 text-muted">
                   {S.repo.statements(r.statements)} {S.common.sep}{" "}
                   {S.repo.chars(r.chars)}
