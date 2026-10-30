@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/baseline"
+	"github.com/trick77/almanach/internal/consolidate"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -74,6 +75,61 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A first run that failed is queued again a day after it ended; one that
+// is still fresh, or a repository never described (cloned before the
+// baseline), waits.
+func TestDescribe_RetriesAFailedFirstRun(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	for name, c := range map[string]struct {
+		last store.BaselineRun
+		want string
+	}{
+		"failed a day ago":   {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "tools cli full first_ready  h1"},
+		"failed an hour ago": {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-time.Hour))}, ""},
+		"never ran":          {store.BaselineRun{}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, g := newFakeStore(), newFakeGit()
+			s.last = c.last
+			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
+			g.origins["/base/tools/cli"] = "https://x/cli.git"
+			g.heads["/base/tools/cli@main"] = "h1"
+			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Describe: Describe{Reconcile: 30 * 24 * time.Hour, Wake: func() {}}, Now: func() time.Time { return now }})
+			if err := p.CycleOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(s.enqueued, "|"); got != c.want {
+				t.Fatalf("queued %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func ptr(t time.Time) *time.Time { return &t }
+
+// While the poller holds the disk, a read waits briefly and then answers
+// busy rather than standing behind a long clone.
+func TestCode_BusyWhileThePollerHoldsTheDisk(t *testing.T) {
+	old := lockWait
+	lockWait = 20 * time.Millisecond
+	t.Cleanup(func() { lockWait = old })
+	p := New(Deps{Store: newFakeStore(), Git: newFakeGit(), Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	code := NewCode(p, nil)
+	p.disk.Lock()
+	_, err := code.Tree(context.Background(), "tools", "cli", strings.Repeat("a", 40))
+	if !errors.Is(err, consolidate.ErrCloneBusy) {
+		t.Fatalf("Tree while the disk is held: err = %v, want ErrCloneBusy", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	lockWait = time.Hour
+	if _, err := code.Tree(ctx, "tools", "cli", strings.Repeat("a", 40)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Tree on a cancelled step: err = %v", err)
+	}
+	p.disk.Unlock()
 }
 
 func TestDescribe_OpenRunAndStoreFailures(t *testing.T) {

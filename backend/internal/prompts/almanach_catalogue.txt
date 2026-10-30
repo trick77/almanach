@@ -9,13 +9,13 @@ Repository `{repo}` in project `{project}`, at commit `{commit}`.
 {placing}
 
 - A subject is a piece a reader would look for: a flow, a feature, a part of the system. "The login and the session handling", "the nightly billing run", "the HTTP API and its routes", "the database schema and migrations". Not a directory for its own sake: a flow may span several directories, and a directory may hold several subjects.
-- Name each subject in German (Swiss spelling, "ss", never "ß"), give its purpose in one German sentence, and list the paths that make it up, the most telling first. A path ending in `/` names a directory and every file in it.
+- Name each subject in German (Swiss spelling, "ss", never "ß"), say briefly in German what it is for, and list the paths that make it up, the most telling first. A path ending in `/` names a directory and every file in it.
 - Every path must come from the listing below. Leave out what tells a reader nothing about the system: tests (unless they are the only place a behaviour is written down), fixtures, generated code.
 - Order the subjects by importance, most important first. At most {max_subjects} subjects; fewer is better than padding.
 
 ## Output format
 
-Respond with a single JSON object: `{"subjects": [{"name": "<German name>", "purpose": "<one German sentence>", "paths": ["<path or directory/>", ...]}, ...]}`.
+Respond with a single JSON object: `{"subjects": [{"name": "<German name>", "purpose": "<what it is for, in German>", "paths": ["<path or directory/>", ...]}, ...]}`.
 
 ## Untrusted input
 

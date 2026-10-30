@@ -1059,6 +1059,9 @@ components:
         committed_at:
           type: string
           format: date-time
+        repo:
+          type: string
+          description: The repository whose commit a baseline source is.
 
     Statement:
       type: object

@@ -328,20 +328,30 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	key, slug := j.Source.ProjectKey, j.Repo.Slug
 	mode, trigger, base := store.RunFull, store.TriggerFirstReady, ""
 	if j.Repo.HeadCommit != "" {
-		if p.Describe.Reconcile <= 0 {
-			return
-		}
-		doc, ok, err := p.Store.DocumentedRun(ctx, key, slug)
-		if err != nil || !ok || doc.Commit == head {
+		doc, documented, err := p.Store.DocumentedRun(ctx, key, slug)
+		if err != nil {
 			p.logRunCheck(err, key, slug)
 			return
 		}
 		last, ok, err := p.Store.LastRun(ctx, key, slug)
-		if err != nil || !ok || last.FinishedAt == nil || p.Now().Sub(*last.FinishedAt) < p.Describe.Reconcile {
+		if err != nil || !ok || last.FinishedAt == nil {
 			p.logRunCheck(err, key, slug)
 			return
 		}
-		mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
+		since := p.Now().Sub(*last.FinishedAt)
+		switch {
+		case !documented:
+			// The first run failed (or none ran, a clone from before the
+			// baseline: no LastRun, returned above). Tried again a day on,
+			// not left undocumented until someone presses the button.
+			if last.State != store.RunFailed || since < firstRetry {
+				return
+			}
+		case p.Describe.Reconcile <= 0 || doc.Commit == head || since < p.Describe.Reconcile:
+			return
+		default:
+			mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
+		}
 	}
 	id, err := p.Store.EnqueueRun(ctx, key, slug, mode, trigger, base, head)
 	switch {
@@ -354,6 +364,10 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	p.Log.Info("baseline_queued", "project", key, "repo", slug, "run_id", id, "mode", mode, "trigger", trigger, "head", gitrepo.ShortSHA(head))
 	p.Describe.Wake()
 }
+
+// firstRetry is how long a failed first run waits before it is queued
+// again: long enough for a gateway outage, short of the monthly reconcile.
+const firstRetry = 24 * time.Hour
 
 func (p *Poller) logRunCheck(err error, key, slug string) {
 	if err != nil {

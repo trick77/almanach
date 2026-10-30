@@ -84,6 +84,13 @@ type runPlan struct {
 	// SummaryChanged: a step rewrote the repository's summary, so the
 	// project step has something to fold.
 	SummaryChanged bool `json:"summary_changed,omitempty"`
+	// CommittedAt is the pinned commit's time, read once for every
+	// baseline source the run attaches.
+	CommittedAt time.Time `json:"committed_at"`
+	// Unplaced is files no subject holds that the run could not place (no
+	// call left, the call failed): the next reconcile places them, since
+	// its diff will not name them again.
+	Unplaced []string `json:"unplaced,omitempty"`
 }
 
 // steps is the reading steps of the plan: the overview, then the subjects.
@@ -126,10 +133,28 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	if errors.Is(err, errStop) {
 		return false
 	}
+	// The poller holds the clone (a long clone or fetch): the step is
+	// taken again at the next wake or poll, the notes meanwhile go on.
+	if errors.Is(err, ErrCloneBusy) {
+		w.log.DebugContext(ctx, "baseline: clone busy, step deferred")
+		return false
+	}
 	if err != nil {
 		w.failRun(ctx, r, err.Error())
 	}
 	return w.saveFailed == nil
+}
+
+// ErrCloneBusy is a Code read that found the clone held by the poller: no
+// failure, the step waits for the next drain.
+var ErrCloneBusy = errors.New("the clone is busy")
+
+// readErr wraps a failed read of the clone, keeping a busy clone apart.
+func readErr(err error) error {
+	if errors.Is(err, ErrCloneBusy) {
+		return err
+	}
+	return fmt.Errorf("read the clone: %w", err)
 }
 
 // save writes the run's progress. A run that is gone (its repository
@@ -176,7 +201,7 @@ func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
 	if r.Mode == store.RunReconcile {
 		ok, err := w.base.Code.Contains(ctx, r.ProjectKey, r.Slug, r.BaseCommit, head)
 		if err != nil {
-			return fmt.Errorf("read the clone: %w", err)
+			return readErr(err)
 		}
 		if !ok {
 			w.log.InfoContext(ctx, "baseline: documented commit "+gitrepo.ShortSHA(r.BaseCommit)+" is not in the history any more, reading afresh")
@@ -235,7 +260,7 @@ func (w *Worker) maxSubjects() int {
 func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, r.Commit)
 	if err != nil {
-		return fmt.Errorf("read the clone: %w", err)
+		return readErr(err)
 	}
 	files := baseline.Files(tree)
 	if r.Mode == store.RunReconcile {
@@ -284,41 +309,55 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 		old, err = decodePlan(doc.Plan)
 	}
 	diff, derr := w.base.Code.Diff(ctx, r.ProjectKey, r.Slug, r.BaseCommit, r.Commit)
-	if !ok || err != nil || derr != nil || baseline.FullInstead(old.Plan, baseline.Sift(diff)) {
+	if errors.Is(derr, ErrCloneBusy) {
+		return runPlan{}, false, derr
+	}
+	changes := baseline.Sift(diff)
+	if !ok || err != nil || derr != nil || baseline.FullInstead(old.Plan, changes) {
 		w.log.InfoContext(ctx, "baseline: reconcile reads the repository afresh")
 		r.Mode = store.RunFull
 		return runPlan{}, false, w.save(ctx, *r)
 	}
-	changes := baseline.Sift(diff)
 	_, unplaced := baseline.Touched(old.Plan, changes)
 	merged := baseline.MergePlan(old.Plan, nil, files, w.maxSubjects())
 	// A file that grew out of its subject's budget left the plan in the
-	// merge: it is placed again like a new one, not lost until it changes.
+	// merge, and a file the last run could not place is in none: both are
+	// placed like new ones, not lost until they change again.
 	unplaced = append(unplaced, evicted(old.Plan, merged, files)...)
-	if len(unplaced) > 0 && r.Calls < w.base.Limits.MaxCalls {
-		placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
-			"Place each: name an existing subject to add it there, or a new subject. Existing subjects:\n\n" + subjectList(old.Plan)
-		res := w.base.Catalogue.Catalogue(ctx, renderCatalogue(*r, baseline.Listing(unplaced), "_None._", placing, w.maxSubjects()))
-		ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
-		if err != nil {
-			return runPlan{}, false, err
+	unplaced = append(unplaced, stillReadable(old.Unplaced, files, unplaced)...)
+	plan := runPlan{}
+	if len(unplaced) > 0 {
+		placed := false
+		if r.Calls < w.base.Limits.MaxCalls {
+			placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
+				"Place each: name an existing subject to add it there, or a new subject. Existing subjects:\n\n" + subjectList(old.Plan)
+			res := w.base.Catalogue.Catalogue(ctx, renderCatalogue(*r, baseline.Listing(unplaced), "_None._", placing, w.maxSubjects()))
+			ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
+			if err != nil {
+				return runPlan{}, false, err
+			}
+			if ok {
+				merged = baseline.MergePlan(old.Plan, res.Catalogue.Subjects, files, len(old.Subjects)+w.maxSubjects())
+				placed = true
+			}
 		}
-		if ok {
-			merged = baseline.MergePlan(old.Plan, res.Catalogue.Subjects, files, len(old.Subjects)+w.maxSubjects())
+		if !placed {
+			for _, f := range unplaced {
+				plan.Unplaced = append(plan.Unplaced, f.Path)
+			}
 		}
 	}
-	merged.Skipped = old.Skipped
-	touched, _ := baseline.Touched(merged, changes)
-	plan := runPlan{Plan: merged, Read: touched}
+	// Touched over the merged plan with the last run's skipped names, the
+	// new plan starting with none of its own.
+	touched, _ := baseline.Touched(baseline.Plan{Subjects: merged.Subjects, Skipped: old.Skipped}, changes)
 	merged.Skipped = nil
-	plan.Plan = merged
-	for p := range changes.Paths() {
+	plan.Plan, plan.Read = merged, touched
+	changed := changes.Paths()
+	for p := range changed {
 		plan.Changed = append(plan.Changed, p)
 	}
 	slices.Sort(plan.Changed)
-	docs := baseline.Docs(files, baseline.DocsMaxBytes)
-	changed := changes.Paths()
-	for _, d := range docs {
+	for _, d := range baseline.Docs(files, baseline.DocsMaxBytes) {
 		if changed[d.Path] {
 			plan.Overview = true
 		}
@@ -326,9 +365,36 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	return plan, true, nil
 }
 
+// stillReadable is the paths of the last run's unplaced files that the tree
+// still has readable and that are not placed already.
+func stillReadable(paths []string, files, already []baseline.File) []baseline.File {
+	have := map[string]bool{}
+	for _, f := range already {
+		have[f.Path] = true
+	}
+	byPath := map[string]baseline.File{}
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	var out []baseline.File
+	for _, p := range paths {
+		if f, ok := byPath[p]; ok && !have[p] {
+			have[p] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // planned stores the plan and moves the run on to its reading steps, or
-// straight to its end when there is nothing to read.
+// straight to its end when there is nothing to read. The pinned commit's
+// time is read here, once.
 func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
+	at, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
+	if err != nil {
+		return readErr(err)
+	}
+	plan.CommittedAt = at
 	raw, err := json.Marshal(plan)
 	if err != nil {
 		return err
@@ -348,7 +414,7 @@ func (w *Worker) readDocs(ctx context.Context, r *store.BaselineRun, files []bas
 	docs := baseline.Docs(files, limit)
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, docs)
 	if err != nil {
-		return "", fmt.Errorf("read the clone: %w", err)
+		return "", readErr(err)
 	}
 	return renderFiles(docs, bodies), nil
 }
@@ -368,22 +434,21 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, r.Commit)
 	if err != nil {
-		return fmt.Errorf("read the clone: %w", err)
+		return readErr(err)
 	}
 	files := baseline.Files(tree)
+	name := partName(plan, i)
 	var part, purpose string
 	var read []baseline.File
-	if plan.Overview && i == 0 {
+	if name == overviewName {
 		part, purpose, read = "the repository's documentation and manifests, for the overview", store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
 	} else {
-		name := partName(plan, i)
 		s, ok := subjectNamed(plan.Plan, name)
 		if !ok {
 			return w.skipPart(ctx, r, &plan, name, "no longer in the plan")
 		}
 		part, purpose, read = fmt.Sprintf("the subject %q: %s", s.Name, s.Purpose), store.PurposeSubject, s.Files
 	}
-	name := partName(plan, i)
 	if r.Calls >= w.base.Limits.MaxCalls {
 		return w.endReading(ctx, r, &plan, "the run's calls are spent")
 	}
@@ -396,7 +461,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
-		return fmt.Errorf("read the clone: %w", err)
+		return readErr(err)
 	}
 	page, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
@@ -429,12 +494,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	committed, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
-	if err != nil {
-		return fmt.Errorf("read the clone: %w", err)
-	}
-	src := store.Source{Kind: store.FromBaseline, Commit: r.Commit, CommittedAt: committed}
-	statements, reason := attach(page.Statements, applied.Statements, src, next)
+	statements, reason := attach(page.Statements, applied.Statements, runSource(*r, *plan), next)
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
@@ -625,25 +685,39 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		}
 		return w.finish(ctx, r, plan)
 	}
-	if err := w.foldProject(ctx, r, projectPage, res.Description); err != nil {
+	rev, err := w.projectRevision(ctx, r, plan, projectPage, res.Description)
+	if err != nil || rev == nil {
+		if err != nil {
+			return err
+		}
+		return w.finish(ctx, r, plan)
+	}
+	// The project revision and the run's end in one transaction: a crash
+	// between them would pay for the project call again and write it twice.
+	if err := w.markDone(ctx, r, plan); err != nil {
 		return err
 	}
-	return w.finish(ctx, r, plan)
+	n, ok, err := w.base.Store.ApplyBaselineStep(ctx, *rev, *r)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project revision write failed, drain paused", logging.Err(err))
+		return errStop
+	}
+	if ok {
+		w.log.InfoContext(ctx, fmt.Sprintf("baseline: project description revision %d (%d statements, %d chars)", n, len(rev.Statements), rev.Chars))
+	}
+	return nil
 }
 
-// foldProject writes the project description a run's last step returned,
-// under the same rules as a note's fold of it.
-func (w *Worker) foldProject(ctx context.Context, r *store.BaselineRun, page store.Page, d *inference.Description) error {
+// projectRevision is the project description a run's last step returned,
+// held to the same rules as a note's fold of it; nil when it is refused or
+// identical.
+func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description) (*store.NewRevision, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
-		return errStop
+		return nil, errStop
 	}
-	committed, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
-	if err != nil {
-		return fmt.Errorf("read the clone: %w", err)
-	}
-	statements, reason := attach(page.Statements, d.Statements, store.Source{Kind: store.FromBaseline, Commit: r.Commit, CommittedAt: committed}, next)
+	statements, reason := attach(page.Statements, d.Statements, runSource(*r, plan), next)
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 	if reason == "" {
@@ -651,28 +725,29 @@ func (w *Worker) foldProject(ctx context.Context, r *store.BaselineRun, page sto
 	}
 	if reason != "" {
 		w.log.WarnContext(ctx, fmt.Sprintf("baseline: project rewrite rejected (%s), page unchanged", reason))
-		return nil
+		return nil, nil
 	}
 	if summary == page.Summary && sameStatements(statements, page.Statements) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
-		return nil
+		return nil, nil
 	}
 	runID := r.ID
-	n, err := w.store.InsertRevision(ctx, store.NewRevision{
+	return &store.NewRevision{
 		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: summary, Statements: statements, Chars: chars,
 		SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID,
-	})
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project revision write failed, drain paused", logging.Err(err))
-		return errStop
-	}
-	w.log.InfoContext(ctx, fmt.Sprintf("baseline: project description revision %d (%d statements, %d chars)", n, len(statements), chars))
-	return nil
+	}, nil
 }
 
-// finish ends a run done: its commit is the one documented now, even when
-// nothing changed on the page, or every reconcile would read it again.
-func (w *Worker) finish(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
+// runSource is the source a run attaches: its commit, the commit's time and
+// the repository, which on the project page names whose commit it is.
+func runSource(r store.BaselineRun, plan runPlan) store.Source {
+	return store.Source{Kind: store.FromBaseline, Commit: r.Commit, CommittedAt: plan.CommittedAt, Repo: r.Slug}
+}
+
+// markDone marks the run done in memory: its commit is the one documented now,
+// even when nothing changed on the page, or every reconcile would read it
+// again.
+func (w *Worker) markDone(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	if err := encodeInto(r, plan); err != nil {
 		return err
 	}
@@ -680,6 +755,14 @@ func (w *Worker) finish(ctx context.Context, r *store.BaselineRun, plan runPlan)
 	r.State, r.FinishedAt = store.RunDone, &now
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: run done at %s: %d calls, %d bytes read, %d skipped",
 		gitrepo.ShortSHA(r.Commit), r.Calls, r.Bytes, r.Skipped))
+	return nil
+}
+
+// finish ends a run done and saves it.
+func (w *Worker) finish(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
+	if err := w.markDone(ctx, r, plan); err != nil {
+		return err
+	}
 	return w.save(ctx, *r)
 }
 

@@ -247,7 +247,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	}
 	login := page.Statements[1]
 	if login.ID != "s2" || login.Text != "Zweistufig, mit Sperre." || login.Checked != head || len(login.Sources) != 1 ||
-		!login.Sources[0].IsBaseline() || login.Sources[0].Commit != head || !login.Sources[0].CommittedAt.Equal(mergedAt) {
+		!login.Sources[0].IsBaseline() || login.Sources[0].Commit != head || !login.Sources[0].CommittedAt.Equal(mergedAt) || login.Sources[0].Repo != "svc" {
 		t.Errorf("edited statement = %+v", login)
 	}
 	if page.Statements[0].Checked != head {
@@ -413,6 +413,47 @@ func TestRun_Failures(t *testing.T) {
 	v.w.drain(context.Background())
 	if r := v.run(); r.State != store.RunQueued {
 		t.Fatalf("store down: %+v, want the run left as it was", r)
+	}
+}
+
+// A clone the poller holds defers the step without failing the run; the
+// next drain takes it.
+func TestRun_BusyCloneDefers(t *testing.T) {
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.code.readErr = ErrCloneBusy
+	x.st.runs[0].State, x.st.runs[0].Commit = store.RunCataloguing, head
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunCataloguing || r.Error != "" {
+		t.Fatalf("busy clone: %+v, want the run untouched", r)
+	}
+}
+
+// New files a reconcile could not place (the catalogue failed) are kept on
+// the plan and placed by the next one, whose diff will not name them.
+func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
+	x := newWorld(t, 16)
+	old := runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 30}, {Path: "README.md", Size: 300}}}}}}
+	raw, _ := json.Marshal(old)
+	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	x.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 40}}
+	x.queue(store.RunReconcile, older40)
+	x.models.catalogue = []inference.CatalogueResult{{Call: inference.Call{Outcome: inference.OutcomeUnparseable}}}
+	x.w.drain(context.Background())
+	if p := x.plan(t); !reflect.DeepEqual(p.Unplaced, []string{"billing/run.go"}) || x.run().State != store.RunDone {
+		t.Fatalf("plan = %+v run %+v", p, x.run())
+	}
+
+	// The next reconcile, with nothing changed, places it.
+	raw, _ = json.Marshal(x.plan(t))
+	y := newWorld(t, 16)
+	y.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	y.queue(store.RunReconcile, older40)
+	y.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "B", Purpose: "p", Paths: []string{"billing/run.go"}}}}}}
+	y.w.drain(context.Background())
+	p := y.plan(t)
+	if len(p.Unplaced) != 0 || len(p.Subjects) != 2 || p.Subjects[1].Name != "B" || !strings.Contains(y.models.prompts[0], "billing/run.go") {
+		t.Fatalf("second reconcile plan = %+v", p)
 	}
 }
 

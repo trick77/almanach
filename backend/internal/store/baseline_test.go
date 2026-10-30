@@ -389,7 +389,7 @@ func TestSource_JSONShapes(t *testing.T) {
 	if string(raw) != `{"kind":"baseline","commit":"c0ffee","committed_at":"2026-10-01T12:00:00Z"}` {
 		t.Fatalf("baseline source JSON = %s", raw)
 	}
-	if b.Key() != "baseline:c0ffee" {
+	if b.Key() != "baseline:@c0ffee" || (Source{Kind: FromBaseline, Commit: "c0ffee", Repo: "svc"}).Key() != "baseline:svc@c0ffee" {
 		t.Fatalf("baseline key = %s", b.Key())
 	}
 	pr, _ := json.Marshal(Source{PRKey: "PRJ/svc#1", MergedAt: mergedBase})
