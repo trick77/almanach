@@ -208,8 +208,10 @@ func serve(log *slog.Logger) error {
 	// The catalogue's own profile, when the baseline has one: checked like
 	// the first, at its balanced level (the merge model's level need not
 	// exist on a cheaper profile).
+	catalogue := llm
 	if app.Sources.Enabled() && app.Baseline.CatalogueModel != "" && app.Baseline.CatalogueModel != app.Model {
-		if _, ok := startModel(ctx, log, "LLM catalogue", app.Baseline.CatalogueModel, ""); !ok {
+		var ok bool
+		if catalogue, ok = startModel(ctx, log, "LLM catalogue", app.Baseline.CatalogueModel, ""); !ok {
 			checks = append(checks, "LLM catalogue")
 		}
 	}
@@ -250,11 +252,11 @@ func serve(log *slog.Logger) error {
 	// call and its writes) and only past the grace cuts it off, before the
 	// pool closes under it.
 	worker := consolidate.New(db, llm, app.Limits, log)
-	worker.Start(context.WithoutCancel(ctx))
 
 	// The poller too runs past the signal: the server drains first, then
 	// Stop cuts the clone in flight (the next cycle redoes it), before the
-	// pool closes.
+	// pool closes. With the sources on, the worker also drains the
+	// baseline runs, reading the clones through the poller's lock.
 	var sources *api.SourcesDeps
 	var poller *clone.Poller
 	if app.Sources.Enabled() {
@@ -262,11 +264,14 @@ func serve(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: bitbucket.New(nil), Key: key, Interval: app.Sources.SyncInterval, Log: log})
+		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: bitbucket.New(nil), Key: key, Interval: app.Sources.SyncInterval, Log: log,
+			Describe: clone.Describe{Reconcile: app.Baseline.Reconcile, Wake: worker.Wake}})
+		worker.WithBaseline(consolidate.Baseline{Store: db, Code: clone.NewCode(poller, git), Catalogue: catalogue, Describer: llm, Limits: app.Baseline})
 		poller.Start(context.WithoutCancel(ctx))
 		// Removals go through the poller, under its disk lock.
 		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: poller, Key: key}
 	}
+	worker.Start(context.WithoutCancel(ctx))
 
 	srv := httpapi.New(db.Ping, log)
 	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources, Log: log})

@@ -250,6 +250,7 @@ type sourceBody struct {
 	MergedAt    time.Time `json:"merged_at,omitzero"`
 	Commit      string    `json:"commit,omitempty"`
 	CommittedAt time.Time `json:"committed_at,omitzero"`
+	Repo        string    `json:"repo,omitempty"`
 }
 
 type statementBody struct {
@@ -296,7 +297,7 @@ func describe(p store.Page, ok bool) *descriptionBody {
 		}
 		for _, src := range s.Sources {
 			sb.Sources = append(sb.Sources, sourceBody{Kind: sourceKind(src.Kind), PRKey: src.PRKey, TicketKey: src.TicketKey,
-				MergedAt: src.MergedAt, Commit: src.Commit, CommittedAt: src.CommittedAt})
+				MergedAt: src.MergedAt, Commit: src.Commit, CommittedAt: src.CommittedAt, Repo: src.Repo})
 		}
 		out.Statements = append(out.Statements, sb)
 	}

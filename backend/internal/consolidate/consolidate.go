@@ -62,6 +62,19 @@ type Worker struct {
 	retryAt time.Time
 	backoff time.Duration
 	now     func() time.Time
+	// base is the baseline runs, nil with the sources off. saveFailed is
+	// set when a run's progress could not be written: the drain pauses
+	// rather than pay for the same step again.
+	base       *Baseline
+	saveFailed error
+}
+
+// WithBaseline gives the worker the baseline runs to drain after the
+// notes, and the rule that a note for a repository that is no source is
+// ignored. Before Start.
+func (w *Worker) WithBaseline(b Baseline) *Worker {
+	w.base = &b
+	return w
 }
 
 // The hold after a gateway-class failure: from backoffMin, doubling to
@@ -154,20 +167,59 @@ func (w *Worker) stopping() bool {
 // otherwise block every note behind it. A fold the gateway failed, or a
 // mark the store refused, ends the drain instead: the same note would come
 // back at once, one paid call per lap; the next wake or poll tries again.
+//
+// Notes come first: a note is a small, timely delta, a run minutes of
+// calls. With the baseline on, one step of the oldest open run follows
+// when no note is due, and the notes are looked at again after it.
 func (w *Worker) drain(ctx context.Context) {
+	w.saveFailed = nil
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		q, ok, err := w.store.NextQueued(ctx)
 		if err != nil {
 			w.log.WarnContext(ctx, "consolidate: queue read failed", logging.Err(err))
 			return
 		}
-		if !ok {
+		if ok {
+			if !w.foldOrIgnore(ctx, q) {
+				return
+			}
+			continue
+		}
+		if w.base == nil {
 			return
 		}
-		if !w.Fold(ctx, q) {
+		r, ok, err := w.base.Store.NextRun(ctx)
+		if err != nil {
+			w.log.WarnContext(ctx, "baseline: run queue read failed", logging.Err(err))
+			return
+		}
+		if !ok || !w.stepRun(ctx, r) {
 			return
 		}
 	}
+}
+
+// foldOrIgnore folds a note, or with the baseline on takes a note for a
+// repository that is no source off the queue unfolded: one queued before
+// the sources existed, or for a repository removed since. The source is
+// the starting point.
+func (w *Worker) foldOrIgnore(ctx context.Context, q store.QueuedNote) bool {
+	if w.base != nil {
+		known, err := w.base.Store.IsSourceRepo(ctx, q.ProjectKey, q.RepoSlug)
+		if err != nil {
+			w.log.WarnContext(ctx, "consolidate: source check failed, drain paused", logging.Err(err))
+			return false
+		}
+		if !known {
+			w.log.InfoContext(ctx, "consolidate: "+q.PRKey+" ignored: no source repository "+q.ProjectKey+"/"+q.RepoSlug)
+			if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
+				w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
+				return false
+			}
+			return true
+		}
+	}
+	return w.Fold(ctx, q)
 }
 
 // maxFoldAttempts bounds how often one note is tried against a gateway
@@ -184,7 +236,7 @@ const maxFoldAttempts = 8
 // refused key, a 5xx or transport failure, a rate limit, a proxy page, a
 // timeout: the gateway. A 4xx (context overflow, rejected format) or a
 // 2xx of the wrong shape: this call. retryAfter is the endpoint's own ask.
-func gatewayClass(res inference.MergeResult) (gateway bool, retryAfter time.Duration) {
+func gatewayClass(res inference.Call) (gateway bool, retryAfter time.Duration) {
 	if res.Outcome == inference.OutcomeTimedOut {
 		return true, 0
 	}
@@ -247,7 +299,7 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		w.log.WarnContext(ctx, "consolidate: call row failed", logging.Err(err))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
-	if gateway, retryAfter := gatewayClass(res); gateway {
+	if gateway, retryAfter := gatewayClass(res.Call); gateway {
 		w.hold(ctx, retryAfter)
 		attempts, derr := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID)
 		if derr != nil {
@@ -293,7 +345,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return
 	}
-	statements, reason := attach(current.Statements, d.Statements, q, next)
+	statements, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt}, next)
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, maxStatements, maxChars)
@@ -324,17 +376,18 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, "entity": true}
 
 // attach turns the model's statements into stored ones: a kept id carries
-// its sources forward and gains this PR when the text changed; a new one
-// starts with this PR, numbered from next (one past every id the page's
-// history used, so a dropped id is never reissued). An id the current page
-// does not have is the model inventing one: rejected. Spelling is Swiss on
-// every prose field.
-func attach(current []store.Statement, proposed []inference.Statement, q store.QueuedNote, next int) ([]store.Statement, string) {
+// its sources forward and gains src (this PR, or a baseline run's commit)
+// when the text changed; a new one starts with src, numbered from next (one
+// past every id the page's history used, so a dropped id is never
+// reissued). An id the current page does not have is the model inventing
+// one: rejected. Spelling is Swiss on every prose field. The commit a
+// statement was last checked against stays while its name and text do; a
+// change voids it, the caller sets a new one when it read the code.
+func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int) ([]store.Statement, string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
 	}
-	src := store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt}
 	out := make([]store.Statement, 0, len(proposed))
 	seen := map[string]bool{}
 	for _, p := range proposed {
@@ -358,6 +411,8 @@ func attach(current []store.Statement, proposed []inference.Statement, q store.Q
 			s.Sources = old.Sources
 			if old.Text != s.Text || old.Name != s.Name {
 				s.Sources = appendSource(s.Sources, src)
+			} else {
+				s.Checked = old.Checked
 			}
 		} else {
 			s.ID = fmt.Sprintf("s%d", next)
@@ -369,9 +424,11 @@ func attach(current []store.Statement, proposed []inference.Statement, q store.Q
 	return out, ""
 }
 
+// appendSource adds s unless the statement has it already: a PR once, a
+// commit once, told apart by kind.
 func appendSource(sources []store.Source, s store.Source) []store.Source {
 	for _, have := range sources {
-		if have.PRKey == s.PRKey {
+		if have.Key() == s.Key() {
 			return sources
 		}
 	}

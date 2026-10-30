@@ -131,6 +131,18 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, boo
 		WHERE project_key = $1 AND slug = $2 ORDER BY id DESC LIMIT 1`, key, slug)
 }
 
+// FailedRuns counts a repository's failed runs since its newest done run
+// (all of them before any): what bounds the automatic retries.
+func (s *Store) FailedRuns(ctx context.Context, key, slug string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM baseline_runs
+		 WHERE project_key = $1 AND slug = $2 AND state = 'failed'
+		   AND id > COALESCE((SELECT MAX(id) FROM baseline_runs WHERE project_key = $1 AND slug = $2 AND state = 'done'), 0)`,
+		key, slug).Scan(&n)
+	return n, err
+}
+
 // DocumentedRun is a repository's newest done run: its commit is the one
 // the page was last read against.
 func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRun, bool, error) {
@@ -138,7 +150,8 @@ func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRu
 		WHERE project_key = $1 AND slug = $2 AND state = 'done' ORDER BY id DESC LIMIT 1`, key, slug)
 }
 
-// SaveRun writes a run's progress: the commit it pinned, state, step, plan,
+// SaveRun writes a run's progress: the commit it pinned, its mode (a reconcile
+// that reads afresh becomes full), state, step, plan,
 // counters, error and times. A run that is over is never written again:
 // reports false when the run is done, failed or gone (its repository
 // removed), and writes nothing.
@@ -157,9 +170,9 @@ func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 	}
 	tag, err := db.Exec(ctx, `
 		UPDATE baseline_runs SET state = $2, step = $3, steps = $4, plan = $5, attempts = $6, calls = $7, bytes = $8,
-		       skipped = $9, error = $10, started_at = $11, finished_at = $12, commit = $13
+		       skipped = $9, error = $10, started_at = $11, finished_at = $12, commit = $13, mode = $14
 		 WHERE id = $1 AND state NOT IN ('done', 'failed')`,
-		r.ID, r.State, r.Step, r.Steps, plan, r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error, r.StartedAt, r.FinishedAt, r.Commit)
+		r.ID, r.State, r.Step, r.Steps, plan, r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error, r.StartedAt, r.FinishedAt, r.Commit, r.Mode)
 	if err != nil {
 		return false, err
 	}

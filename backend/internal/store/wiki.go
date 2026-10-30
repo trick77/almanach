@@ -32,6 +32,9 @@ type Source struct {
 	MergedAt    time.Time `json:"merged_at,omitzero"`
 	Commit      string    `json:"commit,omitempty"`
 	CommittedAt time.Time `json:"committed_at,omitzero"`
+	// Repo is the slug whose commit a baseline source is: on the project
+	// page a commit alone would not say which repository's history it is.
+	Repo string `json:"repo,omitempty"`
 }
 
 // IsBaseline reports whether the source is a baseline run's commit.
@@ -41,7 +44,7 @@ func (s Source) IsBaseline() bool { return s.Kind == FromBaseline }
 // once however often it is touched by it.
 func (s Source) Key() string {
 	if s.IsBaseline() {
-		return FromBaseline + ":" + s.Commit
+		return FromBaseline + ":" + s.Repo + "@" + s.Commit
 	}
 	return FromPR + ":" + s.PRKey
 }
