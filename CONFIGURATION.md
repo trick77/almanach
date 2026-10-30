@@ -35,7 +35,7 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_GIT_CA_FILE` | unset | A PEM bundle git trusts for https (`GIT_SSL_CAINFO`), for a forge behind an internal CA. |
 | `ALMANACH_CATALOGUE_MODEL` | `ALMANACH_MODEL` | The baseline's catalogue step (which subjects a repository is made of, which files belong to each) as an llmwire profile id: a cheaper model may pick, the main one writes. Checked at startup like `ALMANACH_MODEL`, at its balanced reasoning level. Only read with `ALMANACH_REPOS_DIR` set. |
 | `ALMANACH_BASELINE_MAX_CALLS` | `16` | Model calls one baseline run may make: the catalogue, the overview, one per subject, the project. At least 3. Checked before every call; past it the rest is skipped and the run ends partial. |
-| `ALMANACH_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read. A subject over what is left is skipped. |
+| `ALMANACH_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read: the docs its catalogue reads and every part's files. A part over what is left is skipped, and a smaller one after it may still be read. |
 | `ALMANACH_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since, and only with the source's automatic runs on). `0`: only the buttons. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `ALMANACH_ENV` | `dev` | Environment name in every log line. |

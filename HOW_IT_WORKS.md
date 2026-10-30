@@ -191,9 +191,12 @@ mixed with the figures noergler reports in `note_calls`.
 With the sources on, the same worker drains the baseline runs (4b): notes
 first, and when no note is due one step of the oldest open run, then the
 notes again. A note of a repository whose run is running waits for it
-(the store skips it) and is folded after it, so no step reads a page
-holding facts newer than its commit; a run still queued holds nothing, so
-a long queue of runs never holds the notes for hours. Runs among
+(the store skips it) and is folded after it; a run still queued holds
+nothing, so a long queue of runs never holds the notes for hours. The run
+pins the clone's last synced head, so a note merged after that fetch may
+have been folded before the run started: a statement such a pull request
+taught is marked read-only in the run's prompts and a patch touching it is
+refused, since the code the run reads cannot show it. Runs among
 themselves go oldest first, one to its end before the next begins.
 
 ## 4. The read side
@@ -385,12 +388,17 @@ commit as `checked`, which a later change of its text voids.
 
 **Failures and caps.** A gateway-class failure holds the worker as for a
 note, with the step's attempt counted on the run; eight fail the run. A
-call that fails on its own or a patch the rules refuse skips the part. A
-page at its ceiling ends the reading; the run goes on to the project. The
-calls (`ALMANACH_BASELINE_MAX_CALLS`) and bytes
-(`ALMANACH_BASELINE_MAX_BYTES`) of a run are checked before each call; past
-them the rest is skipped. A run that ends with skipped parts is shown as
-partial and still records its commit. A clone the poller holds (a long
+full run's catalogue that fails on its own fails the run: there is no plan
+to read. A part's call that fails on its own, or a patch the rules refuse,
+skips that part; a project step refused or unpaid is skipped too. A page
+at its ceiling ends the reading; the run goes on to the project. The calls
+(`ALMANACH_BASELINE_MAX_CALLS`) are checked before each call, and when they
+are spent the rest is skipped. The bytes (`ALMANACH_BASELINE_MAX_BYTES`,
+the catalogue's docs and every part's files) are checked per part: a part
+over what is left is skipped, a smaller one after it may still be read. A
+run that ends with skipped parts is shown as partial and still records
+its commit; the next reconcile reads the skipped parts again, the docs and
+the project included. A clone the poller holds (a long
 clone or fetch) defers the step to the next drain rather than holding the
 worker behind it; the reads take the poller's disk lock for the read only,
 never across a model call.
@@ -845,9 +853,12 @@ the reason in the log and the page unchanged:
 - Each step makes at most one model call; the caps are checked before it.
   A step's revision and the run's progress land in one transaction, the
   project step's with the run's end.
-- Paths a model names are held to the tree: a catalogue path the tree does
-  not have is dropped, a statement's files are checked against the whole
-  tree with `./` and directories forgiven.
+- Paths a model names are held to the tree, `./` and directories forgiven:
+  a catalogue path the tree does not have is dropped, a statement a step
+  writes or edits keeps only the files the tree has, and the drop and edit
+  rules for a PR statement read the whole tree.
+- A statement a PR merged after the run's commit taught is read-only for
+  that run.
 - A patch: an unnamed id stays; an invented id, an id edited twice, edited
   and dropped, or confirmed and dropped rejects it; a PR statement is
   dropped only when its files left the tree, and an edit of it keeps the

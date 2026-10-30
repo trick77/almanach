@@ -10,8 +10,9 @@ and tests included.
 
 - Module in `backend/` (go commands there); `ui/` (npm commands there),
   docs, `compose.yaml`, `make` at the root. Prompts in
-  `backend/internal/prompts/`, compiled in, never configurable. `make fe-build` writes `backend/web/dist`, which `go
-  build` embeds; the UI is German only (`ui/src/strings.ts`), read-only,
+  `backend/internal/prompts/`, compiled in, never configurable. `make
+  fe-build` writes `backend/web/dist`, which `go build` embeds; the UI is
+  German only (`ui/src/strings.ts`), read-only,
   reads `/api/...` and nothing else; its routes are mirrored in
   `backend/web/embed.go`, statements render as paragraphs, never markdown.
 - Gate = `make check` (ship master; `SHIP_CMD=<binary>` locally). `make
@@ -36,8 +37,10 @@ and tests included.
 - Ingest is strict on the envelope (`DisallowUnknownFields`, a 422 names
   the field; a body that is not JSON is a 422 too, never a 400); the
   `note` object and `review_totals` are kept verbatim. One
-  `webhook_processed` line per request read; a 401 is on the access log
-  only, a persist failure is `webhook_persist_failed`. The contract is
+  `webhook_processed` line per request read (`accepted`, `deduped`,
+  `ignored`, `invalid`); a 401 is on the access log only, a persist failure
+  is `webhook_persist_failed`, a failed source check
+  `webhook_source_check_failed`, both a 500. The contract is
   `backend/api/openapi.yaml`, kept in step with `api.go`.
 - German always, Swiss spelling (`lang.SwissSS` on every prose field, never
   on paths), generic masculine. No `ß` anywhere, docs included.
