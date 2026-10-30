@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock · Quellen · Almanach</title>
+<style>
+  @font-face { font-family: "Anthropic Sans"; src: url("../../ui/src/fonts/SansWebVariable-TextRegular.woff2") format("woff2"); font-weight: 300 800; font-display: swap; }
+  @font-face { font-family: "Anthropic Serif"; src: url("../../ui/src/fonts/SerifWebVariable-TextRegular.woff2") format("woff2"); font-weight: 300 800; font-display: swap; }
+  @font-face { font-family: "Anthropic Mono"; src: url("../../ui/src/fonts/MonoVariableVariable-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+
+  /* Warm Editorial dark: ui/src/index.css, verbatim. */
+  :root {
+    --bg: #1f1f1e; --panel: #1b1b1a; --active: #2c2c2a; --border: #323230; --border-soft: #2a2a28;
+    --ink: #faf9f5; --ink-dim: #e4e1d8; --wordmark: #f4f0e8; --muted: #9c9a92; --faint: #6f6d66;
+    --accent: #c6613f; --accent-strong: #d97757; --accent-fill: #c25f34; --accent-dim: #5a3527;
+    --online: #5aa06a; --online-ink: #82c491; --danger: #c14638; --danger-ink: #ec7e7e;
+    --ochre: #d6a15a; --ochre-wash: rgba(214,161,90,.14);
+    --elevated: #363632; --elevated-border: #454540; --elevated-hover: #3f3f3a;
+    --sans: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
+    --mono: "Anthropic Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --r: 10px; --r-sm: 8px; --r-lg: 12px;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: none; }
+  button, input, select { font: inherit; color: inherit; }
+  button { background: none; border: 0; cursor: pointer; }
+  [hidden] { display: none !important; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+
+  /* The mock's own chrome: a fake URL bar above the app shell. */
+  .urlbar { display: flex; gap: 12px; align-items: center; padding: 6px 14px; background: #141413; border-bottom: 1px solid var(--border); font: 12px var(--mono); color: var(--faint); }
+  .urlbar b { color: var(--muted); font-weight: 400; }
+  .urlbar .hint { margin-left: auto; font-family: var(--sans); font-style: italic; }
+
+  .app { display: grid; grid-template-rows: 56px 1fr; height: calc(100vh - 31px); }
+  header.top { display: flex; align-items: center; gap: 24px; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { margin: 0; font: 500 21px/28px var(--serif); color: var(--wordmark); white-space: nowrap; }
+  header nav { display: flex; flex: 1; gap: 2px; }
+  header nav a { padding: 6px 12px; border-radius: var(--r-sm); font-size: 14px; color: var(--muted); }
+  header nav a:hover { background: var(--active); color: var(--ink); }
+  header nav a[aria-current="page"] { background: var(--active); color: var(--ink); }
+  header .reader { font-size: 13px; color: var(--muted); }
+
+  main { min-height: 0; overflow: auto; }
+  .column { max-width: 900px; margin: 0 auto; padding: 28px 40px; }
+  h2 { margin: 0; font: 500 28px/1.15 var(--serif); letter-spacing: -.01em; color: var(--ink); }
+  .meta { margin-top: 6px; font-size: 14.5px; color: var(--muted); }
+  .lede { margin: 4px 0 24px; max-width: 66ch; font-size: 14.5px; color: var(--muted); }
+  .sep { margin: 0 7px; color: var(--faint); }
+  .eyebrow { margin: 28px 0 10px; font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); display: flex; align-items: center; gap: 12px; }
+  .eyebrow .right { margin-left: auto; letter-spacing: 0; text-transform: none; font-weight: 400; }
+  .crumbs { margin-bottom: 10px; font-size: 13px; color: var(--faint); }
+  .crumbs a { color: var(--muted); } .crumbs a:hover { color: var(--ink-dim); }
+  .crumbs b { font-weight: 400; color: var(--ink-dim); }
+  .empty { padding: 6px 0; font-size: 13.5px; color: var(--faint); }
+
+  /* Tables, ui.tsx classes. */
+  .tbox { overflow-x: auto; }
+  table { width: 100%; min-width: 560px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  th { padding: 0 10px 8px 0; border-bottom: 1px solid var(--border); text-align: left; font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+  th.num, td.num { text-align: right; }
+  td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--border-soft); vertical-align: top; color: var(--ink-dim); }
+  td.mono { white-space: nowrap; }
+  td .sub { margin-top: 2px; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.err { color: var(--danger-ink); font-size: 13px; }
+  tr.rowlink { cursor: pointer; } tr.rowlink:hover td { background: var(--active); }
+  td.actions { text-align: right; white-space: nowrap; }
+  td.actions button { padding: 2px 8px; border-radius: 6px; font-size: 12.5px; color: var(--muted); }
+  td.actions button:hover { background: var(--active); color: var(--ink); }
+  td.actions button.danger:hover { color: var(--danger-ink); }
+
+  /* Pill, ui.tsx tones. */
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .pill i { width: 6px; height: 6px; border-radius: 50%; }
+  .pill.ok { background: rgba(90,160,106,.15); color: var(--online-ink); } .pill.ok i { background: var(--online); }
+  .pill.warn { background: var(--ochre-wash); color: var(--ochre); } .pill.warn i { background: var(--ochre); }
+  .pill.fail { background: rgba(193,70,56,.15); color: var(--danger-ink); } .pill.fail i { background: var(--danger); }
+  .pill.none { background: var(--elevated); color: var(--ink-dim); } .pill.none i { background: var(--muted); }
+  .pill.quiet { color: var(--muted); box-shadow: inset 0 0 0 1px var(--elevated-border); } .pill.quiet i { background: var(--faint); }
+  .pill.warn i.spin { width: 9px; height: 9px; border-radius: 50%; background: transparent; border: 1.5px solid var(--ochre-wash); border-top-color: var(--ochre); animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Chip: ui.tsx's citation box, here for kind and host. */
+  .chip { display: inline-flex; align-items: center; padding: 1px 7px; border: 1px solid var(--accent-dim); border-radius: 6px; background: rgba(198,97,63,.1); font: 11px var(--mono); color: var(--accent-strong); white-space: nowrap; }
+  .chip.dim { border-color: var(--elevated-border); background: transparent; color: var(--muted); }
+
+  /* Tiles, ui.tsx. */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 18px; }
+  .tile { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); }
+  .tile .l { font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
+  .tile .v { margin-top: 2px; font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .tile .n { font-size: 12px; color: var(--muted); }
+
+  /* Buttons: the first write surface the UI has. One primary, one quiet,
+     one dangerous; all three sit in one row under the title. */
+  .actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--panel); font-size: 13.5px; color: var(--ink-dim); }
+  .btn:hover { background: var(--active); border-color: var(--elevated-border); color: var(--ink); }
+  .btn.primary { border-color: var(--accent-fill); background: var(--accent-fill); color: #fff; }
+  .btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+  .btn.danger:hover { border-color: var(--danger); color: var(--danger-ink); }
+  .btn[disabled] { opacity: .5; cursor: default; }
+
+  /* Forms: one panel, opened in place under its eyebrow, never a modal. */
+  .form { margin-top: 12px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); }
+  .form h3 { margin: 0 0 12px; font: 500 17px var(--serif); color: var(--ink); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  .grid .wide { grid-column: 1 / -1; }
+  label { display: block; }
+  label span.l { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+  label span.h { display: block; margin-top: 4px; font-size: 12px; color: var(--faint); }
+  input, select { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--ink); font-size: 14px; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  input::placeholder { color: var(--faint); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; }
+  .seg button { padding: 6px 12px; font-size: 13.5px; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: var(--active); color: var(--ink); }
+  .form .foot { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
+  .form .foot .note { margin-left: auto; font-size: 12.5px; color: var(--faint); }
+  .stored { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-dim); }
+  .stored .pill { font-weight: 500; }
+
+  /* The confirm box for a removal: inline, red border, names what goes. */
+  .confirm { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: var(--r); background: rgba(193,70,56,.08); font-size: 13.5px; color: var(--ink-dim); }
+  .confirm .foot { display: flex; gap: 8px; margin-top: 10px; }
+
+  .callout { margin-top: 20px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); font-size: 13.5px; color: var(--muted); }
+  .callout b { color: var(--ink-dim); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="urlbar">▸ <b id="url">almanach.example.invalid/quellen</b><span class="hint">Mock · Quellen · Zeilen, Buttons und Formulare sind klickbar</span></div>
+<div class="app">
+  <header class="top">
+    <h1><a href="#quellen">Almanach</a></h1>
+    <nav aria-label="Seiten">
+      <a href="#">Projekte</a>
+      <a href="#quellen" id="nav-quellen" aria-current="page">Quellen</a>
+      <a href="#">FAQ</a>
+    </nav>
+    <span class="reader">jan</span>
+  </header>
+  <main>
+
+    <!-- ============ /quellen ============ -->
+    <section id="v-list" class="column">
+      <h2>Quellen</h2>
+      <p class="lede">Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Die Klone sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.</p>
+
+      <div class="actions-row">
+        <button class="btn primary" onclick="toggle('f-new')">Neue Quelle</button>
+        <button class="btn" onclick="flash(this,'Alle Quellen synchronisieren …')">Alle synchronisieren</button>
+      </div>
+
+      <div id="f-new" class="form" hidden>
+        <h3>Neue Quelle</h3>
+        <div class="grid">
+          <label><span class="l">Art</span>
+            <div class="seg" id="kindseg">
+              <button type="button" aria-pressed="true" onclick="kind('bitbucket')">Bitbucket-Projekt</button>
+              <button type="button" aria-pressed="false" onclick="kind('static')">Statischer Ordner</button>
+            </div>
+            <span class="h" id="kindhint">Die Repositories kommen aus der Bitbucket-API und werden bei jedem Lauf neu gelistet.</span>
+          </label>
+          <label><span class="l">Slug</span><input placeholder="SHOP" class="mono"><span class="h">Wird der Ordnername unter dem Basisordner. Buchstaben, Ziffern, Punkt, Strich, Unterstrich, Tilde.</span></label>
+          <label class="wide bb"><span class="l">Bitbucket-Host</span><input placeholder="https://bitbucket.example.invalid"><span class="h">Nur https. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen.</span></label>
+          <label class="wide"><span class="l">Personal Access Token <span style="color:var(--faint)">(optional)</span></span><input type="password" placeholder="Leer lassen für öffentliche Repositories" autocomplete="off" oninput="tokenTyped(this.value)"><span class="h">Nur nötig für private Repositories oder ein privates Bitbucket-Projekt. Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.</span></label>
+          <label id="authfield" hidden><span class="l">Token senden als</span>
+            <div class="seg" id="authseg">
+              <button type="button" aria-pressed="true" onclick="auth('bearer')">Bearer</button>
+              <button type="button" aria-pressed="false" onclick="auth('basic')">Basic</button>
+            </div>
+            <span class="h" id="authhint">Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center die sichere Wahl.</span>
+          </label>
+          <label id="userfield" hidden><span class="l">Benutzername</span><input placeholder="x-access-token"><span class="h">Basic: GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).</span></label>
+        </div>
+        <div class="foot">
+          <button class="btn primary" onclick="toggle('f-new')">Anlegen und synchronisieren</button>
+          <button class="btn" onclick="toggle('f-new')">Abbrechen</button>
+          <span class="note">Ohne ALMANACH_SECRET_KEY kann kein Token gespeichert werden.</span>
+        </div>
+      </div>
+
+      <div class="eyebrow">Quellen <span class="right">3 Quellen · 14 Repositories · nächster Lauf in 18 min</span></div>
+      <div class="tbox">
+        <table>
+          <thead><tr>
+            <th>Slug</th><th>Art</th><th>Host</th><th>Token</th><th class="num">Repos</th><th>Zustand</th><th>Letzter Lauf</th>
+          </tr></thead>
+          <tbody>
+            <tr class="rowlink" onclick="go('shop')">
+              <td class="mono">SHOP</td>
+              <td><span class="chip">bitbucket</span></td>
+              <td class="mono">bitbucket.example.invalid</td>
+              <td><span class="pill none">Hinterlegt</span></td>
+              <td class="num">7</td>
+              <td><span class="pill ok"><i></i>7 bereit</span></td>
+              <td class="num">Heute 14:02</td>
+            </tr>
+            <tr class="rowlink" onclick="go('werkzeuge')">
+              <td class="mono">werkzeuge</td>
+              <td><span class="chip dim">statisch</span></td>
+              <td class="mono">github.com</td>
+              <td><span class="pill none">Hinterlegt</span></td>
+              <td class="num">5</td>
+              <td><span class="pill ok"><i></i>3 bereit</span> <span class="pill warn"><i class="spin"></i>1 läuft</span> <span class="pill fail"><i></i>1 fehlgeschlagen</span></td>
+              <td class="num">Heute 14:05</td>
+            </tr>
+            <tr class="rowlink" onclick="go('bill')">
+              <td class="mono">BILL</td>
+              <td><span class="chip">bitbucket</span></td>
+              <td class="mono">bitbucket.example.invalid</td>
+              <td><span class="pill quiet">Öffentlich</span></td>
+              <td class="num">2</td>
+              <td><span class="pill fail"><i></i>Listing fehlgeschlagen</span></td>
+              <td class="num">Heute 14:02</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout"><b>Basisordner</b> /app/repos · Volume <span class="mono">repos</span> · 2.3 GB belegt · Lauf alle 30 min, sequenziell. Ein Klick auf Synchronisieren setzt die Repositories auf «ausstehend» und stösst den nächsten Lauf sofort an.</div>
+    </section>
+
+    <!-- ============ /quellen/SHOP (bitbucket, healthy) ============ -->
+    <section id="v-shop" class="column" hidden>
+      <nav class="crumbs"><a href="#quellen">Quellen</a><span class="sep">/</span><b>SHOP</b></nav>
+      <h2>SHOP</h2>
+      <p class="meta"><span class="chip">bitbucket</span> <span class="sep">·</span> <span class="mono">https://bitbucket.example.invalid</span> <span class="sep">·</span> Token hinterlegt (Bearer) <span class="sep">·</span> gelistet heute 14:02</p>
+
+      <div class="tiles">
+        <div class="tile"><div class="l">Repositories</div><div class="v">7</div><div class="n">Aus der API, 1 archiviert übersprungen</div></div>
+        <div class="tile"><div class="l">Bereit</div><div class="v">7</div><div class="n">Alle auf dem Stand des Remotes</div></div>
+        <div class="tile"><div class="l">Letzter Lauf</div><div class="v">14:02</div><div class="n">2.1 s, nichts Neues</div></div>
+        <div class="tile"><div class="l">Auf der Platte</div><div class="v">1.4 GB</div><div class="n">/app/repos/SHOP</div></div>
+      </div>
+
+      <div class="actions-row">
+        <button class="btn primary" onclick="flash(this,'Listing und Sync angestossen …')">Synchronisieren</button>
+        <button class="btn" onclick="toggle('f-cred-shop')">Host und Token</button>
+        <button class="btn danger" onclick="toggle('c-shop')">Quelle entfernen</button>
+      </div>
+
+      <div id="f-cred-shop" class="form" hidden>
+        <h3>Host und Token</h3>
+        <div class="grid">
+          <label class="wide"><span class="l">Bitbucket-Host</span><input value="https://bitbucket.example.invalid"></label>
+          <label><span class="l">Token senden als</span>
+            <div class="seg"><button type="button" aria-pressed="true">Bearer</button><button type="button" aria-pressed="false">Basic</button></div>
+          </label>
+          <label><span class="l">Personal Access Token</span>
+            <div class="stored"><span class="pill none">Hinterlegt</span> <button class="btn" onclick="this.closest('.stored').replaceWith(Object.assign(document.createElement('input'),{type:'password',placeholder:'neues Token'}))">Ersetzen</button> <button class="btn" onclick="flash(this,'Token gelöscht')">Löschen</button></div>
+            <span class="h">Das gespeicherte Token wird nie angezeigt. Ersetzen überschreibt es, Löschen macht die Quelle öffentlich.</span>
+          </label>
+        </div>
+        <div class="foot"><button class="btn primary" onclick="toggle('f-cred-shop')">Speichern</button><button class="btn" onclick="toggle('f-cred-shop')">Abbrechen</button></div>
+      </div>
+
+      <div id="c-shop" class="confirm" hidden>
+        <b>Quelle SHOP entfernen?</b> Löscht die Quelle, ihre 7 Repository-Einträge und den Ordner <span class="mono">/app/repos/SHOP</span> mit 1.4 GB. Beschreibungen aus Pull-Request-Notizen bleiben; sie hängen am Projekt, nicht an der Quelle.
+        <div class="foot"><button class="btn danger" onclick="toggle('c-shop');go('list')">Ja, entfernen</button><button class="btn" onclick="toggle('c-shop')">Abbrechen</button></div>
+      </div>
+
+      <div class="eyebrow">Repositories <span class="right">Reihenfolge der API, archivierte übersprungen</span></div>
+      <div class="tbox">
+        <table>
+          <thead><tr><th>Repository</th><th>Branch</th><th>Head</th><th>Zustand</th><th>Letzter Sync</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="mono">shop-ui</td><td class="mono">main</td><td class="mono">a81f3c2</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+            <tr><td class="mono">shop-backend</td><td class="mono">master</td><td class="mono">0c9e77d</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+            <tr><td class="mono">shop-search</td><td class="mono">master</td><td class="mono">5d21b0a</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+            <tr><td class="mono">shop-contract</td><td class="mono">main</td><td class="mono">f4e0a91</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+            <tr><td class="mono">shop-admin-backend</td><td class="mono">master</td><td class="mono">9b7c1de</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+            <tr><td class="mono">shop-events</td><td class="mono">master</td><td class="mono">33d8e4f</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+            <tr><td class="mono">shop-infra</td><td class="mono">main</td><td class="mono">c0ffee1</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="empty">Bei einer Bitbucket-Quelle werden Repositories nicht von Hand hinzugefügt: die Liste ist die der API. Ein Repository, das die API nicht mehr liefert, wird als «verschwunden» markiert und sein Klon bleibt, bis du ihn entfernst.</p>
+    </section>
+
+    <!-- ============ /quellen/werkzeuge (static, mixed states) ============ -->
+    <section id="v-werkzeuge" class="column" hidden>
+      <nav class="crumbs"><a href="#quellen">Quellen</a><span class="sep">/</span><b>werkzeuge</b></nav>
+      <h2>werkzeuge</h2>
+      <p class="meta"><span class="chip dim">statisch</span> <span class="sep">·</span> Repositories von Hand eingetragen <span class="sep">·</span> Token hinterlegt (Basic als <span class="mono">x-access-token</span>)</p>
+
+      <div class="tiles">
+        <div class="tile"><div class="l">Repositories</div><div class="v">5</div><div class="n">Von Hand eingetragen</div></div>
+        <div class="tile"><div class="l">Bereit</div><div class="v">3</div><div class="n">1 läuft, 1 fehlgeschlagen</div></div>
+        <div class="tile"><div class="l">Letzter Lauf</div><div class="v">14:05</div><div class="n">Läuft gerade</div></div>
+        <div class="tile"><div class="l">Auf der Platte</div><div class="v">0.9 GB</div><div class="n">/app/repos/werkzeuge</div></div>
+      </div>
+
+      <div class="actions-row">
+        <button class="btn primary" onclick="flash(this,'Sync angestossen …')">Synchronisieren</button>
+        <button class="btn" onclick="toggle('f-add')">Repository hinzufügen</button>
+        <button class="btn" onclick="flash(this,'(wie bei SHOP)')">Token</button>
+        <button class="btn danger" onclick="flash(this,'(wie bei SHOP)')">Quelle entfernen</button>
+      </div>
+
+      <div id="f-add" class="form" hidden>
+        <h3>Repository hinzufügen</h3>
+        <div class="grid">
+          <label><span class="l">Slug</span><input placeholder="acme-cli" class="mono"><span class="h">Der Ordnername unter /app/repos/werkzeuge.</span></label>
+          <label><span class="l">Branch</span><input placeholder="(Default-Branch des Remotes)" class="mono"><span class="h">Leer: wird mit ls-remote vom Remote gelesen und hier eingetragen.</span></label>
+          <label class="wide"><span class="l">Clone-URL</span><input placeholder="https://github.com/acme/acme-cli.git" class="mono"><span class="h">Nur https. Das Token der Quelle wird beim Klonen mitgegeben, nie in die URL geschrieben.</span></label>
+        </div>
+        <div class="foot"><button class="btn primary" onclick="toggle('f-add')">Hinzufügen und klonen</button><button class="btn" onclick="toggle('f-add')">Abbrechen</button></div>
+      </div>
+
+      <div class="eyebrow">Repositories <span class="right">alphabetisch · Seite aktualisiert alle 3 s, solange etwas läuft</span></div>
+      <div class="tbox">
+        <table>
+          <thead><tr><th>Repository</th><th>Branch</th><th>Head</th><th>Zustand</th><th>Letzter Sync</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="mono">acme-cli<div class="sub">github.com/acme/acme-cli.git</div></td><td class="mono">main</td><td class="mono">7e1d9a0</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:05</td><td class="actions"><button>Synchronisieren</button><button class="danger" onclick="toggle('c-repo')">Entfernen</button></td></tr>
+            <tr><td class="mono">acme-core<div class="sub">github.com/acme/acme-core.git</div></td><td class="mono">main</td><td class="mono">b2c4f6e</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:05</td><td class="actions"><button>Synchronisieren</button><button class="danger">Entfernen</button></td></tr>
+            <tr><td class="mono">acme-docs<div class="sub">github.com/acme/acme-docs.git</div></td><td class="mono">master</td><td class="mono">d0e1f2a</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:05</td><td class="actions"><button>Synchronisieren</button><button class="danger">Entfernen</button></td></tr>
+            <tr><td class="mono">acme-gateway<div class="sub">github.com/acme/acme-gateway.git</div></td><td class="mono">—</td><td class="mono">—</td><td><span class="pill warn"><i class="spin"></i>Läuft</span></td><td class="num">—</td><td class="actions"><button disabled>Synchronisieren</button><button class="danger">Entfernen</button></td></tr>
+            <tr>
+              <td class="mono">acme-legacy<div class="sub">github.com/acme/acme-legacy.git</div></td><td class="mono">develop</td><td class="mono">4a4a4a4</td>
+              <td><span class="pill fail"><i></i>Fehlgeschlagen</span></td><td class="num">Gestern 22:31</td>
+              <td class="actions"><button>Erneut</button><button class="danger">Entfernen</button></td>
+            </tr>
+            <tr><td colspan="6" class="err">acme-legacy: branch "develop": configured branch not found. Der Branch ist auf dem Remote verschwunden; Branch leeren, damit er neu vom Remote gelesen wird, oder einen anderen eintragen.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="c-repo" class="confirm" hidden>
+        <b>Repository acme-cli entfernen?</b> Löscht den Eintrag und den Klon unter <span class="mono">/app/repos/werkzeuge/acme-cli</span>. Der Eintrag kann jederzeit neu angelegt werden; der Klon wird dann neu geholt.
+        <div class="foot"><button class="btn danger" onclick="toggle('c-repo')">Ja, entfernen</button><button class="btn" onclick="toggle('c-repo')">Abbrechen</button></div>
+      </div>
+    </section>
+
+    <!-- ============ /quellen/BILL (bitbucket, listing failed) ============ -->
+    <section id="v-bill" class="column" hidden>
+      <nav class="crumbs"><a href="#quellen">Quellen</a><span class="sep">/</span><b>BILL</b></nav>
+      <h2>BILL</h2>
+      <p class="meta"><span class="chip">bitbucket</span> <span class="sep">·</span> <span class="mono">https://bitbucket.example.invalid</span> <span class="sep">·</span> <span class="pill quiet">Öffentlich</span> <span class="sep">·</span> zuletzt gelistet gestern 09:14</p>
+
+      <div class="confirm" style="border-color: var(--danger); margin-top: 18px;">
+        <b>Listing fehlgeschlagen (heute 14:02):</b> GET /rest/api/1.0/projects/BILL/repos → 401. Die Repository-Liste wurde nicht verändert; die 2 bekannten Repositories werden weiter synchronisiert, solange der Klon anonym geht.
+        <div class="foot"><button class="btn primary" onclick="flash(this,'(Formular wie bei SHOP)')">Token hinterlegen</button><button class="btn" onclick="flash(this,'Listing angestossen …')">Erneut listen</button></div>
+      </div>
+
+      <div class="eyebrow">Repositories <span class="right">Stand des letzten erfolgreichen Listings</span></div>
+      <div class="tbox">
+        <table>
+          <thead><tr><th>Repository</th><th>Branch</th><th>Head</th><th>Zustand</th><th>Letzter Sync</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="mono">billing</td><td class="mono">master</td><td class="mono">e9a1c33</td><td><span class="pill ok"><i></i>Bereit</span></td><td class="num">Heute 14:02</td><td class="actions"><button>Synchronisieren</button></td></tr>
+            <tr><td class="mono">billing-reports</td><td class="mono">master</td><td class="mono">1f1f1f1</td><td><span class="pill quiet"><i></i>Verschwunden</span></td><td class="num">Vor 12 Tagen</td><td class="actions"><button class="danger">Klon entfernen</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="empty">«verschwunden»: das letzte erfolgreiche Listing hat dieses Repository nicht mehr geliefert. Der Klon bleibt, bis du ihn entfernst.</p>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  const views = { list: 'v-list', shop: 'v-shop', werkzeuge: 'v-werkzeuge', bill: 'v-bill' };
+  const urls = { list: 'almanach.example.invalid/quellen', shop: 'almanach.example.invalid/quellen/SHOP', werkzeuge: 'almanach.example.invalid/quellen/werkzeuge', bill: 'almanach.example.invalid/quellen/BILL' };
+  function go(v) {
+    for (const k in views) document.getElementById(views[k]).hidden = k !== v;
+    document.getElementById('url').textContent = urls[v];
+    location.hash = v === 'list' ? 'quellen' : 'quelle/' + v;
+    document.querySelector('main').scrollTop = 0;
+  }
+  function toggle(id) { const el = document.getElementById(id); el.hidden = !el.hidden; }
+  function flash(btn, text) { const t = btn.textContent; btn.textContent = text; btn.disabled = true; setTimeout(() => { btn.textContent = t; btn.disabled = false; }, 1200); }
+  function kind(k) {
+    document.querySelectorAll('#kindseg button').forEach(b => b.setAttribute('aria-pressed', String(b.textContent.toLowerCase().startsWith(k === 'bitbucket' ? 'bitbucket' : 'statisch'))));
+    document.querySelectorAll('.bb').forEach(el => el.hidden = k !== 'bitbucket');
+    document.getElementById('kindhint').textContent = k === 'bitbucket'
+      ? 'Die Repositories kommen aus der Bitbucket-API und werden bei jedem Lauf neu gelistet.'
+      : 'Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation.';
+    auth(k === 'bitbucket' ? 'bearer' : 'basic');
+  }
+  function tokenTyped(v) {
+    document.getElementById('authfield').hidden = v === '';
+    if (v === '') document.getElementById('userfield').hidden = true;
+    else auth(document.querySelector('#authseg [aria-pressed="true"]').textContent.toLowerCase());
+  }
+  function auth(a) {
+    document.querySelectorAll('#authseg button').forEach(b => b.setAttribute('aria-pressed', String(b.textContent.toLowerCase() === a)));
+    document.getElementById('userfield').hidden = a !== 'basic' || document.getElementById('authfield').hidden;
+    document.getElementById('authhint').textContent = a === 'bearer'
+      ? 'Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center die sichere Wahl.'
+      : 'Basic: Benutzername und Token in der URL für genau diesen einen git-Aufruf. Für GitHub die übliche Wahl.';
+  }
+  window.addEventListener('hashchange', route);
+  function route() {
+    const h = location.hash.replace('#', '');
+    if (h.startsWith('quelle/')) go(h.slice(7)); else go('list');
+  }
+  route();
+</script>
+</body>
+</html>
