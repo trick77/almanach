@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -109,12 +110,8 @@ func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("inference: model %q: %w", c.model, err)
 	}
-	switch {
-	case c.effort == EffortOff && !p.Reasoning.CanBeDisabled:
-		return "", fmt.Errorf("inference: reasoning_effort=%q: %s cannot be switched off", c.effort, c.model)
-	case c.effort != "" && c.effort != EffortOff && !p.Reasoning.Accepts(c.effort):
-		return "", fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s, or %s where it can be switched off)",
-			c.effort, c.model, strings.Join(p.Reasoning.EffortValues, ", "), EffortOff)
+	if err := checkEffort(c.effort, c.model, p.Reasoning); err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
@@ -180,6 +177,32 @@ func (c *Client) Model() string { return c.model }
 // Measured on a baseline subject step (2026-10-31): of 22k output tokens,
 // about 1.5k were the patch, the rest thinking; time and cost follow.
 const EffortOff = "off"
+
+// checkEffort holds the configured level to the profile. Off on a model
+// that never reasons is what it does anyway, so no fault; off is refused
+// only where the model reasons and cannot be switched off. A refused level
+// names off as an alternative only where off switches something.
+func checkEffort(effort, model string, r llmwire.Reasoning) error {
+	switch {
+	case effort == "":
+		return nil
+	case effort == EffortOff:
+		if r.Supported && !r.CanBeDisabled {
+			return fmt.Errorf("inference: reasoning_effort=%q: %s reasons and cannot be switched off", effort, model)
+		}
+		return nil
+	case r.Accepts(effort):
+		return nil
+	}
+	accepted := slices.Clone(r.EffortValues)
+	if r.Supported && r.CanBeDisabled {
+		accepted = append(accepted, EffortOff)
+	}
+	if len(accepted) == 0 {
+		return fmt.Errorf("inference: reasoning_effort=%q: %s takes no reasoning level", effort, model)
+	}
+	return fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)", effort, model, strings.Join(accepted, ", "))
+}
 
 func (c *Client) reasoning() llmwire.ReasoningRequest {
 	switch c.effort {

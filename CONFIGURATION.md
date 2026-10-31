@@ -20,7 +20,7 @@ required, a commented line is optional and shows its default.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALMANACH_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts, or `off` for no reasoning where the profile can be switched off; anything else is a startup fault. Thinking is most of a call's output: measured on a baseline subject step, about 1.5k of 22k output tokens were the patch. |
+| `ALMANACH_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts, or `off` for no reasoning (a no-op on a model that never reasons, a startup fault on one that reasons and cannot be switched off); anything else is a startup fault. Thinking is most of a call's output: measured on a baseline subject step, about 1.5k of 22k output tokens were the patch. |
 | `SERVER_HOST` | `0.0.0.0` | Listen address. |
 | `SERVER_PORT` | `8080` | Listen port. |
 | `ALMANACH_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `SERVER_HOST`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. `compose.yaml` fixes `oidc`, `compose.dev.yaml` `none`; `.env` sets neither. |
