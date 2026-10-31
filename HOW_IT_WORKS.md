@@ -526,10 +526,10 @@ resumes after a restart. The run pins the clone's head when it starts.
    a directory of its own, never one holding all: fixes that share nothing
    but the root back no subject in particular. The prompt's rule: a
    pitfall only where a problem area or a bugfix note backs it; without
-   one, none. The answer is a
-   patch (edits by id, new statements in `added` without one, drops,
-   confirmations, a summary or null), applied under the rules below and then folded like a note:
-   `attach`, the ceilings, identical means no revision. The revision and
+   one, none. The answer is a patch (edits by id, new statements in
+   `added` without one, drops, confirmations, a summary or null), applied
+   under the rules below and then folded like a note: `attach`, the
+   ceilings, identical means no revision. The revision and
    the run's progress land in one transaction. Each overview and subject
    prompt names a budget, computed by code, for what its patch may add to
    the page net: characters of prose and new statements, a corrected or
@@ -1150,9 +1150,9 @@ the reason in the log and the page unchanged:
   refers to nothing: it is left out with a log line ("unknown ids left
   out: ...") and the rest applies. Nothing unknown is ever accepted, so the
   invented-id rule holds; only its blast radius is narrower, one
-  hallucinated hash in `confirmed` no longer costing a part. A PR statement is
-  dropped only when its files left the tree, and an edit of it keeps the
-  files the tree still has.
+  hallucinated hash in `confirmed` no longer costing a part. A PR
+  statement is dropped only when its files left the tree, and an edit of
+  it keeps the files the tree still has.
 - A run that ends with no revision still records its commit as documented.
 - A failed or refused part is named on the plan and read by the next
   reconcile; files a reconcile could not place are too.
