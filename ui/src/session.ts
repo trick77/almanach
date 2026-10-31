@@ -1,0 +1,91 @@
+import { useEffect, useState } from "react";
+import type { Me } from "./api";
+import { S } from "./strings";
+
+/** The session gate, like ../rongo's. /api/me is the one request made
+ *  before anything renders, so an expired cookie sends the browser to the
+ *  provider instead of letting every page fail with its own 401.
+ *
+ *  "checking" is a real state: rendering first and redirecting afterwards
+ *  flashes an empty wiki on every reload. "halted" keeps the automatic
+ *  redirect from becoming a loop: a failed callback and a finished
+ *  sign-out both land on a URL that says so, and the gate offers a button
+ *  there instead of sending the browser back to a provider that returns
+ *  it to the same place. */
+export type Session =
+  | { state: "checking" }
+  | { state: "in"; me: Me }
+  | { state: "out" }
+  | { state: "halted"; message: string };
+
+/** haltReason is why the gate must not redirect on its own:
+ *  - after a failed callback the provider still has a live session, answers
+ *    the next login without a prompt, and the callback fails the same way;
+ *  - after sign-out the provider's session is untouched and hands out a new
+ *    token unseen: the button would appear to do nothing. */
+export function haltReason(search: string): string | null {
+  const params = new URLSearchParams(search);
+  if (params.has("signed_out")) return S.auth.signedOut;
+  if (params.has("auth_error")) return S.auth.failed;
+  return null;
+}
+
+/** anonymous is the reader when the check itself could not be made. */
+const anonymous: Me = { mode: "none", user: "" };
+
+export function useSession(): Session {
+  const [session, setSession] = useState<Session>({ state: "checking" });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const halt = haltReason(window.location.search);
+      if (halt !== null) {
+        setSession({ state: "halted", message: halt });
+        return;
+      }
+      let res: Response;
+      try {
+        res = await fetch("/api/me");
+      } catch {
+        // A network error is not a signed-out session: redirecting would
+        // bounce the reader to the provider whenever the connection drops.
+        // The wiki renders and its pages report their own failures.
+        if (!cancelled) setSession({ state: "in", me: anonymous });
+        return;
+      }
+      if (cancelled) return;
+      if (res.status === 401) {
+        setSession({ state: "out" });
+        // A full navigation, not a fetch: the provider answers with a login
+        // page and a redirect chain a fetch cannot follow.
+        window.location.href = "/api/auth/login";
+        return;
+      }
+      if (!res.ok) {
+        setSession({ state: "halted", message: S.auth.unchecked(res.status) });
+        return;
+      }
+      const me = (await res.json()) as Me;
+      if (!cancelled) setSession({ state: "in", me });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return session;
+}
+
+/** logout clears the cookie and goes where the server says: a page that
+ *  halts, since the provider's session lives on. */
+export async function logout(): Promise<void> {
+  try {
+    const res = await fetch("/api/auth/logout", { method: "POST" });
+    const body = (await res.json()) as { redirect_url?: string };
+    window.location.href = body.redirect_url ?? "/?signed_out=1";
+  } catch {
+    // The cookie may or may not be gone; the gate decides on reload.
+    window.location.reload();
+  }
+}

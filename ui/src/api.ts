@@ -315,3 +315,10 @@ export async function send<T>(
   }
   return parsed as T;
 }
+
+/** Me is the session check's answer: the auth mode and the reader's name
+ *  (email, else subject), "" in none mode. */
+export interface Me {
+  mode: "none" | "oidc";
+  user: string;
+}

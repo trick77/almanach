@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { FaqPage } from "./FaqPage";
@@ -6,7 +6,13 @@ import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
-import type { NoteDetail, ProjectDetail, Projects, RepoDetail } from "./api";
+import type {
+  Me,
+  NoteDetail,
+  ProjectDetail,
+  Projects,
+  RepoDetail,
+} from "./api";
 
 /** serve answers each API path from a table, so a page under test fetches
  *  exactly what it would in the browser. */
@@ -433,7 +439,7 @@ describe("NotePage", () => {
 
 describe("App", () => {
   it("routes by the address and navigates on a click", async () => {
-    serve({ projects, "projects/PAY": project });
+    serve({ me: anonymous, projects, "projects/PAY": project });
     window.history.replaceState({}, "", "/");
     render(<App />);
     expect(await screen.findByText(/Revision 7/)).toBeInTheDocument();
@@ -447,5 +453,133 @@ describe("App", () => {
   it("renders the FAQ", () => {
     render(<FaqPage />);
     expect(screen.getByText("Wer schreibt hier?")).toBeInTheDocument();
+  });
+});
+
+const anonymous: Me = { mode: "none", user: "" };
+
+/** answer stubs fetch with one response for /api/me and the table's for
+ *  the rest, recording every call. */
+function answer(me: { status: number; body?: unknown } | Error) {
+  const calls: { url: string; method: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url === "/api/me") {
+        if (me instanceof Error) throw me;
+        return {
+          ok: me.status < 300,
+          status: me.status,
+          json: async () => me.body,
+        };
+      }
+      if (url === "/api/auth/logout") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ redirect_url: "/?signed_out=1" }),
+        };
+      }
+      if (url === "/api/projects") {
+        return { ok: true, status: 200, json: async () => projects };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }),
+  );
+  return calls;
+}
+
+/** stubLocation swaps window.location for a plain object, so a test can
+ *  see where the gate sends the browser; jsdom does not navigate. */
+function stubLocation(search = "") {
+  const loc = { href: "/", pathname: "/", search, reload: vi.fn() };
+  vi.stubGlobal("location", loc);
+  return loc;
+}
+
+describe("session gate", () => {
+  it("renders the wiki without a name or Abmelden in none mode", async () => {
+    answer({ status: 200, body: anonymous });
+    render(<App />);
+    expect(await screen.findByText("PAY")).toBeInTheDocument();
+    expect(screen.queryByText("Abmelden")).not.toBeInTheDocument();
+    expect(
+      document.querySelector('[data-slot="reader"]'),
+    ).toBeEmptyDOMElement();
+  });
+
+  it("names the reader and signs out in oidc mode", async () => {
+    const calls = answer({
+      status: 200,
+      body: { mode: "oidc", user: "jan@example.com" },
+    });
+    render(<App />);
+    expect(await screen.findByText("jan@example.com")).toBeInTheDocument();
+    const loc = stubLocation();
+    fireEvent.click(screen.getByText("Abmelden"));
+    await waitFor(() => expect(loc.href).toBe("/?signed_out=1"));
+    expect(calls).toContainEqual({ url: "/api/auth/logout", method: "POST" });
+  });
+
+  it("goes to the login on 401, by a full navigation", async () => {
+    const loc = stubLocation();
+    answer({ status: 401, body: { error: "sign-in required" } });
+    render(<App />);
+    await waitFor(() => expect(loc.href).toBe("/api/auth/login"));
+    expect(
+      screen.getByText("Weiterleitung zur Anmeldung …"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("PAY")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["?auth_error=oidc_callback_failed", "Die Anmeldung konnte nicht"],
+    ["?signed_out=1", "Abgemeldet."],
+  ])(
+    "halts on %s with a button instead of redirecting",
+    async (search, text) => {
+      const loc = stubLocation(search);
+      const calls = answer({ status: 401 });
+      render(<App />);
+      expect(await screen.findByText(new RegExp(text))).toBeInTheDocument();
+      expect(screen.getByText("Anmelden").closest("a")).toHaveAttribute(
+        "href",
+        "/api/auth/login",
+      );
+      expect(calls).toEqual([]);
+      expect(loc.href).toBe("/");
+    },
+  );
+
+  it("halts when the session cannot be checked", async () => {
+    answer({ status: 500 });
+    render(<App />);
+    expect(
+      await screen.findByText(
+        "Die Sitzung konnte nicht geprüft werden (HTTP 500).",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the wiki when the check fails on the network", async () => {
+    answer(new TypeError("offline"));
+    render(<App />);
+    expect(await screen.findByText("PAY")).toBeInTheDocument();
+  });
+
+  it("reloads when the sign-out request fails", async () => {
+    answer({ status: 200, body: { mode: "oidc", user: "sub-1" } });
+    render(<App />);
+    await screen.findByText("sub-1");
+    const loc = stubLocation();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("offline");
+      }),
+    );
+    fireEvent.click(screen.getByText("Abmelden"));
+    await waitFor(() => expect(loc.reload).toHaveBeenCalled());
   });
 });

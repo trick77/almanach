@@ -346,6 +346,18 @@ export const S = {
     clonesText:
       "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Almanach liest jeden Klon und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
   },
+  auth: {
+    checking: "Sitzung wird geprüft …",
+    redirecting: "Weiterleitung zur Anmeldung …",
+    signedOut:
+      "Abgemeldet. Die Sitzung beim Identitätsanbieter läuft weiter; wer sie beenden will, meldet sich auch dort ab.",
+    failed:
+      "Die Anmeldung konnte nicht abgeschlossen werden. Bitte erneut versuchen; schlägt sie wieder fehl, steht der Grund im Server-Log.",
+    unchecked: (status: number) =>
+      `Die Sitzung konnte nicht geprüft werden (HTTP ${status}).`,
+    signIn: "Anmelden",
+    signOut: "Abmelden",
+  },
 } as const;
 
 /** fmtInt renders a count the Swiss way: a thin space every three digits.

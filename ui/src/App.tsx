@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Sources } from "./api";
+import type { Me, Sources } from "./api";
 import { FaqPage } from "./FaqPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
@@ -8,14 +8,37 @@ import { RepoPage } from "./RepoPage";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import { routeFromPath, sourcesPath, type Route } from "./routing";
+import { logout, useSession } from "./session";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
-import { Link } from "./ui";
+import { btn, btnPrimary, Link } from "./ui";
+
+/** The session gate in front of the shell: nothing that fetches renders
+ *  until the session is known (see session.ts). */
+export default function App() {
+  const session = useSession();
+  if (session.state === "in") return <Shell me={session.me} />;
+  return (
+    <main className="mx-auto max-w-3xl p-5 sm:p-8">
+      <p className="text-sm text-muted">
+        {session.state === "checking" && S.auth.checking}
+        {session.state === "out" && S.auth.redirecting}
+        {session.state === "halted" && session.message}
+      </p>
+      {session.state === "halted" && (
+        <a href="/api/auth/login" className={btnPrimary + " mt-4"}>
+          {S.auth.signIn}
+        </a>
+      )}
+    </main>
+  );
+}
 
 /** The shell: a fixed header over one scrolling page. A top nav, not
  *  ../rongo's thread rail: the wiki has pages, not conversations. The slot
- *  on the right is for the reader's name once the API gives one. */
-export default function App() {
+ *  on the right is the reader's name and the sign-out, in oidc mode only:
+ *  in none there is nobody to name. */
+function Shell({ me }: { me: Me }) {
   const [route, setRoute] = useState<Route>(() =>
     routeFromPath(window.location.pathname),
   );
@@ -68,7 +91,23 @@ export default function App() {
           {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
           {nav(S.nav.faq, "/faq", route.page === "faq")}
         </nav>
-        <span className="text-[13px] text-muted" data-slot="reader" />
+        <span
+          className="flex items-center gap-3 text-[13px] text-muted"
+          data-slot="reader"
+        >
+          {me.mode === "oidc" && (
+            <>
+              <span className="hidden truncate sm:inline">{me.user}</span>
+              <button
+                type="button"
+                className={btn}
+                onClick={() => void logout()}
+              >
+                {S.auth.signOut}
+              </button>
+            </>
+          )}
+        </span>
       </header>
 
       <main className="min-h-0 min-w-0">
