@@ -49,7 +49,8 @@ type PatchResult struct {
 	Patch Patch
 }
 
-// DescriptionResult is one project call: Description nil means no change.
+// DescriptionResult is one project call: Description nil means no change;
+// a rewrite's Map is nil only for a project too large to draw.
 type DescriptionResult struct {
 	Call
 	Description *Description
@@ -74,7 +75,7 @@ func (c *Client) Catalogue(ctx context.Context, prompt string) CatalogueResult {
 
 // Patch asks what one part of the code teaches the repository page.
 func (c *Client) Patch(ctx context.Context, prompt string) PatchResult {
-	content, call := c.call(ctx, prompt, patchFormat())
+	content, call := c.call(ctx, prompt, patchFormat(c.diagrams))
 	out := PatchResult{Call: call}
 	if call.Outcome == OutcomeOK && (!parse(content, &out.Patch) || out.Patch.Statements == nil) {
 		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
@@ -84,7 +85,7 @@ func (c *Client) Patch(ctx context.Context, prompt string) PatchResult {
 
 // Describe asks for the project description rewritten, or null.
 func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult {
-	content, call := c.call(ctx, prompt, descriptionFormat())
+	content, call := c.call(ctx, prompt, descriptionFormat(c.diagrams))
 	out := DescriptionResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out
@@ -101,6 +102,8 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 	if string(answer.Description) == "null" {
 		return out
 	}
+	// The map may be null (a project too large to draw); whether it should
+	// be is the worker's to judge, and a missing one never sinks the text.
 	var d Description
 	if json.Unmarshal(answer.Description, &d) != nil || d.Statements == nil {
 		out.Outcome = OutcomeUnparseable
@@ -111,21 +114,7 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 }
 
 func strict(name string, properties map[string]any) llmwire.ResponseFormat {
-	required := make([]any, 0, len(properties))
-	for _, k := range sortedKeys(properties) {
-		required = append(required, k)
-	}
-	return llmwire.ResponseFormat{
-		Kind: llmwire.FormatJSONSchema,
-		Name: name,
-		Schema: map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             required,
-			"properties":           properties,
-		},
-		Strict: true,
-	}
+	return llmwire.ResponseFormat{Kind: llmwire.FormatJSONSchema, Name: name, Schema: object(properties), Strict: true}
 }
 
 // sortedKeys keeps the required list in one order on the wire, call after
@@ -141,32 +130,24 @@ func sortedKeys(m map[string]any) []string {
 
 func catalogueFormat() llmwire.ResponseFormat {
 	return strict(CatalogueSchemaName, map[string]any{
-		"subjects": map[string]any{
-			"type": "array",
-			"items": map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []any{"name", "purpose", "paths"},
-				"properties": map[string]any{
-					"name":    map[string]any{"type": "string", "minLength": 1},
-					"purpose": map[string]any{"type": "string", "minLength": 1},
-					"paths":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 1}},
-				},
-			},
-		},
+		"subjects": array(object(map[string]any{
+			"name":    map[string]any{"type": "string", "minLength": 1},
+			"purpose": map[string]any{"type": "string", "minLength": 1},
+			"paths":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 1}},
+		})),
 	})
 }
 
-func patchFormat() llmwire.ResponseFormat {
+func patchFormat(diagrams bool) llmwire.ResponseFormat {
 	ids := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	return strict(PatchSchemaName, map[string]any{
 		"summary":    map[string]any{"type": []any{"string", "null"}, "minLength": 1},
-		"statements": statements(),
+		"statements": statements(diagrams),
 		"drop":       ids,
 		"confirmed":  ids,
 	})
 }
 
-func descriptionFormat() llmwire.ResponseFormat {
-	return strict(DescriptionSchemaName, map[string]any{"description": description()})
+func descriptionFormat(diagrams bool) llmwire.ResponseFormat {
+	return strict(DescriptionSchemaName, map[string]any{"description": projectDescription(diagrams)})
 }

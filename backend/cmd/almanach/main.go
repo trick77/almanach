@@ -108,8 +108,8 @@ func listenAddr() string {
 // check: strict schema support, the reasoning level, the gateway's listing.
 // A gateway that does not answer is a warning; anything else is a fault,
 // ok false.
-func startModel(ctx context.Context, log *slog.Logger, label, model, effort string) (*inference.Client, bool) {
-	llm, err := inference.New(inference.Options{Model: model, ReasoningEffort: effort, Logger: log, Lookup: os.LookupEnv})
+func startModel(ctx context.Context, log *slog.Logger, label, model, effort string, noDiagrams bool) (*inference.Client, bool) {
+	llm, err := inference.New(inference.Options{Model: model, ReasoningEffort: effort, Logger: log, Lookup: os.LookupEnv, NoDiagrams: noDiagrams})
 	var warning string
 	if err == nil {
 		warning, err = llm.Startup(ctx)
@@ -203,7 +203,7 @@ func serve(log *slog.Logger) error {
 	} else {
 		log.Info("Team keys: OK", "teams", keys.Teams())
 	}
-	llm, ok := startModel(ctx, log, "LLM", app.Model, app.ReasoningEffort)
+	llm, ok := startModel(ctx, log, "LLM", app.Model, app.ReasoningEffort, app.Limits.MaxDiagrams == 0)
 	if !ok {
 		checks = append(checks, "LLM")
 	}
@@ -213,7 +213,7 @@ func serve(log *slog.Logger) error {
 	catalogue := llm
 	if app.Sources.Enabled() && app.Baseline.CatalogueModel != "" && app.Baseline.CatalogueModel != app.Model {
 		var ok bool
-		if catalogue, ok = startModel(ctx, log, "LLM catalogue", app.Baseline.CatalogueModel, ""); !ok {
+		if catalogue, ok = startModel(ctx, log, "LLM catalogue", app.Baseline.CatalogueModel, "", true); !ok {
 			checks = append(checks, "LLM catalogue")
 		}
 	}

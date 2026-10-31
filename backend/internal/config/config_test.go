@@ -41,7 +41,8 @@ func TestLoadDefaults(t *testing.T) {
 	if app.Host != "0.0.0.0" || app.Port != 8080 || app.AuthMode != AuthNone || app.ReasoningEffort != "" {
 		t.Errorf("server defaults = %+v", app)
 	}
-	want := Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, RepoMaxChars: 60000, ProjectMaxChars: 40000}
+	want := Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, RepoMaxChars: 60000, ProjectMaxChars: 40000,
+		DiagramMaxNodes: 12, DiagramMaxEdges: 20, MaxDiagrams: 6}
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
@@ -60,6 +61,9 @@ func TestLoadOverrides(t *testing.T) {
 	env["ALMANACH_REPO_MAX_CHARS"] = "800"
 	env["ALMANACH_PROJECT_MAX_CHARS"] = "120"
 	env["ALMANACH_PROBLEM_WINDOW_DAYS"] = "30"
+	env["ALMANACH_DIAGRAM_MAX_NODES"] = "16"
+	env["ALMANACH_DIAGRAM_MAX_EDGES"] = "8"
+	env["ALMANACH_MAX_DIAGRAMS"] = "0"
 	env["LOG_LEVEL"] = "DEBUG"
 	app, err := Load(lookup(env))
 	if err != nil {
@@ -68,7 +72,8 @@ func TestLoadOverrides(t *testing.T) {
 	if app.Host != "127.0.0.1" || app.Port != 9090 || app.AuthMode != AuthNone || app.ReasoningEffort != "high" {
 		t.Errorf("server values = %+v", app)
 	}
-	want := Limits{RepoMaxStatements: 10, ProjectMaxStatements: 5, RepoMaxChars: 800, ProjectMaxChars: 120}
+	want := Limits{RepoMaxStatements: 10, ProjectMaxStatements: 5, RepoMaxChars: 800, ProjectMaxChars: 120,
+		DiagramMaxNodes: 16, DiagramMaxEdges: 8, MaxDiagrams: 0}
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
@@ -226,6 +231,25 @@ func TestNonPositiveCap(t *testing.T) {
 	}
 }
 
+func TestDiagramCaps(t *testing.T) {
+	for name, c := range map[string]struct{ value, fault string }{
+		"ALMANACH_DIAGRAM_MAX_NODES": {"17", "at most 16, the most the drawing lays out"},
+		"ALMANACH_DIAGRAM_MAX_EDGES": {"25", "at most 24, the most the drawing lays out"},
+		"ALMANACH_MAX_DIAGRAMS":      {"-1", "must not be negative"},
+	} {
+		env := minimal()
+		env[name] = c.value
+		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), name+": "+c.fault) {
+			t.Errorf("%s=%s: error = %v", name, c.value, err)
+		}
+	}
+	env := minimal()
+	env["ALMANACH_DIAGRAM_MAX_NODES"] = "0"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "ALMANACH_DIAGRAM_MAX_NODES: must be a positive integer") {
+		t.Errorf("no nodes: error = %v", err)
+	}
+}
+
 func TestBaselineDefaultsAndChecks(t *testing.T) {
 	app, err := Load(lookup(minimal()))
 	if err != nil {
@@ -298,7 +322,7 @@ func TestSummaryHidesDSN(t *testing.T) {
 			t.Errorf("Summary leaks %q: %s", secret, s)
 		}
 	}
-	for _, want := range []string{"addr=0.0.0.0:8080", "auth=none", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars}", "problem_window=90d"} {
+	for _, want := range []string{"addr=0.0.0.0:8080", "auth=none", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars, diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Summary lacks %q: %s", want, s)
 		}

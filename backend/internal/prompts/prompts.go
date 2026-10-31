@@ -25,3 +25,15 @@ var Describe string
 //
 //go:embed almanach_project.txt
 var Project string
+
+// Diagrams is the diagram rules the merge, describe and project prompts
+// share, rendered into their {diagram_rules}.
+//
+//go:embed almanach_diagrams.txt
+var Diagrams string
+
+// DiagramsOff stands in for Diagrams with ALMANACH_MAX_DIAGRAMS=0, when no
+// statement schema offers a diagram.
+//
+//go:embed almanach_diagrams_off.txt
+var DiagramsOff string

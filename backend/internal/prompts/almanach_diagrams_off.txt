@@ -1,0 +1,3 @@
+## Diagrams
+
+Statements carry no diagram here: a statement has no `diagram` field. Any `Diagram:` line below is a picture already stored; it stays with its statement.

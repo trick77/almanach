@@ -64,6 +64,32 @@ export const S = {
     rootArea: "(Wurzel)",
     recentNotes: "Letzte Notizen",
     noNotes: "Noch keine Notiz.",
+    map: "Systemkarte",
+    noMap:
+      "Noch keine Systemkarte: sie entsteht beim nächsten Lauf, der dieses Projekt aus dem Code beschreibt.",
+  },
+  diagram: {
+    titles: {
+      flow: "Ablaufdiagramm",
+      sequence: "Sequenzdiagramm",
+      er: "Datenmodell",
+      map: "Systemkarte",
+    },
+    // The map's zones by id: the backend allows these four and no other.
+    zones: {
+      clients: "Clients",
+      repositories: "Repositories",
+      stores: "Datenspeicher",
+      external: "Externe Systeme",
+    } as Record<string, string>,
+    pending: "Diagramm wird gezeichnet …",
+    failed: "Das Diagramm konnte nicht gezeichnet werden.",
+    full: "Vollansicht",
+    fullOf: (title: string) => `${title}: Vollansicht`,
+    download: "SVG herunterladen",
+    downloadOf: (title: string) => `${title}: SVG herunterladen`,
+    close: "Schliessen",
+    repoLink: (slug: string) => `Repository ${slug} öffnen`,
   },
   repo: {
     what: "das Repository",

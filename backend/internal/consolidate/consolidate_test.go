@@ -20,7 +20,8 @@ import (
 )
 
 var (
-	limits   = config.Limits{RepoMaxStatements: 3, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200}
+	limits = config.Limits{RepoMaxStatements: 3, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200,
+		DiagramMaxNodes: 4, DiagramMaxEdges: 3, MaxDiagrams: 1}
 	mergedAt = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 	older    = time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 )
@@ -488,7 +489,8 @@ func TestRender(t *testing.T) {
 	empty := store.Page{}
 	out := render(prompts.Merge, q, existingRepoPage(), empty, limits)
 	for _, ph := range []string{"{repo}", "{project}", "{pr_key}", "{ticket_key}", "{change_kind}", "{repo_max_statements}",
-		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}", "{note}"} {
+		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}", "{note}",
+		"{diagram_rules}", "{diagram_max_nodes}", "{diagram_max_edges}", "{max_diagrams}"} {
 		if strings.Contains(out, ph) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
@@ -496,7 +498,7 @@ func TestRender(t *testing.T) {
 	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown", "at most 3 statements", "at most 2 statements",
 		"400 characters of prose in all", "200 characters of prose in all", "Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		"the current description has 54", "the current description has 0",
-		"_None yet._", `{"components":[{"name":"x"}]}`} {
+		"_None yet._", `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)
 		}

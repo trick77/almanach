@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/trick77/almanach/internal/diagram"
 )
 
 // The queue hands out the oldest unconsolidated note; marking it takes it
@@ -172,6 +174,38 @@ func TestInsertRevision_ProjectScope(t *testing.T) {
 	}
 	if p.Revision != 2 || p.Statements == nil || len(p.Statements) != 0 {
 		t.Errorf("project page = rev %d statements %v, want 2 and []", p.Revision, p.Statements)
+	}
+	if p.Map != nil {
+		t.Errorf("project page map = %+v, want none before one is drawn", p.Map)
+	}
+}
+
+// The map and a statement's diagram come back as written: the map in its
+// own column, the diagram inside the statements. A repository revision
+// carries no map, the column's check refuses one.
+func TestInsertRevision_Diagrams(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	m := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR",
+		Nodes: []diagram.Node{{ID: "svc", Label: "svc", Shape: "step", Zone: "repositories"}, {ID: "pg", Label: "PostgreSQL", Shape: "step", Zone: "stores"}},
+		Edges: []diagram.Edge{{From: "svc", To: "pg", Label: "DB", Head: "end"}},
+		Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}, {ID: "stores", Title: "Datenspeicher"}}}
+	seq := &diagram.Diagram{Kind: diagram.KindSequence, Actors: []diagram.Actor{{ID: "a", Label: "A"}},
+		Rows: []diagram.Row{{Type: diagram.RowFrame, Keyword: "loop", Label: "jede Minute"}, {Type: diagram.RowMessage, From: "a", To: "a", Line: "solid", Head: "filled"}, {Type: diagram.RowEnd}}}
+	_, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeProject, ProjectKey: "PRJ", Summary: "p", SourceKind: FromBaseline, SourceCommit: "abc",
+		Statements: []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Files: []string{}, Diagram: seq}}, Map: m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok, err := s.CurrentPage(ctx, ScopeProject, "PRJ", "")
+	if err != nil || !ok {
+		t.Fatalf("CurrentPage: ok=%v err=%v", ok, err)
+	}
+	if !diagram.Equal(p.Map, m) || !diagram.Equal(p.Statements[0].Diagram, seq) {
+		t.Errorf("map = %+v, diagram = %+v", p.Map, p.Statements[0].Diagram)
+	}
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "r", SourcePR: "PRJ/svc#1", Map: m}); err == nil {
+		t.Error("a repository revision with a map was stored")
 	}
 }
 

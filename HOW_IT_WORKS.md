@@ -445,6 +445,42 @@ resumes after a restart. The run pins the clone's head when it starts.
    summary; interfaces, shared entities and cross-repository rules as
    statements. Its revision and the run's end land in one transaction.
 
+**Diagrams.** The model never writes a diagram language: it returns
+rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
+sequence or an entity model, and `baseline/diagram.go` holds it to code's
+rules like a statement: every arrow and message end declared, no self edge
+in a flow or an entity model (a sequence may message itself, rongo draws
+it), nothing twice, unique ids, known shapes, labels present, Swiss and
+capped, the nodes and edges per diagram from config, within the drawing's
+own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule
+rejects the rewrite whole; one added past the page's count
+(`ALMANACH_MAX_DIAGRAMS`) is left out, its statement kept, and the reading
+goes on. With the count at 0 no schema offers a diagram. Code carries a
+statement's diagram by id like provenance: `diagram: null` keeps it,
+`{"kind": "none"}` removes it, a new one replaces it; the prompts show it
+as JSON to correct. A changed diagram is a changed statement (reordering is
+none), and only a new or changed one meets today's caps, so lowering a cap
+never freezes a page; a page over the count may keep it, not grow. Every
+project with no more source repositories than a map holds (15, room left
+for one more node) carries a system map, the project step's alone
+(`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
+a repository node named by a source repository's slug, an edge labelled
+by how the parts talk (HTTP, event, DB, library, file), held to the
+drawing's limits. A larger project gets none, and the prompt asks for
+null. The map never costs the description: a repository that left the
+project is taken out of it first, and a map that still breaks a rule, or
+none returned, keeps the stored one (its departed repositories out too)
+with the reason logged. Where a map was due and none is stored, the
+revision carries the sentinel `{"kind": "none"}`: asked for, not drawn.
+A map is due only while `revisions.map` is NULL, so a quiet reconcile
+folds such a project once, not forever; a run that folds it anyway asks
+again. A zone needs no title, the UI titles zones by id. A note's fold
+carries the map forward unchanged. The API serves the sentinel as no map
+with `map_declined`, and the project page shows its placeholder only
+where `map_expected` holds and no map was declined. The UI draws both
+with rongo's copied layout, drawing and theme, no Mermaid; the map's
+repository nodes link to their pages.
+
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none
 of its files is in the tree any more (`./` and directories forgiven), and
@@ -522,6 +558,7 @@ one.
 | `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row. Declares the `Store`, `Git` and `Lister` interfaces it needs. | gitrepo, secret, store |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
+| `internal/diagram` | A diagram's shape (rongo's intermediate form), data only; `baseline/diagram.go` validates it. | nothing |
 | `internal/config` | The environment, read once through kit's reader, every fault collected. | kit/env |
 
 The interfaces are declared where they are used (`api.Store`,
@@ -593,7 +630,8 @@ columns: the cache-hit rate and the cost per note are one query.
 **The wiki.** `revisions` is every version of every description:
 `scope` (repository or project), the keys, a per-page `revision` number,
 the `summary` prose, the `statements` array as JSONB (each with its id,
-kind, name, text, files and the sources code attached), the serialized
+kind, name, text, files, the sources code attached and its diagram, if
+any), a project revision's system `map` as JSONB, the serialized
 size, what produced it (`source_kind`: the PR whose note it was, or the
 baseline run's commit, exactly one of `source_pr_key` and `source_commit`
 set) and the call behind it. A statement's source carries the same kind;
