@@ -22,6 +22,7 @@ const (
 	TriggerManual     = "manual"
 	TriggerFirstReady = "first_ready"
 	TriggerMonthly    = "monthly"
+	TriggerRetry      = "retry"
 )
 
 // Run states: queued until the worker takes it, then one state per kind of

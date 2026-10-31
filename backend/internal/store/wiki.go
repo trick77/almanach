@@ -26,10 +26,13 @@ const (
 // keeps or touches the statement: a PR, or a baseline run's commit. Kind ""
 // is a PR: every statement stored before baselines existed reads as one.
 type Source struct {
-	Kind        string    `json:"kind,omitempty"`
-	PRKey       string    `json:"pr_key,omitempty"`
-	TicketKey   string    `json:"ticket_key,omitempty"`
-	MergedAt    time.Time `json:"merged_at,omitzero"`
+	Kind      string    `json:"kind,omitempty"`
+	PRKey     string    `json:"pr_key,omitempty"`
+	TicketKey string    `json:"ticket_key,omitempty"`
+	MergedAt  time.Time `json:"merged_at,omitzero"`
+	// Commit is a baseline run's read commit, or a PR's merge commit: a run
+	// asks git whether that is in what it reads. Empty on PR sources from
+	// before it was kept, which the merge time decides.
 	Commit      string    `json:"commit,omitempty"`
 	CommittedAt time.Time `json:"committed_at,omitzero"`
 	// Repo is the slug whose commit a baseline source is: on the project

@@ -417,9 +417,13 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 	}
 	r.Plan, r.Step, r.Steps = raw, 0, plan.steps()+1
 	if plan.steps() == 0 {
-		// Nothing to read again; the project step still runs, and folds
-		// when the last run skipped it.
+		// Nothing to read again. A reconcile whose summary stands ends
+		// here, in one write; otherwise the project step still runs, and
+		// folds when the last run skipped it.
 		w.log.InfoContext(ctx, "baseline: nothing to read again")
+		if r.Mode == store.RunReconcile && !plan.SummaryChanged {
+			return w.finish(ctx, r, plan)
+		}
 		r.State = store.RunProject
 		return w.save(ctx, *r)
 	}
@@ -492,8 +496,12 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
 		return errStop
 	}
+	newer, err := w.newerIDs(ctx, r, page.Statements, plan.CommittedAt)
+	if err != nil {
+		return readErr(err)
+	}
 	focus := w.focus(plan, page)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), plan.CommittedAt)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -503,13 +511,13 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if !ok {
 		return w.skipPart(ctx, r, &plan, name, "the call failed: "+res.Outcome.String())
 	}
-	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree))
+	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer)
 }
 
 // foldPatch applies a step's patch to the page under the rules of a fold
 // and writes the revision with the run's progress in one transaction.
-func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool) error {
-	if id := touchesNewer(page.Statements, patch, plan.CommittedAt); id != "" {
+func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]bool) error {
+	if id := touchesNewer(newer, patch); id != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+id+" was taught by a pull request newer than the commit read")
 	}
 	applied, reason := baseline.ApplyPatch(page.Statements, patch, exists)
@@ -572,36 +580,60 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	return nil
 }
 
-// newerSlack is how much later than the read commit a pull request may
-// have been merged and still count as in it: the PR whose merge commit is
-// the head is recorded as merged a moment after the commit is made.
+// newerSlack is how much later than the read commit a pull request without
+// a merge commit may have been merged and still count as in it: the PR
+// whose merge commit is the head is recorded as merged a moment after the
+// commit is made.
 const newerSlack = 2 * time.Minute
 
-// newerThan reports whether a pull request among a statement's sources was
-// merged after the commit a run reads: the run pins the clone's last
-// synced head, and a note merged since may have been folded before the run
-// started. Such a statement describes code the run cannot see.
-func newerThan(s store.Statement, at time.Time) bool {
-	if at.IsZero() {
-		return false
-	}
-	for _, src := range s.Sources {
-		if !src.IsBaseline() && src.MergedAt.After(at.Add(newerSlack)) {
-			return true
+// newerIDs is the statements a pull request taught that the commit a run
+// reads does not hold: the run pins the clone's last synced head, and a
+// note merged since may have been folded before the run started. Such a
+// statement describes code the run cannot see. A source naming its merge
+// commit is decided by ancestry, each commit asked once; one without (an
+// older note) by its merge time against the read commit's.
+func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements []store.Statement, at time.Time) (map[string]bool, error) {
+	newer := map[string]bool{}
+	held := map[string]bool{}
+	for _, s := range statements {
+		for _, src := range s.Sources {
+			if src.IsBaseline() {
+				continue
+			}
+			n, err := w.newerSource(ctx, r, src, at, held)
+			if err != nil {
+				return nil, err
+			}
+			if n {
+				newer[s.ID] = true
+				break
+			}
 		}
 	}
-	return false
+	return newer, nil
+}
+
+func (w *Worker) newerSource(ctx context.Context, r *store.BaselineRun, src store.Source, at time.Time, held map[string]bool) (bool, error) {
+	if src.Commit != "" {
+		if in, asked := held[src.Commit]; asked {
+			return !in, nil
+		}
+		in, err := w.base.Code.Contains(ctx, r.ProjectKey, r.Slug, src.Commit, r.Commit)
+		if err == nil {
+			held[src.Commit] = in
+			return !in, nil
+		}
+		// Not a full commit name (noergler's to send): the clock decides.
+		if !errors.Is(err, gitrepo.ErrBadSHA) {
+			return false, err
+		}
+	}
+	return !at.IsZero() && src.MergedAt.After(at.Add(newerSlack)), nil
 }
 
 // touchesNewer is the first id a patch edits, drops or confirms that a
 // newer pull request taught; "" when it touches none.
-func touchesNewer(current []store.Statement, p inference.Patch, at time.Time) string {
-	newer := map[string]bool{}
-	for _, s := range current {
-		if newerThan(s, at) {
-			newer[s.ID] = true
-		}
-	}
+func touchesNewer(newer map[string]bool, p inference.Patch) string {
 	if len(newer) == 0 {
 		return ""
 	}
@@ -926,13 +958,13 @@ func renderCatalogue(r store.BaselineRun, listing, docs, placing string, maxSubj
 	).Replace(prompts.Catalogue)
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, part, focus, files string, at time.Time) string {
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, part, focus, files string, newer map[string]bool) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
-		"{repo_description}", describeSourced(page, at), "{files}", files,
+		"{repo_description}", describeSourced(page, newer), "{files}", files,
 	).Replace(prompts.Describe)
 }
 
@@ -947,7 +979,7 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, l conf
 
 // describeSourced is describe with each statement's provenance: a step
 // must know which statements a pull request taught.
-func describeSourced(p store.Page, at time.Time) string {
+func describeSourced(p store.Page, newer map[string]bool) string {
 	if p.RevisionID == 0 {
 		return "_None yet._"
 	}
@@ -968,7 +1000,7 @@ func describeSourced(p store.Page, at time.Time) string {
 		if len(prs) > 0 {
 			fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
 		}
-		if newerThan(s, at) {
+		if newer[s.ID] {
 			b.WriteString("\nA pull request newer than the code shown taught this: leave it as it is, do not edit, drop or confirm it.\n")
 		}
 	}

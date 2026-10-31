@@ -61,8 +61,8 @@ func TestEnqueueRun_OneOpenPerRepository(t *testing.T) {
 		t.Fatalf("unknown repository: err = %v, want ErrNoRepo", err)
 	}
 	failed := finish(t, s, r, RunFailed)
-	if _, err := s.EnqueueRun(ctx, "tools", "svc", RunFull, TriggerManual, "", "beef"); err != nil {
-		t.Fatalf("after the run failed: %v", err)
+	if _, err := s.EnqueueRun(ctx, "tools", "svc", RunFull, TriggerRetry, "", "beef"); err != nil {
+		t.Fatalf("retry after the run failed: %v", err)
 	}
 	// A run that is over is never written again, so a stale copy cannot
 	// reopen it beside the new one.

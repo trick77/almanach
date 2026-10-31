@@ -77,22 +77,38 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 	}
 }
 
-// A first run that failed is queued again a day after it ended; one that
-// is still fresh, or a repository never described (cloned before the
-// baseline), waits.
-func TestDescribe_RetriesAFailedFirstRun(t *testing.T) {
+// A failed run is queued again in its own mode a day after it ended (or
+// after the interval, when that is shorter), three times in a row; past
+// that the repository is back on the reconcile interval. A fresh failure,
+// a repository never described (cloned before the baseline) and a run done
+// since the documented check wait.
+func TestDescribe_RetriesAFailedRun(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	month := 30 * 24 * time.Hour
+	failedAt := func(mode string, ago time.Duration) store.BaselineRun {
+		return store.BaselineRun{ID: 2, Mode: mode, State: store.RunFailed, FinishedAt: ptr(now.Add(-ago))}
+	}
 	for name, c := range map[string]struct {
 		last       store.BaselineRun
 		documented string
 		failed     int
+		reconcile  time.Duration
 		want       string
 	}{
-		"failed a day ago":   {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "", 1, "tools cli full first_ready  h1"},
-		"failed an hour ago": {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-time.Hour))}, "", 1, ""},
-		"failed three times": {store.BaselineRun{ID: 1, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "", 3, ""},
-		"reconcile failed":   {store.BaselineRun{ID: 2, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour))}, "d0", 1, "tools cli reconcile monthly d0 h1"},
-		"never ran":          {store.BaselineRun{}, "", 0, ""},
+		"failed a day ago":           {failedAt(store.RunFull, 25*time.Hour), "", 1, month, "tools cli full retry  h1"},
+		"failed an hour ago":         {failedAt(store.RunFull, time.Hour), "", 1, month, ""},
+		"third retry":                {failedAt(store.RunFull, 25*time.Hour), "", 3, month, "tools cli full retry  h1"},
+		"past the retries":           {failedAt(store.RunFull, 25*time.Hour), "", 4, month, ""},
+		"past the retries, a month":  {failedAt(store.RunFull, month+time.Hour), "", 4, month, "tools cli full monthly  h1"},
+		"past the retries, buttons":  {failedAt(store.RunFull, month+time.Hour), "", 4, 0, ""},
+		"reconcile failed":           {failedAt(store.RunReconcile, 25*time.Hour), "d0", 1, month, "tools cli reconcile retry d0 h1"},
+		"full read failed, doc'd":    {failedAt(store.RunFull, 25*time.Hour), "d0", 1, month, "tools cli full retry  h1"},
+		"reconcile past the retries": {failedAt(store.RunReconcile, month+time.Hour), "d0", 4, month, "tools cli reconcile monthly d0 h1"},
+		"shorter interval":           {failedAt(store.RunReconcile, 3*time.Hour), "d0", 1, 2 * time.Hour, "tools cli reconcile retry d0 h1"},
+		"retry inside the interval":  {failedAt(store.RunReconcile, time.Hour), "d0", 1, 2 * time.Hour, ""},
+		"done since the documented":  {store.BaselineRun{ID: 2, Mode: store.RunFull, State: store.RunDone, FinishedAt: ptr(now.Add(-month - time.Hour))}, "", 0, month, ""},
+		"done since, buttons":        {store.BaselineRun{ID: 2, Mode: store.RunFull, State: store.RunDone, FinishedAt: ptr(now.Add(-time.Hour))}, "", 0, 0, ""},
+		"never ran":                  {store.BaselineRun{}, "", 0, month, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
@@ -104,7 +120,7 @@ func TestDescribe_RetriesAFailedFirstRun(t *testing.T) {
 			g.origins["/base/tools/cli"] = "https://x/cli.git"
 			g.heads["/base/tools/cli@main"] = "h1"
 			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-				Describe: Describe{Reconcile: 30 * 24 * time.Hour, Wake: func() {}}, Now: func() time.Time { return now }})
+				Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}, Now: func() time.Time { return now }})
 			if err := p.CycleOnce(context.Background()); err != nil {
 				t.Fatal(err)
 			}

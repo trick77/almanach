@@ -319,10 +319,11 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 // describe queues a baseline run after a sync when one is due: the first
 // run on a clone's first ready (its row had no head before), a reconcile
 // when the head is off the documented commit and the last run is older
-// than the interval, and a failed run again a day on, at most maxRetries
-// times in a row. Only with auto_describe on; a repository already cloned
-// when the baseline shipped has no run at all and waits for its button. A
-// run already open is no failure.
+// than the interval, and a failed run again, in its own mode, after
+// retryAfter, at most maxRetries times in a row; past that the failed
+// repository is back on the reconcile interval. Only with auto_describe
+// on; a repository already cloned when the baseline shipped has no run at
+// all and waits for its button. A run already open is no failure.
 func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	if p.Describe.Wake == nil || !j.Source.AutoDescribe {
 		return
@@ -345,25 +346,43 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			p.logRunCheck(err, key, slug)
 			return
 		}
+		if last.State != store.RunFailed && !documented {
+			// Done since DocumentedRun looked: documented now, the next
+			// cycle sees it.
+			return
+		}
 		since := p.Now().Sub(*last.FinishedAt)
-		if last.State == store.RunFailed {
-			// A failed run, first or reconcile, is tried again a day on,
-			// a bounded number of times: a failure that is permanent (a
-			// repository too large for one call) must not cost a call a
-			// day forever.
-			if since < firstRetry {
-				return
-			}
+		retry := false
+		if last.State == store.RunFailed && since >= p.retryAfter() {
+			// A failed run is tried again a bounded number of times: a
+			// failure that is permanent (a repository too large for one
+			// call) must not cost a call a day forever.
 			failed, err := p.Store.FailedRuns(ctx, key, slug)
-			if err != nil || failed >= maxRetries {
+			if err != nil {
 				p.logRunCheck(err, key, slug)
 				return
 			}
-		} else if since < p.Describe.Reconcile {
-			return
+			retry = failed <= maxRetries
 		}
-		if documented {
+		switch {
+		case retry:
+			// The failed run's own mode: a full read the button asked for
+			// on a documented repository stays a full read.
+			mode, trigger = last.Mode, store.TriggerRetry
+			if mode == store.RunReconcile {
+				if !documented {
+					return
+				}
+				base = doc.Commit
+			}
+		case p.Describe.Reconcile <= 0 || since < p.Describe.Reconcile:
+			return
+		case documented:
 			mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
+		default:
+			// Never documented and past its retries: the interval tries
+			// the full read again.
+			trigger = store.TriggerMonthly
 		}
 	}
 	id, err := p.Store.EnqueueRun(ctx, key, slug, mode, trigger, base, head)
@@ -378,12 +397,22 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	p.Describe.Wake()
 }
 
-// firstRetry is how long a failed run waits before it is queued
-// again: long enough for a gateway outage, short of the monthly reconcile.
-const firstRetry = 24 * time.Hour
+// retryWait is how long a failed run waits before it is queued again:
+// long enough for a gateway outage, short of the monthly reconcile.
+const retryWait = 24 * time.Hour
 
-// maxRetries is how many failed runs in a row the poller queues again on
-// its own; past it only a button does.
+// retryAfter is retryWait, or the reconcile interval when that is shorter:
+// a failure must not slow the cadence it interrupted.
+func (p *Poller) retryAfter() time.Duration {
+	if r := p.Describe.Reconcile; r > 0 && r < retryWait {
+		return r
+	}
+	return retryWait
+}
+
+// maxRetries is how many times in a row the poller queues a failed run
+// again; past it the repository waits for the reconcile interval or a
+// button.
 const maxRetries = 3
 
 func (p *Poller) logRunCheck(err error, key, slug string) {

@@ -33,6 +33,8 @@ type runStore struct {
 	repos      []store.SourceRepo
 	documented *store.BaselineRun
 	sources    map[string]bool
+	// saved is every state a run was saved in, in order.
+	saved []string
 }
 
 func (s *runStore) NextRun(context.Context) (store.BaselineRun, bool, error) {
@@ -56,6 +58,7 @@ func (s *runStore) SaveRun(_ context.Context, r store.BaselineRun) (bool, error)
 				return false, nil
 			}
 			s.runs[i] = r
+			s.saved = append(s.saved, r.State)
 			return true, nil
 		}
 	}
@@ -93,8 +96,12 @@ type fakeCode struct {
 	bodies   map[string]string
 	diff     []gitrepo.Entry
 	contains bool
-	readErr  error
-	read     [][]string
+	// held answers Contains for the merge commits it names; asked counts
+	// those questions.
+	held    map[string]bool
+	asked   int
+	readErr error
+	read    [][]string
 }
 
 func (c *fakeCode) Tree(context.Context, string, string, string) ([]gitrepo.Entry, error) {
@@ -103,7 +110,14 @@ func (c *fakeCode) Tree(context.Context, string, string, string) ([]gitrepo.Entr
 func (c *fakeCode) Diff(context.Context, string, string, string, string) ([]gitrepo.Entry, error) {
 	return c.diff, nil
 }
-func (c *fakeCode) Contains(context.Context, string, string, string, string) (bool, error) {
+func (c *fakeCode) Contains(_ context.Context, _, _, ancestor, _ string) (bool, error) {
+	if in, ok := c.held[ancestor]; ok {
+		c.asked++
+		return in, nil
+	}
+	if ancestor == "short" {
+		return false, gitrepo.ErrBadSHA
+	}
 	return c.contains, nil
 }
 func (c *fakeCode) CommitTime(context.Context, string, string, string) (time.Time, error) {
@@ -358,14 +372,15 @@ func TestRun_Reconcile(t *testing.T) {
 		t.Errorf("corrected PR statement sources = %+v, want the PR kept and the commit added", st.Sources)
 	}
 
-	// Nothing a subject holds changed: done at once, no call.
+	// Nothing a subject holds changed: done at once, no call, no lap
+	// through the project state.
 	y := newWorld(t, 16)
 	y.st.documented = x.st.documented
 	y.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 	y.queue(store.RunReconcile, older40)
 	y.w.drain(context.Background())
-	if r := y.run(); r.State != store.RunDone || r.Calls != 0 || len(y.models.prompts) != 0 {
-		t.Fatalf("quiet reconcile = %+v", r)
+	if r := y.run(); r.State != store.RunDone || r.Calls != 0 || len(y.models.prompts) != 0 || slices.Contains(y.st.saved, store.RunProject) {
+		t.Fatalf("quiet reconcile = %+v, saved in %v", r, y.st.saved)
 	}
 
 	// The same quiet reconcile after a run that skipped its project step
@@ -471,6 +486,45 @@ func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
 	p := y.plan(t)
 	if len(p.Unplaced) != 0 || len(p.Subjects) != 2 || p.Subjects[1].Name != "B" || !reflect.DeepEqual(p.Read, []string{"B"}) || !strings.Contains(y.models.prompts[0], "billing/run.go") {
 		t.Fatalf("second reconcile plan = %+v", p)
+	}
+}
+
+// Whether a PR's statement is newer than the read commit: its merge commit
+// decides by ancestry, asked once per commit, whatever the clocks say (a
+// rebase merge's head is older than the PR's merge time; a PR merged a
+// minute after the head is still not in it). A source without a merge
+// commit, or with one git refuses as a name, falls back to the merge time,
+// with two minutes of slack.
+func TestNewerIDs_AncestryFirstThenTheClock(t *testing.T) {
+	x := newWorld(t, 16)
+	in, out := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	x.code.held = map[string]bool{in: true, out: false}
+	pr := func(id string, src store.Source) store.Statement {
+		src.PRKey = "tools/svc#" + id
+		return store.Statement{ID: id, Sources: []store.Source{{Kind: store.FromBaseline, Commit: head}, src}}
+	}
+	statements := []store.Statement{
+		pr("held, merged an hour later", store.Source{Commit: in, MergedAt: mergedAt.Add(time.Hour)}),
+		pr("held again", store.Source{Commit: in}),
+		pr("not held, merged a minute later", store.Source{Commit: out, MergedAt: mergedAt.Add(time.Minute)}),
+		pr("no commit, within the slack", store.Source{MergedAt: mergedAt.Add(newerSlack)}),
+		pr("no commit, past the slack", store.Source{MergedAt: mergedAt.Add(newerSlack + time.Second)}),
+		pr("short commit, past the slack", store.Source{Commit: "short", MergedAt: mergedAt.Add(time.Hour)}),
+		{ID: "baseline only", Sources: []store.Source{{Kind: store.FromBaseline, Commit: head}}},
+	}
+	got, err := x.w.newerIDs(context.Background(), &store.BaselineRun{ProjectKey: "tools", Slug: "svc", Commit: head}, statements, mergedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"not held, merged a minute later": true, "no commit, past the slack": true, "short commit, past the slack": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("newer = %v, want %v", got, want)
+	}
+	if x.code.asked != 2 {
+		t.Errorf("git asked %d times, want once per merge commit (2)", x.code.asked)
+	}
+	if id := touchesNewer(got, inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}); id != "no commit, past the slack" {
+		t.Errorf("touchesNewer = %q", id)
 	}
 }
 

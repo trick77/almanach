@@ -653,7 +653,7 @@ components:
           enum: [full, reconcile]
         trigger:
           type: string
-          enum: [manual, first_ready, monthly]
+          enum: [manual, first_ready, monthly, retry]
         commit:
           type: string
           description: The head when queued, pinned when the run starts.
@@ -1056,6 +1056,9 @@ components:
           format: date-time
         commit:
           type: string
+          description: >-
+            A baseline run's read commit, or a PR's merge commit (absent on
+            sources from before it was kept).
         committed_at:
           type: string
           format: date-time
