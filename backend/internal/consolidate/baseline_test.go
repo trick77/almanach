@@ -1171,6 +1171,18 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; !slices.Equal(ids(p), []string{"s1:Erfunden:Neu."}) {
 		t.Errorf("empty repository page = %v, want the overview's edit taken as s1", ids(p))
 	}
+	// A first project page over its ceiling of two is refused whole, never
+	// written without its statements.
+	x = newWorld(t, 3)
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Zu viel.", Statements: []inference.Statement{
+		stmt(ref("s1"), "rule", "Eins", "A.", "x.go"), stmt(ref("s2"), "rule", "Zwei", "B.", "x.go"), stmt(ref("s3"), "rule", "Drei", "C.", "x.go")}}}
+	x.w.drain(context.Background())
+	if p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; p.Summary == "Zu viel." {
+		t.Errorf("first project page over its ceiling written: %q %v", p.Summary, ids(p))
+	}
 	// At its ceiling of two: the new one is left out, the edit and the
 	// summary stand.
 	p = project(&inference.Description{Summary: "Voll.", Statements: []inference.Statement{stmt(ref("s1"), "component", "Schnittstelle", "Geschärft.", "api.go")}, Added: added})

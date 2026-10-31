@@ -573,8 +573,9 @@ resumes after a restart. The run pins the clone's head when it starts.
    PR-taught one (a note's fold may rewrite it): that drop is left out
    and logged. New statements that alone take the page over a ceiling are
    left out and logged, the summary, map, edits and drops kept, so a full
-   project page is never frozen. Its revision and the run's end land in
-   one transaction.
+   project page is never frozen; a first page over one is refused whole,
+   never written without statements. Its revision and the run's end land
+   in one transaction.
 
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a

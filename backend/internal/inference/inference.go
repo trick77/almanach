@@ -445,15 +445,10 @@ func added(diagrams bool, kinds []string) map[string]any {
 	return array(object(statementProps(diagrams, kinds)))
 }
 
-// NameMaxChars is the most runes a statement's name may hold. The schema
-// says so beside the prompts: a name over it costs the whole rewrite, and
-// stated in the prompts alone it was still written (two parts of one eval).
-const NameMaxChars = 80
-
 func statementProps(diagrams bool, kinds []string) map[string]any {
 	props := map[string]any{
 		"kind":  enum(kinds...),
-		"name":  map[string]any{"type": "string", "minLength": 1, "maxLength": NameMaxChars},
+		"name":  map[string]any{"type": "string", "minLength": 1},
 		"text":  map[string]any{"type": "string", "minLength": 1},
 		"files": array(str()),
 	}
