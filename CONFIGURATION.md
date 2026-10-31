@@ -33,6 +33,10 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_SECRET_KEY` | unset | Base64 of 32 random bytes (`openssl rand -base64 32`). Seals the sources' tokens in the database with AES-GCM. Unset, public repositories still clone and saving a token is a 422. Changing it orphans every stored token: the affected sources fail with a line naming the key until the token is entered again. |
 | `ALMANACH_SYNC_INTERVAL` | `30m` | The poller's cycle: every Bitbucket source listed, every clone fetched. `0` means on demand only (the Synchronisieren buttons). The first cycle runs thirty seconds after start whatever the interval. |
 | `ALMANACH_GIT_CA_FILE` | unset | A PEM bundle git trusts for https (`GIT_SSL_CAINFO`), for a forge behind an internal CA. |
+| `ALMANACH_CATALOGUE_MODEL` | `ALMANACH_MODEL` | The baseline's catalogue step (which subjects a repository is made of, which files belong to each) as an llmwire profile id: a cheaper model may pick, the main one writes. Checked at startup like `ALMANACH_MODEL`, at its balanced reasoning level. Only read with `ALMANACH_REPOS_DIR` set. |
+| `ALMANACH_BASELINE_MAX_CALLS` | `16` | Model calls one baseline run may make: the catalogue, the overview, one per subject, the project. At least 3. Checked before every call; past it the rest is skipped and the run ends partial. |
+| `ALMANACH_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read: the docs its catalogue reads and every part's files. A part over what is left is skipped, and a smaller one after it may still be read. |
+| `ALMANACH_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since, and only with the source's automatic runs on). `0`: only the buttons. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `ALMANACH_ENV` | `dev` | Environment name in every log line. |
 

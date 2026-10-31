@@ -52,8 +52,10 @@ Three parts, three responsibilities:
 - **The consolidation worker** (`internal/consolidate`) is the only caller
   of the model. It takes notes off the queue one at a time, renders the
   merge prompt, checks the answer against rules the model cannot bend and
-  writes a revision. It runs in the same process, started after the
-  startup checks and stopped after the HTTP server.
+  writes a revision. With the sources on it also steps the baseline runs
+  (4b), reading the clones through the poller's lock. It runs in the same
+  process, started after the startup checks and stopped after the HTTP
+  server.
 
 The two surfaces have different trust models. Machine traffic (noergler)
 authenticates with a bearer token that *is* the team: the token names the
@@ -186,6 +188,17 @@ fifteen seconds for its writes, before it is cut off.
 Every merge call leaves an `llm_calls` row: Almanach's own ledger, never
 mixed with the figures noergler reports in `note_calls`.
 
+With the sources on, the same worker drains the baseline runs (4b): notes
+first, and when no note is due one step of the oldest open run, then the
+notes again. A note of a repository whose run is running waits for it
+(the store skips it) and is folded after it; a run still queued holds
+nothing, so a long queue of runs never holds the notes for hours. The run
+pins the clone's last synced head, so a note merged after that fetch may
+have been folded before the run started: a statement such a pull request
+taught is marked read-only in the run's prompts and a patch touching it is
+refused, since the code the run reads cannot show it. Runs among
+themselves go oldest first, one to its end before the next begins.
+
 ## 4. The read side
 
 `/api/...` serves the wiki as JSON, structs with stable field order:
@@ -220,9 +233,9 @@ taught. What they lack is the baseline, a description of the repository as
 it stands, and the baseline needs the code itself. The sources feature is
 the first half of that: Almanach clones every repository of a project into
 a base folder and keeps the clones current. Reading them and writing the
-baseline description with the model is the second half, a later step; the
-clones already record the head commit each checkout holds, so that step can
-diff since the last commit it described instead of re-reading everything.
+baseline description with the model is the second half, section 4b; the
+clones record the head commit each checkout holds, so a later run diffs
+since the commit it last described instead of re-reading everything.
 
 A **source** is a project. Two kinds: a **Bitbucket project**, whose
 repositories are listed from the Bitbucket Server REST API
@@ -239,7 +252,7 @@ any repository size, and every rule here was paid for there.
 
 - A clone is bare and full history: an object store, no working tree, so
   nothing on disk can go stale between the recorded head and the files,
-  and phase 2 reads `git show <head>:<path>` as ../rongo's reader does. The
+  and a baseline run reads the object store at a commit (4b). The
   default branch is asked of the remote (`ls-remote --symref`), never
   assumed; a fetch uses explicit refspecs with `--prune`; the head is the
   remote-tracking ref, and a branch the remote no longer has is a loud
@@ -301,7 +314,94 @@ entry. The UI section "Quellen" is the one read-write part of the SPA: the
 sources list with a create form, a source page with its repositories, their
 states, inline forms for the token and for adding a repository to a static
 source, and inline confirms for removals that name the folder that goes.
-It polls every three seconds while a clone runs and otherwise not at all.
+It polls every three seconds while a clone or a baseline run is under way
+and otherwise not at all.
+
+## 4b. The baseline
+
+A **run** reads one repository's clone at one commit and folds what the
+code teaches into its page: the description the repository should have had
+before the first note. From then on the notes are the deltas, and a
+monthly reconcile reads what changed in the code since, PRs or not.
+
+**The source is the starting point.** With the sources on, a repository
+exists for Almanach once it is a source repository. A note for any other
+is answered 202 `ignored`, logged with its key and slug, and never stored:
+noergler marks it sent and does not resend. A note still queued for one
+(from before the sources, or for a repository removed since) is taken off
+the queue unfolded. The wiki lists the sources then, with noergler's team
+where it has delivered for the key; a source key that differs from a key
+noergler delivers only by case is refused at creation, since every note
+of the project would be ignored. With the sources off, nothing changes:
+every note is taken and the wiki lists noergler's projects.
+
+**Triggers.** The poller queues a full run on a clone's first `ready` (its
+row had no head before), retries a failed first run a day on, and queues a
+reconcile when the head left the documented commit and the last run ended
+more than `ALMANACH_BASELINE_RECONCILE` ago; all only with the source's
+`auto_describe` on. The buttons on the source page queue a reconcile
+(Aktualisieren, a full run before the first) or a full run with a fresh
+catalogue (Neu beschreiben). Repositories cloned before the baseline
+existed have no documented run and wait for their button.
+
+**A run, step by step.** Each step is at most one model call, so a step is
+what the worker interleaves with notes, holds after a gateway failure and
+resumes after a restart. The run pins the clone's head when it starts.
+
+1. *Catalogue.* The tree at the commit (`ls-tree`, modes and sizes), held
+   to what a run may read: regular files, within 100 kB, not vendored,
+   built, locked, binary or generated. A full run asks the catalogue model
+   (`ALMANACH_CATALOGUE_MODEL`, else `ALMANACH_MODEL`) for the
+   repository's subjects (a flow, a feature, a part) with their paths,
+   from the listing (directories over 4000 files) and the docs. Code holds
+   the answer to the tree: invented paths dropped, directories expanded,
+   each subject within 240 kB, at most `ALMANACH_BASELINE_MAX_CALLS` less
+   three. A reconcile starts from the documented run's plan instead: the
+   diff since its commit (`diff-tree`, files that left the readable set
+   counted as gone) maps onto the subjects, and only files no subject
+   holds go to the catalogue model to be placed; files it cannot place
+   stay on the plan for the next reconcile. Over half the catalogued bytes
+   changed, a documented commit no longer in the history, or no plan: a
+   full run instead.
+2. *Overview.* The docs and manifests, chosen by code (README, agent
+   notes, architecture docs, manifests, `docs/`), write the summary and
+   what spans the repository. A reconcile reads them only when one changed.
+3. *Subjects.* One step per subject the run reads: its files through one
+   `cat-file --batch`, the current page beside them, and for a reconcile
+   the ids of the statements resting on changed files. The answer is a
+   patch (new statements, edits by id, drops, confirmations, a summary or
+   null), applied under the rules below and then folded like a note:
+   `attach`, the ceilings, identical means no revision. The revision and
+   the run's progress land in one transaction.
+4. *Project.* The repository's new description folded into the project
+   page, on a full run always, on a reconcile when the summary changed.
+   Its revision and the run's end land in one transaction.
+
+**PR facts are checked, not erased.** A patch never drops an id it does
+not name. A statement a pull request taught may be dropped only when none
+of its files is in the tree any more (`./` and directories forgiven), and
+an edit of it keeps every file of it the tree still has; anything else
+rejects the patch, the part is skipped and named for the next reconcile.
+An edit keeps the statement's PR sources and adds the run's commit
+(`Basis`, with the repository's slug); a confirmed statement gets the
+commit as `checked`, which a later change of its text voids.
+
+**Failures and caps.** A gateway-class failure holds the worker as for a
+note, with the step's attempt counted on the run; eight fail the run. A
+full run's catalogue that fails on its own fails the run: there is no plan
+to read. A part's call that fails on its own, or a patch the rules refuse,
+skips that part; a project step refused or unpaid is skipped too. A page
+at its ceiling ends the reading; the run goes on to the project. The calls
+(`ALMANACH_BASELINE_MAX_CALLS`) are checked before each call, and when they
+are spent the rest is skipped. The bytes (`ALMANACH_BASELINE_MAX_BYTES`,
+the catalogue's docs and every part's files) are checked per part: a part
+over what is left is skipped, a smaller one after it may still be read. A
+run that ends with skipped parts is shown as partial and still records
+its commit; the next reconcile reads the skipped parts again, the docs and
+the project included. A clone the poller holds (a long
+clone or fetch) defers the step to the next drain rather than holding the
+worker behind it; the reads take the poller's disk lock for the read only,
+never across a model call.
 
 ## 5. Operations
 
@@ -393,7 +493,21 @@ error. `source_repos` is one row per clone: the clone URL, who put it here
 (`listed` by the API or `manual`), the branch (NULL until resolved from
 the remote), the head commit the checkout holds, the poller's `state`
 (`pending`, `syncing`, `ready`, `failed`, `missing`) and the last sync's
-time and error. Phase 2 joins the two groups on `(project_key, slug)`.
+time and error, and `auto_describe` on the source. The two groups meet on
+`(project_key, slug)`: with the sources on, a note is taken only for a
+source repository, and the wiki lists the sources (4b).
+
+**The baseline.** `baseline_runs` is one row per run: the repository, the
+mode (`full` or `reconcile` from `base_commit`), the trigger (`manual`,
+`first_ready`, `monthly`), the commit (the head when queued, pinned when
+the run starts), the state (`queued`, `cataloguing`, `describing`,
+`project`, `done`, `failed`), the step and the steps, the plan (the
+catalogue as JSONB: subjects with their files and sizes, what this run
+reads, what it skipped, files it could not place), the attempts of the
+current step, the calls and bytes spent, the skipped parts, the error and
+the times. A partial unique index keeps one open run per repository; the
+rows go with their repository (`ON DELETE CASCADE`). The documented commit
+of a repository is the commit of its newest `done` run.
 
 **The notes.** `notes` is one row per merged pull request, replaced when
 the same PR is delivered again (a reopen and re-merge) and then re-queued.
@@ -412,12 +526,16 @@ columns: the cache-hit rate and the cost per note are one query.
 `scope` (repository or project), the keys, a per-page `revision` number,
 the `summary` prose, the `statements` array as JSONB (each with its id,
 kind, name, text, files and the sources code attached), the serialized
-size, the PR whose note produced it and the merge call behind it. The
+size, what produced it (`source_kind`: the PR whose note it was, or the
+baseline run's commit, exactly one of `source_pr_key` and `source_commit`
+set) and the call behind it. A statement's source carries the same kind;
+a source stored before baselines has none and is a PR. The
 check `(scope = 'project') = (repo_slug IS NULL)` keeps the two scopes
 honest. `pages` is the current pointer per page: one row, one
 `current_revision_id`. Repointing it is a rollback; history is never
-rewritten. `llm_calls` is Almanach's own ledger, one row per merge call,
-never summed with `note_calls`.
+rewritten. `llm_calls` is Almanach's own ledger, one row per model call
+with its `purpose` (`merge`, `catalogue`, `overview`, `subject`,
+`project`) and, for a run's, the run's id; never summed with `note_calls`.
 
 What is derived and what is kept: `deliveries` and `notes` are kept as
 they arrived. `bugfix_area`, the statements' `sources` and ids, the
@@ -507,6 +625,29 @@ so the choice is not undone as a cleanup.
 - **Origin is identity.** A checkout is named after its row, and a row's
   clone URL can be corrected; comparing `remote.origin.url` on every cycle
   is what keeps the old code from answering under the new name.
+- **The source is the starting point** (user, 2026-10-30). A note for a
+  repository that is no source is ignored and never stored, not held
+  until a source appears: the baseline reads the code that PR produced,
+  so the fact is not lost, its PR chip is. Storing ignored notes would put
+  into `deliveries` what must never be rebuilt into the wiki.
+- **Runs live in the one worker, notes first.** A run is a write to the
+  same pages the notes write; a second writer would need the base checked
+  at write time. A note is a small, timely delta and a run minutes of
+  calls, so the notes go first and a run steps when none is due; a
+  repository's notes wait only while its own run is running.
+- **Read by subject, answer with a patch.** A catalogue of subjects keeps a
+  flow that spans directories in one step; a directory group would show
+  the model a third of it per call. A patch over the page rather than a
+  rewritten page: a step sees part of the code, and a full rewrite per
+  step would pay for the whole page's output each time and risk losing
+  statements about parts it never read.
+- **A run checks what the PRs taught, it does not erase it.** A PR fact
+  carries knowledge the code does not show, such as why a rule exists; a
+  run may correct it but drop it only when its files left the tree. Every
+  note is folded, a note whose PR the run already read included.
+- **A cheaper model picks, the strong one writes.** The catalogue is a
+  listing and the docs, a selection task; the steps that write are the
+  expensive ones. `ALMANACH_CATALOGUE_MODEL` is optional.
 
 ## 9. Rules and invariants
 
@@ -541,11 +682,15 @@ things a change must not undo by accident.
   refused, which is how the note can grow without a release here. A body
   over one megabyte is 413.
 - **One `webhook_processed` line for every request that was read**, with
-  the outcome (`accepted`, `deduped`, `invalid`), the team and the
-  delivery id when one could be built. A request without a known bearer
+  the outcome (`accepted`, `deduped`, `ignored`, `invalid`), the team and
+  the delivery id when one could be built. A request without a known bearer
   is a 401 on the access log only; a delivery the database refused logs
-  `webhook_persist_failed` instead, with the 500, so the sender keeps the
-  note pending. Count the three lines together for a per-request total.
+  `webhook_persist_failed` instead, a failed source check
+  `webhook_source_check_failed`, each with the 500, so the sender keeps
+  the note pending. Count the lines together for a per-request total.
+- **With the sources on, the source is the starting point.** A note whose
+  `(project_key, repo_slug)` is no source repository is answered 202
+  `ignored` after the envelope is checked, and nothing is written.
 - **Timestamps are stored in UTC**; `merged_at` is parsed in whatever
   offset noergler sent and normalised.
 
@@ -698,13 +843,41 @@ the reason in the log and the page unchanged:
   entry. On: git on PATH, the folder present and writable (a probe file),
   and the key, if set, 32 bytes of base64, all checked at startup.
 
+### The baseline
+
+- One open run per repository (partial unique index); a second describe
+  is a 409. A run's commit is pinned when it starts; every read is at that
+  commit, never a working tree.
+- A repository's notes wait while its run is past `queued`; afterwards
+  every waiting note is folded.
+- Each step makes at most one model call; the caps are checked before it.
+  A step's revision and the run's progress land in one transaction, the
+  project step's with the run's end.
+- Paths a model names are held to the tree, `./` and directories forgiven:
+  a catalogue path the tree does not have is dropped, a statement a step
+  writes or edits keeps only the files the tree has, and the drop and edit
+  rules for a PR statement read the whole tree.
+- A statement a PR merged after the run's commit taught is read-only for
+  that run.
+- A patch: an unnamed id stays; an invented id, an id edited twice, edited
+  and dropped, or confirmed and dropped rejects it; a PR statement is
+  dropped only when its files left the tree, and an edit of it keeps the
+  files the tree still has.
+- A run that ends with no revision still records its commit as documented.
+- A failed or refused part is named on the plan and read by the next
+  reconcile; files a reconcile could not place are too.
+- Reads take the poller's disk lock for the read only; a lock held past
+  two seconds defers the step to the next drain, never fails the run.
+
 ### Startup and operations
 
 - Startup runs every check before aborting: the database answers and the
   schema is current (the pending migration files are named), the keys file
   loads with at least one team, the model profile supports strict JSON
   schema output and the configured reasoning level, and the gateway lists
-  the model's alias. The listing is bounded to ten seconds. A gateway that
+  the model's alias; with the sources on and a catalogue model of its own,
+  the same for it at its balanced level. The listing is bounded to ten
+  seconds. A gateway that
   is unreachable or answers 5xx is a warning; a refused key, a 4xx, a body
   that is not a listing, or an alias missing from it is a fault.
 - `serve` never migrates; `migrate` needs only the DSN. A schema behind the
