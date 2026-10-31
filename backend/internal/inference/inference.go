@@ -337,45 +337,40 @@ func deref(p *int64) int64 {
 const MergeSchemaName = "almanach_merge"
 
 func description() map[string]any {
-	return map[string]any{
-		"type":                 []any{"object", "null"},
-		"additionalProperties": false,
-		"required":             []any{"summary", "statements"},
-		"properties": map[string]any{
-			"summary":    map[string]any{"type": "string", "minLength": 1},
-			"statements": statements(),
-		},
-	}
+	return nullable(object(map[string]any{
+		"summary":    map[string]any{"type": "string", "minLength": 1},
+		"statements": statements(),
+	}))
+}
+
+// nullable lets an object schema be null too: a description left alone.
+func nullable(o map[string]any) map[string]any {
+	o["type"] = []any{"object", "null"}
+	return o
 }
 
 // statements is the array of statements as a description or a patch
-// carries them: id null for a new one, diagram null for none.
+// carries them: id null for a new one, diagram null to keep the one it has
+// (or have none).
 func statements() map[string]any {
-	return map[string]any{
-		"type": "array",
-		"items": map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             []any{"id", "kind", "name", "text", "files", "diagram"},
-			"properties": map[string]any{
-				"id":      map[string]any{"type": []any{"string", "null"}},
-				"kind":    map[string]any{"type": "string", "enum": []any{"component", "rule", "invariant", "entity"}},
-				"name":    map[string]any{"type": "string", "minLength": 1},
-				"text":    map[string]any{"type": "string", "minLength": 1},
-				"files":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"diagram": statementDiagram(),
-			},
-		},
-	}
+	return array(object(map[string]any{
+		"id":      map[string]any{"type": []any{"string", "null"}},
+		"kind":    enum("component", "rule", "invariant", "entity"),
+		"name":    map[string]any{"type": "string", "minLength": 1},
+		"text":    map[string]any{"type": "string", "minLength": 1},
+		"files":   array(str()),
+		"diagram": statementDiagram(),
+	}))
 }
 
 // projectDescription is the project step's description: the merge's shape
 // plus the system map, which it must carry.
 func projectDescription() map[string]any {
-	d := description()
-	d["required"] = []any{"summary", "statements", "map"}
-	d["properties"].(map[string]any)["map"] = mapSchema()
-	return d
+	return nullable(object(map[string]any{
+		"summary":    map[string]any{"type": "string", "minLength": 1},
+		"statements": statements(),
+		"map":        mapSchema(),
+	}))
 }
 
 func mergeFormat() llmwire.ResponseFormat {

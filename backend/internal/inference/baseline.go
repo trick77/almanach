@@ -113,21 +113,7 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 }
 
 func strict(name string, properties map[string]any) llmwire.ResponseFormat {
-	required := make([]any, 0, len(properties))
-	for _, k := range sortedKeys(properties) {
-		required = append(required, k)
-	}
-	return llmwire.ResponseFormat{
-		Kind: llmwire.FormatJSONSchema,
-		Name: name,
-		Schema: map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             required,
-			"properties":           properties,
-		},
-		Strict: true,
-	}
+	return llmwire.ResponseFormat{Kind: llmwire.FormatJSONSchema, Name: name, Schema: object(properties), Strict: true}
 }
 
 // sortedKeys keeps the required list in one order on the wire, call after
@@ -143,19 +129,11 @@ func sortedKeys(m map[string]any) []string {
 
 func catalogueFormat() llmwire.ResponseFormat {
 	return strict(CatalogueSchemaName, map[string]any{
-		"subjects": map[string]any{
-			"type": "array",
-			"items": map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []any{"name", "purpose", "paths"},
-				"properties": map[string]any{
-					"name":    map[string]any{"type": "string", "minLength": 1},
-					"purpose": map[string]any{"type": "string", "minLength": 1},
-					"paths":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 1}},
-				},
-			},
-		},
+		"subjects": array(object(map[string]any{
+			"name":    map[string]any{"type": "string", "minLength": 1},
+			"purpose": map[string]any{"type": "string", "minLength": 1},
+			"paths":   map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 1}},
+		})),
 	})
 }
 

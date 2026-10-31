@@ -5,8 +5,9 @@ package inference
 // the shape; the rules no schema can say (ends declared, no self edges,
 // caps, slugs) are baseline/diagram.go's.
 
-// object is a strict object: every property required, nothing else
-// allowed, the required list in one order on the wire.
+// object is a strict object, the one builder of every schema here: every
+// property required, nothing else allowed, the required list in one order
+// on the wire.
 func object(properties map[string]any) map[string]any {
 	required := make([]any, 0, len(properties))
 	for _, k := range sortedKeys(properties) {
