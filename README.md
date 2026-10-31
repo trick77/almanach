@@ -76,19 +76,23 @@ reasons: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Every knob:
 Almanach needs an OpenAI-compatible gateway (a LiteLLM proxy) for the
 model; its database is a file it keeps itself. `compose.yaml` is the
 production stack; for local work `compose.dev.yaml` goes on top: port
-8081, no sign-in, no Traefik.
+8081 on loopback, no sign-in, no Traefik.
 
 ```sh
 cp .env.example .env            # fill in the gateway and the model; for private
                                 # repositories ALMANACH_SECRET_KEY (openssl rand -base64 32)
 cp conf/team-keys.example.json conf/team-keys.json
-docker compose -f compose.yaml -f compose.dev.yaml up --build   # migrate, then almanach on :8081
+make dev                        # migrate, then almanach on 127.0.0.1:8081; make dev-down stops it
 ```
 
-The copied `.env` is needed even locally: `compose.yaml` checks
-`PUBLIC_FQDN` and the OIDC lines before the override applies, and the
-example's placeholders pass; the override blanks the OIDC lines and runs
-`ALMANACH_AUTH_MODE=none`.
+`make dev` runs `docker compose --env-file .env --env-file
+compose.dev.env -f compose.yaml -f compose.dev.yaml up --build`.
+`compose.yaml` checks `PUBLIC_FQDN` and the OIDC block while it is read,
+before any override applies; `compose.dev.env`, the later env file and
+so the winner, gives those checks stand-ins, and the override blanks the
+OIDC variables in the container and runs `ALMANACH_AUTH_MODE=none`. The
+dev `.env` needs the gateway and the model, nothing else. A variable
+exported in your shell beats both files.
 
 The database lives on the `data` volume (`/data/almanach.db`), the clones
 on the `repos` volume: two volumes, the database alone on its own. A
@@ -118,18 +122,21 @@ The read API, the UI and the source writes are open as the dev override
 runs them (`ALMANACH_AUTH_MODE=none`): keep it off any network others
 reach.
 
-In production, `docker compose up -d --build` with `compose.yaml` alone:
-no host port, the only way in is a Traefik router on the external
+In production, `docker compose up -d` with `compose.yaml` alone: it
+builds the checkout (`pull_policy: build`, never a surprise pull), with
+no host port; the only way in is a Traefik router on the external
 `traefik` network (entrypoint `websecure`, TLS) for `PUBLIC_FQDN`.
 Almanach signs readers in itself over OIDC at your identity provider;
 `ALMANACH_AUTH_MODE=oidc` is fixed in the file, so `.env` cannot turn it
 off. `.env` carries `PUBLIC_FQDN`, the OIDC block (issuer, client id and
 secret, redirect URL `https://<PUBLIC_FQDN>/api/auth/callback`) and
-`ALMANACH_SESSION_SECRET`. A missing hostname, issuer, client id or
-redirect URL stops `up` with its name; a missing secret stops `serve`.
-The webhook and the ping stay bearer only. The first-run steps
-are at the top of `compose.yaml`; see `ALMANACH_AUTH_MODE` in
-[CONFIGURATION.md](CONFIGURATION.md).
+`ALMANACH_SESSION_SECRET`; the example leaves all six blank, and `up`
+stops naming each one still blank. The webhook and the ping stay bearer
+only. The first-run steps, running a published release instead, and
+the caveats (a shell export beats `.env`; `docker compose config` prints
+the secrets) are at the top of `compose.yaml`; see `ALMANACH_AUTH_MODE`
+in [CONFIGURATION.md](CONFIGURATION.md). Needs Docker Compose 2.24.4 or
+later.
 
 ## Development
 

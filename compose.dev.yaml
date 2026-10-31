@@ -1,21 +1,29 @@
 # Local work, on top of compose.yaml:
 #
-#   docker compose -f compose.yaml -f compose.dev.yaml up --build
+#   make dev        (make dev-down stops it and keeps the volumes)
 #
-# Almanach on http://localhost:8081, no sign-in, no Traefik. Still needs .env
-# copied from .env.example: compose.yaml checks PUBLIC_FQDN and the OIDC
-# lines before any override applies, and the example's placeholders pass.
-# Never on a network others reach: the read API, the UI and the source
-# writes are open.
+# which runs
+#
+#   docker compose --env-file .env --env-file compose.dev.env \
+#     -f compose.yaml -f compose.dev.yaml up --build
+#
+# Almanach on http://localhost:8081 (loopback only), no sign-in, no
+# Traefik. .env needs the gateway and the model, nothing else.
+# compose.yaml checks PUBLIC_FQDN and the OIDC block while it is read,
+# before any override applies; compose.dev.env, the later --env-file and so
+# the winner, gives those checks stand-ins, and this file blanks the OIDC
+# variables in the container again. A shell export still beats both files.
+# The read API, the UI and the source writes are open: the port stays on
+# 127.0.0.1.
 services:
   almanach:
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       ALMANACH_AUTH_MODE: none
-      # Blank, so an .env filled in for oidc still starts here: serve refuses
-      # every oidc variable under none, and blank counts as unset. Over
-      # env_file too: environment wins.
+      # Blank, so neither the stand-ins nor an .env filled in for oidc reach
+      # serve, which refuses every oidc variable under none (blank counts
+      # as unset). Over env_file too: environment wins.
       ALMANACH_OIDC_ISSUER: ""
       ALMANACH_OIDC_CLIENT_ID: ""
       ALMANACH_OIDC_CLIENT_SECRET: ""

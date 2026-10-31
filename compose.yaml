@@ -2,7 +2,7 @@
 # readers signed in over OIDC at your identity provider. No host port: the
 # only way in is the Traefik router below. Requires the external "traefik"
 # network the Traefik stack creates. For local work, compose.dev.yaml on top
-# (README, "Running it").
+# (make dev; README, "Running it").
 #
 # First-run setup:
 #
@@ -14,13 +14,19 @@
 #
 #      cp .env.example .env
 #
+#    The example leaves PUBLIC_FQDN and the OIDC block blank, and this file
+#    checks all six: `up` stops with the message next to each until a real
+#    value is filled in.
+#
 #    .env reaches the container whole (env_file below), so any variable
-#    .env.example documents needs no compose edit. A value exported in your
-#    shell and not written in .env is NOT forwarded. PUBLIC_FQDN and the
-#    OIDC issuer, client id and redirect URL are checked by this file:
-#    `up` stops with the message next to them. A missing .env is no error
-#    of its own (required: false); it shows up as those checks, or as serve
-#    refusing to start, naming each missing variable.
+#    .env.example documents needs no compose edit. A value only exported in
+#    your shell does not reach the container that way. The six checked
+#    lines below are interpolated, though, and for those Compose prefers a
+#    shell export over .env: a stale `export ALMANACH_OIDC_ISSUER=...` in
+#    the shell silently wins. Unset such exports before `up`.
+#
+#    `docker compose config` prints every value, the env_file's secrets
+#    included: never share its output.
 #
 # 2. One bearer token per team in conf/team-keys.json, the same token in
 #    that team's almanach: block in noergler. Readable by uid 1000; mounted
@@ -28,20 +34,27 @@
 #
 #      cp conf/team-keys.example.json conf/team-keys.json
 #
-# 3. docker compose up -d --build: migrate runs, then almanach.
+#    conf/ is the container's /conf: a CA bundle for a forge behind an
+#    internal CA goes there too, with ALMANACH_GIT_CA_FILE=/conf/ca.pem in
+#    .env (the path inside the container, never the host's).
+#
+# 3. docker compose up -d: builds this checkout, migrate runs, then
+#    almanach. almanach has pull_policy: build, so `up` never pulls a
+#    release by surprise. To run a published release instead, pull it and
+#    start without building:
+#
+#      docker pull ghcr.io/trick77/almanach:latest
+#      docker compose up -d --no-build
 #
 # The database and the clones live on the named volumes data and repos,
 # which take uid 1000 from the image on first mount: nothing to chown. A
 # backup is the data volume; the clones refill from the forge.
 #
-# Needs Docker Compose 2.24 or later: older versions reject the long
-# env_file form (path/required) and the !reset tags of compose.dev.yaml.
+# Needs Docker Compose 2.24.4 or later: older versions reject the long
+# env_file form (path/required) and the !override tag of compose.dev.yaml.
 
 # What both services share: the image and the hardening.
 x-almanach: &almanach
-  build:
-    context: .
-    dockerfile: Containerfile
   image: ghcr.io/trick77/almanach:latest
   user: "1000:1000"
   cap_drop: [ALL]
@@ -57,6 +70,8 @@ services:
   # service, never inside it. Same image, same data volume.
   migrate:
     <<: *almanach
+    # almanach's build makes the image; never built twice, never pulled.
+    pull_policy: never
     command: ["migrate"]
     # No env_file: migrate needs the database path and nothing else, least
     # of all the gateway key.
@@ -69,6 +84,10 @@ services:
 
   almanach:
     <<: *almanach
+    build:
+      context: .
+      dockerfile: Containerfile
+    pull_policy: build
     restart: unless-stopped
     # Longer than serve's own shutdown: the HTTP drain (15 s), then the
     # worker's grace for the paid call in flight and its writes
@@ -104,12 +123,13 @@ services:
       # stack. compose.dev.yaml alone sets none.
       ALMANACH_AUTH_MODE: oidc
       # Checked here, so `up` stops with the message instead of the
-      # container restarting in a loop. The client secret and
-      # ALMANACH_SESSION_SECRET come through env_file only, kept out of
-      # `docker compose config`; serve refuses to start without them.
+      # container restarting in a loop. Interpolated: a shell export wins
+      # over .env (step 1 above).
       ALMANACH_OIDC_ISSUER: ${ALMANACH_OIDC_ISSUER:?set it in .env, the provider's issuer exactly as it states it; see .env.example}
       ALMANACH_OIDC_CLIENT_ID: ${ALMANACH_OIDC_CLIENT_ID:?set it in .env, the client registered for Almanach; see .env.example}
+      ALMANACH_OIDC_CLIENT_SECRET: ${ALMANACH_OIDC_CLIENT_SECRET:?set it in .env, the client's secret at the provider; see .env.example}
       ALMANACH_OIDC_REDIRECT_URL: ${ALMANACH_OIDC_REDIRECT_URL:?set it in .env, https://<PUBLIC_FQDN>/api/auth/callback; see .env.example}
+      ALMANACH_SESSION_SECRET: ${ALMANACH_SESSION_SECRET:?set it in .env, openssl rand -base64 48; see .env.example}
     volumes:
       # The database alone: the file and its -wal, -shm. Never a shared
       # filesystem: SQLite in WAL needs the locks of one local disk.

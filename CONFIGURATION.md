@@ -35,7 +35,7 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_REPOS_DIR` | unset | The clones (the Quellen pages). Unset: the feature is off, no poller, the routes answer 404, the UI hides the entry. Set: the base folder every clone lands under as `<dir>/<project>/<slug>`; must exist and be writable (checked with a probe file at startup), and `git` must be on PATH. compose gives its container `/app/repos` on the `repos` volume; a deployment needs a volume claim there, owned by uid 1000 (fsGroup or an init chown). |
 | `ALMANACH_SECRET_KEY` | unset | Base64 of 32 random bytes (`openssl rand -base64 32`). Seals the sources' tokens in the database with AES-GCM. Unset, public repositories still clone and saving a token is a 422. Changing it orphans every stored token: the affected sources fail with a line naming the key until the token is entered again. |
 | `ALMANACH_SYNC_INTERVAL` | `30m` | The poller's cycle: every Bitbucket source listed, every clone fetched. `0` means on demand only (the Synchronisieren buttons). The first cycle runs thirty seconds after start whatever the interval. |
-| `ALMANACH_GIT_CA_FILE` | unset | A PEM bundle git trusts for https (`GIT_SSL_CAINFO`), for a forge behind an internal CA. |
+| `ALMANACH_GIT_CA_FILE` | unset | A PEM bundle git trusts for https (`GIT_SSL_CAINFO`), for a forge behind an internal CA. The path as the process sees it: under compose the file goes into `./conf` and this reads `/conf/ca.pem`. |
 | `ALMANACH_CATALOGUE_MODEL` | `ALMANACH_MODEL` | The baseline's catalogue step (which subjects a repository is made of, which files belong to each) as an llmwire profile id: a cheaper model may pick, the main one writes. Checked at startup like `ALMANACH_MODEL`, at its balanced reasoning level. Only read with `ALMANACH_REPOS_DIR` set. |
 | `ALMANACH_BASELINE_MAX_CALLS` | `16` | Model calls one baseline run may make: the catalogue, the overview, one per subject, the project. At least 3. Checked before every call; past it the rest is skipped and the run ends partial. |
 | `ALMANACH_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read: the docs its catalogue reads and every part's files. A part over what is left is skipped, and a smaller one after it may still be read. |
@@ -96,16 +96,38 @@ the provider's policy. `/webhooks/noergler`, `/auth/ping`, `/healthz`,
 the external `traefik` network, `oidc` fixed. It reads `.env` whole
 (`env_file`, optional), then sets what must not come from there: the
 database, keys and clone paths, the listener, `HOME` and `TMPDIR` for git
-on the read-only root filesystem, and the mode. `compose.dev.yaml` on top
-publishes port 8081, sets `none`, blanks the OIDC lines and drops the
-router and the network. Compose checks these before any override applies,
-so the dev stack needs them in `.env` too, where the example's
-placeholders pass:
+on the read-only root filesystem, and the mode. The variables below it
+checks itself (`${VAR:?}`): blank or missing stops `up` with the
+variable's name. `.env.example` leaves them blank.
 
 | Variable | Meaning |
 | --- | --- |
 | `PUBLIC_FQDN` | The hostname Traefik routes Almanach on. Read by compose only. |
-| `ALMANACH_OIDC_ISSUER`, `ALMANACH_OIDC_CLIENT_ID`, `ALMANACH_OIDC_REDIRECT_URL` | As in [Signing in](#signing-in). The client secret and `ALMANACH_SESSION_SECRET` reach the container through `.env` alone, unchecked by compose; `serve` refuses to start without them. |
+| `ALMANACH_OIDC_ISSUER`, `ALMANACH_OIDC_CLIENT_ID`, `ALMANACH_OIDC_CLIENT_SECRET`, `ALMANACH_OIDC_REDIRECT_URL`, `ALMANACH_SESSION_SECRET` | As in [Signing in](#signing-in). |
+
+Checked means interpolated, and when Compose interpolates, a variable
+exported in the shell beats `.env`: a stale export silently wins over the
+file. Unset it, or keep the values in env files only. `docker compose
+config` prints every value, the secrets included: never share its
+output.
+
+`compose.dev.yaml` on top (`make dev`, `make dev-down`) publishes
+`127.0.0.1:8081`, sets `none`, blanks the OIDC variables in the container
+and drops the router and the network. Compose checks the variables above
+while it reads `compose.yaml`, before any override applies, so
+`make dev` passes `compose.dev.env` after `.env` (`--env-file` twice, the
+later one wins): stand-ins for those checks, never real values.
+
+Paths in `.env` are the process's view. compose sets the database, keys
+and clone paths itself; `ALMANACH_GIT_CA_FILE` it leaves to `.env`, so
+under compose the bundle sits in `./conf`, mounted read-only at `/conf`,
+and the variable reads `/conf/ca.pem`.
+
+almanach has `pull_policy: build`: `up` builds the checkout and never
+pulls a release by surprise; migrate runs the same image without a build
+of its own (`pull_policy: never`), so it is built once. A published
+release: `docker pull ghcr.io/trick77/almanach:latest`, then
+`docker compose up -d --no-build`. Needs Docker Compose 2.24.4 or later.
 
 The stop grace is 11 minutes: the worker waits up to the call timeout
 plus 15 s for a paid call in flight before it cuts it off, and Docker's
