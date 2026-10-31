@@ -36,7 +36,21 @@ type Limits struct {
 	// the summary and every statement's name and text.
 	RepoMaxChars    int
 	ProjectMaxChars int
+	// DiagramMaxNodes and DiagramMaxEdges cap every diagram, the system map
+	// included: past about a dozen nodes a picture stops reading and
+	// should be two. MaxDiagrams is the statement diagrams one page may
+	// hold; the map does not count.
+	DiagramMaxNodes int
+	DiagramMaxEdges int
+	MaxDiagrams     int
 }
+
+// The ceilings of rongo's drawing (ui/src/diagramIR.ts fits): a diagram
+// past them is not drawn, so the caps may not go past them either.
+const (
+	drawMaxNodes = 16
+	drawMaxEdges = 24
+)
 
 // Sources is the clone feature: off when ReposDir is empty.
 type Sources struct {
@@ -111,6 +125,9 @@ func Load(lookup func(string) string) (*App, error) {
 			ProjectMaxStatements: positive(r, "ALMANACH_PROJECT_MAX_STATEMENTS", 24),
 			RepoMaxChars:         positive(r, "ALMANACH_REPO_MAX_CHARS", 60000),
 			ProjectMaxChars:      positive(r, "ALMANACH_PROJECT_MAX_CHARS", 40000),
+			DiagramMaxNodes:      positive(r, "ALMANACH_DIAGRAM_MAX_NODES", 12),
+			DiagramMaxEdges:      positive(r, "ALMANACH_DIAGRAM_MAX_EDGES", 20),
+			MaxDiagrams:          nonNegative(r, "ALMANACH_MAX_DIAGRAMS", 6),
 		},
 		ProblemWindow: positive(r, "ALMANACH_PROBLEM_WINDOW_DAYS", 90),
 		Sources: Sources{
@@ -132,6 +149,12 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if app.Baseline.MaxCalls > 0 && app.Baseline.MaxCalls < minBaselineCalls {
 		r.Fail("ALMANACH_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
+	}
+	if app.Limits.DiagramMaxNodes > drawMaxNodes {
+		r.Fail("ALMANACH_DIAGRAM_MAX_NODES: at most %d, the most the drawing lays out, got %d", drawMaxNodes, app.Limits.DiagramMaxNodes)
+	}
+	if app.Limits.DiagramMaxEdges > drawMaxEdges {
+		r.Fail("ALMANACH_DIAGRAM_MAX_EDGES: at most %d, the most the drawing lays out, got %d", drawMaxEdges, app.Limits.DiagramMaxEdges)
 	}
 	if app.Baseline.Reconcile < 0 {
 		r.Fail("ALMANACH_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
@@ -155,6 +178,15 @@ func positive(r *kitenv.Reader, name string, def int) int {
 	return v
 }
 
+// nonNegative is an int that may be 0: no statement diagrams at all.
+func nonNegative(r *kitenv.Reader, name string, def int) int {
+	v := r.Int(name, def)
+	if v < 0 {
+		r.Fail("%s: must not be negative, got %d", name, v)
+	}
+	return v
+}
+
 // Summary is the config as the startup log prints it: no secret, no DSN.
 func (a *App) Summary() string {
 	sources := "off"
@@ -167,7 +199,8 @@ func (a *App) Summary() string {
 			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "",
 			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
 	}
-	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars} problem_window=%dd sources=%s",
+	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars, diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
 		a.Host, a.Port, a.AuthMode, a.Model, a.ReasoningEffort,
-		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars, a.ProblemWindow, sources)
+		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars,
+		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources)
 }

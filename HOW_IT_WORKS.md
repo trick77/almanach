@@ -409,6 +409,24 @@ resumes after a restart. The run pins the clone's head when it starts.
    summary; interfaces, shared entities and cross-repository rules as
    statements. Its revision and the run's end land in one transaction.
 
+**Diagrams.** The model never writes a diagram language: it returns
+rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
+sequence or an entity model, and `baseline/diagram.go` holds it to code's
+rules like a statement: every arrow and message end declared, no self
+edges, nothing twice, unique ids, known shapes, labels present, Swiss and
+capped, the nodes and edges per diagram and the statement diagrams per page
+from config. Anything off rejects the rewrite whole. Every project carries
+a system map, the project step's alone (`revisions.map`): zones `clients`,
+`repositories`, `stores`, `external`, a repository node named by a source
+repository's slug, an edge labelled by how the parts talk (HTTP, event, DB,
+library, file). A project step's rewrite without a map is off schema, a
+"no change" for a project without one is skipped and redone, and a note's
+fold carries the map forward unchanged. A statement may carry a `diagram`
+where a picture says more than its paragraphs, on either path; the prompts
+show it as JSON, so keeping it means repeating it, and a changed diagram is
+a changed statement. The UI draws both with rongo's copied layout, drawing
+and theme, no Mermaid; the map's repository nodes link to their pages.
+
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none
 of its files is in the tree any more (`./` and directories forgiven), and
@@ -486,6 +504,7 @@ one.
 | `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row. Declares the `Store`, `Git` and `Lister` interfaces it needs. | gitrepo, secret, store |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
+| `internal/diagram` | A diagram's shape (rongo's intermediate form), data only; `baseline/diagram.go` validates it. | nothing |
 | `internal/config` | The environment, read once through kit's reader, every fault collected. | kit/env |
 
 The interfaces are declared where they are used (`api.Store`,
@@ -557,7 +576,8 @@ columns: the cache-hit rate and the cost per note are one query.
 **The wiki.** `revisions` is every version of every description:
 `scope` (repository or project), the keys, a per-page `revision` number,
 the `summary` prose, the `statements` array as JSONB (each with its id,
-kind, name, text, files and the sources code attached), the serialized
+kind, name, text, files, the sources code attached and its diagram, if
+any), a project revision's system `map` as JSONB, the serialized
 size, what produced it (`source_kind`: the PR whose note it was, or the
 baseline run's commit, exactly one of `source_pr_key` and `source_commit`
 set) and the call behind it. A statement's source carries the same kind;

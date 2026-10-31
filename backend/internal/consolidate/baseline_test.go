@@ -14,6 +14,7 @@ import (
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/store"
@@ -74,7 +75,7 @@ func (s *runStore) ApplyBaselineStep(ctx context.Context, rev store.NewRevision,
 	}
 	n, err := s.InsertRevision(ctx, rev)
 	s.pages[pageKey(rev.Scope, rev.ProjectKey, rev.RepoSlug)] = store.Page{RevisionID: int64(n), Revision: n, Summary: rev.Summary,
-		Statements: rev.Statements, SourceKind: rev.SourceKind, SourceCommit: rev.SourceCommit}
+		Statements: rev.Statements, SourceKind: rev.SourceKind, SourceCommit: rev.SourceCommit, Map: rev.Map}
 	return n, true, err
 }
 
@@ -187,6 +188,20 @@ func stmt(id *string, kind, name, text string, files ...string) inference.Statem
 
 func ref(s string) *string { return &s }
 
+// drawnMap is a system map: the repositories by slug, a store behind the
+// first, an external system calling it.
+func drawnMap(slugs ...string) *diagram.Diagram {
+	d := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Zones: []diagram.Zone{
+		{ID: "repositories", Title: "Repositories"}, {ID: "stores", Title: "Datenspeicher"}, {ID: "external", Title: "Externe Systeme"}}}
+	for _, s := range slugs {
+		d.Nodes = append(d.Nodes, diagram.Node{ID: s, Label: s, Shape: "step", Zone: "repositories"})
+	}
+	d.Nodes = append(d.Nodes, diagram.Node{ID: "pg", Label: "PostgreSQL", Shape: "step", Zone: "stores"},
+		diagram.Node{ID: "forge", Label: "Forge", Shape: "step", Zone: "external"})
+	d.Edges = []diagram.Edge{{From: slugs[0], To: "pg", Label: "DB", Head: "end"}, {From: "forge", To: slugs[0], Label: "HTTP: Webhook", Head: "end"}}
+	return d
+}
+
 type world struct {
 	w      *Worker
 	st     *runStore
@@ -207,7 +222,12 @@ func newWorld(t *testing.T, calls int) world {
 		contains: true,
 	}
 	models := &fakeModels{}
-	w := New(st, &fakeMerger{}, config.Limits{RepoMaxStatements: 4, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200},
+	// The project has its map from an earlier run, so a project step that
+	// answers no change leaves it as it is; TestRun_ProjectWithoutAMap
+	// starts without one.
+	st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{Map: drawnMap("svc")}
+	w := New(st, &fakeMerger{}, config.Limits{RepoMaxStatements: 4, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200,
+		DiagramMaxNodes: 12, DiagramMaxEdges: 20, MaxDiagrams: 6},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	w.WithBaseline(Baseline{Store: st, Code: code, Catalogue: models, Describer: models, Limits: config.Baseline{MaxCalls: calls, MaxBytes: 1 << 20}})
 	w.now = func() time.Time { return mergedAt }
@@ -245,7 +265,8 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s2"), "rule", "Login", "Zweistufig, mit Sperre.", "auth/login.go")}, Confirmed: []string{"s1"}}},
 	}
-	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.", Statements: []inference.Statement{}}}
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.", Statements: []inference.Statement{},
+		Map: drawnMap("svc", "portal")}}
 	x.st.others = []store.RepoSummary{{Slug: "portal", Summary: "Das Portal ruft svc auf."}, {Slug: "svc", Summary: "Alte Fassung."}}
 	x.w.drain(context.Background())
 
@@ -289,6 +310,9 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	if project.Scope != store.ScopeProject || project.SourceKind != store.FromBaseline || project.SourceCommit != head || project.Summary != "Werkzeuge." {
 		t.Errorf("project revision = %+v", project)
 	}
+	if !diagram.Equal(project.Map, drawnMap("svc", "portal")) {
+		t.Errorf("project map = %+v", project.Map)
+	}
 	cat, overview, auth := x.models.prompts[0], x.models.prompts[1], x.models.prompts[2]
 	if !strings.Contains(cat, "auth/login.go\t30") || strings.Contains(cat, "go.sum") || !strings.Contains(cat, "<<<FILE README.md>>>") {
 		t.Errorf("catalogue prompt lacks the listing or the docs, or shows a lockfile:\n%s", cat)
@@ -304,6 +328,10 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	if !strings.Contains(proj, "### portal\n\nDas Portal ruft svc auf.") || strings.Contains(proj, "Alte Fassung.") ||
 		!strings.Contains(proj, "Ein Dienst für Werkzeuge.") || strings.Contains(proj, "{other_repos}") {
 		t.Errorf("project prompt:\n%s", proj)
+	}
+	// The map the model may draw: these slugs, the current map to repeat.
+	if !strings.Contains(proj, "one of these and nothing else: portal, svc.") || !strings.Contains(proj, `"zone":"repositories"`) {
+		t.Errorf("project prompt lacks the slugs or the current map:\n%s", proj)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/ingest"
 	"github.com/trick77/almanach/internal/store"
@@ -263,6 +264,8 @@ type statementBody struct {
 	// Checked is the commit a baseline run last confirmed the statement
 	// against, "" when none has.
 	Checked string `json:"checked"`
+	// Diagram is rongo's IR as validated on the way in, absent for none.
+	Diagram *diagram.Diagram `json:"diagram,omitempty"`
 }
 
 type descriptionBody struct {
@@ -291,7 +294,7 @@ func describe(p store.Page, ok bool) *descriptionBody {
 		SourceCommit: p.SourceCommit, UpdatedAt: p.UpdatedAt, Statements: make([]statementBody, 0, len(p.Statements))}
 	for _, s := range p.Statements {
 		sb := statementBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Checked: s.Checked,
-			Sources: make([]sourceBody, 0, len(s.Sources))}
+			Diagram: s.Diagram, Sources: make([]sourceBody, 0, len(s.Sources))}
 		if sb.Files == nil {
 			sb.Files = []string{}
 		}
@@ -342,6 +345,9 @@ type projectDetailBody struct {
 	Key         string           `json:"key"`
 	Team        string           `json:"team"`
 	Description *descriptionBody `json:"description"`
+	// Map is the system map of the current project revision, null before
+	// a baseline project step drew one.
+	Map         *diagram.Diagram `json:"map"`
 	Repos       []repoBody       `json:"repos"`
 	Problems    []problemBody    `json:"problems"`
 	ProblemDays int              `json:"problem_window_days"`
@@ -381,7 +387,7 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "notes")
 		return
 	}
-	out := projectDetailBody{Key: key, Team: team, Description: describe(page, found), ProblemDays: d.ProblemWindow,
+	out := projectDetailBody{Key: key, Team: team, Description: describe(page, found), Map: page.Map, ProblemDays: d.ProblemWindow,
 		Repos: make([]repoBody, 0, len(repos)), Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	for _, rp := range repos {
 		out.Repos = append(out.Repos, repoBody{Slug: rp.Slug, Revision: rp.Revision, Summary: firstSentence(rp.Summary), Notes: rp.Notes, LastMerge: rp.LastMerge})

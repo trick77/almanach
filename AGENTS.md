@@ -9,10 +9,11 @@ docs and tests included.
   `strings.ts`, `/api/...` only; `routing.ts` mirrored in
   `backend/web/embed.go`.
   Wiki read-only; Quellen (`/api/sources*`) only browser write. Statements
-  as paragraphs, never markdown.
+  paragraphs, never markdown; diagrams only from validated JSON, drawn by
+  rongo's code.
 - Gate = `make check` (`SHIP_CMD=<binary>` locally); `make hooks` per
-  clone. GitHub never first to find failure. Store tests need docker;
-  plain `go test` skips them.
+  clone. GitHub never first to find failure. Store tests: docker, else
+  skipped.
 - Commit subjects + PR titles: Go style `area: what`, gated by ship.
 - Release: `gh workflow run Release`, GitHub-hosted runners only.
 - ship, kit never hand-pinned: `ship init`, kit `@latest`, Dependabot.
@@ -37,8 +38,8 @@ docs and tests included.
   checked on stored Swiss text. Over: rewrite rejected whole, page stays,
   never truncated. Identical rewrite = no revision.
 - Provenance is code's: `sources` carried by id, current PR appended on
-  text change. Unknown id = invented, rejected. New id from
-  `NextStatementID` over whole history: never reissued.
+  text change. Unknown id = invented, rejected. New id from whole history:
+  never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's
   component.
 - One worker, serial, oldest first. Call-specific failure: note marked,
@@ -54,8 +55,8 @@ docs and tests included.
 - `serve` never migrates; never edit an applied migration. Probes exec,
   never httpGet.
 - Reader's name gates nothing (reads, writes), log only.
-- Sources: Almanach clones, noergler never indexes. git binary (`os/exec`;
-  image has git), never go-git (rejected 2026-10-30). Clones only at
+- Sources: Almanach clones, noergler never indexes. git binary (`os/exec`),
+  never go-git (rejected 2026-10-30). Clones only at
   `ALMANACH_REPOS_DIR/<project>/<slug>`; key, slug single path segments,
   `filepath.Rel`-checked before any `RemoveAll`. Clone URLs https, no
   credentials. Bare clones. Token: per-command header via `GIT_CONFIG_*`,

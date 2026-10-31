@@ -7,6 +7,7 @@ package consolidate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,7 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
@@ -353,10 +356,10 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return
 	}
-	statements, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next)
+	statements, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, diagramCaps(w.limits))
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
-	chars, capReason := check(summary, statements, maxStatements, maxChars)
+	chars, capReason := check(summary, statements, maxStatements, maxChars, w.limits.MaxDiagrams)
 	if reason == "" {
 		reason = capReason
 	}
@@ -368,9 +371,11 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description identical, no revision")
 		return
 	}
+	// The map is the baseline project step's alone: a note's fold carries
+	// the project's forward unchanged (a repository page has none).
 	n, err := w.store.InsertRevision(ctx, store.NewRevision{
 		Scope: scope, ProjectKey: q.ProjectKey, RepoSlug: repo, Summary: summary, Statements: statements,
-		Chars: chars, SourcePR: q.PRKey, LLMCallID: callID,
+		Chars: chars, SourcePR: q.PRKey, LLMCallID: callID, Map: current.Map,
 	})
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: "+scope+" revision write failed", logging.Err(err))
@@ -388,10 +393,13 @@ var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, 
 // when the text changed; a new one starts with src, numbered from next (one
 // past every id the page's history used, so a dropped id is never
 // reissued). An id the current page does not have is the model inventing
-// one: rejected. Spelling is Swiss on every prose field. The commit a
-// statement was last checked against stays while its name and text do; a
-// change voids it, the caller sets a new one when it read the code.
-func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int) ([]store.Statement, string) {
+// one: rejected. Spelling is Swiss on every prose field. A diagram is held
+// to baseline.CheckDiagram; one that fails rejects the whole rewrite, and a
+// changed diagram is a changed statement, like changed text. The commit a
+// statement was last checked against stays while its name, text and
+// diagram do; a change voids it, the caller sets a new one when it read the
+// code.
+func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int, caps baseline.DiagramCaps) ([]store.Statement, string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
@@ -406,6 +414,11 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 		if s.Name == "" || s.Text == "" {
 			return nil, "empty statement"
 		}
+		d, reason := baseline.CheckDiagram(p.Diagram, caps)
+		if reason != "" {
+			return nil, fmt.Sprintf("statement %q diagram: %s", s.Name, reason)
+		}
+		s.Diagram = d
 		if p.ID != nil && *p.ID != "" {
 			old, ok := byID[*p.ID]
 			if !ok {
@@ -417,7 +430,7 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 			seen[*p.ID] = true
 			s.ID = old.ID
 			s.Sources = old.Sources
-			if old.Text != s.Text || old.Name != s.Name {
+			if old.Text != s.Text || old.Name != s.Name || !diagram.Equal(old.Diagram, s.Diagram) {
 				s.Sources = appendSource(s.Sources, src)
 			} else {
 				s.Checked = old.Checked
@@ -461,15 +474,24 @@ const (
 	pathMaxChars = 200
 )
 
-// check applies the ceilings: the statement count, the prose of the whole
-// description, and the fixed caps on a name and on files. chars is that
-// prose count, stored on the revision row.
-func check(summary string, statements []store.Statement, maxStatements, maxChars int) (int, string) {
+// check applies the ceilings: the statement count, the statement diagrams,
+// the prose of the whole description, and the fixed caps on a name and on
+// files. chars is that prose count, stored on the revision row.
+func check(summary string, statements []store.Statement, maxStatements, maxChars, maxDiagrams int) (int, string) {
 	if strings.TrimSpace(summary) == "" {
 		return 0, "empty summary"
 	}
 	if len(statements) > maxStatements {
 		return 0, fmt.Sprintf("%d statements over the cap of %d", len(statements), maxStatements)
+	}
+	drawn := 0
+	for _, s := range statements {
+		if s.Diagram != nil {
+			drawn++
+		}
+	}
+	if drawn > maxDiagrams {
+		return 0, fmt.Sprintf("%d diagrams over the cap of %d", drawn, maxDiagrams)
 	}
 	// The ceiling is on the whole description, never on one statement: a
 	// description is documentation and a statement is as long as its
@@ -501,7 +523,8 @@ func sameStatements(a, b []store.Statement) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].ID != b[i].ID || a[i].Kind != b[i].Kind || a[i].Name != b[i].Name || a[i].Text != b[i].Text || strings.Join(a[i].Files, "\x00") != strings.Join(b[i].Files, "\x00") {
+		if a[i].ID != b[i].ID || a[i].Kind != b[i].Kind || a[i].Name != b[i].Name || a[i].Text != b[i].Text ||
+			strings.Join(a[i].Files, "\x00") != strings.Join(b[i].Files, "\x00") || !diagram.Equal(a[i].Diagram, b[i].Diagram) {
 			return false
 		}
 	}
@@ -532,6 +555,9 @@ func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{repo_description}", describe(repoPage),
 		"{project_description}", describe(projectPage),
+		"{diagram_max_nodes}", fmt.Sprint(l.DiagramMaxNodes),
+		"{diagram_max_edges}", fmt.Sprint(l.DiagramMaxEdges),
+		"{max_diagrams}", fmt.Sprint(l.MaxDiagrams),
 		"{note}", string(q.Body),
 	).Replace(tmpl)
 }
@@ -553,8 +579,27 @@ func describe(p store.Page) string {
 		if len(s.Files) > 0 {
 			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
 		}
+		b.WriteString(diagramLine(s.Diagram))
 	}
 	return b.String()
+}
+
+// diagramLine shows a statement's diagram as the JSON it is, so the model
+// can return it as it stands: a diagram left out of an edit is gone.
+func diagramLine(d *diagram.Diagram) string {
+	if d == nil {
+		return ""
+	}
+	j, err := json.Marshal(d)
+	if err != nil {
+		return ""
+	}
+	return "\nDiagram: " + string(j) + "\n"
+}
+
+// diagramCaps is the per-diagram part of the limits.
+func diagramCaps(l config.Limits) baseline.DiagramCaps {
+	return baseline.DiagramCaps{MaxNodes: l.DiagramMaxNodes, MaxEdges: l.DiagramMaxEdges}
 }
 
 // prose is the runes a description's ceiling counts: the summary and every

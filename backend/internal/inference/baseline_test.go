@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/trick77/llmwire/llmwiretest"
@@ -72,12 +73,20 @@ func TestPatch(t *testing.T) {
 	}
 }
 
+const testMap = `{"kind": "flow", "direction": "LR", "nodes": [{"id": "svc", "label": "svc", "shape": "step", "zone": "repositories"}], "edges": [], "zones": [{"id": "repositories", "title": "Repositories"}]}`
+
 func TestDescribe(t *testing.T) {
 	srv := llmwiretest.NewServer(t)
-	srv.SetReply(`{"description": {"summary": "Zwei Repos.", "statements": []}}`)
+	srv.SetReply(`{"description": {"summary": "Zwei Repos.", "statements": [{"id": null, "kind": "component", "name": "n", "text": "t", "files": [],
+		"diagram": {"kind": "sequence", "actors": [{"id": "a", "label": "A"}], "rows": [{"type": "message", "from": "a", "to": "a", "label": "x", "line": "solid", "head": "filled"}]}}],
+		"map": ` + testMap + `}}`)
 	res := testClient(srv.Client()).Describe(context.Background(), "the project")
 	if res.Outcome != OutcomeOK || res.Description == nil || res.Description.Summary != "Zwei Repos." {
 		t.Fatalf("Describe = %+v", res)
+	}
+	d := res.Description
+	if d.Map == nil || d.Map.Nodes[0].Zone != "repositories" || d.Statements[0].Diagram == nil || d.Statements[0].Diagram.Rows[0].Head != "filled" {
+		t.Errorf("map %+v, diagram %+v", d.Map, d.Statements[0].Diagram)
 	}
 	if name := schemaName(t, srv); name != DescriptionSchemaName {
 		t.Errorf("schema = %q", name)
@@ -86,7 +95,9 @@ func TestDescribe(t *testing.T) {
 	if res := testClient(srv.Client()).Describe(context.Background(), "p"); res.Outcome != OutcomeOK || res.Description != nil {
 		t.Errorf("no change = %+v, want ok and nil", res)
 	}
-	for _, reply := range []string{"null", "Gerne!", "{}", `{"other": 1}`, `{"description": {"summary": "x"}}`, `{"description": 3}`} {
+	// A rewrite without its map is no answer: every project has one.
+	for _, reply := range []string{"null", "Gerne!", "{}", `{"other": 1}`, `{"description": {"summary": "x"}}`, `{"description": 3}`,
+		`{"description": {"summary": "x", "statements": []}}`, `{"description": {"summary": "x", "statements": [], "map": null}}`} {
 		srv.SetReply(reply)
 		if res := testClient(srv.Client()).Describe(context.Background(), "p"); res.Outcome != OutcomeUnparseable {
 			t.Errorf("reply %q: Outcome = %s, want unparseable", reply, res.Outcome)
@@ -124,5 +135,52 @@ func TestStrictFormatsRequireEveryProperty(t *testing.T) {
 				t.Errorf("required not sorted: %v", req)
 			}
 		}
+	}
+	// Strict mode holds at every depth: each object of every diagram kind,
+	// the map's and the sequence rows' anyOf branches included.
+	for _, f := range []map[string]any{patchFormat().Schema, descriptionFormat().Schema, mergeFormat().Schema} {
+		walkObjects(t, f)
+	}
+}
+
+// walkObjects checks every object schema under s lists each property as
+// required and allows nothing else.
+func walkObjects(t *testing.T, s any) {
+	t.Helper()
+	switch v := s.(type) {
+	case map[string]any:
+		if props, ok := v["properties"].(map[string]any); ok {
+			req, _ := v["required"].([]any)
+			if len(req) != len(props) || v["additionalProperties"] != false {
+				t.Errorf("object with properties %v: required %v", sortedKeys(props), req)
+			}
+		}
+		for _, child := range v {
+			walkObjects(t, child)
+		}
+	case []any:
+		for _, child := range v {
+			walkObjects(t, child)
+		}
+	}
+}
+
+func TestDiagramSchemas(t *testing.T) {
+	desc := projectDescription()
+	props := desc["properties"].(map[string]any)
+	if _, ok := props["map"]; !ok || !slices.Contains(desc["required"].([]any), any("map")) {
+		t.Errorf("project description without a required map: %v", desc["required"])
+	}
+	// The merge's description has no map: the merge never draws one.
+	if _, ok := description()["properties"].(map[string]any)["map"]; ok {
+		t.Error("the merge's description carries a map")
+	}
+	zone := mapSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["zone"].(map[string]any)
+	if !slices.Equal(zone["enum"].([]any), []any{"clients", "repositories", "stores", "external"}) {
+		t.Errorf("map node zone = %v", zone)
+	}
+	branches := statementDiagram()["anyOf"].([]any)
+	if len(branches) != 4 || branches[3].(map[string]any)["type"] != "null" {
+		t.Errorf("statement diagram = %v", branches)
 	}
 }

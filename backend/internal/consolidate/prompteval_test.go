@@ -264,6 +264,24 @@ func TestPromptEval(t *testing.T) {
 			t.Errorf("project summary never names %s", repo.Slug)
 		}
 	}
+	// Every project carries its map, every repository on it, beside what
+	// they talk to; the store holds only maps the checks passed.
+	if project.Map == nil {
+		t.Error("project: no map")
+	} else {
+		onMap := map[string]bool{}
+		for _, n := range project.Map.Nodes {
+			onMap[n.ID] = n.Zone == baseline.ZoneRepositories
+		}
+		for _, repo := range st.repos {
+			if !onMap[repo.Slug] {
+				t.Errorf("project map lacks repository %s", repo.Slug)
+			}
+		}
+		if len(project.Map.Nodes) <= len(st.repos) {
+			t.Errorf("project map holds the repositories only: %d nodes", len(project.Map.Nodes))
+		}
+	}
 	dump(t, out, "_project", project)
 }
 
@@ -295,7 +313,10 @@ func dump(t *testing.T, dir, name string, p store.Page) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n%s\n", name, p.Summary)
 	for _, s := range p.Statements {
-		fmt.Fprintf(&b, "\n## [%s] %s: %s\n\n%s\n\nFiles: %s\n", s.ID, s.Kind, s.Name, s.Text, strings.Join(s.Files, ", "))
+		fmt.Fprintf(&b, "\n## [%s] %s: %s\n\n%s\n\nFiles: %s\n%s", s.ID, s.Kind, s.Name, s.Text, strings.Join(s.Files, ", "), diagramLine(s.Diagram))
+	}
+	if p.Map != nil {
+		fmt.Fprintf(&b, "\n## Map\n\n%s\n", projectMap(p))
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

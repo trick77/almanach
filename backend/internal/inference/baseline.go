@@ -49,7 +49,8 @@ type PatchResult struct {
 	Patch Patch
 }
 
-// DescriptionResult is one project call: Description nil means no change.
+// DescriptionResult is one project call: Description nil means no change;
+// a rewrite always carries its Map.
 type DescriptionResult struct {
 	Call
 	Description *Description
@@ -101,8 +102,9 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 	if string(answer.Description) == "null" {
 		return out
 	}
+	// A rewrite without its map is off schema too: every project has one.
 	var d Description
-	if json.Unmarshal(answer.Description, &d) != nil || d.Statements == nil {
+	if json.Unmarshal(answer.Description, &d) != nil || d.Statements == nil || d.Map == nil {
 		out.Outcome = OutcomeUnparseable
 		return out
 	}
@@ -168,5 +170,5 @@ func patchFormat() llmwire.ResponseFormat {
 }
 
 func descriptionFormat() llmwire.ResponseFormat {
-	return strict(DescriptionSchemaName, map[string]any{"description": description()})
+	return strict(DescriptionSchemaName, map[string]any{"description": projectDescription()})
 }

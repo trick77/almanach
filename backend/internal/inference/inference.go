@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/llmwire"
 )
 
@@ -174,19 +175,23 @@ func (c *Client) reasoning() llmwire.ReasoningRequest {
 	return llmwire.ReasoningEffort(c.effort)
 }
 
-// Statement is one statement as the model returns it: ID nil for a new one.
+// Statement is one statement as the model returns it: ID nil for a new one,
+// Diagram nil for none.
 type Statement struct {
-	ID    *string  `json:"id"`
-	Kind  string   `json:"kind"`
-	Name  string   `json:"name"`
-	Text  string   `json:"text"`
-	Files []string `json:"files"`
+	ID      *string          `json:"id"`
+	Kind    string           `json:"kind"`
+	Name    string           `json:"name"`
+	Text    string           `json:"text"`
+	Files   []string         `json:"files"`
+	Diagram *diagram.Diagram `json:"diagram"`
 }
 
-// Description is one rewritten description.
+// Description is one rewritten description. Map is the project step's
+// system map; the merge never returns one.
 type Description struct {
-	Summary    string      `json:"summary"`
-	Statements []Statement `json:"statements"`
+	Summary    string           `json:"summary"`
+	Statements []Statement      `json:"statements"`
+	Map        *diagram.Diagram `json:"map,omitempty"`
 }
 
 // Merge is the model's answer: nil for a description it leaves alone.
@@ -344,23 +349,33 @@ func description() map[string]any {
 }
 
 // statements is the array of statements as a description or a patch
-// carries them: id null for a new one.
+// carries them: id null for a new one, diagram null for none.
 func statements() map[string]any {
 	return map[string]any{
 		"type": "array",
 		"items": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
-			"required":             []any{"id", "kind", "name", "text", "files"},
+			"required":             []any{"id", "kind", "name", "text", "files", "diagram"},
 			"properties": map[string]any{
-				"id":    map[string]any{"type": []any{"string", "null"}},
-				"kind":  map[string]any{"type": "string", "enum": []any{"component", "rule", "invariant", "entity"}},
-				"name":  map[string]any{"type": "string", "minLength": 1},
-				"text":  map[string]any{"type": "string", "minLength": 1},
-				"files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"id":      map[string]any{"type": []any{"string", "null"}},
+				"kind":    map[string]any{"type": "string", "enum": []any{"component", "rule", "invariant", "entity"}},
+				"name":    map[string]any{"type": "string", "minLength": 1},
+				"text":    map[string]any{"type": "string", "minLength": 1},
+				"files":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"diagram": statementDiagram(),
 			},
 		},
 	}
+}
+
+// projectDescription is the project step's description: the merge's shape
+// plus the system map, which it must carry.
+func projectDescription() map[string]any {
+	d := description()
+	d["required"] = []any{"summary", "statements", "map"}
+	d["properties"].(map[string]any)["map"] = mapSchema()
+	return d
 }
 
 func mergeFormat() llmwire.ResponseFormat {

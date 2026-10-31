@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
@@ -383,6 +384,27 @@ func TestProject(t *testing.T) {
 	}
 	if !strings.Contains(string(desc["statements"]), `"files":[]`) {
 		t.Errorf("statement files = %s, want an empty array for nil", desc["statements"])
+	}
+	if string(body["map"]) != "null" || strings.Contains(string(desc["statements"]), `"diagram"`) {
+		t.Errorf("map = %s, statements = %s; want null and no diagram key", body["map"], desc["statements"])
+	}
+
+	// The map on the project, a diagram on its statement: rongo's IR as
+	// stored, every list an array.
+	page := st.pages[store.ScopeProject+"|PLAT|"]
+	page.Map = &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "files", Label: "files", Shape: "step", Zone: "repositories"}},
+		Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}}}
+	page.Statements[0].Diagram = &diagram.Diagram{Kind: diagram.KindER, Direction: "TB", Entities: []diagram.Entity{{ID: "file", Label: "Datei"}}}
+	st.pages[store.ScopeProject+"|PLAT|"] = page
+	_, body = do(t, h, "GET", "/api/projects/PLAT", "", "", nil)
+	if want := `{"kind":"flow","direction":"LR","nodes":[{"id":"files","label":"files","shape":"step","zone":"repositories"}],"edges":[],"zones":[{"id":"repositories","title":"Repositories"}]}`; string(body["map"]) != want {
+		t.Errorf("map = %s\nwant %s", body["map"], want)
+	}
+	if err := json.Unmarshal(body["description"], &desc); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(desc["statements"]), `"diagram":{"kind":"er","direction":"TB","entities":[{"id":"file","label":"Datei","attrs":[]}],"rels":[]}`) {
+		t.Errorf("statements = %s", desc["statements"])
 	}
 }
 
