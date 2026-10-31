@@ -323,14 +323,19 @@ func checkPage(t *testing.T, slug string, p store.Page, exists func(string) bool
 				t.Errorf("%s %s: file %s not in the tree", slug, s.ID, f)
 			}
 		}
-		if w := spelledOut.FindString(s.Name + "\n" + s.Text); w != "" {
+		if w := spelledOut.FindString(codeSpan.ReplaceAllString(s.Name+"\n"+s.Text, "")); w != "" {
 			t.Errorf("%s %s %q: umlaut spelled out (%s)", slug, s.ID, s.Name, w)
 		}
 	}
 }
 
+// codeSpan is an inline code span: a quoted identifier may spell an
+// umlaut out (an eval quoted a test's `Datenueberpruefung`).
+var codeSpan = regexp.MustCompile("`[^`\n]*`")
+
 // spelledOut finds the common German words whose umlauts a model writes
-// out ("ergaenzen", "fuer"), the slip the prompts' spelling rule forbids.
+// out ("ergaenzen", "fuer"), the slip the prompts' spelling rule forbids,
+// outside code spans.
 var spelledOut = regexp.MustCompile(`(?i)\b(fuer|ueber\w*|\w*aender\w*|\w*pruef\w*|\w*fueg\w*|\w*ergaenz\w*|moeglich\w*|\w*groess\w*|waehr\w*|koenn\w*|muess\w*|naechst\w*|spaet\w*)\b`)
 
 func dump(t *testing.T, dir, name string, p store.Page) {
