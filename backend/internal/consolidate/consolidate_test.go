@@ -540,19 +540,37 @@ func TestRender(t *testing.T) {
 	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown", "at most 3 statements", "at most 2 statements",
 		"400 characters of prose in all", "200 characters of prose in all", "Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		"the current description has 54", "the current description has 0",
-		"_None yet._", `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram"} {
+		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
 	}
-	if strings.Count(out, "_None yet._") != 1 {
-		t.Errorf("_None yet._ appears %d times, want once (the project page only)", strings.Count(out, "_None yet._"))
+	if n := strings.Count(out, "_None yet"); n != 1 {
+		t.Errorf("_None yet appears %d times, want once (the project page only)", n)
 	}
 }
 
 func TestDescribe(t *testing.T) {
-	if got := describe(store.Page{RevisionID: 0, Summary: "ignored"}); got != "_None yet._" {
+	// An empty page says every statement is new, or the model numbers its
+	// own and invents ids; a page only read says no more than that it is
+	// empty. The baseline renderings say the same.
+	if got := describe(store.Page{RevisionID: 0, Summary: "ignored"}); got != noneYet {
 		t.Errorf("describe(no revision) = %q", got)
+	}
+	if got := describeRead(store.Page{}); got != "_None yet._" {
+		t.Errorf("describeRead(no revision) = %q", got)
+	}
+	bare := store.Page{RevisionID: 1, Summary: "Werkzeuge."}
+	for name, got := range map[string]string{"describe": describe(bare), "describeSourced": describeSourced(bare, nil), "describeTaught": describeTaught(bare)} {
+		if got != "Werkzeuge.\n"+noStatementsYet {
+			t.Errorf("%s(no statements) = %q", name, got)
+		}
+	}
+	if got := describeSourced(store.Page{}, nil); got != noneYet {
+		t.Errorf("describeSourced(no revision) = %q", got)
+	}
+	if got := describeRead(bare); got != "Werkzeuge.\n" {
+		t.Errorf("describeRead(no statements) = %q", got)
 	}
 	p := existingRepoPage()
 	p.Statements = append(p.Statements, store.Statement{ID: "s2", Kind: "rule", Name: "R", Text: "T"})

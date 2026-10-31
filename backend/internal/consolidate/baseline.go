@@ -1393,7 +1393,7 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
-		"{project_description}", describeTaught(projectPage), "{repo_description}", describe(repoPage), "{other_repos}", others,
+		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
 		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),
 	).Replace(prompts.Project)
@@ -1523,11 +1523,14 @@ func describeTaught(p store.Page) string { return sourced(p, nil, false) }
 
 func sourced(p store.Page, newer map[string]string, keys bool) string {
 	if p.RevisionID == 0 {
-		return "_None yet._"
+		return noneYet
 	}
 	var b strings.Builder
 	b.WriteString(p.Summary)
 	b.WriteString("\n")
+	if len(p.Statements) == 0 {
+		b.WriteString(noStatementsYet)
+	}
 	for _, s := range p.Statements {
 		fmt.Fprintf(&b, "\n### [%s] %s: %s\n\n%s\n", s.ID, s.Kind, s.Name, s.Text)
 		if len(s.Files) > 0 {

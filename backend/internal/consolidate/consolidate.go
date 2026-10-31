@@ -719,15 +719,35 @@ func diagramField(l config.Limits) string {
 	return `, "diagram": <diagram> | {"kind": "none"} | null`
 }
 
-// describe renders a page for the prompt: the summary, then one line per
+// An empty page as the prompts show it, saying in so many words that every
+// statement is new: shown nothing, a model numbers its new statements, and
+// an id the page does not have is invented and rejects the rewrite.
+const (
+	noneYet         = "_None yet: every statement you write is new, its id null._"
+	noStatementsYet = "\n_No statements yet: every statement you write is new, its id null._\n"
+)
+
+// describe renders a page the prompt writes: the summary, then one line per
 // statement with its id, so the model can keep or edit by id.
-func describe(p store.Page) string {
+func describe(p store.Page) string { return describePage(p, true) }
+
+// describeRead renders a page the prompt only reads: nothing there to
+// write, so an empty one says no more than that.
+func describeRead(p store.Page) string { return describePage(p, false) }
+
+func describePage(p store.Page, written bool) string {
 	if p.RevisionID == 0 {
-		return "_None yet._"
+		if !written {
+			return "_None yet._"
+		}
+		return noneYet
 	}
 	var b strings.Builder
 	b.WriteString(p.Summary)
 	b.WriteString("\n")
+	if len(p.Statements) == 0 && written {
+		b.WriteString(noStatementsYet)
+	}
 	// One block per statement, its id in the heading: the text is prose
 	// with paragraphs of its own, so a bullet per statement would leave
 	// every second paragraph outside any id.
