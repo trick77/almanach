@@ -581,7 +581,12 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	var problems []store.RepoProblem
 	if subject {
 		if w.problemsRun != r.ID || w.problems == nil {
-			all, err := w.base.Store.RepoProblems(ctx, r.ProjectKey, r.Slug, plan.CommittedAt.Add(newerSlack))
+			// A plan from before the time was kept has none: no cutoff.
+			until := plan.CommittedAt.Add(newerSlack)
+			if plan.CommittedAt.IsZero() {
+				until = w.now()
+			}
+			all, err := w.base.Store.RepoProblems(ctx, r.ProjectKey, r.Slug, until)
 			if err != nil {
 				w.log.WarnContext(ctx, "baseline: problem areas read failed, drain paused", logging.Err(err))
 				return errStop
@@ -602,6 +607,10 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	r.Bytes += size
 	if !ok {
 		return w.skipPart(ctx, r, &plan, name, "the call failed: "+res.Outcome.String())
+	}
+	// A step shown no problem area had no evidence for a new pitfall.
+	if len(problems) == 0 {
+		res.Patch.Added = unbackedPitfalls(ctx, w.log, "baseline: "+name, res.Patch.Added)
 	}
 	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer, b)
 }

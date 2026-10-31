@@ -265,9 +265,8 @@ func TestFoldNewStatement(t *testing.T) {
 
 // The three kinds for agents land on the pages like any other: decision,
 // extension and pitfall on the repository's, decision and pitfall on the
-// project's.
+// project's, a new pitfall only from a bugfix note.
 func TestFoldAgentKinds(t *testing.T) {
-	st := newFakeStore()
 	repo := &inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{
 		{Kind: "decision", Name: "Ein Worker", Text: "Seriell, weil zwei Schreiber eine Seite verlieren.", Files: []string{"w.go"}},
 		{Kind: "extension", Name: "Neue Route", Text: "api.go, dann openapi.yaml.", Files: []string{"api.go", "openapi.yaml"}},
@@ -277,19 +276,29 @@ func TestFoldAgentKinds(t *testing.T) {
 		{Kind: "decision", Name: "Eine Datenbank", Text: "Weil.", Files: []string{"files/db.go"}},
 		{Kind: "pitfall", Name: "Doppelte Zustellung", Text: "Brach.", Files: []string{"files/hook.go"}},
 	}}
-	newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 2 {
-		t.Fatalf("revisions = %+v, want both pages", st.revisions)
-	}
-	var got []string
-	for _, rev := range st.revisions {
-		for _, s := range rev.Statements {
-			got = append(got, rev.Scope+":"+s.Kind)
+	kinds := func(note string) []string {
+		st := newFakeStore()
+		q := queued("PLAT/files#42")
+		q.ChangeKind = note
+		newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), q)
+		if len(st.revisions) != 2 {
+			t.Fatalf("%s: revisions = %+v, want both pages", note, st.revisions)
 		}
+		var got []string
+		for _, rev := range st.revisions {
+			for _, s := range rev.Statements {
+				got = append(got, rev.Scope+":"+s.Kind)
+			}
+		}
+		return got
 	}
-	want := []string{"repository:decision", "repository:extension", "repository:pitfall", "project:decision", "project:pitfall"}
-	if !slices.Equal(got, want) {
-		t.Errorf("kinds = %v, want %v", got, want)
+	if got, want := kinds("bugfix"), []string{"repository:decision", "repository:extension", "repository:pitfall", "project:decision", "project:pitfall"}; !slices.Equal(got, want) {
+		t.Errorf("bugfix note: kinds = %v, want %v", got, want)
+	}
+	// Any other note is no pitfall's evidence: a new one is left out, the
+	// rest of the answer stands.
+	if got, want := kinds("feature"), []string{"repository:decision", "repository:extension", "project:decision"}; !slices.Equal(got, want) {
+		t.Errorf("feature note: kinds = %v, want %v", got, want)
 	}
 }
 

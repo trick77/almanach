@@ -146,37 +146,71 @@ func writeStatement(b *strings.Builder, s store.Statement) {
 }
 
 // writeJSONBlock writes a diagram as the fenced JSON it is stored as, the
-// fence longer than any run of backticks in a label.
+// fence longer than any run of backticks in a label. A label's < > & stay
+// as written, never escaped for HTML: the reader is an agent.
 func writeJSONBlock(b *strings.Builder, d *diagram.Diagram) {
-	j, err := json.MarshalIndent(d, "", "  ")
-	if err != nil {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(d); err != nil {
 		return
 	}
-	fence := strings.Repeat("`", max(3, longestRun(string(j), '`')+1))
-	b.WriteString(fence + "json\n" + string(j) + "\n" + fence + "\n\n")
+	j := strings.TrimSuffix(buf.String(), "\n")
+	fence := strings.Repeat("`", max(3, longestRun(j, '`')+1))
+	b.WriteString(fence + "json\n" + j + "\n" + fence + "\n\n")
 }
 
 // prose is model-written text as text, never as the export's structure.
-// Each line loses its indent (no code block), and one whose first character
-// could open a block (a heading, quote, fence, list, rule, underline or
-// HTML) gets a backslash before it, as does the dot or parenthesis after a
-// leading number (no ordered list): a backslashed ASCII punctuation mark
-// reads as itself.
+// Each line loses its indent (no code block), and one that would open a
+// block as CommonMark reads it (a heading, quote, fence, list item, rule,
+// underline or HTML) gets a backslash before the marker: a backslashed
+// ASCII punctuation mark reads as itself. Text that opens nothing, "-5" or
+// "1.5 Sekunden", stays as written, for the agent reads the raw file.
 func prose(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i, l := range lines {
 		t := strings.TrimLeft(l, " \t")
-		switch {
-		case t != "" && strings.ContainsRune("#>`~-+*_=<|", rune(t[0])):
+		if blockStart(t) {
 			t = `\` + t
-		default:
-			if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n < len(t) && (t[n] == '.' || t[n] == ')') {
-				t = t[:n] + `\` + t[n:]
-			}
+		} else if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n <= 9 && n < len(t) &&
+			(t[n] == '.' || t[n] == ')') && markerEnds(t[n+1:]) {
+			t = t[:n] + `\` + t[n:]
 		}
 		lines[i] = t
 	}
 	return strings.Join(lines, "\n")
+}
+
+// blockStart reports whether a line, its indent dropped, opens a block
+// with its first character.
+func blockStart(t string) bool {
+	if t == "" {
+		return false
+	}
+	switch t[0] {
+	case '>':
+		return true
+	case '#':
+		n := len(t) - len(strings.TrimLeft(t, "#"))
+		return n <= 6 && markerEnds(t[n:])
+	case '`', '~':
+		return strings.HasPrefix(t, strings.Repeat(t[:1], 3))
+	case '<':
+		return len(t) > 1 && (t[1] >= 'a' && t[1] <= 'z' || t[1] >= 'A' && t[1] <= 'Z' || strings.ContainsRune("/!?", rune(t[1])))
+	case '-', '+', '*':
+		if markerEnds(t[1:]) {
+			return true
+		}
+	}
+	// A rule or a heading's underline: nothing but -, *, _ or = and blanks.
+	return strings.Trim(t, "-*_= \t") == ""
+}
+
+// markerEnds reports whether what follows a block marker lets it open the
+// block: nothing, or a blank.
+func markerEnds(rest string) bool {
+	return rest == "" || rest[0] == ' ' || rest[0] == '\t'
 }
 
 // codeSpan is s as inline code, its delimiter longer than any run of

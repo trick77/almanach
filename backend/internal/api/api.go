@@ -94,20 +94,35 @@ func Register(s *httpapi.Server, d Deps) {
 // team is the caller's team by its bearer, or "" with the 401 written.
 // The bearer is the whole identity: nothing in a body names a team.
 func (d Deps) team(w http.ResponseWriter, r *http.Request) string {
-	token, ok := httpx.Bearer(r)
-	if !ok {
+	team, sent := d.bearerTeam(r)
+	if !sent {
 		httpx.WriteError(w, http.StatusUnauthorized, "bearer token required")
 		return ""
-	}
-	team, reloadErr := d.Keys.Lookup(token)
-	if reloadErr != nil {
-		d.Log.WarnContext(r.Context(), "team keys reload failed, last good table in use", logging.Err(reloadErr))
 	}
 	if team == "" {
 		httpx.WriteError(w, http.StatusUnauthorized, "unknown token")
 		return ""
 	}
 	return team
+}
+
+// bearerTeam is the team whose token the request bears, "" for none or an
+// unknown one; sent says whether a bearer came at all. The lookup is
+// constant time over every entry; a failed reload is logged and the last
+// good table answers.
+func (d Deps) bearerTeam(r *http.Request) (team string, sent bool) {
+	token, ok := httpx.Bearer(r)
+	if !ok {
+		return "", false
+	}
+	if d.Keys == nil {
+		return "", true
+	}
+	team, reloadErr := d.Keys.Lookup(token)
+	if reloadErr != nil {
+		d.Log.WarnContext(r.Context(), "team keys reload failed, last good table in use", logging.Err(reloadErr))
+	}
+	return team, true
 }
 
 // exportOf is name without its .md suffix, and whether the request is the
@@ -121,18 +136,11 @@ func exportOf(r *http.Request, name string) (string, bool) {
 }
 
 // teamBearer reports whether the request carries a team's bearer, by the
-// webhook's lookup (constant time over every entry): what opens the
-// Markdown export in oidc mode. The team goes to the access log, as a
-// reader's name does; it gates nothing beyond the export.
+// webhook's lookup: what opens the Markdown export in oidc mode. The team
+// goes to the access log, as a reader's name does; it gates nothing beyond
+// the export.
 func (d Deps) teamBearer(r *http.Request) bool {
-	token, ok := httpx.Bearer(r)
-	if !ok || d.Keys == nil {
-		return false
-	}
-	team, reloadErr := d.Keys.Lookup(token)
-	if reloadErr != nil {
-		d.Log.WarnContext(r.Context(), "team keys reload failed, last good table in use", logging.Err(reloadErr))
-	}
+	team, _ := d.bearerTeam(r)
 	if team == "" {
 		return false
 	}

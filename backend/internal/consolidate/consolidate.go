@@ -398,6 +398,13 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
 		return nil
 	}
+	// A bugfix note is a pitfall's evidence on the merge path; any other
+	// note backs none.
+	if q.ChangeKind != "bugfix" {
+		backed := *d
+		backed.Added = unbackedPitfalls(ctx, w.log, "consolidate: "+scope, d.Added)
+		d = &backed
+	}
 	next, err := w.store.NextStatementID(ctx, scope, q.ProjectKey, repo)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
@@ -456,6 +463,23 @@ func kindSet(list []string) map[string]bool {
 		out[k] = true
 	}
 	return out
+}
+
+// unbackedPitfalls leaves out the new pitfalls a fold or step had no
+// evidence for (a bugfix note, a problem area): the prompts say so, code
+// holds it. Only new ones: an existing pitfall was backed when written, and
+// on the merge path a statement not returned is dropped. Each left out is
+// logged by name; the rest of the answer stands.
+func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added []inference.Statement) []inference.Statement {
+	kept := make([]inference.Statement, 0, len(added))
+	for _, s := range added {
+		if s.Kind == "pitfall" {
+			log.WarnContext(ctx, where+": pitfall without evidence left out", slog.String("name", s.Name))
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept
 }
 
 // attachDescription is attach over a whole description's edits and new

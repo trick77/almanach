@@ -266,7 +266,9 @@ of seven kinds:
   the prompt routes its symptom and cause to a pitfall, new or deepening
   one on the same files. On a baseline run a subject step is told the
   problem areas its files sit in (section 4b) and writes a pitfall only
-  where one backs it.
+  where one backs it. Code holds the prompts to it: a new pitfall from a
+  note that is no bugfix, or from a step shown no problem area, is left
+  out and logged by name, the rest of the answer kept.
 
 Left out: technical debt (code does not show the debt that matters, and
 TODO comments would paint the few written down as all there is: facts

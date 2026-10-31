@@ -1252,8 +1252,10 @@ func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
 		{Area: "billing", Bugfixes: 1, TopCause: "config", PRKeys: []string{"tools/svc#3"}}}
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}, {Name: "Abrechnung", Purpose: "Rechnungen.", Paths: []string{"billing/"}}}}}}
+	// The overview, shown no problem area, has no evidence for its pitfall.
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{},
+			Added: []inference.Statement{stmt(nil, "pitfall", "Geraten", "Aus dem Code gelesen.", "README.md")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "pitfall", "Sperre vergessen", "Brach.", "auth/login.go")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
 	}
@@ -1276,7 +1278,7 @@ func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
 		t.Errorf("problem areas read %d times in one run, want once", x.st.problemReads)
 	}
 	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
-	if len(page.Statements) != 1 || page.Statements[0].Kind != "pitfall" {
+	if len(page.Statements) != 1 || page.Statements[0].Kind != "pitfall" || page.Statements[0].Name != "Sperre vergessen" {
 		t.Errorf("page = %+v", page.Statements)
 	}
 

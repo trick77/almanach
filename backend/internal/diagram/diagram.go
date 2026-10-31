@@ -176,7 +176,7 @@ type Rel struct {
 func (d Diagram) MarshalJSON() ([]byte, error) {
 	switch d.Kind {
 	case KindFlow:
-		return json.Marshal(struct {
+		return marshalPlain(struct {
 			Kind      string `json:"kind"`
 			Direction string `json:"direction"`
 			Nodes     []Node `json:"nodes"`
@@ -192,7 +192,7 @@ func (d Diagram) MarshalJSON() ([]byte, error) {
 			}
 			rows = append(rows, b)
 		}
-		return json.Marshal(struct {
+		return marshalPlain(struct {
 			Kind   string            `json:"kind"`
 			Actors []Actor           `json:"actors"`
 			Rows   []json.RawMessage `json:"rows"`
@@ -209,7 +209,7 @@ func (d Diagram) MarshalJSON() ([]byte, error) {
 			e.Attrs = attrs
 			entities[i] = e
 		}
-		return json.Marshal(struct {
+		return marshalPlain(struct {
 			Kind      string   `json:"kind"`
 			Direction string   `json:"direction"`
 			Entities  []Entity `json:"entities"`
@@ -217,14 +217,14 @@ func (d Diagram) MarshalJSON() ([]byte, error) {
 		}{d.Kind, d.Direction, entities, orEmpty(d.Rels)})
 	}
 	type plain Diagram
-	return json.Marshal(plain(d))
+	return marshalPlain(plain(d))
 }
 
 // marshal writes a row with its type's fields, the empty label included.
 func (r Row) marshal() ([]byte, error) {
 	switch r.Type {
 	case RowMessage:
-		return json.Marshal(struct {
+		return marshalPlain(struct {
 			Type  string `json:"type"`
 			From  string `json:"from"`
 			To    string `json:"to"`
@@ -233,7 +233,7 @@ func (r Row) marshal() ([]byte, error) {
 			Head  string `json:"head"`
 		}{r.Type, r.From, r.To, r.Label, r.Line, r.Head})
 	case RowNote:
-		return json.Marshal(struct {
+		return marshalPlain(struct {
 			Type  string `json:"type"`
 			From  string `json:"from"`
 			To    string `json:"to"`
@@ -241,15 +241,28 @@ func (r Row) marshal() ([]byte, error) {
 			Label string `json:"label"`
 		}{r.Type, r.From, r.To, r.Side, r.Label})
 	case RowFrame, RowDivider:
-		return json.Marshal(struct {
+		return marshalPlain(struct {
 			Type    string `json:"type"`
 			Keyword string `json:"keyword"`
 			Label   string `json:"label"`
 		}{r.Type, r.Keyword, r.Label})
 	}
-	return json.Marshal(struct {
+	return marshalPlain(struct {
 		Type string `json:"type"`
 	}{r.Type})
+}
+
+// marshalPlain is json.Marshal leaving < > & as written: a label reaches
+// the Markdown export as the model wrote it. An encoder that escapes for
+// HTML (the API's) still does so over these bytes.
+func marshalPlain(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 func orEmpty[T any](s []T) []T {

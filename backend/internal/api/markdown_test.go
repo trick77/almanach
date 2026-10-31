@@ -173,12 +173,14 @@ func TestMarkdownBearerInOIDC(t *testing.T) {
 // or underline line is escaped, a fence in a diagram label outlasted, a
 // backtick in a path kept inside its code span.
 func TestMarkdownEscapesModelText(t *testing.T) {
-	label := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "x ```` y", Shape: "step"}}}
+	label := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "x ```` y < z", Shape: "step"}}}
 	md := renderMarkdown("T", store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel",
-		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen", Text: "Satz.\n## Regeln\n```\n> zitiert\n---\n\n    eingerückt\n***\n1. Punkt\n<div>\n- Liste\n2026 kam",
+		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen",
+			Text:  "Satz.\n## Regeln\n```\n> zitiert\n---\n\n    eingerückt\n***\n1. Punkt\n<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10",
 			Files: []string{"a`b.go"}, Diagram: label}}}, true)
-	for _, want := range []string{"\\# Kein Titel\n", "### Zwei Zeilen\n", "Satz.\n\\## Regeln\n\\```\n\\> zitiert\n\\---\n\neingerückt\n\\***\n1\\. Punkt\n\\<div>\n\\- Liste\n2026 kam\n",
-		"Dateien: `` a`b.go ``\n", "`````json\n"} {
+	for _, want := range []string{"\\# Kein Titel\n", "### Zwei Zeilen\n",
+		"Satz.\n\\## Regeln\n\\```\n\\> zitiert\n\\---\n\neingerückt\n\\***\n1\\. Punkt\n\\<div>\n\\- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10\n",
+		"Dateien: `` a`b.go ``\n", "`````json\n", `"label": "x ` + "````" + ` y < z"`} {
 		if !strings.Contains(md, want) {
 			t.Errorf("export lacks %q:\n%s", want, md)
 		}
