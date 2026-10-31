@@ -199,10 +199,17 @@ func TestCheckMap(t *testing.T) {
 	if out, reason := CheckMap(untitled, slugs, caps); reason != "" || out.Zones[0].Title != "" {
 		t.Errorf("untitled zone: %+v, reason %q", out, reason)
 	}
-	unlabelled := mapOf(node("api", ir.ZoneRepositories))
-	unlabelled.Nodes[0].Label = ""
+	unlabelled := mapOf(node("api", ir.ZoneRepositories), node("pg", ir.ZoneStores))
+	unlabelled.Nodes[1].Label = ""
 	if _, reason := CheckMap(unlabelled, slugs, caps); !strings.Contains(reason, "empty label") {
 		t.Errorf("unlabelled node: reason %q", reason)
+	}
+	// A repository node is labelled by its slug, whatever was written; the
+	// map handed in stays as it was.
+	renamed := mapOf(node("api", ir.ZoneRepositories))
+	renamed.Nodes[0].Label = "die API"
+	if out, reason := CheckMap(renamed, slugs, caps); reason != "" || out.Nodes[0].Label != "api" || renamed.Nodes[0].Label != "die API" {
+		t.Errorf("repository label: %+v, reason %q, input %q", out, reason, renamed.Nodes[0].Label)
 	}
 	withEdge := func(d *ir.Diagram, e ir.Edge) *ir.Diagram { d.Edges = append(d.Edges, e); return d }
 	cases := map[string]struct {

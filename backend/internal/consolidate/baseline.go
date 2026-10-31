@@ -1183,7 +1183,12 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 
 // projectRevision is the project description a run's last step returned,
 // held to the same rules as a note's fold of it; nil when it is refused or
-// identical, the map included. The map never sinks the description: see
+// identical, the map included. Its statements are a patch, as a subject
+// step's: edits by id, a statement not named kept, removals in drop, so an
+// answer that names none no longer empties the page (an eval's second
+// repository wiped the first one's eleven so). The project has no one tree:
+// no file pins a project statement, so ApplyPatch lets a PR-taught one go
+// as the full rewrite did. The map never sinks the description: see
 // revisionMap. slugs are the project's source repositories.
 func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
@@ -1191,7 +1196,14 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
-	statements, leftOut, reason := attachDescription(store.ScopeProject, page.Statements, d, runSource(*r, plan), next, limitsOf(w.limits))
+	applied, reason := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: d.Added, Drop: d.Drop}, noTree)
+	if reason != "" {
+		return nil, reason, nil
+	}
+	if len(applied.Unknown) > 0 {
+		w.log.WarnContext(ctx, "baseline: "+projectName+": unknown ids left out", slog.Any("ids", applied.Unknown))
+	}
+	statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits))
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 	if reason == "" {
@@ -1237,6 +1249,9 @@ func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *dia
 	}
 	return drawn
 }
+
+// noTree is the project's file check: no path pins a project statement.
+func noTree(string) bool { return false }
 
 // carriedMap is the stored map as a revision carries it on: its departed
 // repositories taken out, so a carried map never names a repository that

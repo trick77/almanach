@@ -82,7 +82,9 @@ func CheckDiagram(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 // CheckMap holds the project's system map to the rules of a flow and to its
 // own: the four zones only, every node in one, a node in the repositories
 // zone named by a source repository's slug, and a slug nowhere else. A map
-// without a repository is no map of the project.
+// without a repository is no map of the project. A repository node's label
+// is its slug, whatever the model wrote ("rongos Zwischenform" once): the
+// reader finds the repository by it. A copy; d is left as it is.
 func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, string) {
 	if d == nil {
 		return nil, "no map"
@@ -95,8 +97,14 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 			return nil, fmt.Sprintf("zone %q is none of %s", z.ID, strings.Join(ir.MapZones, ", "))
 		}
 	}
+	labelled := *d
+	labelled.Nodes = slices.Clone(d.Nodes)
+	d = &labelled
 	repos := 0
-	for _, n := range d.Nodes {
+	for i, n := range d.Nodes {
+		if n.Zone == ir.ZoneRepositories {
+			d.Nodes[i].Label = n.ID
+		}
 		isSlug := slices.Contains(slugs, n.ID)
 		switch {
 		case n.Zone == "":

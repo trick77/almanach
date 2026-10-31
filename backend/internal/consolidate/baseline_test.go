@@ -1122,6 +1122,35 @@ func TestRun_ProjectSkippedWhenRefused(t *testing.T) {
 	}
 }
 
+// The project step answers a patch: a statement it does not name stays, a
+// dropped one goes (a PR-taught one too: no tree pins a project statement),
+// an unknown drop is left out, a new one is numbered. An answer naming no
+// statement empties nothing.
+func TestRun_ProjectAnswersAPatch(t *testing.T) {
+	x := newWorld(t, 3)
+	x.queue(store.RunFull, "")
+	pr := []store.Source{{PRKey: "tools/svc#4", MergedAt: mergedAt.Add(-time.Hour)}}
+	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Das Projekt.",
+		Statements: []store.Statement{
+			{ID: "s1", Kind: "component", Name: "Schnittstelle", Text: "Bleibt.", Files: []string{"api.go"}, Sources: pr},
+			{ID: "s2", Kind: "rule", Name: "Alt", Text: "Geht.", Files: []string{"old.go"}, Sources: pr},
+		}}
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Das Projekt, neu.",
+		Statements: []inference.Statement{}, Drop: []string{"s2", "s99"},
+		Added: []inference.Statement{stmt(nil, "decision", "Ein Worker", "Weil.", "w.go")}}}
+	x.w.drain(context.Background())
+	page := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	var got []string
+	for _, s := range page.Statements {
+		got = append(got, s.ID+":"+s.Name)
+	}
+	if page.Summary != "Das Projekt, neu." || !slices.Equal(got, []string{"s1:Schnittstelle", "s3:Ein Worker"}) {
+		t.Errorf("project page = %q %v, want s1 kept, s2 dropped, s3 added", page.Summary, got)
+	}
+}
+
 // Three calls are the least a run makes: the catalogue, the overview and
 // the project, no subject.
 func TestRun_CallsCap(t *testing.T) {

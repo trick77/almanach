@@ -562,7 +562,12 @@ resumes after a restart. The run pins the clone's head when it starts.
    cut one), so the page is written as one system: purpose and boundary,
    each repository's role, the flows across them and the runtime in the
    summary; interfaces, shared entities and cross-repository rules as
-   statements. Its revision and the run's end land in one transaction.
+   statements. The summary is rewritten whole; the statements are a patch
+   like a subject step's (edits by id, `added`, `drop`), a statement not
+   named kept: as a full rewrite, one answer naming none emptied a page
+   (an eval's second repository wiped the first one's eleven). No tree
+   pins a project statement, so a PR-taught one may be dropped. Its
+   revision and the run's end land in one transaction.
 
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
@@ -591,7 +596,8 @@ cap never freezes a page; a page over the count may keep it, not grow.
 Every project with no more source repositories than a map holds (15,
 room left for one more node) carries a system map, the project step's alone
 (`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
-a repository node named by a source repository's slug, an edge labelled
+a repository node named and labelled by a source repository's slug (code
+sets the label, whatever the model wrote), an edge labelled
 by how the parts talk (HTTP, event, DB, library, file), held to the
 drawing's limits. A larger project gets none, and the prompt asks for
 null. The map never costs the description: a repository that left the

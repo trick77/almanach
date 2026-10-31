@@ -206,6 +206,17 @@ func existingRepoPage() store.Page {
 	}
 }
 
+// Every prompt that asks for statements gives the name's cap check holds
+// them to: a name over it costs the whole rewrite.
+func TestPromptsStateTheNameCap(t *testing.T) {
+	want := fmt.Sprintf("at most %d characters>", nameMaxChars)
+	for name, p := range map[string]string{"merge": prompts.Merge, "describe": prompts.Describe, "project": prompts.Project} {
+		if !strings.Contains(p, want) {
+			t.Errorf("%s prompt lacks %q", name, want)
+		}
+	}
+}
+
 func TestFoldNoChange(t *testing.T) {
 	st := newFakeStore()
 	m := &fakeMerger{result: okResult(nil, nil)}
