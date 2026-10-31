@@ -18,14 +18,15 @@ Two sources feed it:
   overview from its docs and manifests, then one step per subject over its
   files, then the project as a whole from every repository's summary. Each
   step is one model call that answers a patch; code holds every patch to
-  rules the model cannot bend. A monthly reconcile reads only what changed.
-  The docs a repository keeps about itself are claims: where its code
-  disagrees, the code wins.
+  rules the model cannot bend. When a repository's head moved, a
+  reconcile (monthly by default) reads only what changed, or everything
+  again when most of it did. The docs a repository keeps about itself are
+  claims: where its code disagrees, the code wins.
 - **The reviews.** noergler already paid to read every pull request's diff
   and ticket. At merge it sends what the pull request taught, and Almanach
   folds it in: the knowledge code cannot show, such as why a rule exists.
-  The code is the starting point; a note for a repository Almanach does
-  not clone is ignored.
+  With the sources on, the code is the starting point: a note for a
+  repository Almanach does not clone is ignored.
 
 The documentation is German, Swiss spelling. Nobody edits it by hand.
 Every revision is kept, with the commit or pull request that wrote it.
@@ -56,9 +57,9 @@ ceiling is refused, never truncated. A JSON API serves all of it
 compiled into the binary, shows it. The wiki is read-only; the sources
 are the one thing the UI configures.
 
-In the works: a system map on every project page and diagrams in rongo's
-style where a picture says more than a paragraph, a login of its own
-(OIDC), and a compose stack behind Traefik.
+In the works: a system map on every project page and diagrams where a
+picture says more than a paragraph, a login of its own (OIDC), and a
+compose stack behind Traefik.
 
 ## How it is built
 
@@ -79,14 +80,22 @@ Almanach needs PostgreSQL and an OpenAI-compatible gateway (a LiteLLM
 proxy) for the model.
 
 ```sh
-cp .env.example .env            # fill in the gateway and the model
+cp .env.example .env            # fill in the gateway and the model; for private
+                                # repositories ALMANACH_SECRET_KEY (openssl rand -base64 32)
 cp team-keys.example.json team-keys.json
 docker compose up --build       # Postgres, migrate, almanach on :8081
 ```
 
-Open http://localhost:8081/quellen, add a Bitbucket project or a
-repository, and its baseline runs once the clone is there. A private
-repository needs a token, sealed with `ALMANACH_SECRET_KEY`.
+Open http://localhost:8081/quellen and add a Bitbucket project, or a
+static folder with its repositories entered by hand; each repository's
+baseline runs once its clone is there. A private repository's token is
+sealed with `ALMANACH_SECRET_KEY`; without it only public ones clone.
+Then read the result:
+
+```sh
+curl http://localhost:8081/api/projects
+curl http://localhost:8081/api/projects/<KEY>/repos/<slug>
+```
 
 For noergler's notes: one token per team in `team-keys.json`, the same
 token in that team's `almanach:` block in noergler's `teams.yaml`.
@@ -97,11 +106,17 @@ curl -H "Authorization: Bearer <token>" http://localhost:8081/auth/ping
 # {"status":"ok","team":"platform"}
 ```
 
+The read API, the UI and the source writes are open as this compose runs
+them (`ALMANACH_AUTH_MODE=none`): keep it off any network others reach.
+In production an OAuth sidecar sits in front; see `ALMANACH_AUTH_MODE` in
+[CONFIGURATION.md](CONFIGURATION.md).
+
 ## Development
 
 ```sh
 make hooks     # once per clone: ship's pre-push gate
 make check     # everything CI runs (needs docker for the store tests)
+make lint      # quick lint while editing
 make build     # bin/almanach
 make prompt-eval EVAL_ENV=<file>   # full baselines through a real model, paid
 ```
