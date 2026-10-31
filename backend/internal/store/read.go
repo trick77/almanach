@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -365,4 +366,71 @@ func (s *Store) Problems(ctx context.Context, project string, days int) ([]Probl
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// RepoProblem is one problem area of a repository as a baseline step reads
+// it: the directory, how many bugfixes touched it, the cause class seen
+// most, and the newest fixes' PR keys, newest first.
+type RepoProblem struct {
+	Area     string
+	Bugfixes int
+	TopCause string
+	PRKeys   []string
+}
+
+// repoProblemPRs is how many of an area's newest fixes a step is told of.
+const repoProblemPRs = 3
+
+// RepoProblems lists a repository's problem areas over its whole history up
+// to until, most bugfixes first: what broke before does not expire like the
+// dashboard's window, and a fix merged after the commit a run reads is no
+// evidence about that code. Grouped by bugfix_area like Problems.
+func (s *Store) RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]RepoProblem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(bugfix_area, ''), COALESCE(bugfix ->> '$.cause_kind', 'other'), pr_key
+		  FROM notes
+		 WHERE project_key = ? AND repo_slug = ? AND change_kind = 'bugfix' AND merged_at <= ?
+		 ORDER BY merged_at DESC, pr_key`, project, repo, stamp(until))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	byArea := map[string]*RepoProblem{}
+	causes := map[string]map[string]int{}
+	var order []string
+	for rows.Next() {
+		var area, cause, key string
+		if err := rows.Scan(&area, &cause, &key); err != nil {
+			return nil, err
+		}
+		p := byArea[area]
+		if p == nil {
+			p = &RepoProblem{Area: area}
+			byArea[area], causes[area] = p, map[string]int{}
+			order = append(order, area)
+		}
+		p.Bugfixes++
+		causes[area][cause]++
+		if len(p.PRKeys) < repoProblemPRs {
+			p.PRKeys = append(p.PRKeys, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]RepoProblem, 0, len(order))
+	for _, area := range order {
+		p := byArea[area]
+		// The cause seen most, ties to the first in name order, as Problems.
+		for cause, n := range causes[area] {
+			if best := causes[area][p.TopCause]; p.TopCause == "" || n > best || (n == best && cause < p.TopCause) {
+				p.TopCause = cause
+			}
+		}
+		out = append(out, *p)
+	}
+	// Most bugfixes first; among equals the area fixed most recently, the
+	// order the rows met them in.
+	slices.SortStableFunc(out, func(a, b RepoProblem) int { return b.Bugfixes - a.Bugfixes })
+	return out, nil
 }

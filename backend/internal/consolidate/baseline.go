@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -36,6 +38,7 @@ type RunStore interface {
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
+	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -528,7 +531,8 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	name := partName(plan, i)
 	var part, purpose string
 	var read []baseline.File
-	if name == overviewName {
+	subject := name != overviewName
+	if !subject {
 		part, purpose, read = overviewPart, store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
 	} else {
 		s, ok := subjectNamed(plan.Plan, name)
@@ -570,10 +574,31 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return readErr(err)
 	}
+	// The evidence a pitfall needs: the problem areas the subject's files
+	// sit in, from fixes merged by the pinned commit's time (newerSlack
+	// after it: the head's own PR is recorded a moment later). Read once a
+	// run. The overview reads docs and gets none.
+	var problems []store.RepoProblem
+	if subject {
+		if w.problemsRun != r.ID || w.problems == nil {
+			// A plan from before the time was kept has none: no cutoff.
+			until := plan.CommittedAt.Add(newerSlack)
+			if plan.CommittedAt.IsZero() {
+				until = w.now()
+			}
+			all, err := w.base.Store.RepoProblems(ctx, r.ProjectKey, r.Slug, until)
+			if err != nil {
+				w.log.WarnContext(ctx, "baseline: problem areas read failed, drain paused", logging.Err(err))
+				return errStop
+			}
+			w.problemsRun, w.problems = r.ID, append([]store.RepoProblem{}, all...)
+		}
+		problems = problemsFor(w.problems, read)
+	}
 	focus := w.focus(plan, page, newer)
 	left := plan.steps() - i - 1
-	b := stepBudget(w.limits, page, left, name == overviewName)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, left, b, part, focus, renderFiles(read, bodies), newer)
+	b := stepBudget(w.limits, page, left, !subject)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, left, b, part, focus, renderFiles(read, bodies), renderProblems(problems), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -582,6 +607,10 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	r.Bytes += size
 	if !ok {
 		return w.skipPart(ctx, r, &plan, name, "the call failed: "+res.Outcome.String())
+	}
+	// A step shown no problem area had no evidence for a new pitfall.
+	if len(problems) == 0 {
+		res.Patch.Added = unbackedPitfalls(ctx, w.log, "baseline: "+name, res.Patch.Added)
 	}
 	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer, b)
 }
@@ -607,6 +636,9 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
+	if len(applied.Unknown) > 0 {
+		w.log.WarnContext(ctx, "baseline: "+name+": unknown ids left out", slog.Any("ids", applied.Unknown))
+	}
 	// A path the model names for a statement it wrote is held to the tree,
 	// forgiven its spelling: a path the tree does not have is invented.
 	for i := range applied.Statements {
@@ -619,7 +651,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	statements, leftOut, reason := attach(page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits))
+	statements, leftOut, reason := attach(store.ScopeRepository, page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits))
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
@@ -1159,7 +1191,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
-	statements, leftOut, reason := attach(page.Statements, d.Statements, runSource(*r, plan), next, limitsOf(w.limits))
+	statements, leftOut, reason := attachDescription(store.ScopeProject, page.Statements, d, runSource(*r, plan), next, limitsOf(w.limits))
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 	if reason == "" {
@@ -1441,8 +1473,50 @@ func returnedUnchanged(before []store.Statement, p inference.Patch) int {
 	return n
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, b budget, part, focus, files string, newer map[string]string) string {
+// problemsFor is the problem areas a subject's files sit in: an area whose
+// directory is one of the files' directories, holds one or lies inside
+// one. The root area backs no subject: ingest files a fix there whose
+// files share no directory, or that named none, so it is no evidence about
+// root files; and a subject with a file at the root is not tied to every
+// area.
+func problemsFor(problems []store.RepoProblem, files []baseline.File) []store.RepoProblem {
+	dirs := map[string]bool{}
+	for _, f := range files {
+		if d := path.Dir(f.Path); d != "." {
+			dirs[d] = true
+		}
+	}
+	var out []store.RepoProblem
+	for _, p := range problems {
+		if p.Area == "" {
+			continue
+		}
+		for d := range dirs {
+			if p.Area == d || strings.HasPrefix(d, p.Area+"/") || strings.HasPrefix(p.Area, d+"/") {
+				out = append(out, p)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// renderProblems lays the problem areas out for the describe prompt, data
+// like the files.
+func renderProblems(problems []store.RepoProblem) string {
+	if len(problems) == 0 {
+		return "_None._"
+	}
+	var b strings.Builder
+	for _, p := range problems {
+		fmt.Fprintf(&b, "- `%s/`: %d bugfixes, cause seen most `%s`, newest fixes %s\n", p.Area, p.Bugfixes, p.TopCause, strings.Join(p.PRKeys, ", "))
+	}
+	return b.String()
+}
+
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, b budget, part, focus, files, problems string, newer map[string]string) string {
 	return strings.NewReplacer(
+		"{problem_areas}", problems,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left),
 		"{step_budget}", allowance(b), "{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,

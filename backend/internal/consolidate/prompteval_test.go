@@ -165,7 +165,7 @@ func TestPromptReplay(t *testing.T) {
 		call, got = res.Call, fmt.Sprintf("%d subjects", len(res.Catalogue.Subjects))
 	case strings.HasSuffix(file, "-patch.txt"):
 		res := llm.Patch(ctx, string(prompt))
-		call, got = res.Call, fmt.Sprintf("%d statements, summary %v", len(res.Patch.Statements), res.Patch.Summary != nil)
+		call, got = res.Call, fmt.Sprintf("%d edits, %d added, summary %v", len(res.Patch.Statements), len(res.Patch.Added), res.Patch.Summary != nil)
 	case strings.HasSuffix(file, "-project.txt"):
 		res := llm.Describe(ctx, string(prompt))
 		call, got = res.Call, fmt.Sprintf("description %v", res.Description != nil)

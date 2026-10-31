@@ -107,6 +107,9 @@ export const S = {
     rule: "Regeln",
     invariant: "Invarianten",
     entity: "Entitäten",
+    decision: "Entscheidungen",
+    extension: "Erweiterungen",
+    pitfall: "Fallstricke",
   },
   noteHeaders: ["PR", "Titel", "Art", "Einträge", "Issues / Hinweise", "Merge"],
   changeKind: {

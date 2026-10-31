@@ -99,7 +99,7 @@ const redirect = "https://almanach.example.com/api/auth/callback"
 
 func TestGate(t *testing.T) {
 	s := sessions(t)
-	h := Gate(s, redirect)(echo)
+	h := Gate(s, redirect, nil)(echo)
 	for _, p := range []string{"/api", "/api/projects", "/api/sources/x/sync", "/api/me", "/api/auth/logout"} {
 		rec := serve(h, p, nil)
 		var body struct{ Error string }
@@ -123,15 +123,77 @@ func TestGate(t *testing.T) {
 }
 
 func TestGateOffInNoneMode(t *testing.T) {
-	if rec := serve(Gate(nil, "")(echo), "/api/projects", nil); rec.Code != http.StatusOK || rec.Body.String() != "" {
+	if rec := serve(Gate(nil, "", nil)(echo), "/api/projects", nil); rec.Code != http.StatusOK || rec.Body.String() != "" {
 		t.Errorf("none mode = %d %q, want through, anonymous", rec.Code, rec.Body.String())
+	}
+}
+
+// In oidc mode a GET of the Markdown export passes on a known bearer;
+// nothing else does, and a bearer the check refuses falls through to the
+// session's 401.
+func TestGateOpensTheExportToABearer(t *testing.T) {
+	s := sessions(t)
+	known := func(r *http.Request) bool { return r.Header.Get("Authorization") == "Bearer good" }
+	h := Gate(s, redirect, known)(echo)
+	call := func(method, p, token string) int {
+		req := httptest.NewRequest(method, p, nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, p := range []string{"/api/projects/PAY.md", "/api/projects/PAY/repos/pay-api.md"} {
+		for _, m := range []string{http.MethodGet, http.MethodHead} {
+			if got := call(m, p, "good"); got != http.StatusOK {
+				t.Errorf("%s %s with a team bearer = %d, want through", m, p, got)
+			}
+		}
+		for _, token := range []string{"", "bad"} {
+			if got := call(http.MethodGet, p, token); got != http.StatusUnauthorized {
+				t.Errorf("GET %s with bearer %q = %d, want 401", p, token, got)
+			}
+		}
+		if got := call(http.MethodPost, p, "good"); got != http.StatusUnauthorized {
+			t.Errorf("POST %s with a team bearer = %d, want 401", p, got)
+		}
+	}
+	for _, p := range []string{"/api/projects/PAY", "/api/projects", "/api/projects/PAY/repos/pay-api", "/api/projects/.md",
+		"/api/projects/PAY/problems.md", "/api/projects/PAY/repos/x/notes/1.md", "/api/me", "/api/projects/A%2Frepos%2Fx.md"} {
+		if got := call(http.MethodGet, p, "good"); got != http.StatusUnauthorized {
+			t.Errorf("GET %s with a team bearer = %d, want 401", p, got)
+		}
+	}
+	for p, want := range map[string]bool{
+		"/api/projects/PAY.md": true, "/api/projects/PAY/repos/svc.md": true, "/api/projects/PAY/repos/.md": false,
+		"/api/projects//repos/svc.md": false, "/api/projects/PAY/other/svc.md": false, "/api/x/PAY.md": false, "/api/projects/PAY%2Emd": false,
+		"/api/projects/%2E%2E/repos/x.md": false, "/api/projects/a%2Fb/repos/x.md": false,
+	} {
+		if ExportPath(p) != want {
+			t.Errorf("ExportPath(%q) = %v", p, !want)
+		}
+	}
+	// The handler learns the bearer let the request in, for the export alone.
+	var marked bool
+	mark := Gate(s, redirect, known)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { marked = ExportOnly(r.Context()) }))
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/PAY.md", nil)
+	req.Header.Set("Authorization", "Bearer good")
+	mark.ServeHTTP(httptest.NewRecorder(), req)
+	if !marked {
+		t.Error("a bearer-let export request is not marked ExportOnly")
+	}
+	// None mode has no session to stand in for: the bearer is not asked.
+	if got := serve(Gate(nil, "", known)(echo), "/api/projects/PAY.md", nil); got.Code != http.StatusOK {
+		t.Errorf("none mode export = %d", got.Code)
 	}
 }
 
 // None mode has no session, but its writes are still checked for their
 // origin; a client sending neither header (curl) still writes.
 func TestGateChecksOriginInNoneMode(t *testing.T) {
-	h := Gate(nil, "")(echo)
+	h := Gate(nil, "", nil)(echo)
 	for _, tc := range []struct {
 		name string
 		hdr  map[string]string
@@ -173,7 +235,7 @@ func TestOriginDropsTheDefaultPort(t *testing.T) {
 	}
 	// A browser on the default port sends no port: it is trusted.
 	s := sessions(t)
-	h := Gate(s, "https://almanach.example.com:443/api/auth/callback")(echo)
+	h := Gate(s, "https://almanach.example.com:443/api/auth/callback", nil)(echo)
 	req := httptest.NewRequest(http.MethodPost, "/api/sources", nil)
 	req.Host = "almanach.internal:8080"
 	req.Header.Set("Origin", "https://almanach.example.com")
@@ -189,7 +251,7 @@ func TestOriginDropsTheDefaultPort(t *testing.T) {
 // Origin; a read and everything outside /api are not asked.
 func TestGateRefusesCrossSiteChanges(t *testing.T) {
 	s := sessions(t)
-	h := Gate(s, redirect)(echo)
+	h := Gate(s, redirect, nil)(echo)
 	ck := sessionCookie(t, s, Claims{Subject: "sub-1"})
 	for _, tc := range []struct {
 		name, method, path string

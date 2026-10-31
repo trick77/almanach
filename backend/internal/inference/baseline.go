@@ -33,12 +33,14 @@ type CatalogueResult struct {
 	Catalogue Catalogue
 }
 
-// Patch is what one step teaches the repository page: new statements (id
-// null), edits by id, ids to drop, ids confirmed unchanged, and a new
-// summary or null to keep it. An id it does not name stays as it is.
+// Patch is what one step teaches the repository page: edits by id, new
+// statements in a list of their own without one, ids to drop, ids
+// confirmed unchanged, and a new summary or null to keep it. An id it does
+// not name stays as it is.
 type Patch struct {
 	Summary    *string     `json:"summary"`
 	Statements []Statement `json:"statements"`
+	Added      []Statement `json:"added"`
 	Drop       []string    `json:"drop"`
 	Confirmed  []string    `json:"confirmed"`
 }
@@ -142,7 +144,8 @@ func patchFormat(diagrams bool) llmwire.ResponseFormat {
 	ids := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	return strict(PatchSchemaName, map[string]any{
 		"summary":    map[string]any{"type": []any{"string", "null"}, "minLength": 1},
-		"statements": statements(diagrams),
+		"statements": statements(diagrams, RepoKinds),
+		"added":      added(diagrams, RepoKinds),
 		"drop":       ids,
 		"confirmed":  ids,
 	})

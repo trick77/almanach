@@ -216,8 +216,11 @@ func (c *Client) reasoning() llmwire.ReasoningRequest {
 	return llmwire.ReasoningEffort(c.effort)
 }
 
-// Statement is one statement as the model returns it: ID nil for a new one,
-// Diagram nil for none.
+// Statement is one statement as the model returns it, Diagram nil for none.
+// An edit carries the id of the statement it edits, which the schema
+// requires; a new one is in a list of its own and carries none (the
+// schema offers no id there, and any the answer holds is cleared), its id
+// the code's to give. Past the model, ID nil marks a new statement.
 type Statement struct {
 	ID      *string          `json:"id"`
 	Kind    string           `json:"kind"`
@@ -230,9 +233,33 @@ type Statement struct {
 // Description is one rewritten description. Map is the project step's
 // system map; the merge never returns one.
 type Description struct {
-	Summary    string           `json:"summary"`
+	Summary string `json:"summary"`
+	// Statements is every statement kept, by id; Added the new ones.
 	Statements []Statement      `json:"statements"`
+	Added      []Statement      `json:"added"`
 	Map        *diagram.Diagram `json:"map,omitempty"`
+}
+
+// Proposed is a description's statements as one list, the edits by id and
+// then the new ones with their ids cleared; reason is set when an edit
+// carries no id.
+func (d Description) Proposed() ([]Statement, string) { return Proposed(d.Statements, d.Added) }
+
+// Proposed joins edits and new statements into one list, ID nil marking a
+// new one. An edit without an id names nothing: reason says so.
+func Proposed(edits, added []Statement) ([]Statement, string) {
+	out := make([]Statement, 0, len(edits)+len(added))
+	for _, s := range edits {
+		if s.ID == nil || *s.ID == "" {
+			return nil, "an edit without a statement id"
+		}
+		out = append(out, s)
+	}
+	for _, s := range added {
+		s.ID = nil
+		out = append(out, s)
+	}
+	return out, ""
 }
 
 // Merge is the model's answer: nil for a description it leaves alone.
@@ -377,10 +404,18 @@ func deref(p *int64) int64 {
 // MergeSchemaName is the strict schema's name on the wire.
 const MergeSchemaName = "almanach_merge"
 
-func description(diagrams bool) map[string]any {
+// The statement kinds. A repository page holds them all; a project page
+// all but extension, a change recipe inside one repository.
+var (
+	RepoKinds    = []string{"component", "rule", "invariant", "entity", "decision", "extension", "pitfall"}
+	ProjectKinds = slices.DeleteFunc(slices.Clone(RepoKinds), func(k string) bool { return k == "extension" })
+)
+
+func description(diagrams bool, kinds []string) map[string]any {
 	return nullable(object(map[string]any{
 		"summary":    map[string]any{"type": "string", "minLength": 1},
-		"statements": statements(diagrams),
+		"statements": statements(diagrams, kinds),
+		"added":      added(diagrams, kinds),
 	}))
 }
 
@@ -390,14 +425,26 @@ func nullable(o map[string]any) map[string]any {
 	return o
 }
 
-// statements is the array of statements as a description or a patch
-// carries them: id null for a new one, diagram null to keep the one it has
-// (or have none). Without diagrams (ALMANACH_MAX_DIAGRAMS=0) the field is
-// not offered at all.
-func statements(diagrams bool) map[string]any {
+// statements is the array of edits as a description or a patch carries
+// them: each with the id of the statement it edits, a string the code
+// checks against the page; diagram null to keep the one it has (or have
+// none). Without diagrams (ALMANACH_MAX_DIAGRAMS=0) the field is not
+// offered at all. kinds is what the page may hold.
+func statements(diagrams bool, kinds []string) map[string]any {
+	props := statementProps(diagrams, kinds)
+	props["id"] = map[string]any{"type": "string", "minLength": 1}
+	return array(object(props))
+}
+
+// added is the array of new statements: no id field at all, so a model
+// cannot number one; the code gives the id.
+func added(diagrams bool, kinds []string) map[string]any {
+	return array(object(statementProps(diagrams, kinds)))
+}
+
+func statementProps(diagrams bool, kinds []string) map[string]any {
 	props := map[string]any{
-		"id":    map[string]any{"type": []any{"string", "null"}},
-		"kind":  enum("component", "rule", "invariant", "entity"),
+		"kind":  enum(kinds...),
 		"name":  map[string]any{"type": "string", "minLength": 1},
 		"text":  map[string]any{"type": "string", "minLength": 1},
 		"files": array(str()),
@@ -405,7 +452,7 @@ func statements(diagrams bool) map[string]any {
 	if diagrams {
 		props["diagram"] = statementDiagram()
 	}
-	return array(object(props))
+	return props
 }
 
 // projectDescription is the project step's description: the merge's shape
@@ -413,11 +460,12 @@ func statements(diagrams bool) map[string]any {
 func projectDescription(diagrams bool) map[string]any {
 	return nullable(object(map[string]any{
 		"summary":    map[string]any{"type": "string", "minLength": 1},
-		"statements": statements(diagrams),
+		"statements": statements(diagrams, ProjectKinds),
+		"added":      added(diagrams, ProjectKinds),
 		"map":        nullable(mapSchema()),
 	}))
 }
 
 func mergeFormat(diagrams bool) llmwire.ResponseFormat {
-	return strict(MergeSchemaName, map[string]any{"repository": description(diagrams), "project": description(diagrams)})
+	return strict(MergeSchemaName, map[string]any{"repository": description(diagrams, RepoKinds), "project": description(diagrams, ProjectKinds)})
 }

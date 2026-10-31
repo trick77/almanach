@@ -183,7 +183,7 @@ func TestDiagramSchemas(t *testing.T) {
 		t.Errorf("map not nullable: %v", props["map"])
 	}
 	// The merge's description has no map: the merge never draws one.
-	if _, ok := description(true)["properties"].(map[string]any)["map"]; ok {
+	if _, ok := description(true, RepoKinds)["properties"].(map[string]any)["map"]; ok {
 		t.Error("the merge's description carries a map")
 	}
 	zone := mapSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["zone"].(map[string]any)
@@ -206,14 +206,14 @@ func TestNoDiagramsSchemas(t *testing.T) {
 	}
 	for name, st := range map[string]map[string]any{
 		"patch":   patchFormat(false).Schema["properties"].(map[string]any)["statements"].(map[string]any),
-		"merge":   description(false)["properties"].(map[string]any)["statements"].(map[string]any),
+		"merge":   description(false, RepoKinds)["properties"].(map[string]any)["statements"].(map[string]any),
 		"project": projectDescription(false)["properties"].(map[string]any)["statements"].(map[string]any),
 	} {
 		if _, ok := statementProps(st)["diagram"]; ok {
 			t.Errorf("%s statements offer a diagram with diagrams off", name)
 		}
 	}
-	if _, ok := statementProps(statements(true))["diagram"]; !ok {
+	if _, ok := statementProps(statements(true, RepoKinds))["diagram"]; !ok {
 		t.Error("statements without a diagram with diagrams on")
 	}
 	if _, ok := projectDescription(false)["properties"].(map[string]any)["map"]; !ok {
@@ -227,5 +227,73 @@ func TestNoDiagramsSchemas(t *testing.T) {
 	body, _ := json.Marshal(srv.Last().Body)
 	if strings.Contains(string(body), `"diagram"`) || !strings.Contains(string(body), `"statements"`) {
 		t.Error("the merge request offered a diagram with diagrams off")
+	}
+}
+
+// Every format splits edits from new statements: an edit's id is a
+// required string, never null; a new statement has no id field at all, so
+// a model cannot number one.
+func TestSchemaEditsAndAdded(t *testing.T) {
+	merge := mergeFormat(true).Schema["properties"].(map[string]any)
+	for name, props := range map[string]map[string]any{
+		"patch":         patchFormat(true).Schema["properties"].(map[string]any),
+		"merge repo":    merge["repository"].(map[string]any)["properties"].(map[string]any),
+		"merge project": merge["project"].(map[string]any)["properties"].(map[string]any),
+		"project":       projectDescription(true)["properties"].(map[string]any),
+	} {
+		edit := props["statements"].(map[string]any)["items"].(map[string]any)
+		id, ok := edit["properties"].(map[string]any)["id"].(map[string]any)
+		if !ok || id["type"] != "string" || !slices.Contains(edit["required"].([]any), any("id")) {
+			t.Errorf("%s: edit id = %v, want a required string", name, id)
+		}
+		add := props["added"].(map[string]any)["items"].(map[string]any)
+		if _, has := add["properties"].(map[string]any)["id"]; has || add["additionalProperties"] != false {
+			t.Errorf("%s: a new statement may carry an id: %v", name, add)
+		}
+		if _, has := add["properties"].(map[string]any)["kind"]; !has {
+			t.Errorf("%s: added lacks the statement's fields", name)
+		}
+	}
+	// Both halves parse; Proposed lists the edits, then the new ones with
+	// any id the answer gave cleared.
+	var d Description
+	if !parse(`{"summary": "s", "statements": [{"id": "s2", "kind": "rule", "name": "a", "text": "b", "files": []}],
+		"added": [{"id": "s36", "kind": "rule", "name": "c", "text": "d", "files": []}]}`, &d) {
+		t.Fatal("description did not parse")
+	}
+	got, reason := d.Proposed()
+	if reason != "" || len(got) != 2 || got[0].ID == nil || *got[0].ID != "s2" || got[1].ID != nil || got[1].Name != "c" {
+		t.Errorf("Proposed = %+v, %q", got, reason)
+	}
+	if _, reason := Proposed([]Statement{{Name: "x"}}, nil); reason == "" {
+		t.Error("an edit without an id was taken")
+	}
+}
+
+// Every format offers the new kinds; a project description never offers an
+// extension, a repository's change recipe.
+func TestSchemaKinds(t *testing.T) {
+	kindsOf := func(st map[string]any) []any {
+		return st["items"].(map[string]any)["properties"].(map[string]any)["kind"].(map[string]any)["enum"].([]any)
+	}
+	merge := mergeFormat(true).Schema["properties"].(map[string]any)
+	for name, tc := range map[string]struct {
+		st        map[string]any
+		extension bool
+	}{
+		"patch":         {patchFormat(true).Schema["properties"].(map[string]any)["statements"].(map[string]any), true},
+		"merge repo":    {merge["repository"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), true},
+		"merge project": {merge["project"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), false},
+		"project":       {projectDescription(true)["properties"].(map[string]any)["statements"].(map[string]any), false},
+	} {
+		got := kindsOf(tc.st)
+		for _, k := range []string{"component", "rule", "invariant", "entity", "decision", "pitfall"} {
+			if !slices.Contains(got, any(k)) {
+				t.Errorf("%s: kinds %v lack %s", name, got, k)
+			}
+		}
+		if slices.Contains(got, any("extension")) != tc.extension {
+			t.Errorf("%s: kinds %v, extension offered = %v", name, got, !tc.extension)
+		}
 	}
 }

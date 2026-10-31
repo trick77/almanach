@@ -79,6 +79,11 @@ type Worker struct {
 	// placeSince is when each merge commit whose read failed first failed
 	// in the run.
 	placeSince map[string]time.Time
+	// problems is run problemsRun's repository problem areas, read at its
+	// first subject step: the cutoff is the pinned commit's, so they hold
+	// for the whole run. nil until read.
+	problemsRun int64
+	problems    []store.RepoProblem
 	// busyRun and busyWrites count the step writes of one run a busy
 	// database refused in a row; a written step resets them. In memory:
 	// the row's attempts are the gateway's, reset by every answered call,
@@ -393,12 +398,19 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
 		return nil
 	}
+	// A bugfix note is a pitfall's evidence on the merge path; any other
+	// note backs none.
+	if q.ChangeKind != "bugfix" {
+		backed := *d
+		backed.Added = unbackedPitfalls(ctx, w.log, "consolidate: "+scope, d.Added)
+		d = &backed
+	}
 	next, err := w.store.NextStatementID(ctx, scope, q.ProjectKey, repo)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return busyOnly(err)
 	}
-	statements, leftOut, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
+	statements, leftOut, reason := attachDescription(scope, current.Statements, d, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, maxStatements, maxChars)
@@ -438,8 +450,47 @@ func busyOnly(err error) error {
 	return nil
 }
 
-// Statement kinds a description may hold.
-var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, "entity": true}
+// The statement kinds a page of each scope may hold: a project page no
+// extension, which is a change recipe inside one repository.
+var kinds = map[string]map[string]bool{
+	store.ScopeRepository: kindSet(inference.RepoKinds),
+	store.ScopeProject:    kindSet(inference.ProjectKinds),
+}
+
+func kindSet(list []string) map[string]bool {
+	out := make(map[string]bool, len(list))
+	for _, k := range list {
+		out[k] = true
+	}
+	return out
+}
+
+// unbackedPitfalls leaves out the new pitfalls a fold or step had no
+// evidence for (a bugfix note, a problem area): the prompts say so, code
+// holds it. Only new ones: an existing pitfall was backed when written, and
+// on the merge path a statement not returned is dropped. Each left out is
+// logged by name; the rest of the answer stands.
+func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added []inference.Statement) []inference.Statement {
+	kept := make([]inference.Statement, 0, len(added))
+	for _, s := range added {
+		if s.Kind == "pitfall" {
+			log.WarnContext(ctx, where+": pitfall without evidence left out", slog.String("name", s.Name))
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept
+}
+
+// attachDescription is attach over a whole description's edits and new
+// statements; an edit without an id rejects it like an invented one.
+func attachDescription(scope string, current []store.Statement, d *inference.Description, src store.Source, next int, dl diagramLimits) ([]store.Statement, diagramsLeftOut, string) {
+	proposed, reason := d.Proposed()
+	if reason != "" {
+		return nil, diagramsLeftOut{}, reason
+	}
+	return attach(scope, current, proposed, src, next, dl)
+}
 
 // attach turns the model's statements into stored ones: a kept id carries
 // its sources forward and gains src (this PR, or a baseline run's commit)
@@ -452,10 +503,12 @@ var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, 
 // diagram costs that diagram, never the statements of a whole part. A
 // stored diagram stays beside an unchanged name and text and goes when
 // they changed unless returned again (statementDiagram), named in leftOut
-// too. A changed diagram is a changed statement, like changed text. The commit a statement was last checked against stays while its
-// name, text and diagram do; a change voids it, the caller sets a new one
-// when it read the code.
-func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, leftOut diagramsLeftOut, reason string) {
+// too. A changed diagram is a changed statement, like changed text. The
+// commit a statement was last checked against stays while its name, text
+// and diagram do; a change voids it, the caller sets a new one when it read
+// the code. A kind the scope's page may not hold (any unknown one, an
+// extension on the project page) rejects the rewrite like an invented id.
+func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, leftOut diagramsLeftOut, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
@@ -464,8 +517,8 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 	olds := make([]*store.Statement, 0, len(proposed))
 	seen := map[string]bool{}
 	for _, p := range proposed {
-		if !kinds[p.Kind] {
-			return nil, diagramsLeftOut{}, "unknown statement kind " + p.Kind
+		if !kinds[scope][p.Kind] {
+			return nil, diagramsLeftOut{}, "statement kind " + p.Kind + " not on a " + scope + " page"
 		}
 		s := cleanStatement(p)
 		if s.Name == "" || s.Text == "" {
@@ -761,9 +814,10 @@ func diagramChange(l config.Limits) string {
 
 // An empty page as the prompts show it, saying in so many words that every
 // statement is new: shown nothing, a model numbers its new statements, and
-// an id the page does not have is invented and rejects the rewrite.
+// an id the page does not have is invented and rejects the rewrite. The
+// schema keeps new statements in `added`, where no id can be written.
 const (
-	allNew          = "every statement you write is new, its id null"
+	allNew          = "every statement you write is new and goes in `added`; `statements` stays empty"
 	noneYet         = "_None yet: " + allNew + "._"
 	noStatementsYet = "\n_No statements yet: " + allNew + "._\n"
 )

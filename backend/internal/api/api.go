@@ -81,8 +81,10 @@ func Register(s *httpapi.Server, d Deps) {
 	s.HandleFunc("GET /auth/ping", d.ping)
 	s.Handle("POST /webhooks/noergler", httpx.MaxBody(maxBody)(http.HandlerFunc(d.webhook)))
 	s.HandleFunc("GET /api/projects", d.projects)
+	// Also GET /api/projects/{key}.md, the project's Markdown export.
 	s.HandleFunc("GET /api/projects/{key}", d.project)
 	s.HandleFunc("GET /api/projects/{key}/problems", d.problems)
+	// Also GET /api/projects/{key}/repos/{slug}.md, the repository's.
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
 	d.registerSources(s)
@@ -92,20 +94,58 @@ func Register(s *httpapi.Server, d Deps) {
 // team is the caller's team by its bearer, or "" with the 401 written.
 // The bearer is the whole identity: nothing in a body names a team.
 func (d Deps) team(w http.ResponseWriter, r *http.Request) string {
-	token, ok := httpx.Bearer(r)
-	if !ok {
+	team, sent := d.bearerTeam(r)
+	if !sent {
 		httpx.WriteError(w, http.StatusUnauthorized, "bearer token required")
 		return ""
-	}
-	team, reloadErr := d.Keys.Lookup(token)
-	if reloadErr != nil {
-		d.Log.WarnContext(r.Context(), "team keys reload failed, last good table in use", logging.Err(reloadErr))
 	}
 	if team == "" {
 		httpx.WriteError(w, http.StatusUnauthorized, "unknown token")
 		return ""
 	}
 	return team
+}
+
+// bearerTeam is the team whose token the request bears, "" for none or an
+// unknown one; sent says whether a bearer came at all. The lookup is
+// constant time over every entry; a failed reload is logged and the last
+// good table answers.
+func (d Deps) bearerTeam(r *http.Request) (team string, sent bool) {
+	token, ok := httpx.Bearer(r)
+	if !ok {
+		return "", false
+	}
+	if d.Keys == nil {
+		return "", true
+	}
+	team, reloadErr := d.Keys.Lookup(token)
+	if reloadErr != nil {
+		d.Log.WarnContext(r.Context(), "team keys reload failed, last good table in use", logging.Err(reloadErr))
+	}
+	return team, true
+}
+
+// exportOf is name without its .md suffix, and whether the request is the
+// Markdown export for certain: a request the gate let in on a bearer, the
+// export being all it opens. Otherwise a name with the suffix is the export
+// only when no listed project or repository carries it whole: the handler
+// asks the store once, and a miss with the suffix cut off is the export.
+func exportOf(r *http.Request, name string) (string, bool) {
+	base, md := strings.CutSuffix(name, ".md")
+	return base, md && auth.ExportOnly(r.Context())
+}
+
+// teamBearer reports whether the request carries a team's bearer, by the
+// webhook's lookup: what opens the Markdown export in oidc mode. The team
+// goes to the access log, as a reader's name does; it gates nothing beyond
+// the export.
+func (d Deps) teamBearer(r *http.Request) bool {
+	team, _ := d.bearerTeam(r)
+	if team == "" {
+		return false
+	}
+	httpx.LogAttrs(r.Context(), slog.String("team", team))
+	return true
 }
 
 type pingBody struct {
@@ -371,9 +411,20 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key := r.PathValue("key")
+	// GET /api/projects/{key}.md: the mux takes no wildcard inside a
+	// segment, so the export arrives here with its suffix (see exportOf).
+	k, md := exportOf(r, key)
+	if md {
+		d.projectMarkdown(w, r, k)
+		return
+	}
 	team, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project")
+		return
+	}
+	if !ok && k != key {
+		d.projectMarkdown(w, r, k)
 		return
 	}
 	if !ok {
@@ -475,9 +526,18 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key, slug := r.PathValue("key"), r.PathValue("slug")
+	s, md := exportOf(r, slug)
+	if md {
+		d.repoMarkdown(w, r, key, s)
+		return
+	}
 	ok, err := d.Store.RepoExists(ctx, key, slug, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "repo")
+		return
+	}
+	if !ok && s != slug {
+		d.repoMarkdown(w, r, key, s)
 		return
 	}
 	if !ok {

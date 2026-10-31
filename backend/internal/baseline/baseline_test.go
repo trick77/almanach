@@ -304,7 +304,9 @@ func TestApplyPatch_EditsDropsConfirmsAppends(t *testing.T) {
 	summary := "Neu."
 	p := inference.Patch{
 		Summary:    &summary,
-		Statements: []inference.Statement{{ID: id("s2"), Kind: "rule", Name: "Retry", Text: "Five times.", Files: []string{"jobs/retry.go"}}, {Kind: "component", Name: "Jobs", Text: "Runs jobs."}},
+		Statements: []inference.Statement{{ID: id("s2"), Kind: "rule", Name: "Retry", Text: "Five times.", Files: []string{"jobs/retry.go"}}},
+		// A new statement carries no id: one the answer holds is cleared.
+		Added: []inference.Statement{{ID: id("s9"), Kind: "component", Name: "Jobs", Text: "Runs jobs."}},
 		// s3 rests on the baseline alone; s2's PR file is gone, but s2 is
 		// edited, not dropped.
 		Drop:      []string{"s3"},
@@ -344,14 +346,14 @@ func TestApplyPatch_Rejections(t *testing.T) {
 		exists func(string) bool
 		reason string
 	}{
-		"invented id":          {inference.Patch{Statements: []inference.Statement{{ID: id("s9"), Name: "x", Text: "y"}}}, everything, "unknown statement id s9"},
-		"edited twice":         {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}, {ID: id("s3")}}}, everything, "used twice s3"},
-		"drop of an invented":  {inference.Patch{Drop: []string{"s9"}}, everything, "drop of unknown statement id s9"},
-		"edited and dropped":   {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}}, Drop: []string{"s3"}}, everything, "both edited and dropped"},
-		"PR fact, files there": {inference.Patch{Drop: []string{"s1"}}, everything, "drop of s1, which a pull request taught"},
-		"PR fact, no files":    {inference.Patch{Drop: []string{"s4"}}, inTree(), "drop of s4"},
-		"confirm invented":     {inference.Patch{Confirmed: []string{"s7"}}, everything, "confirmation of unknown statement id s7"},
-		"confirmed and gone":   {inference.Patch{Drop: []string{"s3"}, Confirmed: []string{"s3"}}, everything, "both confirmed and dropped"},
+		"invented id":           {inference.Patch{Statements: []inference.Statement{{ID: id("s9"), Name: "x", Text: "y"}}}, everything, "unknown statement id s9"},
+		"edit without an id":    {inference.Patch{Statements: []inference.Statement{{Name: "x", Text: "y"}}}, everything, "an edit without a statement id"},
+		"edit with an empty id": {inference.Patch{Statements: []inference.Statement{{ID: id(""), Name: "x", Text: "y"}}}, everything, "an edit without a statement id"},
+		"edited twice":          {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}, {ID: id("s3")}}}, everything, "used twice s3"},
+		"edited and dropped":    {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}}, Drop: []string{"s3"}}, everything, "both edited and dropped"},
+		"PR fact, files there":  {inference.Patch{Drop: []string{"s1"}}, everything, "drop of s1, which a pull request taught"},
+		"PR fact, no files":     {inference.Patch{Drop: []string{"s4"}}, inTree(), "drop of s4"},
+		"confirmed and gone":    {inference.Patch{Drop: []string{"s3"}, Confirmed: []string{"s3"}}, everything, "both confirmed and dropped"},
 		"PR fact edited off its file": {inference.Patch{Statements: []inference.Statement{{ID: id("s1"), Kind: "component", Name: "Auth",
 			Text: "Moved.", Files: []string{"elsewhere.go"}}}}, everything, "edit of s1, which a pull request taught, drops its file auth/login.go"},
 	} {
@@ -362,6 +364,12 @@ func TestApplyPatch_Rejections(t *testing.T) {
 	a, reason := ApplyPatch(page(), inference.Patch{Drop: []string{"s1"}}, inTree("jobs/retry.go"))
 	if reason != "" || len(a.Statements) != 3 {
 		t.Errorf("PR fact whose files are gone: reason %q, %d statements, want it dropped", reason, len(a.Statements))
+	}
+	// An unknown id to drop or confirm refers to nothing: left out, named,
+	// and the rest of the patch applies.
+	a, reason = ApplyPatch(page(), inference.Patch{Drop: []string{"s9", "s3"}, Confirmed: []string{"8b0d8f4a", "s1"}}, everything)
+	if reason != "" || !reflect.DeepEqual(a.Unknown, []string{"s9", "8b0d8f4a"}) || len(a.Statements) != 3 || !a.Checked[0] {
+		t.Errorf("unknown drop and confirm ids: reason %q, unknown %v, %d statements, checked %v", reason, a.Unknown, len(a.Statements), a.Checked)
 	}
 	// An edit may add files and correct the text, keeping the ones the tree
 	// has, however spelled; a file that left the tree may go.
