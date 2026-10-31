@@ -69,10 +69,15 @@ describe("download", () => {
       value: revoke,
       configurable: true,
     });
+    vi.useFakeTimers();
     download("d.svg", "<svg/>");
     expect(create).toHaveBeenCalled();
     expect(click).toHaveBeenCalled();
+    // Not while the click is being handled: after it.
+    expect(revoke).not.toHaveBeenCalled();
+    vi.runAllTimers();
     expect(revoke).toHaveBeenCalledWith("blob:x");
+    vi.useRealTimers();
     click.mockRestore();
   });
 

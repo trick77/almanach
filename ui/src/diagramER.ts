@@ -24,7 +24,7 @@ import { ramp, textWidth, wrap, type Face } from "./diagramTheme";
  * and routes the lines, as it does a flow nothing simpler fits.
  *
  * The layout is a flow layout with tables for nodes, so the connector rules
- * a flowchart is held to (diagramCheck.ts check) hold here too.
+ * a flowchart is held to (test/diagramCheck.ts check) hold here too.
  */
 
 export type TableRow = {

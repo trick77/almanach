@@ -1,7 +1,7 @@
 // Copied from rongo (ui/src/diagramExport.ts), kept in step by hand.
 // The SVG file only, what Almanach calls: the PNG and the mermaid halves
-// stay in rongo, and fileName takes the IR's kind instead of a mermaid
-// source.
+// stay in rongo, fileName takes the IR's kind instead of a mermaid source,
+// and download revokes its URL after the click.
 
 /**
  * Taking a diagram out of Almanach: as a standalone .svg file, the
@@ -64,7 +64,9 @@ export function download(name: string, data: string | Blob): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  // Revoked after the click has been handled, not during it: a browser that
+  // starts the download asynchronously would otherwise find the URL gone.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /** fileName is what the download is called: the kind of picture it is, so a

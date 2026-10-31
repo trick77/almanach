@@ -1,7 +1,7 @@
 // Copied from rongo (ui/src/diagramCheck.test.ts), kept in step by hand.
 import { describe, it, expect } from "vitest";
 import { check } from "./diagramCheck";
-import type { EdgeRoute, FlowLayout, NodeBox } from "./diagramLayout";
+import type { EdgeRoute, FlowLayout, NodeBox } from "../diagramLayout";
 
 const node = (
   id: string,

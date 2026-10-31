@@ -1,25 +1,24 @@
 // Copied from rongo (ui/src/diagramCheck.ts), kept in step by hand.
-import type { FlowLayout, NodeBox, Point } from "./diagramLayout";
-import { dotted, titleRoom } from "./diagramLayout";
-import { markRoom, tablePad, type ERLayout } from "./diagramER";
+// Almanach: test-only, so it lives under src/test and ships in no bundle.
+import type { FlowLayout, NodeBox, Point } from "../diagramLayout";
+import { dotted, titleRoom } from "../diagramLayout";
+import { markRoom, tablePad, type ERLayout } from "../diagramER";
 import {
   boxPad,
   nestInset,
   notePad,
   type SeqLifeline,
   type SequenceLayout,
-} from "./diagramSequence";
-import { ramp, textWidth } from "./diagramTheme";
+} from "../diagramSequence";
+import { ramp, textWidth } from "../diagramTheme";
 
 /**
- * A layout's taste gate as code: the connector rules diagram-design holds
- * every hand-drawn diagram to (references/primitives-core.md), checked on a
- * computed layout. Every arrow straight or bent at right angles, leaving and
- * entering a box square to its edge; never behind a box it does not
- * connect; no two arrows on one stretch of line or one attach point, and
- * none crossing another; every label clear of its line and of every box;
- * every label inside its box.
- * corpus.test.ts runs it over every corpus diagram, so a layout change that
+ * A layout's quality gate as code, checked on a computed layout: every
+ * arrow straight or bent at right angles, leaving and entering a box square
+ * to its edge; never behind a box it does not connect; no two arrows on one
+ * stretch of line or one attach point, and none crossing another; every
+ * label clear of its line and of every box; every label inside its box.
+ * The layout tests run it over their diagrams, so a layout change that
  * breaks one fails a test rather than a picture.
  *
  * Returns what is wrong, in words, empty when nothing is.

@@ -16,7 +16,7 @@ import {
   tidy,
   type FlowLayout,
 } from "./diagramLayout";
-import { check } from "./diagramCheck";
+import { check } from "./test/diagramCheck";
 
 const n = (
   id: string,

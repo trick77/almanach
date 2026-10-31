@@ -1,7 +1,7 @@
 // Copied from rongo (ui/src/diagramSequence.test.ts), kept in step by hand.
 import { describe, it, expect } from "vitest";
 import { layoutSequence } from "./diagramSequence";
-import { checkSequence } from "./diagramCheck";
+import { checkSequence } from "./test/diagramCheck";
 import type { SeqRow, SequenceIR } from "./diagramIR";
 import { textWidth } from "./diagramTheme";
 

@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { ERIR, EntityIR, RelIR } from "./diagramIR";
 import { layoutER, markRoom } from "./diagramER";
-import { checkER } from "./diagramCheck";
+import { checkER } from "./test/diagramCheck";
 import { drawER, drawFlow } from "./diagramDraw";
 import type { Palette } from "./diagramTheme";
 import { layoutSpine } from "./diagramLayout";
