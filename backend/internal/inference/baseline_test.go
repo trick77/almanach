@@ -216,6 +216,12 @@ func TestNoDiagramsSchemas(t *testing.T) {
 	if _, ok := statementProps(statements(true, RepoKinds))["diagram"]; !ok {
 		t.Error("statements without a diagram with diagrams on")
 	}
+	// The name's cap is the schema's, on edits and new statements alike.
+	for name, st := range map[string]map[string]any{"edits": statements(true, RepoKinds), "added": added(true, ProjectKinds)} {
+		if n := statementProps(st)["name"].(map[string]any); n["maxLength"] != NameMaxChars {
+			t.Errorf("%s name = %v, want maxLength %d", name, n, NameMaxChars)
+		}
+	}
 	if _, ok := projectDescription(false)["properties"].(map[string]any)["map"]; !ok {
 		t.Error("the map is gone with statement diagrams off")
 	}

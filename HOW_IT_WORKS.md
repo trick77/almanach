@@ -152,7 +152,10 @@ each with its `id` (the schema requires the string), and `added`, the new
 ones, which have no id field at all. A model asked to write `null` for a
 new statement's id numbered it anyway (`s1` on an empty page, `s36` on one
 up to `s35`) and lost the rewrite to the invented-id rule; with no field to
-write, it cannot. The code numbers a new statement.
+write, it cannot. The code numbers a new statement. On a page without
+statements the model still put new ones in `statements` with ids (an
+eval's project step, `s2`); there is nothing to edit there, so on every
+path such edits are taken as new statements, logged, before any rule.
 
 The answer is then held to rules the model cannot bend:
 

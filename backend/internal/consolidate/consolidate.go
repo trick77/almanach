@@ -398,13 +398,16 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
 		return nil
 	}
+	answer := *d
+	var moved int
+	answer.Statements, answer.Added, moved = asNew(current.Statements, d.Statements, d.Added)
+	logAsNew(ctx, w.log, "consolidate: "+scope, moved)
 	// A bugfix note is a pitfall's evidence on the merge path; any other
 	// note backs none.
 	if q.ChangeKind != "bugfix" {
-		backed := *d
-		backed.Added = unbackedPitfalls(ctx, w.log, "consolidate: "+scope, d.Added)
-		d = &backed
+		answer.Added = unbackedPitfalls(ctx, w.log, "consolidate: "+scope, answer.Added)
 	}
+	d = &answer
 	next, err := w.store.NextStatementID(ctx, scope, q.ProjectKey, repo)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
@@ -480,6 +483,26 @@ func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added
 		kept = append(kept, s)
 	}
 	return kept
+}
+
+// asNew is an answer's edits and new statements for a page without
+// statements: there is nothing to edit there, so an edit is the model
+// numbering what it writes, the mistake the empty page's note warns of (an
+// eval's project step was refused whole for "unknown statement id s2" so).
+// Its edits join the new statements, their ids cleared by Proposed and
+// ApplyPatch; on a page with statements nothing moves. moved counts them.
+func asNew(current []store.Statement, edits, added []inference.Statement) ([]inference.Statement, []inference.Statement, int) {
+	if len(current) > 0 || len(edits) == 0 {
+		return edits, added, 0
+	}
+	return []inference.Statement{}, append(slices.Clone(edits), added...), len(edits)
+}
+
+// logAsNew logs the edits asNew took as new statements.
+func logAsNew(ctx context.Context, log *slog.Logger, where string, moved int) {
+	if moved > 0 {
+		log.InfoContext(ctx, fmt.Sprintf("%s: %s on a page without statements taken as new", where, plural(moved, "edit")))
+	}
 }
 
 // attachDescription is attach over a whole description's edits and new
@@ -690,9 +713,10 @@ func cleanFiles(files []string) []string {
 }
 
 // Caps on the fields the config does not size: a statement's name and its
-// file list, the same numbers noergler holds a note's items to.
+// file list, the same numbers noergler holds a note's items to. The name's
+// is the schema's too.
 const (
-	nameMaxChars = 80
+	nameMaxChars = inference.NameMaxChars
 	filesMax     = 5
 	pathMaxChars = 200
 )

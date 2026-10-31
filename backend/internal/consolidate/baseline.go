@@ -608,6 +608,9 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if !ok {
 		return w.skipPart(ctx, r, &plan, name, "the call failed: "+res.Outcome.String())
 	}
+	var moved int
+	res.Patch.Statements, res.Patch.Added, moved = asNew(page.Statements, res.Patch.Statements, res.Patch.Added)
+	logAsNew(ctx, w.log, "baseline: "+name, moved)
 	// A step shown no problem area had no evidence for a new pitfall.
 	if len(problems) == 0 {
 		res.Patch.Added = unbackedPitfalls(ctx, w.log, "baseline: "+name, res.Patch.Added)
@@ -1200,6 +1203,11 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
+	answer := *d
+	var moved int
+	answer.Statements, answer.Added, moved = asNew(page.Statements, d.Statements, d.Added)
+	logAsNew(ctx, w.log, "baseline: "+projectName, moved)
+	d = &answer
 	taught := map[string]bool{}
 	for _, s := range page.Statements {
 		taught[s.ID] = baseline.FromPR(s)

@@ -1155,6 +1155,22 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 	if want := []string{"s1:Schnittstelle:Bleibt.", "s3:Ein Worker:Weil."}; p.Summary != "Das Projekt, neu." || !slices.Equal(ids(p), want) {
 		t.Errorf("project page = %q %v, want %v", p.Summary, ids(p), want)
 	}
+	// A project page without statements: an edit is a new statement (an
+	// eval's step was refused whole for "unknown statement id s2").
+	x := newWorld(t, 3)
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."),
+		Statements: []inference.Statement{stmt(ref("s4"), "rule", "Erfunden", "Neu.", "README.md")}}}}
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Neu.",
+		Statements: []inference.Statement{stmt(ref("s2"), "rule", "Quer", "Gilt.", "x.go")}, Added: []inference.Statement{}}}
+	x.w.drain(context.Background())
+	if p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; !slices.Equal(ids(p), []string{"s1:Quer:Gilt."}) {
+		t.Errorf("empty project page = %v, want the edit taken as s1", ids(p))
+	}
+	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; !slices.Equal(ids(p), []string{"s1:Erfunden:Neu."}) {
+		t.Errorf("empty repository page = %v, want the overview's edit taken as s1", ids(p))
+	}
 	// At its ceiling of two: the new one is left out, the edit and the
 	// summary stand.
 	p = project(&inference.Description{Summary: "Voll.", Statements: []inference.Statement{stmt(ref("s1"), "component", "Schnittstelle", "Geschärft.", "api.go")}, Added: added})

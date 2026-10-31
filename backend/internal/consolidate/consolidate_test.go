@@ -342,6 +342,24 @@ func TestFoldEditsAndAdded(t *testing.T) {
 			t.Errorf("%s: revision written: %+v", name, st.revisions)
 		}
 	}
+
+	// On a page without statements nothing can be edited: an edit, its id
+	// invented or missing, is a new statement, numbered by the code.
+	st = newFakeStore()
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+		Statements: []inference.Statement{{ID: str("s9"), Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}, {Kind: "rule", Name: "Takt", Text: "Jede Minute.", Files: []string{"b.go"}}},
+		Added:      []inference.Statement{{Kind: "component", Name: "Uploader", Text: "Nimmt an.", Files: []string{"c.go"}}},
+	}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("empty page: revisions = %+v", st.revisions)
+	}
+	var got []string
+	for _, s := range st.revisions[0].Statements {
+		got = append(got, s.ID+":"+s.Name)
+	}
+	if want := []string{"s1:Grenze", "s2:Takt", "s3:Uploader"}; !slices.Equal(got, want) {
+		t.Errorf("empty page: statements = %v, want %v", got, want)
+	}
 }
 
 // An extension is a repository's change recipe: on the project page it is

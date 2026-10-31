@@ -31,7 +31,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   name, file caps constants; checked on stored Swiss text. Over: rewrite rejected whole, page stays,
   never truncated. Identical rewrite = no revision.
 - Provenance is code's: `sources` carried by id, current PR appended on text change. Unknown id on
-  an edit = invented, rejected; on a step's drop/confirmed skipped, logged. New statements in
+  an edit = invented, rejected (page without statements: edits taken as new); on a step's
+  drop/confirmed skipped, logged. New statements in
   id-less `added`; id from `NextStatementID` over whole history, never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
