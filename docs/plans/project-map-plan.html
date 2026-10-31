@@ -123,7 +123,7 @@
   <tbody>
     <tr><td>T</td><td><code>docs: AGENTS.md trimmed to 4k</code></td><td>master</td><td>AGENTS.md only</td></tr>
     <tr><td>A</td><td><code>consolidate: code wins over docs, diagrams read, the project from every repository</code></td><td>master</td><td>prompts, <code>baseline/docs.go</code>, <code>projectStep</code>, <code>RunStore</code></td></tr>
-    <tr><td>G</td><td><code>consolidate: diagrams like rongo's, an overview map on every project</code></td><td>A</td><td>schemas, <code>baseline/diagram.go</code>, migration 0005, API, UI</td></tr>
+    <tr><td>G</td><td><code>consolidate: diagrams like rongo's, an overview map on every project</code></td><td>A</td><td>schemas, <code>baseline/diagram.go</code>, migration 0006, API, UI</td></tr>
     <tr><td>B</td><td><code>api: OIDC login like rongo</code></td><td>master</td><td>config, <code>internal/auth</code>, <code>api.go</code>, <code>App.tsx</code>, docs</td></tr>
     <tr><td>C</td><td><code>compose: Traefik stack, no host ports, dev override</code></td><td>B</td><td><code>compose.yaml</code>, <code>compose.dev.yaml</code>, <code>.env.example</code>, README</td></tr>
   </tbody>
@@ -252,7 +252,9 @@
   <li>A new <code>baseline/diagram.go</code>, in the same register as the provenance rules. An invalid diagram rejects the rewrite whole and the page stays.</li>
   <li><b>The map:</b> a repository node must be a source repository slug of the project. An unknown slug is an invention.</li>
   <li><b>Every diagram:</b> every edge end and every message end is a declared node or participant; no self edges, no duplicates; labels go through <code>lang.SwissSS</code> and are capped in length.</li>
-  <li><b>Caps from config:</b> <code>ALMANACH_DIAGRAM_MAX_NODES</code> (12) and <code>ALMANACH_DIAGRAM_MAX_EDGES</code> (20) per diagram, <code>ALMANACH_REPO_MAX_DIAGRAMS</code> (6) per page. Past about 12 nodes it is two diagrams; the prompt says so (D8).</li>
+  <li><b>Every node,</b> external, store and client nodes as much as repository nodes: a unique id, a kind from the fixed list, a label that is not empty.</li>
+  <li><b>Caps from config:</b> <code>ALMANACH_DIAGRAM_MAX_NODES</code> (12) and <code>ALMANACH_DIAGRAM_MAX_EDGES</code> (20) per diagram, <code>ALMANACH_MAX_DIAGRAMS</code> (6) statement diagrams per page, repository or project page; the project map does not count toward it. Past about 12 nodes it is two diagrams; the prompt says so (D8).</li>
+  <li><b>AGENTS.md,</b> within the 4k: "statements as paragraphs, never markdown" gains "diagrams only from validated JSON, drawn by rongo's code". Section 14 of the baseline plan ("no diagrams in the wiki") is superseded by the user's order.</li>
 </ul>
 
 <figure class="fig"><div class="scroll">
@@ -302,7 +304,7 @@
   <!-- nodes: bottom row -->
   <rect x="504" y="200" width="200" height="72" rx="6" fill="#1f1f1e"/><rect x="504" y="200" width="200" height="72" rx="6" fill="#171716" stroke="#9c9a92" stroke-width="1"/>
   <rect x="512" y="206" width="20" height="12" rx="2" fill="none" stroke="#6f6d66" stroke-width="0.8"/><text class="ntag" x="522" y="215" text-anchor="middle">DB</text>
-  <text class="nname" x="604" y="232" text-anchor="middle">Store</text><text class="nsub" x="604" y="248" text-anchor="middle">statements JSONB · diagram</text><text class="nsub" x="604" y="260" text-anchor="middle">revisions.map · 0005</text>
+  <text class="nname" x="604" y="232" text-anchor="middle">Store</text><text class="nsub" x="604" y="248" text-anchor="middle">statements JSONB · diagram</text><text class="nsub" x="604" y="260" text-anchor="middle">revisions.map · 0006</text>
 
   <rect x="256" y="200" width="184" height="72" rx="6" fill="#1f1f1e"/><rect x="256" y="200" width="184" height="72" rx="6" fill="#1b1b1a" stroke="#9c9a92" stroke-width="1"/>
   <rect x="264" y="206" width="28" height="12" rx="2" fill="none" stroke="#6f6d66" stroke-width="0.8"/><text class="ntag" x="278" y="215" text-anchor="middle">HTTP</text>
@@ -332,7 +334,7 @@
 <h3>Storage</h3>
 <ul>
   <li>Statement diagrams live in <code>Statement.Diagram</code>, inside the <code>statements</code> JSONB that already exists (<code>0001_initial.sql:140</code>): no column.</li>
-  <li>The project map: a new migration <code>0005_diagrams.sql</code> adds <code>revisions.map JSONB NULL</code>, project scope. 0004 is never edited.</li>
+  <li>The project map: a new migration <code>0006_diagrams.sql</code> (0005 is the retry trigger) adds <code>revisions.map JSONB NULL</code>, project scope. No applied migration is ever edited.</li>
   <li>A diagram change is a revision; identical diagrams with identical text are none. With <code>description: null</code> the map is carried forward. The PR merge path carries the map forward when it writes a project revision.</li>
   <li>Who updates the map: the baseline project step, on full runs and reconciles (D7). Statement diagrams follow their statements on both paths.</li>
 </ul>

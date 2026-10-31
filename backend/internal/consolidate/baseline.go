@@ -33,6 +33,7 @@ type RunStore interface {
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
+	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -480,7 +481,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	var part, purpose string
 	var read []baseline.File
 	if name == overviewName {
-		part, purpose, read = "the repository's documentation and manifests, for the overview", store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
+		part, purpose, read = overviewPart, store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
 	} else {
 		s, ok := subjectNamed(plan.Plan, name)
 		if !ok {
@@ -878,6 +879,12 @@ func encodeInto(r *store.BaselineRun, plan runPlan) error {
 	return nil
 }
 
+// overviewPart is the overview step's part: docs are claims, the code's
+// steps check them.
+const overviewPart = "the repository's documentation, manifests and diagram sources, for the overview. " +
+	"What docs and diagrams say are claims, possibly outdated, that the steps reading the code will check: " +
+	"never correct or drop a statement resting on code files from a doc alone"
+
 // focus is what a reconcile's step must look at besides its files: the
 // statements resting on paths that changed, the paths that are gone.
 func (w *Worker) focus(plan runPlan, page store.Page) string {
@@ -925,7 +932,12 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, w.limits))
+	repos, err := w.base.Store.Repos(ctx, r.ProjectKey, true)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
+		return errStop
+	}
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), w.limits))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -1087,13 +1099,39 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 	).Replace(prompts.Describe)
 }
 
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, l config.Limits) string {
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, l config.Limits) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
-		"{project_description}", describe(projectPage), "{repo_description}", describe(repoPage),
+		"{project_description}", describe(projectPage), "{repo_description}", describe(repoPage), "{other_repos}", others,
 	).Replace(prompts.Project)
+}
+
+// otherRepos is the summaries of the project's other source repositories,
+// by slug, so the project is written as a whole: within
+// ProjectReposMaxBytes, past it and without a summary only the names.
+func otherRepos(repos []store.RepoRow, self string) string {
+	var b strings.Builder
+	var named []string
+	for _, r := range repos {
+		if r.Slug == self {
+			continue
+		}
+		entry := fmt.Sprintf("### %s\n\n%s\n\n", r.Slug, r.Summary)
+		if r.Summary == "" || b.Len()+len(entry) > baseline.ProjectReposMaxBytes {
+			named = append(named, r.Slug)
+			continue
+		}
+		b.WriteString(entry)
+	}
+	if len(named) > 0 {
+		fmt.Fprintf(&b, "Also in the project, without a summary here: %s.\n", strings.Join(named, ", "))
+	}
+	if b.Len() == 0 {
+		return "_None._"
+	}
+	return b.String()
 }
 
 // describeSourced is describe with each statement's provenance: a step

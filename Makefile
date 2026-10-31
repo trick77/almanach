@@ -47,3 +47,18 @@ build: fe-build
 
 test:
 	cd backend && go test -race ./...
+
+# The prompt eval: full baseline runs of EVAL_REPOS (slug=url, one project)
+# through a real model, the pages written to EVAL_OUT. Paid calls, never in
+# check or CI. EVAL_ENV is a file exporting EVAL_API_KEY, a key of llmwire's
+# mimo provider; it stays outside the repository.
+EVAL_REPOS ?= almanach=https://github.com/trick77/almanach,rongo=https://github.com/trick77/rongo
+EVAL_MODEL ?= mimo-v2.6-pro
+EVAL_OUT ?= $(CURDIR)/.prompt-eval
+
+.PHONY: prompt-eval
+prompt-eval:
+	@test -n "$(EVAL_ENV)" || { echo "EVAL_ENV=<file exporting EVAL_API_KEY> required"; exit 1; }
+	. "$(EVAL_ENV)" && cd backend && LLMWIRE_MIMO_API_KEY="$$EVAL_API_KEY" EVAL_REPOS="$(EVAL_REPOS)" \
+		EVAL_MODEL="$(EVAL_MODEL)" EVAL_OUT="$(EVAL_OUT)" \
+		go test -tags prompteval -run TestPromptEval -count=1 -timeout 3h -v ./internal/consolidate/

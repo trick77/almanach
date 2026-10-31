@@ -33,6 +33,9 @@ type runStore struct {
 	repos      []store.SourceRepo
 	documented *store.BaselineRun
 	sources    map[string]bool
+	// others is the project's source repositories with their summaries.
+	others    []store.RepoRow
+	othersErr error
 	// saved is every state a run was saved in, in order.
 	saved []string
 }
@@ -88,6 +91,10 @@ func (s *runStore) SourceRepos(context.Context, string) ([]store.SourceRepo, err
 
 func (s *runStore) IsSourceRepo(_ context.Context, key, slug string) (bool, error) {
 	return s.sources[key+"/"+slug], nil
+}
+
+func (s *runStore) Repos(context.Context, string, bool) ([]store.RepoRow, error) {
+	return s.others, s.othersErr
 }
 
 // fakeCode is a clone: one tree, the bodies of its files, one diff.
@@ -239,6 +246,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s2"), "rule", "Login", "Zweistufig, mit Sperre.", "auth/login.go")}, Confirmed: []string{"s1"}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.", Statements: []inference.Statement{}}}
+	x.st.others = []store.RepoRow{{Slug: "portal", Summary: "Das Portal ruft svc auf."}, {Slug: "svc", Summary: "Alte Fassung."}}
 	x.w.drain(context.Background())
 
 	r := x.run()
@@ -291,6 +299,25 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	if !strings.Contains(auth, `the subject "Anmeldung": Login.`) || !strings.Contains(auth, "<<<FILE auth/login.go>>>\npackage auth") ||
 		!strings.Contains(auth, "[s1] component: Dienst") {
 		t.Errorf("subject prompt:\n%s", auth)
+	}
+	proj := x.models.prompts[len(x.models.prompts)-1]
+	if !strings.Contains(proj, "### portal\n\nDas Portal ruft svc auf.") || strings.Contains(proj, "Alte Fassung.") ||
+		!strings.Contains(proj, "Ein Dienst für Werkzeuge.") || strings.Contains(proj, "{other_repos}") {
+		t.Errorf("project prompt:\n%s", proj)
+	}
+}
+
+// The other repositories' summaries: the run's own left out, past the cap
+// and without a summary only names.
+func TestOtherRepos(t *testing.T) {
+	if got := otherRepos([]store.RepoRow{{Slug: "svc", Summary: "x"}}, "svc"); got != "_None._" {
+		t.Errorf("only itself = %q", got)
+	}
+	big := strings.Repeat("a", baseline.ProjectReposMaxBytes-20)
+	got := otherRepos([]store.RepoRow{{Slug: "a", Summary: big}, {Slug: "b", Summary: "zu viel"}, {Slug: "c"}, {Slug: "svc", Summary: "selbst"}}, "svc")
+	if !strings.HasPrefix(got, "### a\n\n"+big) || strings.Contains(got, "zu viel") || strings.Contains(got, "selbst") ||
+		!strings.HasSuffix(got, "Also in the project, without a summary here: b, c.\n") {
+		t.Errorf("otherRepos = …%q", got[len(got)-80:])
 	}
 }
 
@@ -445,6 +472,22 @@ func TestRun_Failures(t *testing.T) {
 	z.w.drain(context.Background())
 	if r := z.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "read the clone") {
 		t.Fatalf("unreadable clone: %+v", r)
+	}
+
+	// The other repositories unreadable: the project step waits, the run
+	// stays at it.
+	u := newWorld(t, 16)
+	u.queue(store.RunFull, "")
+	u.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	u.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
+	}
+	u.st.othersErr = errors.New("db down")
+	u.w.drain(context.Background())
+	if r := u.run(); r.State != store.RunProject || r.Calls != 3 {
+		t.Fatalf("repositories unreadable: %+v, want the run held at its project step", r)
 	}
 
 	v := newWorld(t, 16)
