@@ -525,8 +525,10 @@ never across a model call.
 ## 5. Operations
 
 - `almanach migrate` applies the embedded migrations to the file
-  `ALMANACH_DB_PATH` names, each in its own transaction (a second migrator
-  waits on SQLite's write lock), and exits: the init container's job.
+  `ALMANACH_DB_PATH` names, each in its own transaction, and exits: the
+  init container's job. The whole run holds a lock on
+  `<ALMANACH_DB_PATH>-migrate.lock` beside the database, so a second
+  migrator waits for the first instead of applying the same file again.
   `almanach serve` refuses a schema that is behind, naming the pending
   files. Both check first that the file's folder exists and takes a file.
 - The database is one file (with its `-wal` and `-shm` beside it) on a
@@ -602,9 +604,13 @@ How SQLite holds what it has no type for:
 - **Times** are `TEXT`, UTC, RFC 3339 with all nine digits of the
   nanoseconds (`2026-10-01T12:00:00.000000000Z`). Fixed width, so text
   order is time order and two merges a second apart keep their order. Go
-  writes every one through the store's one helper; the schema has no
-  clock of its own (no `datetime('now')`, no default on a time column),
-  and a stored time in any other shape is a read error, never a zero time.
+  writes every one through the store's one helper, in UTC; the schema has
+  no clock of its own (no `datetime('now')`, no default on a time column),
+  every time column's `CHECK (... GLOB '????-??-??T??:??:??.?????????Z')`
+  refuses any other shape, and one read in another shape is an error,
+  never a zero time. Not the driver's `_timefmt`: it formats a custom
+  layout in the time's own zone, so a local time would land as its local
+  clock with a `Z`.
 - **JSON** (the note, the bugfix, a revision's statements and map, a run's
   plan, a call's warnings, the delivery body) is `TEXT` with a
   `CHECK (json_valid(...))`, read with `json_each`, `json_array_length`,
@@ -621,8 +627,14 @@ on the DSN): it takes the database's one write lock at `BEGIN`, so it never
 holds a read snapshot and then fails its first write with "database is
 locked". A second writer waits up to the busy timeout (10 s, kit's
 `sqlitex.DSN`, with WAL and foreign keys); one that runs out is an error
-like any failed write, and the webhook answers 500. Readers never wait in
-WAL: the UI and the API read while the worker writes.
+like any failed write, and the webhook answers 500. In the worker it is
+temporary (`store.IsBusy`), like a gateway failure: the worker holds, the
+note stays queued with its attempt counted, a run's step is taken again
+after the hold, both up to `maxFoldAttempts`. Readers never wait in WAL:
+the UI and the API read while the worker writes. The pool holds at most
+four connections, each a WASM instance of SQLite with its own memory.
+`/readyz` reads `schema_migrations`, so a volume gone or a file that is no
+database turns it red.
 
 Four groups of tables:
 
@@ -656,7 +668,9 @@ source repository, and the wiki lists the sources (4b).
 
 **The baseline.** `baseline_runs` is one row per run: the repository, the
 mode (`full` or `reconcile` from `base_commit`), the trigger (`manual`,
-`first_ready`, `monthly`), the commit (the head when queued, pinned when
+`first_ready`, `monthly`, or `retry`: a failed run queued again in its own
+mode, up to three times in a row, a day apart or after the reconcile
+interval when that is shorter), the commit (the head when queued, pinned when
 the run starts), the state (`queued`, `cataloguing`, `describing`,
 `project`, `done`, `failed`), the step and the steps, the plan (the
 catalogue as JSON: subjects with their files and sizes, what this run
