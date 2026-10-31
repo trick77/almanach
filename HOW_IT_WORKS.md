@@ -412,24 +412,34 @@ resumes after a restart. The run pins the clone's head when it starts.
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
 sequence or an entity model, and `baseline/diagram.go` holds it to code's
-rules like a statement: every arrow and message end declared, no self
-edges, nothing twice, unique ids, known shapes, labels present, Swiss and
-capped, the nodes and edges per diagram and the statement diagrams per page
-from config. Anything off rejects the rewrite whole. Every project carries
-a system map, the project step's alone (`revisions.map`): zones `clients`,
-`repositories`, `stores`, `external`, a repository node named by a source
-repository's slug, an edge labelled by how the parts talk (HTTP, event, DB,
-library, file). A project step's rewrite without a map is off schema, a
-"no change" for a project without one is skipped and redone, and a note's
-fold carries the map forward unchanged. A statement may carry a `diagram`
-where a picture says more than its paragraphs, on either path. Code carries
-it by statement id like provenance: `diagram: null` keeps it, a new one
-replaces it, it goes only with its statement; the prompts show it as JSON
-to correct. A changed diagram is a changed statement (reordering is none),
-and only a new or changed one is held to today's caps, so lowering a cap
-never freezes a page; a page over the count may keep it, not grow. A quiet
-reconcile of a project without a map still runs the project step. The UI draws both with rongo's copied layout, drawing
-and theme, no Mermaid; the map's repository nodes link to their pages.
+rules like a statement: every arrow and message end declared, no self edge
+in a flow or an entity model (a sequence may message itself, rongo draws
+it), nothing twice, unique ids, known shapes, labels present, Swiss and
+capped, the nodes and edges per diagram from config, within the drawing's
+own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule
+rejects the rewrite whole; one added past the page's count
+(`ALMANACH_MAX_DIAGRAMS`) is left out, its statement kept, and the reading
+goes on. With the count at 0 no schema offers a diagram. Code carries a
+statement's diagram by id like provenance: `diagram: null` keeps it,
+`{"kind": "none"}` removes it, a new one replaces it; the prompts show it
+as JSON to correct. A changed diagram is a changed statement (reordering is
+none), and only a new or changed one meets today's caps, so lowering a cap
+never freezes a page; a page over the count may keep it, not grow. Every
+project with no more source repositories than a map holds (15, room left
+for one more node) carries a system map, the project step's alone
+(`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
+a repository node named by a source repository's slug, an edge labelled
+by how the parts talk (HTTP, event, DB, library, file), held to the
+drawing's limits. A larger project gets none, and the prompt asks for
+null. The map never costs the description: a repository that left the
+project is taken out of it first, and a map that still breaks a rule, or
+none returned, keeps the stored one with the reason logged. A "no change"
+for a project that is due a map and has none is skipped and redone, a
+quiet reconcile of one still runs the project step, and a note's fold
+carries the map forward unchanged. The project page shows a placeholder
+only where `map_expected` says a run will draw one. The UI draws both
+with rongo's copied layout, drawing and theme, no Mermaid; the map's
+repository nodes link to their pages.
 
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none

@@ -3,6 +3,7 @@ package consolidate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -24,8 +25,8 @@ func seq(label string) *diagram.Diagram {
 }
 
 // A statement's diagram is stored with it, its labels Swiss; a diagram
-// that breaks a rule, or one too many on the page, rejects the rewrite
-// whole.
+// that breaks a rule rejects the rewrite whole, one too many on the page
+// is left out.
 func TestFoldStatementDiagram(t *testing.T) {
 	st := newFakeStore()
 	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
@@ -41,19 +42,79 @@ func TestFoldStatementDiagram(t *testing.T) {
 
 	dangling := seq("x")
 	dangling.Rows[0].To = "queue"
-	for name, statements := range map[string][]inference.Statement{
-		"dangling end": {{Kind: "rule", Name: "R", Text: "T", Diagram: dangling}},
-		"over the page's cap": {
-			{Kind: "rule", Name: "R1", Text: "T", Diagram: seq("a")},
-			{Kind: "rule", Name: "R2", Text: "T", Diagram: seq("b")},
-		},
-	} {
-		st := newFakeStore()
-		m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: statements}, nil)}
-		newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
-		if len(st.revisions) != 0 {
-			t.Errorf("%s: revisions = %+v, want the rewrite rejected", name, st.revisions)
-		}
+	st = newFakeStore()
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{Kind: "rule", Name: "R", Text: "T", Diagram: dangling}}}, nil)}
+	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 0 {
+		t.Errorf("dangling end: revisions = %+v, want the rewrite rejected", st.revisions)
+	}
+
+	// One diagram past the page's count (1 here) costs that diagram, not the
+	// rewrite: the later one is left out, its statement kept.
+	st = newFakeStore()
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{Kind: "rule", Name: "R1", Text: "T", Diagram: seq("a")},
+		{Kind: "rule", Name: "R2", Text: "T", Diagram: seq("b")},
+	}}, nil)}
+	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("over the page's count: revisions = %+v, want one", st.revisions)
+	}
+	if got := st.revisions[0].Statements; got[0].Diagram == nil || got[1].Diagram != nil || got[1].Text != "T" {
+		t.Errorf("statements = %+v, want R2 kept without its diagram", got)
+	}
+}
+
+// {"kind": "none"} removes a statement's diagram and keeps the statement;
+// on a new statement it is no diagram.
+func TestFoldNoneRemovesTheDiagram(t *testing.T) {
+	page := existingRepoPage()
+	page.Statements[0].Diagram = seq("schreibt")
+	st := newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	s := page.Statements[0]
+	none := &diagram.Diagram{Kind: diagram.KindNone}
+	m := &fakeMerger{result: okResult(&inference.Description{Summary: page.Summary, Statements: []inference.Statement{
+		{ID: str(s.ID), Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Diagram: none},
+		{Kind: "rule", Name: "Neu", Text: "T", Diagram: none},
+	}}, nil)}
+	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("revisions = %+v, want one", st.revisions)
+	}
+	got := st.revisions[0].Statements
+	if got[0].Diagram != nil || got[0].Text != s.Text || got[1].Diagram != nil {
+		t.Errorf("statements = %+v, want both without a diagram", got)
+	}
+	if len(got[0].Sources) != 2 {
+		t.Errorf("sources = %+v, want the removal counted as a change", got[0].Sources)
+	}
+}
+
+// A diagram over the page's count on a baseline step is left out; the
+// reading goes on, no ceiling reached.
+func TestRun_DiagramOverTheCountKeepsReading(t *testing.T) {
+	x := newWorld(t, 16)
+	x.w.limits.MaxDiagrams = 1
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{
+			{Kind: "component", Name: "Eins", Text: "T", Files: []string{"README.md"}, Diagram: seq("a")},
+			{Kind: "component", Name: "Zwei", Text: "T", Files: []string{"README.md"}, Diagram: seq("b")}}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	p := x.plan(t)
+	if r := x.run(); r.State != store.RunDone || len(p.Skipped) != 0 {
+		t.Fatalf("run %+v, skipped %v; want every part read", r, p.Skipped)
+	}
+	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
+	if len(page.Statements) != 3 || page.Statements[0].Diagram == nil || page.Statements[1].Diagram != nil {
+		t.Errorf("page = %+v, want three statements, the second without its diagram", page.Statements)
 	}
 }
 
@@ -137,8 +198,12 @@ func TestFoldLoweredCaps(t *testing.T) {
 		t.Errorf("changed over-cap diagram: revisions = %+v, want rejected", st.revisions)
 	}
 	third := inference.Statement{Kind: "rule", Name: "R3", Text: "T", Diagram: seq("y")}
-	if st := run([]inference.Statement{echo(s1, nil), echo(s2, nil), third}); len(st.revisions) != 0 {
-		t.Errorf("a third diagram: revisions = %+v, want rejected, the page may not grow", st.revisions)
+	st := run([]inference.Statement{echo(s1, nil), echo(s2, nil), third})
+	if len(st.revisions) != 1 {
+		t.Fatalf("a third diagram: revisions = %+v, want the rewrite taken", st.revisions)
+	}
+	if got := st.revisions[0].Statements; got[0].Diagram == nil || got[1].Diagram == nil || got[2].Diagram != nil {
+		t.Errorf("statements = %+v, want the page's two kept and the third left out", got)
 	}
 }
 
@@ -192,10 +257,26 @@ func TestBaselinePromptsFilled(t *testing.T) {
 		if ph := left.FindAllString(out, -1); len(ph) > 0 {
 			t.Errorf("%s prompt: placeholders left: %v", name, ph)
 		}
-		// The shared rules, once, their caps filled in.
-		if !strings.Contains(out, "At most 4 nodes") || strings.Count(out, "## Diagrams") != 1 {
-			t.Errorf("%s prompt lacks the diagram rules or has them twice", name)
+		// The shared rules, once, their caps filled in; the field offered.
+		if !strings.Contains(out, "At most 4 nodes") || strings.Count(out, "## Diagrams") != 1 || !strings.Contains(out, `"diagram": <diagram>`) {
+			t.Errorf("%s prompt lacks the diagram rules or the field, or has them twice", name)
 		}
+	}
+	// With ALMANACH_MAX_DIAGRAMS=0 the prompts offer no diagram either, the
+	// project's map still asked for.
+	off := limits
+	off.MaxDiagrams = 0
+	for name, out := range map[string]string{
+		"describe": renderDescribe(r, existingRepoPage(), off, 1, 2, 1, "the overview", "", "_None._", nil),
+		"project":  renderProject(r, existingRepoPage(), store.Page{}, "_None._", []string{"files"}, off),
+		"merge":    render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, off),
+	} {
+		if ph := left.FindAllString(out, -1); len(ph) > 0 || strings.Contains(out, `"diagram"`) || !strings.Contains(out, "Statements carry no diagram here") {
+			t.Errorf("%s prompt with diagrams off: placeholders %v, or a diagram offered", name, ph)
+		}
+	}
+	if out := renderProject(r, existingRepoPage(), store.Page{}, "_None._", []string{"files"}, off); !strings.Contains(out, "Every rewrite carries `map`, never null") {
+		t.Error("project prompt with diagrams off lost the map")
 	}
 }
 
@@ -276,11 +357,14 @@ func TestRun_ProjectWithoutAMap(t *testing.T) {
 	}
 }
 
-// The map is checked like a statement: an invented slug or a dangling edge
-// refuses the rewrite and the project stays; a changed map alone is a
-// revision, the same map with the same text none.
+// The map never sinks the description: a map that breaks a rule is not
+// drawn, the stored one stays, and the text is applied all the same. A
+// repository no longer in the project is taken out of a returned map
+// before the check. A changed map alone is a revision, the same map with
+// the same text none. The map is held to the drawing's limits, not the
+// statement diagrams' caps.
 func TestRun_ProjectMap(t *testing.T) {
-	project := func(m *diagram.Diagram) world {
+	projectAs := func(summary string, m *diagram.Diagram) world {
 		x := newWorld(t, 16)
 		x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "portal"}}
 		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.",
@@ -288,11 +372,12 @@ func TestRun_ProjectMap(t *testing.T) {
 		x.queue(store.RunFull, "")
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
 		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
-		x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
+		x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: summary,
 			Statements: []inference.Statement{}, Map: m}}
 		x.w.drain(context.Background())
 		return x
 	}
+	project := func(m *diagram.Diagram) world { return projectAs("Werkzeuge.", m) }
 	projectRevisions := func(x world) []store.NewRevision {
 		var out []store.NewRevision
 		for _, r := range x.st.revisions {
@@ -303,21 +388,83 @@ func TestRun_ProjectMap(t *testing.T) {
 		return out
 	}
 
-	invented := drawnMap("svc", "billing")
+	// A bad map with new text: the text lands, the stored map stays.
 	dangling := drawnMap("svc")
 	dangling.Edges = append(dangling.Edges, diagram.Edge{From: "svc", To: "nowhere", Label: "HTTP", Head: "end"})
-	for name, m := range map[string]*diagram.Diagram{"invented slug": invented, "dangling edge": dangling} {
-		x := project(m)
-		if revs := projectRevisions(x); len(revs) != 0 || x.run().Skipped != 1 {
-			t.Errorf("%s: project revisions %+v, skipped %d; want refused", name, revs, x.run().Skipped)
-		}
+	x := projectAs("Werkzeuge, neu.", dangling)
+	revs := projectRevisions(x)
+	if len(revs) != 1 || revs[0].Summary != "Werkzeuge, neu." || !diagram.Equal(revs[0].Map, drawnMap("svc")) || x.run().Skipped != 0 {
+		t.Errorf("dangling edge: revisions %+v, skipped %d; want the text with the stored map", revs, x.run().Skipped)
+	}
+	// A bad map with the same text: nothing changes, nothing is skipped.
+	if x := project(dangling); len(projectRevisions(x)) != 0 || x.run().Skipped != 0 {
+		t.Errorf("dangling edge, same text: revisions %+v, skipped %d", projectRevisions(x), x.run().Skipped)
+	}
+
+	// A repository that left the project is taken out with its edges; the
+	// rest of the map is what it was.
+	departed := drawnMap("svc", "billing")
+	departed.Edges = append(departed.Edges, diagram.Edge{From: "billing", To: "pg", Label: "DB", Head: "end"})
+	if x := project(departed); len(projectRevisions(x)) != 0 {
+		t.Errorf("departed slug: revisions = %+v, want the map as stored, no revision", projectRevisions(x))
 	}
 
 	if revs := projectRevisions(project(drawnMap("svc"))); len(revs) != 0 {
 		t.Errorf("same map, same text: revisions = %+v, want none", revs)
 	}
-	revs := projectRevisions(project(drawnMap("svc", "portal")))
+	revs = projectRevisions(project(drawnMap("svc", "portal")))
 	if len(revs) != 1 || len(revs[0].Map.Nodes) != 4 {
 		t.Fatalf("changed map: revisions = %+v, want one with the new map", revs)
+	}
+
+	// 13 nodes: over the statement diagrams' cap (12), within the drawing's.
+	wide := drawnMap("svc", "portal")
+	for i := range 9 {
+		wide.Nodes = append(wide.Nodes, diagram.Node{ID: fmt.Sprintf("x%d", i), Label: "Extern", Shape: "step", Zone: "external"})
+	}
+	if revs := projectRevisions(project(wide)); len(revs) != 1 || len(revs[0].Map.Nodes) != 13 {
+		t.Errorf("13-node map: revisions = %+v, want it drawn", revs)
+	}
+}
+
+// A project with more repositories than a map holds gets none: the step
+// asks for null, a returned map is not drawn, and a quiet reconcile does
+// not run the step again for the missing map.
+func TestRun_ProjectTooLargeForAMap(t *testing.T) {
+	many := func() []store.RepoSummary {
+		var out []store.RepoSummary
+		for i := range diagram.DrawMaxNodes {
+			out = append(out, store.RepoSummary{Slug: fmt.Sprintf("r%02d", i)})
+		}
+		return append(out, store.RepoSummary{Slug: "svc"})
+	}
+	x := newWorld(t, 16)
+	x.st.others = many()
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
+		Statements: []inference.Statement{}, Map: drawnMap("svc")}}
+	x.w.drain(context.Background())
+	p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	if p.Summary != "Werkzeuge." || p.Map != nil {
+		t.Errorf("project page = %+v, want the text and no map", p)
+	}
+	prompt := x.models.prompts[len(x.models.prompts)-1]
+	if !strings.Contains(prompt, "This project has 17 repositories, more than one map holds: `map` is null") {
+		t.Errorf("project prompt does not say the map is null")
+	}
+
+	plan, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p",
+		Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
+	y := newWorld(t, 16)
+	y.st.others = many()
+	y.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Statements: []store.Statement{}}
+	y.st.documented = &store.BaselineRun{Commit: older40, Plan: plan, State: store.RunDone}
+	y.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
+	y.queue(store.RunReconcile, older40)
+	y.w.drain(context.Background())
+	if y.run().State != store.RunDone || len(y.st.calls) != 0 {
+		t.Errorf("quiet reconcile of a too-large project: run %+v, %d calls; want done without one", y.run(), len(y.st.calls))
 	}
 }

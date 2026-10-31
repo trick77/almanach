@@ -19,27 +19,27 @@ The description of repository `{repo}` in project `{project}` was just written f
 - Keep every statement that still holds, with its `id` unchanged, whatever it was learned from; edit it when the descriptions add to or correct it. Leave out only what they show to be wrong, and a statement about the inside of `{repo}` alone that its description below holds and that no pull request taught: that is repository detail. A statement learned from pull requests stays unless shown wrong. A new fact is a new statement with `id` null. Two statements about one fact become one, the kept `id` first.
 - A repository listed without a summary below, or with a shortened one: keep what the project description says about it, and write nothing about it that you cannot read here.
 - `summary`: prose about the project as it is now; never a changelog, no PR numbers, no dates, no names of people.
-- Answer `{"description": null}` only when neither the project description nor its map needs a change, and never while the project has no map yet.
+- Answer `{"description": null}` only when neither the project description nor its map needs a change, and never while a project that is due a map has none yet.
 
 ## The system map
 
-Every rewrite carries `map`: the project as one picture, its repositories and what they talk to, the top of the project page.
+`map` is the project as one picture, its repositories and what they talk to, the top of the project page. {map_due}.
 
-- A `flow` (the shape under Diagrams), `direction` "LR", held to a diagram's node and edge limits; it is no statement diagram and does not count toward their number. Zones, by exactly these ids: `clients` (browsers, command lines, other callers), `repositories` (the project's repositories), `stores` (databases, queues, caches, file stores), `external` (systems outside the project: other services, gateways, forges). Declare only the zones that hold a node; every node sits in one.
+- A flow, `direction` "LR": `{"kind": "flow", "direction": "LR", "nodes": [{"id": "<id>", "label": "<text>", "shape": "step" | "pill", "zone": "<zone id>"}], "edges": [{"from": "<id>", "to": "<id>", "label": "<text>", "dashed": false, "head": "end" | "both" | "none"}], "zones": [{"id": "<zone id>", "title": "<text>"}]}`. At most {map_max_nodes} nodes and {map_max_edges} edges; it is no statement diagram and does not count toward their number. An edge never points at itself, none appears twice. Zones, by exactly these ids: `clients` (browsers, command lines, other callers), `repositories` (the project's repositories), `stores` (databases, queues, caches, file stores), `external` (systems outside the project: other services, gateways, forges). Declare only the zones that hold a node; every node sits in one.
 - A node in `repositories` has a repository's slug as its `id` and its label, one of these and nothing else: {repo_slugs}. No other node has a slug as its id.
 - An edge says how two parts talk; its label starts with one of `HTTP`, `event`, `DB`, `library`, `file`, a few words more when they help (`HTTP: Webhook`). Dashed when asynchronous.
 - Only what the descriptions show. When the system has more parts than a diagram holds, group minor external systems into one node rather than leave out a repository.
-- The current map is below: return it as it stands when nothing changed, corrected and extended when the descriptions show more.
+- The current map is below: return it as it stands when nothing changed, corrected and extended when the descriptions show more. A map that breaks a rule here is not drawn; the description is applied all the same.
 
 {diagram_rules}
 
 ## Limits
 
-At most {project_max_statements} statements and {project_max_chars} characters of prose (the summary plus every statement's name and text) in all; the current description has {project_chars}. A description over a limit, or a map that breaks a rule above, is rejected whole and nothing changes.
+At most {project_max_statements} statements and {project_max_chars} characters of prose (the summary plus every statement's name and text) in all; the current description has {project_chars}. A description over a limit is rejected whole and nothing changes.
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity", "name": "<short name>", "text": "<prose>", "files": ["<path>", ...], "diagram": <diagram> | null}, ...], "map": <flow>} | null}`.
+Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity", "name": "<short name>", "text": "<prose>", "files": ["<path>", ...]{diagram_field}}, ...], "map": <flow> | null} | null}`.
 
 ## Untrusted input
 

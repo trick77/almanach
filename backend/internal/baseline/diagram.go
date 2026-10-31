@@ -2,6 +2,7 @@ package baseline
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -30,20 +31,10 @@ type DiagramCaps struct {
 	MaxEdges int
 }
 
-// DrawCaps is the most rongo's drawing lays out (diagramIR.ts fits), the
-// bound config's caps may not pass: what an unchanged stored diagram is
-// held to.
-var DrawCaps = DiagramCaps{MaxNodes: 16, MaxEdges: 24}
-
-// The ceilings of rongo's drawing per kind (diagramIR.ts fits) where they
-// are below a flow's: a sequence and an entity model are wider per item.
-const (
-	drawMaxActors   = 8
-	drawMaxRows     = 20
-	drawMaxEntities = 8
-	drawMaxRels     = 12
-	drawMaxAttrs    = 12
-)
+// DrawCaps is the most rongo's drawing lays out, the bound config's caps may
+// not pass: what the system map and an unchanged stored diagram are held
+// to. The sequence and entity limits are diagram.DrawMax* too.
+var DrawCaps = DiagramCaps{MaxNodes: ir.DrawMaxNodes, MaxEdges: ir.DrawMaxEdges}
 
 // Fixed caps on a diagram's text, like a statement name's.
 const (
@@ -132,6 +123,37 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 	return checkFlow(d, caps)
 }
 
+// DropDeparted takes out of a map the repository nodes whose slug is no
+// source repository of the project any more, with their edges, and names
+// them: a repository removed since the map was drawn is history, not an
+// invention, and must not cost the map. A copy; nil stays nil.
+func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
+	if d == nil {
+		return nil, nil
+	}
+	gone := map[string]bool{}
+	out := *d
+	out.Nodes = nil
+	for _, n := range d.Nodes {
+		if n.Zone == ZoneRepositories && !slices.Contains(slugs, n.ID) {
+			gone[n.ID] = true
+			continue
+		}
+		out.Nodes = append(out.Nodes, n)
+	}
+	if len(gone) == 0 {
+		return d, nil
+	}
+	out.Edges = nil
+	for _, e := range d.Edges {
+		if !gone[e.From] && !gone[e.To] {
+			out.Edges = append(out.Edges, e)
+		}
+	}
+	names := slices.Sorted(maps.Keys(gone))
+	return &out, names
+}
+
 func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 	if !slices.Contains(directions, d.Direction) {
 		return nil, fmt.Sprintf("direction %q is neither TB nor LR", d.Direction)
@@ -206,7 +228,7 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 }
 
 func checkSequence(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
-	maxActors := min(caps.MaxNodes, drawMaxActors)
+	maxActors := min(caps.MaxNodes, ir.DrawMaxActors)
 	if len(d.Actors) == 0 || len(d.Actors) > maxActors {
 		return nil, fmt.Sprintf("%d participants, not 1 to %d", len(d.Actors), maxActors)
 	}
@@ -224,10 +246,10 @@ func checkSequence(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 	}
 	// Every row takes a line of the drawing, a frame's opening, divider and
 	// end as much as a message: all of them count against rongo's rows.
-	if len(d.Rows) > drawMaxRows {
-		return nil, fmt.Sprintf("%d rows, over the cap of %d", len(d.Rows), drawMaxRows)
+	if len(d.Rows) > ir.DrawMaxRows {
+		return nil, fmt.Sprintf("%d rows, over the cap of %d", len(d.Rows), ir.DrawMaxRows)
 	}
-	maxRows := min(caps.MaxEdges, drawMaxRows)
+	maxRows := min(caps.MaxEdges, ir.DrawMaxRows)
 	depth, drawn, messages := 0, 0, 0
 	for i, r := range d.Rows {
 		at := fmt.Sprintf("row %d", i+1)
@@ -299,11 +321,11 @@ func checkER(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 	if !slices.Contains(directions, d.Direction) {
 		return nil, fmt.Sprintf("direction %q is neither TB nor LR", d.Direction)
 	}
-	maxEntities := min(caps.MaxNodes, drawMaxEntities)
+	maxEntities := min(caps.MaxNodes, ir.DrawMaxEntities)
 	if len(d.Entities) == 0 || len(d.Entities) > maxEntities {
 		return nil, fmt.Sprintf("%d entities, not 1 to %d", len(d.Entities), maxEntities)
 	}
-	maxRels := min(caps.MaxEdges, drawMaxRels)
+	maxRels := min(caps.MaxEdges, ir.DrawMaxRels)
 	if len(d.Rels) > maxRels {
 		return nil, fmt.Sprintf("%d relationships, over the cap of %d", len(d.Rels), maxRels)
 	}
@@ -317,8 +339,8 @@ func checkER(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 		if reason != "" {
 			return nil, reason
 		}
-		if len(e.Attrs) > drawMaxAttrs {
-			return nil, fmt.Sprintf("entity %q: %d fields, over the cap of %d", e.ID, len(e.Attrs), drawMaxAttrs)
+		if len(e.Attrs) > ir.DrawMaxAttrs {
+			return nil, fmt.Sprintf("entity %q: %d fields, over the cap of %d", e.ID, len(e.Attrs), ir.DrawMaxAttrs)
 		}
 		entity := ir.Entity{ID: e.ID, Label: text, Attrs: []ir.Attr{}}
 		for _, a := range e.Attrs {

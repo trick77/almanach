@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/almanach/internal/diagram"
 	kitenv "github.com/trick77/ship/kit/env"
 )
 
@@ -44,13 +45,6 @@ type Limits struct {
 	DiagramMaxEdges int
 	MaxDiagrams     int
 }
-
-// The ceilings of rongo's drawing (ui/src/diagramIR.ts fits): a diagram
-// past them is not drawn, so the caps may not go past them either.
-const (
-	drawMaxNodes = 16
-	drawMaxEdges = 24
-)
 
 // Sources is the clone feature: off when ReposDir is empty.
 type Sources struct {
@@ -150,11 +144,13 @@ func Load(lookup func(string) string) (*App, error) {
 	if app.Baseline.MaxCalls > 0 && app.Baseline.MaxCalls < minBaselineCalls {
 		r.Fail("ALMANACH_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
 	}
-	if app.Limits.DiagramMaxNodes > drawMaxNodes {
-		r.Fail("ALMANACH_DIAGRAM_MAX_NODES: at most %d, the most the drawing lays out, got %d", drawMaxNodes, app.Limits.DiagramMaxNodes)
+	// A diagram past the drawing's ceilings is not drawn, so the caps may
+	// not go past them either.
+	if app.Limits.DiagramMaxNodes > diagram.DrawMaxNodes {
+		r.Fail("ALMANACH_DIAGRAM_MAX_NODES: at most %d, the most the drawing lays out, got %d", diagram.DrawMaxNodes, app.Limits.DiagramMaxNodes)
 	}
-	if app.Limits.DiagramMaxEdges > drawMaxEdges {
-		r.Fail("ALMANACH_DIAGRAM_MAX_EDGES: at most %d, the most the drawing lays out, got %d", drawMaxEdges, app.Limits.DiagramMaxEdges)
+	if app.Limits.DiagramMaxEdges > diagram.DrawMaxEdges {
+		r.Fail("ALMANACH_DIAGRAM_MAX_EDGES: at most %d, the most the drawing lays out, got %d", diagram.DrawMaxEdges, app.Limits.DiagramMaxEdges)
 	}
 	if app.Baseline.Reconcile < 0 {
 		r.Fail("ALMANACH_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)

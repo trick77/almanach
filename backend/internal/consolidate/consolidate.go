@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -356,10 +357,11 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return
 	}
-	statements, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, diagramCaps(w.limits))
+	statements, stripped, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
+	logStripped(ctx, w.log, "consolidate: "+scope, stripped)
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
-	chars, capReason := check(summary, statements, maxStatements, maxChars, diagramsAllowed(w.limits.MaxDiagrams, current.Statements))
+	chars, capReason := check(summary, statements, maxStatements, maxChars)
 	if reason == "" {
 		reason = capReason
 	}
@@ -394,43 +396,51 @@ var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, 
 // past every id the page's history used, so a dropped id is never
 // reissued). An id the current page does not have is the model inventing
 // one: rejected. Spelling is Swiss on every prose field. A diagram is held
-// to baseline.CheckDiagram; one that fails rejects the whole rewrite, and a
-// changed diagram is a changed statement, like changed text. The commit a
-// statement was last checked against stays while its name, text and
-// diagram do; a change voids it, the caller sets a new one when it read the
-// code.
-func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int, caps baseline.DiagramCaps) ([]store.Statement, string) {
+// to baseline.CheckDiagram; one that breaks a rule rejects the whole
+// rewrite, while one past the page's count is stripped (its statement
+// kept) and named in stripped. A changed diagram is a changed statement,
+// like changed text. The commit a statement was last checked against stays
+// while its name, text and diagram do; a change voids it, the caller sets a
+// new one when it read the code.
+func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, stripped []string, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
 	}
-	out := make([]store.Statement, 0, len(proposed))
+	out = make([]store.Statement, 0, len(proposed))
+	olds := make([]*store.Statement, 0, len(proposed))
 	seen := map[string]bool{}
 	for _, p := range proposed {
 		if !kinds[p.Kind] {
-			return nil, "unknown statement kind " + p.Kind
+			return nil, nil, "unknown statement kind " + p.Kind
 		}
 		s := store.Statement{Kind: p.Kind, Name: lang.SwissSS(strings.TrimSpace(p.Name)), Text: lang.SwissSS(strings.TrimSpace(p.Text)), Files: cleanFiles(p.Files)}
 		if s.Name == "" || s.Text == "" {
-			return nil, "empty statement"
+			return nil, nil, "empty statement"
 		}
 		var old *store.Statement
 		if p.ID != nil && *p.ID != "" {
 			o, ok := byID[*p.ID]
 			if !ok {
-				return nil, "unknown statement id " + *p.ID
+				return nil, nil, "unknown statement id " + *p.ID
 			}
 			if seen[*p.ID] {
-				return nil, "statement id used twice " + *p.ID
+				return nil, nil, "statement id used twice " + *p.ID
 			}
 			seen[*p.ID] = true
 			old = &o
 		}
-		d, reason := statementDiagram(p.Diagram, old, caps)
-		if reason != "" {
-			return nil, fmt.Sprintf("statement %q diagram: %s", s.Name, reason)
+		d, why := statementDiagram(p.Diagram, old, dl.caps)
+		if why != "" {
+			return nil, nil, fmt.Sprintf("statement %q diagram: %s", s.Name, why)
 		}
 		s.Diagram = d
+		out = append(out, s)
+		olds = append(olds, old)
+	}
+	stripped = stripOverCount(out, olds, max(dl.max, countDiagrams(current)))
+	for i := range out {
+		s, old := &out[i], olds[i]
 		if old != nil {
 			s.ID = old.ID
 			s.Sources = old.Sources
@@ -444,29 +454,63 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 			next++
 			s.Sources = []store.Source{src}
 		}
-		out = append(out, s)
 	}
-	return out, ""
+	return out, stripped, ""
+}
+
+// diagramLimits is what a page's statement diagrams are held to: the caps
+// per diagram, and how many a page may hold.
+type diagramLimits struct {
+	caps baseline.DiagramCaps
+	max  int
+}
+
+func limitsOf(l config.Limits) diagramLimits {
+	return diagramLimits{caps: baseline.DiagramCaps{MaxNodes: l.DiagramMaxNodes, MaxEdges: l.DiagramMaxEdges}, max: l.MaxDiagrams}
 }
 
 // statementDiagram is the diagram a statement keeps. Carried by id in code,
-// like provenance: null keeps the stored one (a statement goes with its
-// diagram, never loses it alone), a new one replaces it. Only a new or
-// changed diagram is held to the caps of today: one stored under higher
-// caps stays as it is, or lowering a cap would freeze every page that has
-// one.
+// like provenance: null keeps the stored one, {"kind": "none"} removes it,
+// a new one replaces it. Only a new or changed diagram is held to the caps
+// of today: one stored under higher caps stays as it is, or lowering a cap
+// would freeze every page that has one.
 func statementDiagram(proposed *diagram.Diagram, old *store.Statement, caps baseline.DiagramCaps) (*diagram.Diagram, string) {
+	if proposed != nil && proposed.Kind == diagram.KindNone {
+		return nil, ""
+	}
 	if old != nil && (proposed == nil || diagram.Equal(proposed, old.Diagram)) {
 		return old.Diagram, ""
 	}
 	return baseline.CheckDiagram(proposed, caps)
 }
 
-// diagramsAllowed is the statement diagrams a rewrite of the page may hold:
-// the cap, or what the page holds now when that is more, so a cap lowered
-// below a page's count stops it growing without freezing it.
-func diagramsAllowed(maxDiagrams int, current []store.Statement) int {
-	return max(maxDiagrams, countDiagrams(current))
+// stripOverCount holds the page to allowed diagrams (the cap, or the
+// page's count when a lowered cap left it higher, so it may keep them but
+// not grow): the diagrams added past it, last first, are stripped, their
+// statements kept. One diagram too many costs that diagram, never the
+// rewrite or the run's reading. A diagram a statement already had never
+// counts as added, so the page's own are kept. Returns the statements
+// stripped, by name.
+func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int) []string {
+	over := countDiagrams(out) - allowed
+	var stripped []string
+	for i := len(out) - 1; i >= 0 && over > 0; i-- {
+		added := out[i].Diagram != nil && (olds[i] == nil || olds[i].Diagram == nil)
+		if added {
+			out[i].Diagram = nil
+			stripped = append(stripped, out[i].Name)
+			over--
+		}
+	}
+	slices.Reverse(stripped)
+	return stripped
+}
+
+// logStripped says which statements lost a diagram to the page's count.
+func logStripped(ctx context.Context, log *slog.Logger, at string, stripped []string) {
+	if len(stripped) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: diagram over the page's count left out: %s", at, strings.Join(stripped, ", ")))
+	}
 }
 
 func countDiagrams(statements []store.Statement) int {
@@ -508,19 +552,16 @@ const (
 	pathMaxChars = 200
 )
 
-// check applies the ceilings: the statement count, the statement diagrams,
-// the prose of the whole description, and the fixed caps on a name and on
-// files. chars is that prose count, stored on the revision row. maxDiagrams
-// is diagramsAllowed's: the cap, or the page's count when that is higher.
-func check(summary string, statements []store.Statement, maxStatements, maxChars, maxDiagrams int) (int, string) {
+// check applies the ceilings: the statement count, the prose of the whole
+// description, and the fixed caps on a name and on files. chars is that
+// prose count, stored on the revision row. The diagram count is attach's:
+// a diagram too many is stripped, never a reason to reject.
+func check(summary string, statements []store.Statement, maxStatements, maxChars int) (int, string) {
 	if strings.TrimSpace(summary) == "" {
 		return 0, "empty summary"
 	}
 	if len(statements) > maxStatements {
 		return 0, fmt.Sprintf("%d statements over the cap of %d", len(statements), maxStatements)
-	}
-	if drawn := countDiagrams(statements); drawn > maxDiagrams {
-		return 0, fmt.Sprintf("%d diagrams over the cap of %d", drawn, maxDiagrams)
 	}
 	// The ceiling is on the whole description, never on one statement: a
 	// description is documentation and a statement is as long as its
@@ -584,18 +625,31 @@ func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{repo_description}", describe(repoPage),
 		"{project_description}", describe(projectPage),
-		"{diagram_rules}", diagramRules(l),
+		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{note}", string(q.Body),
 	).Replace(tmpl)
 }
 
 // diagramRules is the shared diagram section with its caps filled in, one
-// rendering for the merge, describe and project prompts.
+// rendering for the merge, describe and project prompts; with
+// ALMANACH_MAX_DIAGRAMS=0 the line that says statements carry none.
 func diagramRules(l config.Limits) string {
-	return strings.NewReplacer(
+	if l.MaxDiagrams == 0 {
+		return strings.TrimSpace(prompts.DiagramsOff)
+	}
+	return strings.TrimSpace(strings.NewReplacer(
 		"{diagram_max_nodes}", fmt.Sprint(l.DiagramMaxNodes), "{diagram_max_edges}", fmt.Sprint(l.DiagramMaxEdges),
 		"{max_diagrams}", fmt.Sprint(l.MaxDiagrams),
-	).Replace(prompts.Diagrams)
+	).Replace(prompts.Diagrams))
+}
+
+// diagramField is a statement's diagram in the output formats, as the
+// schema offers it: not at all with ALMANACH_MAX_DIAGRAMS=0.
+func diagramField(l config.Limits) string {
+	if l.MaxDiagrams == 0 {
+		return ""
+	}
+	return `, "diagram": <diagram> | {"kind": "none"} | null`
 }
 
 // describe renders a page for the prompt: the summary, then one line per
@@ -631,11 +685,6 @@ func diagramLine(d *diagram.Diagram) string {
 		return ""
 	}
 	return "\nDiagram: " + string(j) + "\n"
-}
-
-// diagramCaps is the per-diagram part of the limits.
-func diagramCaps(l config.Limits) baseline.DiagramCaps {
-	return baseline.DiagramCaps{MaxNodes: l.DiagramMaxNodes, MaxEdges: l.DiagramMaxEdges}
 }
 
 // prose is the runes a description's ceiling counts: the summary and every

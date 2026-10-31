@@ -2,7 +2,9 @@
 // The IR types and fits only: rongo reads them out of the mermaid parse,
 // Almanach gets them as JSON the backend validated (baseline/diagram.go).
 // Almanach: a sequence's rows count whole, frames included, as the
-// backend counts them.
+// backend counts them. The limits below are the backend's DrawMaxNodes,
+// DrawMaxEdges, DrawMaxActors, DrawMaxRows, DrawMaxEntities, DrawMaxRels
+// and DrawMaxAttrs (backend/internal/diagram); change both together.
 
 /** start and stop are a state diagram's `[*]`: a dot where it begins, a
  * ringed dot where it ends. They carry no text. */

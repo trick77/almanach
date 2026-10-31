@@ -12,12 +12,33 @@ import (
 	"strings"
 )
 
-// The kinds.
+// The kinds. KindNone is no diagram: a statement's way to say its diagram
+// is gone, never stored.
 const (
 	KindFlow     = "flow"
 	KindSequence = "sequence"
 	KindER       = "er"
+	KindNone     = "none"
 )
+
+// The most rongo's drawing lays out (ui/src/diagramIR.ts fits, which names
+// these): the one place the backend keeps them. A flow, the system map
+// included, holds DrawMaxNodes and DrawMaxEdges; a sequence and an entity
+// model are wider per item and stop sooner.
+const (
+	DrawMaxNodes    = 16
+	DrawMaxEdges    = 24
+	DrawMaxActors   = 8
+	DrawMaxRows     = 20
+	DrawMaxEntities = 8
+	DrawMaxRels     = 12
+	DrawMaxAttrs    = 12
+)
+
+// MapFits reports whether a project of this many source repositories can
+// have a system map: every repository a node, and room for at least one
+// node beside them. A larger project gets none.
+func MapFits(repos int) bool { return repos <= DrawMaxNodes-1 }
 
 // Diagram is one of the three kinds, told apart by Kind; only that kind's
 // fields are set, and only they go on the wire.

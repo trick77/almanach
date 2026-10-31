@@ -28,9 +28,9 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_PROJECT_MAX_STATEMENTS` | `24` | Statements a project description may hold. |
 | `ALMANACH_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
 | `ALMANACH_PROJECT_MAX_CHARS` | `40000` | The same for a project description. |
-| `ALMANACH_DIAGRAM_MAX_NODES` | `12` | Nodes one diagram may hold (participants of a sequence, tables of an entity model), the project's system map included. At most 16, the most the drawing lays out; a sequence and an entity model stop at 8 whatever this says. Past about a dozen a picture stops reading and should be two; the prompts say so. The node and edge caps hold a new or changed diagram: one stored under higher caps stays as it is. |
+| `ALMANACH_DIAGRAM_MAX_NODES` | `12` | Nodes one statement diagram may hold (participants of a sequence, tables of an entity model); the project's system map is held to the drawing's 16 instead. At most 16, the most the drawing lays out; a sequence and an entity model stop at 8 whatever this says. Past about a dozen a picture stops reading and should be two; the prompts say so. The node and edge caps hold a new or changed diagram: one stored under higher caps stays as it is. |
 | `ALMANACH_DIAGRAM_MAX_EDGES` | `20` | Edges one diagram may hold (messages and notes of a sequence, relationships of an entity model, which stop at 20 and 12). At most 24. |
-| `ALMANACH_MAX_DIAGRAMS` | `6` | Statement diagrams one page may hold, repository or project page; the system map does not count. `0`: statements gain no diagram, the map is still drawn. A page already over a lowered cap keeps its diagrams but gains none. |
+| `ALMANACH_MAX_DIAGRAMS` | `6` | Statement diagrams one page may hold, repository or project page; the system map does not count. A diagram added past it is left out, its statement kept. `0`: no schema offers a statement diagram, the map is still drawn. A page already over a lowered cap keeps its diagrams but gains none. |
 | `ALMANACH_PROBLEM_WINDOW_DAYS` | `90` | How far back the problem areas look by default; `?days=` overrides per request. |
 | `ALMANACH_REPOS_DIR` | unset | The clones (the Quellen pages). Unset: the feature is off, no poller, the routes answer 404, the UI hides the entry. Set: the base folder every clone lands under as `<dir>/<project>/<slug>`; must exist and be writable (checked with a probe file at startup), and `git` must be on PATH. compose gives its container `/app/repos` on the `repos` volume; a deployment needs a volume claim there, owned by uid 1000 (fsGroup or an init chown). |
 | `ALMANACH_SECRET_KEY` | unset | Base64 of 32 random bytes (`openssl rand -base64 32`). Seals the sources' tokens in the database with AES-GCM. Unset, public repositories still clone and saving a token is a 422. Changing it orphans every stored token: the affected sources fail with a line naming the key until the token is entered again. |
@@ -45,10 +45,11 @@ required, a commented line is optional and shows its default.
 
 Over any cap the merge call's rewrite is rejected whole and the page stays
 as it was; the caps are the one lever against endless growth, and the
-prompt tells the model the numbers. The diagram caps work the same way: a
-diagram over one, or one that breaks a rule (an arrow to an undeclared
-node, a repository on the map that is no source repository), rejects the
-whole rewrite, never a part of it.
+prompt tells the model the numbers. A statement diagram over a node or
+edge cap, or one that breaks a rule (an arrow to an undeclared node),
+rejects the whole rewrite the same way; one past the page's count is left
+out, its statement kept. The system map never costs a rewrite: one that
+fails is not drawn and the stored one stays.
 
 ## The sidecar
 

@@ -217,6 +217,26 @@ func TestCheckMap(t *testing.T) {
 	}
 }
 
+// A repository node whose slug left the project goes, with its edges; a
+// node of another zone named like nothing stays for CheckMap to judge.
+func TestDropDeparted(t *testing.T) {
+	m := mapOf(node("api", ZoneRepositories), node("old", ZoneRepositories), node("pg", ZoneStores))
+	m.Edges = []ir.Edge{edge("api", "pg", "DB"), edge("old", "pg", "DB"), edge("api", "old", "HTTP")}
+	out, gone := DropDeparted(m, []string{"api"})
+	if len(gone) != 1 || gone[0] != "old" || len(out.Nodes) != 2 || len(out.Edges) != 1 || out.Edges[0].To != "pg" {
+		t.Errorf("out = %+v, gone %v", out, gone)
+	}
+	if len(m.Nodes) != 3 || len(m.Edges) != 3 {
+		t.Error("DropDeparted changed the caller's map")
+	}
+	if same, gone := DropDeparted(m, []string{"api", "old"}); same != m || gone != nil {
+		t.Errorf("nothing departed: %+v %v", same, gone)
+	}
+	if d, gone := DropDeparted(nil, nil); d != nil || gone != nil {
+		t.Error("nil map")
+	}
+}
+
 // A statement the patch does not name keeps its diagram: the patch rebuilds
 // it from the page.
 func TestApplyPatchKeepsDiagrams(t *testing.T) {

@@ -31,3 +31,9 @@ var Project string
 //
 //go:embed almanach_diagrams.txt
 var Diagrams string
+
+// DiagramsOff stands in for Diagrams with ALMANACH_MAX_DIAGRAMS=0, when no
+// statement schema offers a diagram.
+//
+//go:embed almanach_diagrams_off.txt
+var DiagramsOff string
