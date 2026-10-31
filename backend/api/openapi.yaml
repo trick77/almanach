@@ -15,9 +15,12 @@ info:
     - `POST /webhooks/noergler` and `GET /auth/ping` take a bearer token. The
       token is the whole identity: it names the team, nothing in a body does.
       Tokens live in the team-keys file of the Almanach instance.
-    - `/api/...` is the read side for the UI. It is open to whoever reaches it;
-      an OAuth sidecar in front decides who that is (`ALMANACH_AUTH_MODE=proxy`).
-      Nothing is written through it.
+    - `/api/...` is the read side for the UI. With `ALMANACH_AUTH_MODE=oidc`
+      every route under it but `/api/auth/login` and `/api/auth/callback`
+      needs the session cookie the OIDC sign-in sets, and answers 401 without
+      one; with `none` it is open to whoever reaches it. The reader gates
+      nothing; the name goes to the access log. Nothing is written through it
+      but the sources.
 
     ## Delivery dedup
 
@@ -30,6 +33,12 @@ info:
 servers:
   - url: /
 
+# none mode: no credential; oidc mode: the session cookie. The feed routes
+# and the sign-in's own two override it.
+security:
+  - {}
+  - session: []
+
 tags:
   - name: feed
     description: What noergler calls.
@@ -40,9 +49,11 @@ tags:
       The clones: the projects whose code Almanach clones itself, a Bitbucket
       project (repositories from its REST API) or a static folder
       (repositories entered by hand). The only writes beside the webhook,
-      gated like the read routes by the sidecar. Off, every route but the
+      gated like the read routes by the session. Off, every route but the
       list answers 404, when `ALMANACH_REPOS_DIR` is unset. A token is sealed
       on the way in and never returned: `has_token` is all a body carries.
+  - name: auth
+    description: The OIDC sign-in of oidc mode and the UI's session check.
 
 paths:
   /auth/ping:
@@ -447,12 +458,91 @@ paths:
         "422":
           $ref: "#/components/responses/Invalid"
 
+  /api/me:
+    get:
+      tags: [auth]
+      summary: Who reads
+      description: >-
+        The UI's session check, made before anything renders. In every mode;
+        401 only in oidc mode without a session.
+      operationId: me
+      responses:
+        "200":
+          description: The mode and the reader.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+
+  /api/auth/login:
+    get:
+      tags: [auth]
+      summary: Start the OIDC sign-in
+      description: >-
+        Redirects to the provider, state, nonce and a PKCE verifier in
+        short-lived cookies. A browser navigates here; a fetch cannot follow.
+      operationId: login
+      security: []
+      responses:
+        "302":
+          description: To the provider.
+        "503":
+          $ref: "#/components/responses/SignInOff"
+
+  /api/auth/callback:
+    get:
+      tags: [auth]
+      summary: Finish the OIDC sign-in
+      description: >-
+        Where the provider returns. State, PKCE, the ID token and its nonce are
+        checked; the claims become the signed session cookie and the browser
+        goes to `/`. On any failure to `/?auth_error=…`, the reason in the
+        server log only.
+      operationId: callback
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: To `/` signed in, or to `/?auth_error=…`.
+        "503":
+          $ref: "#/components/responses/SignInOff"
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      summary: Sign out
+      description: >-
+        Clears the session cookie; nothing is stored server-side. The
+        provider's own session lives on, so the UI goes where `redirect_url`
+        says and halts there.
+      operationId: logout
+      responses:
+        "200":
+          description: Signed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Logout"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "503":
+          $ref: "#/components/responses/SignInOff"
+
 components:
   securitySchemes:
     teamToken:
       type: http
       scheme: bearer
       description: The team's token from the instance's team-keys file.
+    session:
+      type: apiKey
+      in: cookie
+      name: almanach_session
+      description: The signed session the OIDC callback sets, oidc mode only. 30 days.
 
   parameters:
     projectKey:
@@ -499,6 +589,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    SignInRequired:
+      description: oidc mode without a valid session; the UI navigates to the login.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SignInOff:
+      description: none mode has no sign-in.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
     Error:
@@ -507,6 +609,25 @@ components:
       properties:
         error:
           type: string
+
+    Me:
+      type: object
+      required: [mode, user]
+      properties:
+        mode:
+          type: string
+          enum: [none, oidc]
+        user:
+          type: string
+          description: The reader (email, else subject); empty in none mode.
+
+    Logout:
+      type: object
+      required: [redirect_url]
+      properties:
+        redirect_url:
+          type: string
+          description: Where the browser goes next, `/?signed_out=1`.
 
     Sources:
       type: object

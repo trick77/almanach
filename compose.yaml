@@ -46,9 +46,10 @@ services:
       - "8081:8080"
     env_file: .env
     # What the container must not take from .env: the DSN, the keys path
-    # and the listener. A loopback SERVER_HOST or proxy mode set for a host
-    # run would bind inside the container's own namespace, with the port
-    # mapping dead and the healthcheck (same env) still green.
+    # and the listener. A loopback SERVER_HOST set for a host run would bind
+    # inside the container's own namespace, with the port mapping dead and
+    # the healthcheck (same env) still green. Auth stays none here: oidc
+    # needs a provider and an https callback this local stack has not got.
     environment:
       - *dsn
       - ALMANACH_TEAM_KEYS_PATH=/app/team-keys.json

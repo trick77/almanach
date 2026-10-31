@@ -23,7 +23,7 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts; anything else is a startup fault. |
 | `SERVER_HOST` | `0.0.0.0` | Listen address. |
 | `SERVER_PORT` | `8080` | Listen port. |
-| `ALMANACH_AUTH_MODE` | `none` | `none`: the read API names nobody. `proxy`: an OAuth sidecar in front sets `X-Forwarded-User`, logged as the reader; `serve` then refuses any `SERVER_HOST` but `127.0.0.1`, so the header can only come from the sidecar. The webhook and the ping never read the header in either mode. |
+| `ALMANACH_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `SERVER_HOST`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. |
 | `ALMANACH_REPO_MAX_STATEMENTS` | `40` | Statements a repository description may hold. |
 | `ALMANACH_PROJECT_MAX_STATEMENTS` | `24` | Statements a project description may hold. |
 | `ALMANACH_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
@@ -44,15 +44,28 @@ Over any cap the merge call's rewrite is rejected whole and the page stays
 as it was; the caps are the one lever against endless growth, and the
 prompt tells the model the numbers.
 
-## The sidecar
+## Signing in
 
-In `proxy` mode, machine traffic must still reach the webhook and the ping
-without a browser login. The sidecar skips authentication for exactly
-`/healthz`, `/auth/ping` and `/webhooks/noergler`; those routes are bearer
-only and read no user header, so a client header on a skipped path has
-nowhere to land. Everything under `/api/` goes through the login, the
-sources' write routes included: whoever the sidecar lets in may configure
-the clones, and the forwarded user is on the log line of every write.
+With `ALMANACH_AUTH_MODE=oidc` every variable below is required, and each
+is a startup fault under `none`, where it would look active and change
+nothing. The provider's discovery document is fetched at startup with a
+30 s timeout; a provider that does not answer aborts startup.
+
+| Variable | Meaning |
+| --- | --- |
+| `ALMANACH_OIDC_ISSUER` | The provider's bare origin, `https://auth.example.com`: no path; a trailing slash is trimmed. |
+| `ALMANACH_OIDC_CLIENT_ID` | The client registered for Almanach at the provider. Scopes asked: `openid profile email`. |
+| `ALMANACH_OIDC_CLIENT_SECRET` | Its secret. |
+| `ALMANACH_OIDC_REDIRECT_URL` | The callback as the browser reaches it, `https://<host>/api/auth/callback`; must be https. The session and login cookies are always Secure, derived from this URL, since behind a TLS-terminating proxy the process sees plain HTTP. |
+| `ALMANACH_SESSION_SECRET` | Signs the session cookie `almanach_session`, at least 32 bytes (`openssl rand -base64 48`). There is no session table: rotating it signs everyone out. |
+
+A session lasts 30 days and is not renewed. Every route under `/api/` but
+`/api/auth/login` and `/api/auth/callback` needs it, the sources' write
+routes included: whoever the provider lets in may configure the clones,
+and the reader (email, else subject) is on the log line of every read and
+write. Who may sign in at all is the provider's policy. `/webhooks/noergler`,
+`/auth/ping`, `/healthz`, `/readyz` and the UI shell are outside the
+sign-in.
 
 ## Commands
 
