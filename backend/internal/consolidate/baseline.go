@@ -435,7 +435,11 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 		// here, in one write; otherwise the project step still runs, and
 		// folds when the last run skipped it.
 		w.log.InfoContext(ctx, "baseline: nothing to read again")
-		if r.Mode == store.RunReconcile && !plan.SummaryChanged {
+		skip, err := w.projectStands(ctx, r, plan)
+		if err != nil {
+			return err
+		}
+		if skip {
 			return w.finish(ctx, r, plan)
 		}
 		r.State = store.RunProject
@@ -578,7 +582,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if applied.Summary != nil {
 		summary = lang.SwissSS(strings.TrimSpace(*applied.Summary))
 	}
-	chars, capReason := check(summary, statements, w.limits.RepoMaxStatements, w.limits.RepoMaxChars, w.limits.MaxDiagrams)
+	chars, capReason := check(summary, statements, w.limits.RepoMaxStatements, w.limits.RepoMaxChars, diagramsAllowed(w.limits.MaxDiagrams, page.Statements))
 	if capReason != "" {
 		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s rewrite rejected (%s), page unchanged", name, capReason))
 		return w.endReading(ctx, r, plan, "the page reached its ceiling at "+name)
@@ -958,7 +962,11 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return fmt.Errorf("the run's plan: %w", err)
 	}
-	if r.Mode == store.RunReconcile && !plan.SummaryChanged {
+	skip, err := w.projectStands(ctx, r, plan)
+	if err != nil {
+		return err
+	}
+	if skip {
 		return w.finish(ctx, r, plan)
 	}
 	if r.Calls >= w.base.Limits.MaxCalls {
@@ -1025,6 +1033,22 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	return nil
 }
 
+// projectStands reports whether a run may end without its project step: a
+// reconcile whose summary stands, of a project that has its map. A project
+// without one yet (described before maps existed) is folded as if the
+// summary had changed, so its map gets drawn.
+func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan runPlan) (bool, error) {
+	if r.Mode != store.RunReconcile || plan.SummaryChanged {
+		return false, nil
+	}
+	page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
+		return false, errStop
+	}
+	return page.Map != nil, nil
+}
+
 // projectRevision is the project description a run's last step returned,
 // held to the same rules as a note's fold of it, its map to the map's
 // (slugs are the project's source repositories); nil when it is refused or
@@ -1038,11 +1062,18 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	caps := diagramCaps(w.limits)
 	statements, reason := attach(page.Statements, d.Statements, runSource(*r, plan), next, caps)
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
-	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars, w.limits.MaxDiagrams)
+	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars, diagramsAllowed(w.limits.MaxDiagrams, page.Statements))
 	if reason == "" {
 		reason = capReason
 	}
-	drawn, mapReason := baseline.CheckMap(d.Map, slugs, caps)
+	// The map returned as it stands is held to the drawing's ceilings, not
+	// to today's caps: lowering one must not freeze the project page. Its
+	// slugs are checked still, a repository may have left the project.
+	mapCaps := caps
+	if diagram.Equal(d.Map, page.Map) {
+		mapCaps = baseline.DrawCaps
+	}
+	drawn, mapReason := baseline.CheckMap(d.Map, slugs, mapCaps)
 	if reason == "" && mapReason != "" {
 		reason = "map: " + mapReason
 	}
@@ -1162,9 +1193,7 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
-		"{repo_description}", describeSourced(page, newer), "{files}", files,
-		"{diagram_max_nodes}", fmt.Sprint(l.DiagramMaxNodes), "{diagram_max_edges}", fmt.Sprint(l.DiagramMaxEdges),
-		"{max_diagrams}", fmt.Sprint(l.MaxDiagrams),
+		"{repo_description}", describeSourced(page, newer), "{files}", files, "{diagram_rules}", diagramRules(l),
 	).Replace(prompts.Describe)
 }
 
@@ -1174,9 +1203,7 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describe(repoPage), "{other_repos}", others,
-		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "),
-		"{diagram_max_nodes}", fmt.Sprint(l.DiagramMaxNodes), "{diagram_max_edges}", fmt.Sprint(l.DiagramMaxEdges),
-		"{max_diagrams}", fmt.Sprint(l.MaxDiagrams),
+		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l),
 	).Replace(prompts.Project)
 }
 

@@ -25,3 +25,9 @@ var Describe string
 //
 //go:embed almanach_project.txt
 var Project string
+
+// Diagrams is the diagram rules the merge, describe and project prompts
+// share, rendered into their {diagram_rules}.
+//
+//go:embed almanach_diagrams.txt
+var Diagrams string

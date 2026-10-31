@@ -359,7 +359,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 	statements, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, diagramCaps(w.limits))
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
-	chars, capReason := check(summary, statements, maxStatements, maxChars, w.limits.MaxDiagrams)
+	chars, capReason := check(summary, statements, maxStatements, maxChars, diagramsAllowed(w.limits.MaxDiagrams, current.Statements))
 	if reason == "" {
 		reason = capReason
 	}
@@ -414,13 +414,9 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 		if s.Name == "" || s.Text == "" {
 			return nil, "empty statement"
 		}
-		d, reason := baseline.CheckDiagram(p.Diagram, caps)
-		if reason != "" {
-			return nil, fmt.Sprintf("statement %q diagram: %s", s.Name, reason)
-		}
-		s.Diagram = d
+		var old *store.Statement
 		if p.ID != nil && *p.ID != "" {
-			old, ok := byID[*p.ID]
+			o, ok := byID[*p.ID]
 			if !ok {
 				return nil, "unknown statement id " + *p.ID
 			}
@@ -428,6 +424,14 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 				return nil, "statement id used twice " + *p.ID
 			}
 			seen[*p.ID] = true
+			old = &o
+		}
+		d, reason := statementDiagram(p.Diagram, old, caps)
+		if reason != "" {
+			return nil, fmt.Sprintf("statement %q diagram: %s", s.Name, reason)
+		}
+		s.Diagram = d
+		if old != nil {
 			s.ID = old.ID
 			s.Sources = old.Sources
 			if old.Text != s.Text || old.Name != s.Name || !diagram.Equal(old.Diagram, s.Diagram) {
@@ -443,6 +447,36 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 		out = append(out, s)
 	}
 	return out, ""
+}
+
+// statementDiagram is the diagram a statement keeps. Carried by id in code,
+// like provenance: null keeps the stored one (a statement goes with its
+// diagram, never loses it alone), a new one replaces it. Only a new or
+// changed diagram is held to the caps of today: one stored under higher
+// caps stays as it is, or lowering a cap would freeze every page that has
+// one.
+func statementDiagram(proposed *diagram.Diagram, old *store.Statement, caps baseline.DiagramCaps) (*diagram.Diagram, string) {
+	if old != nil && (proposed == nil || diagram.Equal(proposed, old.Diagram)) {
+		return old.Diagram, ""
+	}
+	return baseline.CheckDiagram(proposed, caps)
+}
+
+// diagramsAllowed is the statement diagrams a rewrite of the page may hold:
+// the cap, or what the page holds now when that is more, so a cap lowered
+// below a page's count stops it growing without freezing it.
+func diagramsAllowed(maxDiagrams int, current []store.Statement) int {
+	return max(maxDiagrams, countDiagrams(current))
+}
+
+func countDiagrams(statements []store.Statement) int {
+	n := 0
+	for _, s := range statements {
+		if s.Diagram != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // appendSource adds s unless the statement has it already: a PR once, a
@@ -476,7 +510,8 @@ const (
 
 // check applies the ceilings: the statement count, the statement diagrams,
 // the prose of the whole description, and the fixed caps on a name and on
-// files. chars is that prose count, stored on the revision row.
+// files. chars is that prose count, stored on the revision row. maxDiagrams
+// is diagramsAllowed's: the cap, or the page's count when that is higher.
 func check(summary string, statements []store.Statement, maxStatements, maxChars, maxDiagrams int) (int, string) {
 	if strings.TrimSpace(summary) == "" {
 		return 0, "empty summary"
@@ -484,13 +519,7 @@ func check(summary string, statements []store.Statement, maxStatements, maxChars
 	if len(statements) > maxStatements {
 		return 0, fmt.Sprintf("%d statements over the cap of %d", len(statements), maxStatements)
 	}
-	drawn := 0
-	for _, s := range statements {
-		if s.Diagram != nil {
-			drawn++
-		}
-	}
-	if drawn > maxDiagrams {
+	if drawn := countDiagrams(statements); drawn > maxDiagrams {
 		return 0, fmt.Sprintf("%d diagrams over the cap of %d", drawn, maxDiagrams)
 	}
 	// The ceiling is on the whole description, never on one statement: a
@@ -555,11 +584,18 @@ func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{repo_description}", describe(repoPage),
 		"{project_description}", describe(projectPage),
-		"{diagram_max_nodes}", fmt.Sprint(l.DiagramMaxNodes),
-		"{diagram_max_edges}", fmt.Sprint(l.DiagramMaxEdges),
-		"{max_diagrams}", fmt.Sprint(l.MaxDiagrams),
+		"{diagram_rules}", diagramRules(l),
 		"{note}", string(q.Body),
 	).Replace(tmpl)
+}
+
+// diagramRules is the shared diagram section with its caps filled in, one
+// rendering for the merge, describe and project prompts.
+func diagramRules(l config.Limits) string {
+	return strings.NewReplacer(
+		"{diagram_max_nodes}", fmt.Sprint(l.DiagramMaxNodes), "{diagram_max_edges}", fmt.Sprint(l.DiagramMaxEdges),
+		"{max_diagrams}", fmt.Sprint(l.MaxDiagrams),
+	).Replace(prompts.Diagrams)
 }
 
 // describe renders a page for the prompt: the summary, then one line per
@@ -584,8 +620,8 @@ func describe(p store.Page) string {
 	return b.String()
 }
 
-// diagramLine shows a statement's diagram as the JSON it is, so the model
-// can return it as it stands: a diagram left out of an edit is gone.
+// diagramLine shows a statement's diagram as the JSON it is, for the model
+// to read and correct; returning null keeps it.
 func diagramLine(d *diagram.Diagram) string {
 	if d == nil {
 		return ""

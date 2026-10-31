@@ -490,7 +490,7 @@ func TestRender(t *testing.T) {
 	out := render(prompts.Merge, q, existingRepoPage(), empty, limits)
 	for _, ph := range []string{"{repo}", "{project}", "{pr_key}", "{ticket_key}", "{change_kind}", "{repo_max_statements}",
 		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}", "{note}",
-		"{diagram_max_nodes}", "{diagram_max_edges}", "{max_diagrams}"} {
+		"{diagram_rules}", "{diagram_max_nodes}", "{diagram_max_edges}", "{max_diagrams}"} {
 		if strings.Contains(out, ph) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
@@ -498,7 +498,7 @@ func TestRender(t *testing.T) {
 	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown", "at most 3 statements", "at most 2 statements",
 		"400 characters of prose in all", "200 characters of prose in all", "Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		"the current description has 54", "the current description has 0",
-		"_None yet._", `{"components":[{"name":"x"}]}`, "at most 4 nodes", "and 3 edges", "At most 1 diagrams on each page"} {
+		"_None yet._", `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)
 		}

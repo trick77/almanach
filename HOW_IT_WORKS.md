@@ -422,9 +422,13 @@ repository's slug, an edge labelled by how the parts talk (HTTP, event, DB,
 library, file). A project step's rewrite without a map is off schema, a
 "no change" for a project without one is skipped and redone, and a note's
 fold carries the map forward unchanged. A statement may carry a `diagram`
-where a picture says more than its paragraphs, on either path; the prompts
-show it as JSON, so keeping it means repeating it, and a changed diagram is
-a changed statement. The UI draws both with rongo's copied layout, drawing
+where a picture says more than its paragraphs, on either path. Code carries
+it by statement id like provenance: `diagram: null` keeps it, a new one
+replaces it, it goes only with its statement; the prompts show it as JSON
+to correct. A changed diagram is a changed statement (reordering is none),
+and only a new or changed one is held to today's caps, so lowering a cap
+never freezes a page; a page over the count may keep it, not grow. A quiet
+reconcile of a project without a map still runs the project step. The UI draws both with rongo's copied layout, drawing
 and theme, no Mermaid; the map's repository nodes link to their pages.
 
 **PR facts are checked, not erased.** A patch never drops an id it does
