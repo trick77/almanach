@@ -220,7 +220,7 @@ func TestCheckMap(t *testing.T) {
 	// A self edge and a repeated edge are taken out, named; the rest stays
 	// and the map handed in is left as it was.
 	broken := mapOf(node("api", ir.ZoneRepositories), node("pg", ir.ZoneStores))
-	broken.Edges = []ir.Edge{edge("api", "api", "HTTP"), edge("api", "pg", "DB"), edge("api", "pg", " DB "), edge("pg", "api", "DB")}
+	broken.Edges = []ir.Edge{edge("api", "api", "HTTP"), edge("api", "pg", "DB: Strasse"), edge("api", "pg", " DB: Straße "), edge("pg", "api", "DB")}
 	fixed, dropped := RepairMap(broken)
 	if len(fixed.Edges) != 2 || !slices.Equal(dropped, []string{"api → api", "api → pg"}) || len(broken.Edges) != 4 {
 		t.Errorf("repaired = %+v, dropped %v, input %d edges", fixed.Edges, dropped, len(broken.Edges))

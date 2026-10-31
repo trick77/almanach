@@ -129,7 +129,8 @@ func RepairMap(d *ir.Diagram) (*ir.Diagram, []string) {
 	var dropped []string
 	seen := map[[3]string]bool{}
 	for _, e := range d.Edges {
-		key := [3]string{e.From, e.To, strings.TrimSpace(e.Label)}
+		// The label as checkFlow compares it: trimmed and Swiss.
+		key := [3]string{e.From, e.To, lang.SwissSS(strings.TrimSpace(e.Label))}
 		if e.From == e.To || seen[key] {
 			dropped = append(dropped, e.From+" → "+e.To)
 			continue

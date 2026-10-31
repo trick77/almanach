@@ -552,6 +552,25 @@ func TestFoldFieldCapsLeaveOneOut(t *testing.T) {
 			}
 		})
 	}
+	// Caps that leave out every statement proposed never empty a page.
+	st := newFakeStore()
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{},
+		Added: []inference.Statement{{Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 0 {
+		t.Errorf("every statement over a cap: revision written %+v", st.revisions)
+	}
+	// A statement stored over a cap and returned with its name and files
+	// as they are stays: only a new or changed field meets the caps.
+	st = newFakeStore()
+	page := existingRepoPage()
+	page.Statements[0].Name = strings.Repeat("n", nameMaxChars+1)
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{ID: str("s1"), Kind: "component", Name: page.Statements[0].Name, Text: "Nimmt Dateien an, neu.", Files: page.Statements[0].Files}},
+		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || st.revisions[0].Statements[0].Text != "Nimmt Dateien an, neu." {
+		t.Errorf("stored over-cap name: revisions %+v, want the text edit taken", st.revisions)
+	}
 }
 
 func TestFoldIdenticalNoRevision(t *testing.T) {

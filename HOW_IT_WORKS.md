@@ -1086,8 +1086,12 @@ the reason in the log and the page unchanged:
   80 runes; at most 5 files, each within 200 runes and without
   whitespace (empty file strings are dropped before counting). A
   statement over one costs that statement, never the rewrite: a new one
-  is left out, an edit leaves the statement as stored, both logged. As a
-  rejection of the whole, one long name lost seven parts of an eval.
+  is left out, an edit leaves the statement as stored (and a step never
+  marks it checked), both logged. Only a new or changed name or file list
+  meets the caps: one stored so stays, like a diagram stored under higher
+  caps. Caps that leave out every statement proposed reject the rewrite:
+  they never empty a page. As a rejection of the whole, one long name lost
+  seven parts of an eval.
 - A rewrite identical to the current page (same summary, same statements
   in the same order with the same ids, kinds, names, texts and files)
   writes no revision.

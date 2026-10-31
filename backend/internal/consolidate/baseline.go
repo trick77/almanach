@@ -660,8 +660,21 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if applied.Summary != nil {
 		summary = lang.SwissSS(strings.TrimSpace(*applied.Summary))
 	}
+	// Checked travels by id, never by position (attach may leave a new
+	// statement out): a statement this step wrote or confirmed was read
+	// against the commit; an edit kept as stored over a field cap was not.
+	checked, stored := map[string]bool{}, map[string]bool{}
+	for i, s := range applied.Statements {
+		if s.ID != nil {
+			checked[*s.ID] = applied.Checked[i]
+		}
+	}
+	for _, s := range page.Statements {
+		stored[s.ID] = true
+	}
 	for i := range statements {
-		if applied.Checked[i] {
+		id := statements[i].ID
+		if (!stored[id] || checked[id]) && !slices.Contains(leftOut.capKept, id) {
 			statements[i].Checked = r.Commit
 		}
 	}
@@ -1250,11 +1263,24 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if len(page.Statements) == 0 {
 		least = 1
 	}
-	for n := len(d.Added) - 1; reason == "" && capReason != "" && n >= least; n-- {
-		if s, l, c, re, ca := fold(d.Added[:n]); re == "" && ca == "" {
-			w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(d.Added)-n, "new statement"), capReason))
-			statements, leftOut, chars, capReason = s, l, c, ""
+	// Fewest first: when even those break a ceiling, the summary or the
+	// edits do and no count of new statements helps. Then the most that
+	// fit, by halving: more new statements only ever grow the page.
+	fits := func(n int) bool {
+		_, _, _, re, ca := fold(d.Added[:n])
+		return re == "" && ca == ""
+	}
+	if reason == "" && capReason != "" && least < len(d.Added) && fits(least) {
+		lo, hi := least, len(d.Added)-1
+		for lo < hi {
+			if mid := (lo + hi + 1) / 2; fits(mid) {
+				lo = mid
+			} else {
+				hi = mid - 1
+			}
 		}
+		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(d.Added)-lo, "new statement"), capReason))
+		statements, leftOut, chars, _, capReason = fold(d.Added[:lo])
 	}
 	if reason == "" {
 		reason = capReason

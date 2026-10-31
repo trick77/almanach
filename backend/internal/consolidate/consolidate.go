@@ -578,13 +578,18 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 		}
 		// One statement over a field cap costs that statement, never the
 		// rewrite (user, 2026-10-31: an eval lost seven parts so): a new one
-		// is left out, an edit leaves the statement as stored.
-		if why := fieldCap(s); why != "" {
-			leftOut.overCap = append(leftOut.overCap, fmt.Sprintf("%q (%s)", s.Name, why))
-			if old != nil {
-				out = append(out, *old)
-				olds = append(olds, old)
+		// is left out, an edit leaves the statement as stored. Only a new
+		// or changed name or file list meets the caps: one stored so stays,
+		// like a diagram stored under higher caps.
+		if why := fieldCap(s); why != "" && (old == nil || old.Name != s.Name || !slices.Equal(old.Files, s.Files)) {
+			if old == nil {
+				leftOut.overCap = append(leftOut.overCap, fmt.Sprintf("%q (%s)", s.Name, why))
+				continue
 			}
+			leftOut.capKept = append(leftOut.capKept, old.ID)
+			leftOut.capKeptWhy = append(leftOut.capKeptWhy, fmt.Sprintf("%s (%s)", old.ID, why))
+			out = append(out, *old)
+			olds = append(olds, old)
 			continue
 		}
 		d, stale, why := statementDiagram(p.Diagram, old, s, dl.caps)
@@ -616,6 +621,10 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			next++
 			s.Sources = []store.Source{src}
 		}
+	}
+	// Caps that left out every statement proposed never empty a page.
+	if len(proposed) > 0 && len(out) == 0 {
+		return nil, leftOutParts{}, "every statement over a field cap"
 	}
 	return out, leftOut, ""
 }
@@ -692,11 +701,13 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 
 // leftOutParts is what attach left out of the statements it kept: the
 // diagrams, by name past the page's count, by name and reason for breaking
-// a rule, by name gone stale beside a changed name or text; and overCap,
-// by name and reason, the statements over a field cap (fieldCap), a new
-// one left out, an edited one kept as stored.
+// a rule, by name gone stale beside a changed name or text; the new
+// statements over a field cap (fieldCap) left out, by name and reason
+// (overCap); and the edits over one, the statement kept as stored, by id
+// (capKept, which a step never marks checked) and with the reason.
 type leftOutParts struct {
 	overCount, invalid, stale, overCap []string
+	capKept, capKeptWhy                []string
 }
 
 // logLeftOut says which statements lost a diagram or were left out, and
@@ -704,7 +715,10 @@ type leftOutParts struct {
 // rejection only.
 func logLeftOut(ctx context.Context, log *slog.Logger, at string, s leftOutParts) {
 	if len(s.overCap) > 0 {
-		log.WarnContext(ctx, fmt.Sprintf("%s: statement over a field cap left out: %s", at, strings.Join(s.overCap, ", ")))
+		log.WarnContext(ctx, fmt.Sprintf("%s: new statement over a field cap left out: %s", at, strings.Join(s.overCap, ", ")))
+	}
+	if len(s.capKeptWhy) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: edit over a field cap left out, statement kept as stored: %s", at, strings.Join(s.capKeptWhy, ", ")))
 	}
 	if len(s.invalid) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: diagram breaking a rule left out: %s", at, strings.Join(s.invalid, ", ")))
