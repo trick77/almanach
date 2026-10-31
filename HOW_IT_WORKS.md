@@ -447,7 +447,12 @@ resumes after a restart. The run pins the clone's head when it starts.
    patch (new statements, edits by id, drops, confirmations, a summary or
    null), applied under the rules below and then folded like a note:
    `attach`, the ceilings, identical means no revision. The revision and
-   the run's progress land in one transaction.
+   the run's progress land in one transaction. Each overview and subject
+   prompt names a prose budget for its patch, computed by code: the
+   ceiling counts the whole page, so its room is spread over this part and
+   those after it (the overview a double share, never under 2000
+   characters), which keeps an early part from filling the page and every
+   answer short; a patch over it is logged, never cut.
 4. *Project.* The repository's new description folded into the project
    page, on a full run always, on a reconcile when the summary changed.
    Beside it the step sees the summaries of the project's other source

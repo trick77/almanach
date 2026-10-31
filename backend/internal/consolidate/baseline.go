@@ -564,7 +564,9 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		return readErr(err)
 	}
 	focus := w.focus(plan, page, newer)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), newer)
+	left := plan.steps() - i - 1
+	budget := stepBudget(w.limits.RepoMaxChars, prose(page.Summary, page.Statements), left, name == overviewName)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, left, budget, part, focus, renderFiles(read, bodies), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -574,6 +576,10 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if !ok {
 		return w.skipPart(ctx, r, &plan, name, "the call failed: "+res.Outcome.String())
 	}
+	// Measured, never enforced: the page's ceilings reject a rewrite whole,
+	// and a patch is never cut.
+	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: patch holds %d chars of prose, budget %d, %d statements returned unchanged",
+		name, patchProse(res.Patch), budget, unchanged(page.Statements, res.Patch)))
 	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer)
 }
 
@@ -1313,10 +1319,69 @@ func renderCatalogue(r store.BaselineRun, listing, docs, placing string, maxSubj
 	).Replace(prompts.Catalogue)
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, part, focus, files string, newer map[string]string) string {
+// The prose budget of a describe step: the ceiling is for the whole page,
+// so what it has left is spread over this part and those after it. The
+// overview takes overviewShare shares, the summary and what spans the
+// repository being its to write; minStepBudget keeps room for a correction
+// on a page near its ceiling.
+const (
+	minStepBudget = 2000
+	overviewShare = 2
+)
+
+// stepBudget is the prose a step's patch should hold at most: the page's
+// room under maxChars spread evenly over this part and the left after it.
+// The overview's extra share is taken from the parts after it, so with none
+// left it has one share like any other.
+func stepBudget(maxChars, chars, left int, overview bool) int {
+	b := max(minStepBudget, (maxChars-chars)/(left+1))
+	if overview && left > 0 {
+		b *= overviewShare
+	}
+	return b
+}
+
+// patchProse is the prose a patch returns, counted like the ceiling: the
+// summary when it writes one, the name and text of every statement.
+func patchProse(p inference.Patch) int {
+	n := 0
+	if p.Summary != nil {
+		n += utf8.RuneCountInString(*p.Summary)
+	}
+	for _, s := range p.Statements {
+		n += utf8.RuneCountInString(s.Name) + utf8.RuneCountInString(s.Text)
+	}
+	return n
+}
+
+// unchanged counts the statements a patch returns by id exactly as stored,
+// held to what attach would store: output paid for that belonged in
+// confirmed.
+func unchanged(current []store.Statement, p inference.Patch) int {
+	byID := make(map[string]store.Statement, len(current))
+	for _, s := range current {
+		byID[s.ID] = s
+	}
+	n := 0
+	for _, st := range p.Statements {
+		if st.ID == nil {
+			continue
+		}
+		old, ok := byID[*st.ID]
+		if ok && st.Kind == old.Kind && lang.SwissSS(strings.TrimSpace(st.Name)) == old.Name &&
+			lang.SwissSS(strings.TrimSpace(st.Text)) == old.Text && slices.Equal(cleanFiles(st.Files), old.Files) &&
+			(st.Diagram == nil || diagram.Equal(st.Diagram, old.Diagram)) {
+			n++
+		}
+	}
+	return n
+}
+
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left, budget int, part, focus, files string, newer map[string]string) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
-		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{part}", part, "{focus}", focus,
+		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{step_budget}", fmt.Sprint(budget),
+		"{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
 		"{repo_description}", describeSourced(page, newer), "{files}", files, "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),

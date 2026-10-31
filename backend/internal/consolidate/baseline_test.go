@@ -419,6 +419,99 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	}
 }
 
+// The budget spreads the page's room over this part and those after it:
+// the overview a double share, the floor on a nearly full page, one share
+// for an overview with nothing after it.
+func TestStepBudget(t *testing.T) {
+	for _, c := range []struct {
+		name             string
+		max, chars, left int
+		overview         bool
+		want             int
+	}{
+		{"fresh page, overview of a 13-step run", 60000, 0, 11, true, 10000},
+		{"after it, the first subject", 60000, 10000, 10, false, 4545},
+		{"last subject", 60000, 50000, 0, false, 10000},
+		{"nearly full page", 60000, 59000, 3, false, minStepBudget},
+		{"over a lowered ceiling", 60000, 70000, 3, false, minStepBudget},
+		{"overview on a nearly full page", 60000, 59000, 3, true, 2 * minStepBudget},
+		{"overview alone", 60000, 20000, 0, true, 40000},
+	} {
+		if got := stepBudget(c.max, c.chars, c.left, c.overview); got != c.want {
+			t.Errorf("%s: stepBudget = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// A step's prompt names its budget; after the call one line logs the
+// patch's prose against it and the statements returned as stored, which
+// belonged in confirmed. Over budget nothing is cut.
+func TestRun_StepBudgetLogged(t *testing.T) {
+	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	login := store.Statement{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}}
+	billing := store.Statement{ID: "s2", Kind: "rule", Name: "Rechnung", Text: "Monatlich.", Files: []string{"billing/run.go"}}
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{login, billing}}
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Werkzeugdienst.")}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{
+			stmt(ref("s1"), "rule", "Login", "Zweistufig.\n", " auth/login.go"),
+			stmt(ref("s2"), "rule", "Rechnung", "Monatlich, im Voraus.", "billing/run.go"),
+			stmt(nil, "rule", "Sperre", "Nach fünf Versuchen.", "auth/login.go"),
+		}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+
+	// 400-rune ceiling, 45 used, two parts: the floor, the overview's twice.
+	if !strings.Contains(x.models.prompts[1], "at most about 4000 characters of prose") ||
+		!strings.Contains(x.models.prompts[2], "at most about 2000 characters of prose") {
+		t.Errorf("prompts lack their budgets:\n%s", x.models.prompts[2])
+	}
+	out := logs.String()
+	for _, want := range []string{
+		"the overview: patch holds 19 chars of prose, budget 4000, 0 statements returned unchanged",
+		"Anmeldung: patch holds 72 chars of prose, budget 2000, 1 statements returned unchanged",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if page := x.st.pages[key]; len(page.Statements) != 3 || page.Statements[1].Text != "Monatlich, im Voraus." {
+		t.Errorf("page = %+v, want the patch applied", page)
+	}
+}
+
+// A statement returned as attach would store it counts as unchanged, its
+// spelling and spaces forgiven; a new one, an unknown id, another kind or a
+// removed diagram does not.
+func TestUnchanged(t *testing.T) {
+	d := drawnMap("svc")
+	current := []store.Statement{
+		{ID: "s1", Kind: "rule", Name: "Grösse", Text: "Gilt.", Files: []string{"a.go"}},
+		{ID: "s2", Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: d},
+	}
+	p := inference.Patch{Statements: []inference.Statement{
+		stmt(ref("s1"), "rule", " Größe", "Gilt.", "a.go"),
+		{ID: ref("s2"), Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: d},
+		stmt(ref("s9"), "rule", "Unbekannt", "Gilt."),
+		stmt(nil, "rule", "Neu", "Gilt."),
+	}}
+	if got := unchanged(current, p); got != 2 {
+		t.Errorf("unchanged = %d, want 2", got)
+	}
+	p.Statements[0].Kind = "invariant"
+	p.Statements[1].Diagram = &diagram.Diagram{Kind: diagram.KindNone}
+	if got := unchanged(current, p); got != 0 {
+		t.Errorf("unchanged after kind and diagram changes = %d, want 0", got)
+	}
+}
+
 // The project step learns which statements pull requests taught, not their
 // keys.
 func TestDescribeTaught(t *testing.T) {
