@@ -8,7 +8,8 @@ the decisions behind it.
 
 ## Architecture overview
 
-Almanach is one Go process and one PostgreSQL database. The wiki feed calls
+Almanach is one Go process and one SQLite database file on its own
+volume. The wiki feed calls
 nothing but the LLM gateway; the sources feature (section 4a) reaches a
 Bitbucket project's repository listing and git remotes with the operator's
 token, and nothing else.
@@ -23,7 +24,7 @@ token, and nothing else.
                                                              │ Ingest, reads
                                                              ▼
                                                   ┌──────────────────────┐
-                                                  │  store (pgx)         │
+                                                  │  store (SQLite)      │
                                                   │  deliveries, notes,  │
                                                   │  revisions, pages... │
                                                   └──────────┬───────────┘
@@ -473,9 +474,16 @@ never across a model call.
 
 ## 5. Operations
 
-- `almanach migrate` applies the embedded migrations under an advisory lock
-  and exits: the init container's job. `almanach serve` refuses a schema
-  that is behind, naming the pending files.
+- `almanach migrate` applies the embedded migrations to the file
+  `ALMANACH_DB_PATH` names, each in its own transaction (a second migrator
+  waits on SQLite's write lock), and exits: the init container's job.
+  `almanach serve` refuses a schema that is behind, naming the pending
+  files. Both check first that the file's folder exists and takes a file.
+- The database is one file (with its `-wal` and `-shm` beside it) on a
+  volume of its own, apart from the clones: a clone volume can be wiped and
+  refilled from the forge, the data volume cannot, and a backup is that
+  volume. A local disk on one node (ReadWriteOnce), never a shared
+  filesystem: SQLite in WAL needs POSIX locks of one host. One replica.
 - `/healthz` is liveness, `/readyz` asks the database. Both answer loopback
   callers only, so probes are `exec` probes against the binary's
   `-healthcheck` and `-readycheck`.
@@ -484,7 +492,7 @@ never across a model call.
   failures at once. A gateway that does not answer is a warning only: notes
   are still taken and folds retry; a gateway that refuses the key or does
   not list the alias is a fault.
-- Logs are structured, one line per event. No secret, no DSN, no token ever
+- Logs are structured, one line per event. No secret, no token ever
   appears in them; the startup config line prints addresses, model and caps.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
@@ -513,7 +521,7 @@ one.
 | `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
-| `internal/store` | PostgreSQL: pool, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes. | pgx, kit/migrate |
+| `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |
 | `internal/consolidate` | The worker: loop, hold, fold, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | config, inference, lang, prompts, store, llmwire (error classes) |
 | `internal/inference` | The llmwire client: startup checks, one `Merge` call with the strict schema, answer parsing, cost extraction. | llmwire |
 | `internal/prompts` | `almanach_merge.txt`, compiled in with `go:embed`. Never configurable. | nothing |
@@ -529,14 +537,44 @@ The interfaces are declared where they are used (`api.Store`,
 `consolidate.Store`, `consolidate.Merger`) and satisfied by `*store.Store`
 and `*inference.Client`. That is what lets the api and consolidate tests
 run against in-memory fakes while the store has its own tests against a
-real PostgreSQL that ship starts for `make check`.
+real, migrated SQLite file in each test's temporary folder: no server, no
+docker, a plain `go test` runs them.
 
 ## 7. Storage model
 
-Everything is in PostgreSQL, schema `backend/internal/store/migrations/`.
-The database records what happened; the descriptions are derived from it
-and rewritten by the merge call, revision by revision, never edited by
-hand. Four groups of tables:
+Everything is in one SQLite file, schema
+`backend/internal/store/migrations/`. The database records what happened;
+the descriptions are derived from it and rewritten by the merge call,
+revision by revision, never edited by hand.
+
+How SQLite holds what it has no type for:
+
+- **Times** are `TEXT`, UTC, RFC 3339 with all nine digits of the
+  nanoseconds (`2026-10-01T12:00:00.000000000Z`). Fixed width, so text
+  order is time order and two merges a second apart keep their order. Go
+  writes every one through the store's one helper; the schema has no
+  clock of its own (no `datetime('now')`, no default on a time column),
+  and a stored time in any other shape is a read error, never a zero time.
+- **JSON** (the note, the bugfix, a revision's statements and map, a run's
+  plan, a call's warnings, the delivery body) is `TEXT` with a
+  `CHECK (json_valid(...))`, read with `json_each`, `json_array_length`,
+  `json_type` and `->>`. Kept verbatim: SQLite does not normalise it.
+- **Money** is nano-USD in an `INTEGER` (64-bit), never a float.
+- **Ids** are `INTEGER PRIMARY KEY`; a baseline run's is `AUTOINCREMENT`,
+  never reused after its repository is removed, because the ledger keeps
+  it without a foreign key.
+
+**Writers.** The webhook, the worker, the poller and the Quellen routes
+write, each in short transactions; none spans a model call or a git
+command. Every writing transaction begins `IMMEDIATE` (`_txlock=immediate`
+on the DSN): it takes the database's one write lock at `BEGIN`, so it never
+holds a read snapshot and then fails its first write with "database is
+locked". A second writer waits up to the busy timeout (10 s, kit's
+`sqlitex.DSN`, with WAL and foreign keys); one that runs out is an error
+like any failed write, and the webhook answers 500. Readers never wait in
+WAL: the UI and the API read while the worker writes.
+
+Four groups of tables:
 
 **What arrived.** `deliveries` keeps every webhook body whole, keyed by
 noergler's dedup id `pr_merged_note#<pr_key>#<source_commit>`. Append-only:
@@ -571,7 +609,7 @@ mode (`full` or `reconcile` from `base_commit`), the trigger (`manual`,
 `first_ready`, `monthly`), the commit (the head when queued, pinned when
 the run starts), the state (`queued`, `cataloguing`, `describing`,
 `project`, `done`, `failed`), the step and the steps, the plan (the
-catalogue as JSONB: subjects with their files and sizes, what this run
+catalogue as JSON: subjects with their files and sizes, what this run
 reads, what it skipped, files it could not place), the attempts of the
 current step, the calls and bytes spent, the skipped parts, the error and
 the times. A partial unique index keeps one open run per repository; the
@@ -580,7 +618,7 @@ of a repository is the commit of its newest `done` run.
 
 **The notes.** `notes` is one row per merged pull request, replaced when
 the same PR is delivered again (a reopen and re-merge) and then re-queued.
-Beside the note object itself (`note`, JSONB, verbatim) sit the facts
+Beside the note object itself (`note`, JSON, verbatim) sit the facts
 noergler attached: ticket, change kind, commits, run id, the posted issue
 and suggestion counts, and two columns computed at ingest for the problem
 areas, `bugfix_area` (the longest directory every component file of a
@@ -593,9 +631,9 @@ columns: the cache-hit rate and the cost per note are one query.
 
 **The wiki.** `revisions` is every version of every description:
 `scope` (repository or project), the keys, a per-page `revision` number,
-the `summary` prose, the `statements` array as JSONB (each with its id,
+the `summary` prose, the `statements` array as JSON (each with its id,
 kind, name, text, files, the sources code attached and its diagram, if
-any), a project revision's system `map` as JSONB, the serialized
+any), a project revision's system `map` as JSON, the serialized
 size, what produced it (`source_kind`: the PR whose note it was, or the
 baseline run's commit, exactly one of `source_pr_key` and `source_commit`
 set) and the call behind it. A statement's source carries the same kind;
@@ -638,9 +676,10 @@ so the choice is not undone as a cleanup.
   project description from two different bases and one would overwrite
   the other's facts. The volume is one note per merged PR; a queue of
   minutes is fine, a wrong description is not. The serial worker is what
-  keeps a fold's base current; the advisory lock in `InsertRevision` only
-  keeps revision numbers and the page pointer consistent, it does not
-  make concurrent folds safe. Parallelising the worker would need the
+  keeps a fold's base current; `InsertRevision`'s transaction, which
+  holds SQLite's one write lock from its `BEGIN`, only keeps revision
+  numbers and the page pointer consistent, it does not make concurrent
+  folds safe. Parallelising the worker would need the
   base revision checked at write time.
 - **Provenance is code's, never the model's.** The sources on a statement
   (which PRs it was learned from) are what make a wiki trustworthy, and a
@@ -950,8 +989,8 @@ the reason in the log and the page unchanged:
   seconds. A gateway that
   is unreachable or answers 5xx is a warning; a refused key, a 4xx, a body
   that is not a listing, or an alias missing from it is a fault.
-- `serve` never migrates; `migrate` needs only the DSN. A schema behind the
-  binary refuses to start.
+- `serve` never migrates; `migrate` needs only `ALMANACH_DB_PATH`. A schema
+  behind the binary refuses to start.
 - `/healthz` and `/readyz` answer a loopback caller without forwarding
   headers only; through a router or the sidecar they are 404 by design.
 - In proxy mode the listener must be loopback (`127.0.0.1` or

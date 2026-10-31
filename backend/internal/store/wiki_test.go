@@ -79,7 +79,7 @@ func fixtureStatements() []Statement {
 }
 
 // Revisions number 1, 2, 3 per page, the page follows the newest, the
-// statements survive JSONB.
+// statements survive the JSON column.
 func TestInsertRevision_NumbersAndRepoints(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

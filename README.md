@@ -63,9 +63,10 @@ compose stack behind Traefik.
 
 ## How it is built
 
-One Go process and one PostgreSQL database. The process holds the HTTP
-surface (noergler's bearer-authenticated webhook, the read API, the UI),
-the store (pgx, embedded migrations), the poller that clones and fetches
+One Go process and one SQLite database file on its own volume. The
+process holds the HTTP surface (noergler's bearer-authenticated webhook,
+the read API, the UI), the store (SQLite in WAL, embedded migrations),
+the poller that clones and fetches
 with the git binary, and one serial worker that folds notes and runs the
 baseline's steps, so a page never has two writers. Descriptions are
 revisions behind a current pointer: history is never rewritten.
@@ -76,15 +77,19 @@ reasons: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Every knob:
 
 ## Running it
 
-Almanach needs PostgreSQL and an OpenAI-compatible gateway (a LiteLLM
-proxy) for the model.
+Almanach needs an OpenAI-compatible gateway (a LiteLLM proxy) for the
+model; its database is a file it keeps itself.
 
 ```sh
 cp .env.example .env            # fill in the gateway and the model; for private
                                 # repositories ALMANACH_SECRET_KEY (openssl rand -base64 32)
 cp team-keys.example.json team-keys.json
-docker compose up --build       # Postgres, migrate, almanach on :8081
+docker compose up --build       # migrate, then almanach on :8081
 ```
+
+The database lives on the `data` volume (`/data/almanach.db`), the clones
+on the `repos` volume: two volumes, the database alone on its own. A
+backup is the data volume; the clones refill from the forge.
 
 Open http://localhost:8081/quellen and add a Bitbucket project, or a
 static folder with its repositories entered by hand; each repository's
@@ -115,7 +120,7 @@ In production an OAuth sidecar sits in front; see `ALMANACH_AUTH_MODE` in
 
 ```sh
 make hooks     # once per clone: ship's pre-push gate
-make check     # everything CI runs (needs docker for the store tests)
+make check     # everything CI runs; the store tests use a temporary file
 make lint      # quick lint while editing
 make build     # bin/almanach
 make prompt-eval EVAL_ENV=<file>   # full baselines through a real model, paid
