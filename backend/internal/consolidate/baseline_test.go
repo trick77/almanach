@@ -437,15 +437,22 @@ func TestStepBudget(t *testing.T) {
 		{"after it, the first subject", 10000, 6, 10, false, 4545, 3},
 		{"last subject", 50000, 30, 0, false, 10000, 10},
 		{"nearly full page", 59000, 39, 3, false, minStepBudget, 1},
-		{"full on statements", 20000, 40, 3, false, 10000, 1},
-		{"over lowered ceilings", 70000, 45, 3, false, minStepBudget, 1},
-		{"overview on a nearly full page", 59000, 39, 3, true, 2 * minStepBudget, 2},
+		{"full on statements", 20000, 40, 3, false, 10000, 0},
+		{"over lowered ceilings", 70000, 45, 3, false, minStepBudget, 0},
+		{"overview on a nearly full page", 59000, 39, 3, true, 2 * minStepBudget, 1},
+		{"overview over the statement cap", 20000, 45, 3, true, 20000, 0},
 		{"overview alone", 20000, 10, 0, true, 40000, 30},
 	} {
 		got := stepBudget(l, page(c.chars, c.statements), c.left, c.overview)
 		if got != (budget{c.wantChars, c.wantStatement}) {
 			t.Errorf("%s: stepBudget = %+v, want %d chars, %d statements", c.name, got, c.wantChars, c.wantStatement)
 		}
+	}
+	// At the cap the prompt asks for none and says what to do instead.
+	r := store.BaselineRun{ProjectKey: "PLAT", Slug: "files", Commit: head}
+	out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, budget{2000, 0}, "a subject", "", "_None._", nil)
+	if !strings.Contains(out, "2000 characters of prose and no new statements: deepen or merge existing ones; its prose is") {
+		t.Errorf("describe prompt at the cap lacks the no-new-statements budget")
 	}
 }
 

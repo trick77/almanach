@@ -451,7 +451,8 @@ resumes after a restart. The run pins the clone's head when it starts.
    prompt names a budget for its patch, characters of prose and new
    statements, computed by code: the ceilings count the whole page, so its
    room under each is spread over this part and those after it (the
-   overview a double share, never under 2000 characters or one statement),
+   overview a double share, never under 2000 characters or, below the
+   statement cap, one statement; at the cap none, deepen or merge instead),
    which keeps an early part from filling the page and ending the reading,
    and every answer short; a patch over it is logged, never cut.
 4. *Project.* The repository's new description folded into the project

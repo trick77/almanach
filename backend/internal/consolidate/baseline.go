@@ -1323,8 +1323,8 @@ func renderCatalogue(r store.BaselineRun, listing, docs, placing string, maxSubj
 // what it has left is spread over this part and those after it. The
 // overview takes overviewShare shares, the summary and what spans the
 // repository being its to write; minStepBudget keeps room for a correction
-// on a page near its prose ceiling, and a step may always add one
-// statement.
+// on a page near its prose ceiling, and a step may add one statement while
+// the page is under its statement cap; at the cap, none.
 const (
 	minStepBudget = 2000
 	overviewShare = 2
@@ -1338,17 +1338,28 @@ type budget struct {
 
 // stepBudget spreads the page's room under both ceilings evenly over this
 // part and the left after it. The overview's extra share is taken from the
-// parts after it, so with none left it has one share like any other.
+// parts after it, so with none left it has one share like any other; new
+// statements never past the room the page has.
 func stepBudget(l config.Limits, page store.Page, left int, overview bool) budget {
-	b := budget{
-		chars:      max(minStepBudget, (l.RepoMaxChars-prose(page.Summary, page.Statements))/(left+1)),
-		statements: max(1, (l.RepoMaxStatements-len(page.Statements))/(left+1)),
+	room := l.RepoMaxStatements - len(page.Statements)
+	b := budget{chars: max(minStepBudget, (l.RepoMaxChars-prose(page.Summary, page.Statements))/(left+1))}
+	if room > 0 {
+		b.statements = max(1, room/(left+1))
 	}
 	if overview && left > 0 {
 		b.chars *= overviewShare
-		b.statements *= overviewShare
+		b.statements = min(max(room, 0), b.statements*overviewShare)
 	}
 	return b
+}
+
+// newStatementsAllowed is the budget's new statements as the prompt says
+// them: none at the cap, with what to do instead.
+func newStatementsAllowed(n int) string {
+	if n == 0 {
+		return "no new statements: deepen or merge existing ones"
+	}
+	return fmt.Sprintf("%d new statements", n)
 }
 
 // newStatements counts the statements a patch adds, those without an id.
@@ -1402,7 +1413,7 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left),
-		"{step_budget}", fmt.Sprint(b.chars), "{step_statements}", fmt.Sprint(b.statements), "{part}", part, "{focus}", focus,
+		"{step_budget}", fmt.Sprint(b.chars), "{step_statements}", newStatementsAllowed(b.statements), "{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
 		"{repo_description}", describeSourced(page, newer), "{files}", files, "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
