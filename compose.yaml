@@ -27,15 +27,24 @@ services:
       - "8081:8080"
     env_file: .env
     # What the container must not take from .env: the database path, the
-    # keys path and the listener. A loopback SERVER_HOST or proxy mode set
-    # for a host run would bind inside the container's own namespace, with
-    # the port mapping dead and the healthcheck (same env) still green.
+    # keys path and the listener. A loopback SERVER_HOST set for a host run
+    # would bind inside the container's own namespace, with the port mapping
+    # dead and the healthcheck (same env) still green. Auth stays none here:
+    # oidc needs a provider and an https callback this local stack has not
+    # got.
     environment:
       - *db-path
       - ALMANACH_TEAM_KEYS_PATH=/app/team-keys.json
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - ALMANACH_AUTH_MODE=none
+      # Blank, so an .env filled in for oidc still starts here: serve
+      # refuses every oidc variable under none, and blank counts as unset.
+      - ALMANACH_OIDC_ISSUER=
+      - ALMANACH_OIDC_CLIENT_ID=
+      - ALMANACH_OIDC_CLIENT_SECRET=
+      - ALMANACH_OIDC_REDIRECT_URL=
+      - ALMANACH_SESSION_SECRET=
       # The clones live on the repos volume; the host's view of the folder
       # (a path outside compose) must not reach the container.
       - ALMANACH_REPOS_DIR=/app/repos

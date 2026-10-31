@@ -23,12 +23,14 @@ import (
 	"strings"
 	"time"
 
+	kitauth "github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
 	"github.com/trick77/ship/kit/run"
 	"github.com/trick77/ship/kit/version"
 
 	"github.com/trick77/almanach/internal/api"
+	"github.com/trick77/almanach/internal/auth"
 	"github.com/trick77/almanach/internal/bitbucket"
 	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/config"
@@ -253,6 +255,24 @@ func serve(log *slog.Logger) error {
 	} else {
 		log.Info("Sources: off (ALMANACH_REPOS_DIR unset)")
 	}
+	// The sign-in. Discovery runs in the background from the first attempt
+	// on, so boot never waits for the provider; one that does not answer
+	// is a warning, like the gateway: the webhook, the ping and the probes
+	// do not need it. Until it answers the login lands on a page that
+	// says so and the wiki stays behind its 401.
+	var oidcSvc api.OIDCService
+	var sessions *kitauth.Sessions
+	if app.AuthMode == config.AuthOIDC {
+		o := app.OIDC
+		s, err := auth.NewSessions(o.SessionKey)
+		if err != nil {
+			panic("session cookie: config admitted a key kit refuses: " + err.Error())
+		}
+		sessions = s
+		provider := auth.NewProvider(auth.Config{Issuer: o.Issuer, ClientID: o.ClientID, ClientSecret: o.ClientSecret, RedirectURL: o.RedirectURL}, log)
+		go provider.Run(ctx)
+		oidcSvc = provider
+	}
 	if len(checks) > 0 {
 		return fmt.Errorf("startup aborted: %d check(s) failed: %s", len(checks), strings.Join(checks, ", "))
 	}
@@ -284,7 +304,8 @@ func serve(log *slog.Logger) error {
 	worker.Start(context.WithoutCancel(ctx))
 
 	srv := httpapi.New(db.Ping, log)
-	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources, Log: log})
+	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
+		OIDC: oidcSvc, Sessions: sessions, RedirectURL: app.OIDC.RedirectURL, Log: log})
 
 	addr := net.JoinHostPort(app.Host, strconv.Itoa(app.Port))
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))

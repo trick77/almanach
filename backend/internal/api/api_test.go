@@ -241,8 +241,8 @@ func TestWebhook(t *testing.T) {
 	t.Run("202 accepted wakes the worker", func(t *testing.T) {
 		st := newFakeStore()
 		w := &fakeWaker{}
-		h := handler(t, st, w, config.AuthProxy)
-		code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(7), map[string]string{"X-Forwarded-User": "mallory"})
+		h := handler(t, st, w, config.AuthNone)
+		code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(7), nil)
 		if code != 202 || field(t, body, "status") != "accepted" {
 			t.Fatalf("code = %d, body %v", code, body)
 		}
@@ -253,7 +253,7 @@ func TestWebhook(t *testing.T) {
 			t.Fatalf("stored = %+v", st.stored)
 		}
 		if st.stored[0].Team != "platform" {
-			t.Errorf("stored Team = %q, want the bearer's team, never a header", st.stored[0].Team)
+			t.Errorf("stored Team = %q, want the bearer's team", st.stored[0].Team)
 		}
 		d := st.deliveries[0]
 		if d.ID != "pr_merged_note#plat/files#7#abcdef1234567" || d.Team != "platform" || d.EventType != "pr_merged_note" || len(d.Payload) == 0 {

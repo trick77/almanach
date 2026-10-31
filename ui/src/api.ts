@@ -5,6 +5,7 @@
 // omitempty are optional here.
 
 import type { DiagramIR, FlowIR } from "./diagramIR";
+import { onUnauthorized } from "./signin";
 
 export interface Project {
   key: string;
@@ -282,6 +283,7 @@ export interface SourceDetail {
  *  failed state rather than an empty one. */
 export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`/api/${path}`, { signal });
+  onUnauthorized(res.status);
   if (!res.ok) {
     throw new Error(`${path}: HTTP ${res.status}`);
   }
@@ -322,6 +324,7 @@ export async function send<T>(
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  onUnauthorized(res.status);
   if (res.status === 204) return null;
   const parsed = parseJSON(await res.text());
   if (!res.ok) {
@@ -329,4 +332,11 @@ export async function send<T>(
     throw new ApiError(res.status, err?.error ?? `HTTP ${res.status}`);
   }
   return parsed as T;
+}
+
+/** Me is the session check's answer: the auth mode and the reader's name
+ *  (preferred username, else email, else subject), "" in none mode. */
+export interface Me {
+  mode: "none" | "oidc";
+  user: string;
 }

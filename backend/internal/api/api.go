@@ -1,6 +1,7 @@
 // Package api is the HTTP surface: the noergler webhook and the ping (bearer
-// = team), and the read API the UI will consume (proxy user, or anonymous).
-// Structs, never maps: encoding/json sorts map keys.
+// = team, never a session), and the read API the UI consumes (the signed-in
+// reader in oidc mode, anonymous in none). Structs, never maps:
+// encoding/json sorts map keys.
 package api
 
 import (
@@ -16,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/trick77/almanach/internal/auth"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
@@ -23,6 +25,7 @@ import (
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
 	"github.com/trick77/almanach/web"
+	kitauth "github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
 )
@@ -59,7 +62,13 @@ type Deps struct {
 	// Sources is the clone feature; nil when ALMANACH_REPOS_DIR is unset,
 	// and the routes then say so.
 	Sources *SourcesDeps
-	Log     *slog.Logger
+	// OIDC, Sessions and RedirectURL are the sign-in, set in oidc mode
+	// only; RedirectURL's origin is trusted for a change beside the
+	// request's own host.
+	OIDC        OIDCService
+	Sessions    *kitauth.Sessions
+	RedirectURL string
+	Log         *slog.Logger
 }
 
 // Register mounts every route.
@@ -77,6 +86,7 @@ func Register(s *httpapi.Server, d Deps) {
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
 	d.registerSources(s)
+	d.registerAuth(s)
 }
 
 // team is the caller's team by its bearer, or "" with the 401 written.
@@ -194,14 +204,11 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusAccepted, acceptedBody{Status: outcome})
 }
 
-// user is who reads, from the sidecar's header in proxy mode; anonymous
-// otherwise. The read API serves the same to everyone; the name is for
-// the access log and a later audit, never a gate.
+// user is who reads, off the session's claims in oidc mode (preferred
+// username, else email, else subject); anonymous in none. The read API serves the same to everyone;
+// the name is for the access log and a later audit, never a gate.
 func (d Deps) user(r *http.Request) string {
-	if d.AuthMode == config.AuthProxy {
-		return strings.TrimSpace(r.Header.Get("X-Forwarded-User"))
-	}
-	return ""
+	return auth.ReaderFrom(r.Context())
 }
 
 // reader puts the reader on the access log line of every read route.

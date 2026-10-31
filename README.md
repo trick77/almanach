@@ -113,8 +113,10 @@ curl -H "Authorization: Bearer <token>" http://localhost:8081/auth/ping
 
 The read API, the UI and the source writes are open as this compose runs
 them (`ALMANACH_AUTH_MODE=none`): keep it off any network others reach.
-In production an OAuth sidecar sits in front; see `ALMANACH_AUTH_MODE` in
-[CONFIGURATION.md](CONFIGURATION.md).
+In production Almanach signs readers in itself over OIDC
+(`ALMANACH_AUTH_MODE=oidc`) at your identity provider, behind a
+TLS-terminating reverse proxy; the webhook and the ping stay bearer only.
+See `ALMANACH_AUTH_MODE` in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Development
 

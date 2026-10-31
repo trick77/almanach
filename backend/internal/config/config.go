@@ -5,11 +5,15 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/trick77/almanach/internal/diagram"
 	kitenv "github.com/trick77/ship/kit/env"
+
+	"github.com/trick77/almanach/internal/authroute"
+	"github.com/trick77/almanach/internal/diagram"
 )
 
 // AuthMode is how the read API knows who asks.
@@ -17,12 +21,42 @@ type AuthMode string
 
 const (
 	// AuthNone trusts nobody and names nobody: every reader is anonymous.
+	// Allowed on any host: the compose stack binds 0.0.0.0 in its
+	// container. Nothing in the code keeps it off a public network; that
+	// is the deployment's choice of mode.
 	AuthNone AuthMode = "none"
-	// AuthProxy trusts X-Forwarded-User from an OAuth sidecar in front; the
-	// service then listens on loopback only, so the header can come from
-	// nowhere else.
-	AuthProxy AuthMode = "proxy"
+	// AuthOIDC signs the browser in at an OpenID provider; every /api route
+	// but the login's own two needs kit's signed session cookie.
+	AuthOIDC AuthMode = "oidc"
 )
+
+// OIDC is the sign-in, all of it required in oidc mode and refused in
+// none, where it would look active and change nothing.
+type OIDC struct {
+	// Issuer is taken exactly as configured: discovery compares it byte for
+	// byte with the provider's own, so a path (many providers have one) or
+	// a trailing slash stays. https, or http on a loopback host for a local
+	// provider.
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is the callback as the browser reaches it:
+	// https://<host>/api/auth/callback. https only: behind a TLS-terminating
+	// proxy the process sees plain HTTP, and the cookies are always Secure.
+	RedirectURL string
+	// SessionKey signs the session cookie, at least 32 bytes. Rotating it
+	// signs everyone out; nothing else revokes a session.
+	SessionKey []byte
+}
+
+// minSessionSecret is kit's floor for the HMAC key.
+const minSessionSecret = 32
+
+// oidcVars is every variable oidc mode reads and none refuses.
+var oidcVars = []string{
+	"ALMANACH_OIDC_ISSUER", "ALMANACH_OIDC_CLIENT_ID", "ALMANACH_OIDC_CLIENT_SECRET",
+	"ALMANACH_OIDC_REDIRECT_URL", "ALMANACH_SESSION_SECRET",
+}
 
 // Limits are the ceilings the merge call is held to: how many statements a
 // description may hold and how large the whole description may be. There
@@ -94,6 +128,8 @@ type App struct {
 	Host         string
 	Port         int
 	AuthMode     AuthMode
+	// OIDC is set in oidc mode only.
+	OIDC OIDC
 	// Model is an llmwire profile id; the gateway host, key and aliases are
 	// llmwire's own variables, read by it.
 	Model           string
@@ -114,7 +150,7 @@ func Load(lookup func(string) string) (*App, error) {
 		TeamKeysPath:    r.Required("ALMANACH_TEAM_KEYS_PATH"),
 		Host:            r.String("SERVER_HOST", "0.0.0.0"),
 		Port:            r.Int("SERVER_PORT", 8080),
-		AuthMode:        AuthMode(strings.ToLower(r.Enum("ALMANACH_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthProxy)))),
+		AuthMode:        AuthMode(strings.ToLower(r.Enum("ALMANACH_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthOIDC)))),
 		Model:           r.Required("ALMANACH_MODEL"),
 		ReasoningEffort: r.String("ALMANACH_REASONING_EFFORT", ""),
 		Limits: Limits{
@@ -158,15 +194,94 @@ func Load(lookup func(string) string) (*App, error) {
 	if app.Baseline.Reconcile < 0 {
 		r.Fail("ALMANACH_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
 	}
-	// In proxy mode the header is the whole credential, so the listener must
-	// be reachable by the sidecar alone.
-	if app.AuthMode == AuthProxy && app.Host != "127.0.0.1" && app.Host != "localhost" {
-		r.Fail("ALMANACH_AUTH_MODE=proxy needs SERVER_HOST=127.0.0.1 (the sidecar is the only caller), got %q", app.Host)
+	if app.AuthMode == AuthOIDC {
+		app.OIDC = loadOIDC(r)
+	} else {
+		for _, name := range oidcVars {
+			if strings.TrimSpace(lookup(name)) != "" {
+				r.Fail("%s is read in oidc mode only, got ALMANACH_AUTH_MODE=%s; remove it", name, app.AuthMode)
+			}
+		}
 	}
 	if err := r.Err(); err != nil {
 		return nil, err
 	}
 	return app, nil
+}
+
+// loadOIDC reads the sign-in. Every gap is fatal, not a warning: a
+// half-configured instance would start, serve the shell and fail every
+// login at the callback, which reads as a provider outage.
+func loadOIDC(r *kitenv.Reader) OIDC {
+	need := func(name string) string {
+		v := r.String(name, "")
+		if v == "" {
+			r.Fail("ALMANACH_AUTH_MODE=oidc requires %s", name)
+		}
+		return v
+	}
+	o := OIDC{
+		Issuer:       need("ALMANACH_OIDC_ISSUER"),
+		ClientID:     need("ALMANACH_OIDC_CLIENT_ID"),
+		ClientSecret: need("ALMANACH_OIDC_CLIENT_SECRET"),
+		RedirectURL:  need("ALMANACH_OIDC_REDIRECT_URL"),
+	}
+	if o.Issuer != "" {
+		if why := issuerFault(o.Issuer); why != "" {
+			r.Fail("ALMANACH_OIDC_ISSUER: %s, got %q", why, o.Issuer)
+		}
+	}
+	if o.RedirectURL != "" {
+		if why := redirectFault(o.RedirectURL); why != "" {
+			r.Fail("ALMANACH_OIDC_REDIRECT_URL: %s, got %q", why, o.RedirectURL)
+		}
+	}
+	if secret := need("ALMANACH_SESSION_SECRET"); secret != "" {
+		if len(secret) < minSessionSecret {
+			r.Fail("ALMANACH_SESSION_SECRET: want at least %d bytes (openssl rand -base64 48), got %d", minSessionSecret, len(secret))
+		} else {
+			o.SessionKey = []byte(secret)
+		}
+	}
+	return o
+}
+
+// issuerFault says what is wrong with an issuer, "" when nothing. A path
+// and a trailing slash are fine: the issuer is compared as written.
+func issuerFault(s string) string {
+	u, err := url.Parse(s)
+	switch {
+	case err != nil || u.Host == "":
+		return "want an absolute URL like https://auth.example.com"
+	case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+		return "want no user info, query or fragment"
+	case u.Scheme == "https", u.Scheme == "http" && loopback(u.Hostname()):
+		return ""
+	default:
+		return "want https (http only on a loopback host)"
+	}
+}
+
+// redirectFault says what is wrong with a redirect URL, "" when nothing.
+func redirectFault(s string) string {
+	u, err := url.Parse(s)
+	switch {
+	case err != nil || u.Scheme != "https" || u.Host == "":
+		return "want https://<host>" + authroute.Callback + ", the session cookie is always Secure"
+	case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Path != authroute.Callback:
+		return "want the path " + authroute.Callback + " and nothing else after the host"
+	}
+	return ""
+}
+
+// loopback reports whether host is this machine: only there may a local
+// provider speak plain http.
+func loopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func positive(r *kitenv.Reader, name string, def int) int {
@@ -186,7 +301,8 @@ func nonNegative(r *kitenv.Reader, name string, def int) int {
 	return v
 }
 
-// Summary is the config as the startup log prints it: no secret, no DSN.
+// Summary is the config as the startup log prints it: no secret, no DSN;
+// of the sign-in only the issuer and the client id.
 func (a *App) Summary() string {
 	sources := "off"
 	if a.Sources.Enabled() {
@@ -198,8 +314,12 @@ func (a *App) Summary() string {
 			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "",
 			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
 	}
+	mode := string(a.AuthMode)
+	if a.AuthMode == AuthOIDC {
+		mode = fmt.Sprintf("{oidc issuer %s, client %s}", a.OIDC.Issuer, a.OIDC.ClientID)
+	}
 	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars, diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
-		a.Host, a.Port, a.AuthMode, a.Model, a.ReasoningEffort,
+		a.Host, a.Port, mode, a.Model, a.ReasoningEffort,
 		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars,
 		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources)
 }
