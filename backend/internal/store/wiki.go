@@ -2,11 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/trick77/almanach/internal/diagram"
 )
 
@@ -106,7 +106,7 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 	var bugfix, note []byte
 	var ticket, issueType, kind, area, comp, reviewed, merge, model *string
 	var runID *int64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRowContext(ctx, `
 		SELECT project_key, repo_slug, pr_id, team, pr_key, pr_title, ticket_key, jira_issue_type, change_kind,
 		       bugfix, bugfix_area, bugfix_component, note, reviewed_commit, source_commit, merge_commit, merged_at,
 		       run_id, model_label, issues_posted, suggestions_posted, received_at
@@ -115,9 +115,9 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 		                      AND b.state NOT IN ('queued', 'done', 'failed'))
 		 ORDER BY received_at, pr_id LIMIT 1`).Scan(
 		&q.ProjectKey, &q.RepoSlug, &q.PRID, &q.Team, &q.PRKey, &q.PRTitle, &ticket, &issueType, &kind,
-		&bugfix, &area, &comp, &note, &reviewed, &q.SourceCommit, &merge, &q.MergedAt,
-		&runID, &model, &q.IssuesPosted, &q.Suggestions, &q.ReceivedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+		&bugfix, &area, &comp, &note, &reviewed, &q.SourceCommit, &merge, timeAt(&q.MergedAt),
+		&runID, &model, &q.IssuesPosted, &q.Suggestions, timeAt(&q.ReceivedAt))
+	if errors.Is(err, sql.ErrNoRows) {
 		return QueuedNote{}, false, nil
 	}
 	if err != nil {
@@ -138,11 +138,15 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 // the history reads ids as stable.
 func (s *Store) NextStatementID(ctx context.Context, scope, project, repo string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(substr(st->>'id', 2)::int), 0) + 1
-		  FROM revisions r, jsonb_array_elements(r.statements) st
-		 WHERE r.scope = $1 AND r.project_key = $2 AND COALESCE(r.repo_slug, '') = $3
-		   AND st->>'id' ~ '^s[0-9]{1,9}$'`, scope, project, repo).Scan(&n)
+	// An id is s and one to nine digits; json_each walks every revision's
+	// statements.
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(CAST(substr(id, 2) AS INTEGER)), 0) + 1
+		  FROM (SELECT st.value ->> '$.id' AS id
+		          FROM revisions r, json_each(r.statements) st
+		         WHERE r.scope = ? AND r.project_key = ? AND COALESCE(r.repo_slug, '') = ?)
+		 WHERE substr(id, 1, 1) = 's' AND length(id) BETWEEN 2 AND 10 AND substr(id, 2) NOT GLOB '*[^0-9]*'`,
+		scope, project, repo).Scan(&n)
 	return n, err
 }
 
@@ -150,15 +154,15 @@ func (s *Store) NextStatementID(ctx context.Context, scope, project, repo string
 // queued; returns the attempts so far. The worker gives up past its bound.
 func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `UPDATE notes SET fold_attempts = fold_attempts + 1
-		WHERE project_key = $1 AND repo_slug = $2 AND pr_id = $3 RETURNING fold_attempts`, project, repo, prID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `UPDATE notes SET fold_attempts = fold_attempts + 1
+		WHERE project_key = ? AND repo_slug = ? AND pr_id = ? RETURNING fold_attempts`, project, repo, prID).Scan(&n)
 	return n, err
 }
 
 // MarkConsolidated takes the note off the queue, folded or refused.
 func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID int) error {
-	_, err := s.pool.Exec(ctx, `UPDATE notes SET consolidated_at = now() WHERE project_key = $1 AND repo_slug = $2 AND pr_id = $3`,
-		project, repo, prID)
+	_, err := s.db.ExecContext(ctx, `UPDATE notes SET consolidated_at = ? WHERE project_key = ? AND repo_slug = ? AND pr_id = ?`,
+		nowStamp(), project, repo, prID)
 	return err
 }
 
@@ -167,13 +171,13 @@ func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID
 func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (Page, bool, error) {
 	p := Page{Scope: scope, ProjectKey: project, RepoSlug: repo}
 	var statements, drawn []byte
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRowContext(ctx, `
 		SELECT r.id, r.revision, r.summary, r.statements, r.source_kind, COALESCE(r.source_pr_key, ''),
 		       COALESCE(r.source_commit, ''), p.updated_at, r.map
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
-		 WHERE p.scope = $1 AND p.project_key = $2 AND p.repo_slug = $3`, scope, project, repo).Scan(
-		&p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR, &p.SourceCommit, &p.UpdatedAt, &drawn)
-	if errors.Is(err, pgx.ErrNoRows) {
+		 WHERE p.scope = ? AND p.project_key = ? AND p.repo_slug = ?`, scope, project, repo).Scan(
+		&p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR, &p.SourceCommit, timeAt(&p.UpdatedAt), &drawn)
+	if errors.Is(err, sql.ErrNoRows) {
 		return Page{}, false, nil
 	}
 	if err != nil {
@@ -215,60 +219,57 @@ type NewRevision struct {
 }
 
 // InsertRevision writes the next revision of a page and repoints the page
-// to it, in one transaction under the page row's lock, so two folds of the
-// same page number themselves correctly. Returns the revision number.
+// to it, in one transaction. The transaction holds the database's one
+// write lock from its BEGIN, so two folds of the same page number
+// themselves correctly. Returns the revision number.
 func (s *Store) InsertRevision(ctx context.Context, rev NewRevision) (int, error) {
-	tx, err := s.pool.Begin(ctx)
+	var n int
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		n, err = insertRevision(ctx, tx, rev)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	n, err := insertRevision(ctx, tx, rev)
-	if err != nil {
-		return 0, err
-	}
-	return n, tx.Commit(ctx)
+	return n, nil
 }
 
 // insertRevision is InsertRevision inside the caller's transaction.
-func insertRevision(ctx context.Context, tx pgx.Tx, rev NewRevision) (int, error) {
-	// One lock per page, whether or not the page row exists yet: the folds
-	// are serial today, the lock keeps them correct if that changes.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, rev.Scope+"|"+rev.ProjectKey+"|"+rev.RepoSlug); err != nil {
-		return 0, err
-	}
+func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, error) {
 	var repo *string
 	if rev.Scope == ScopeRepository {
 		repo = &rev.RepoSlug
 	}
-	statements, err := json.Marshal(orEmptyStatements(rev.Statements))
+	statements, err := jsonOf(orEmptyStatements(rev.Statements))
 	if err != nil {
 		return 0, err
 	}
-	var drawn []byte
+	var drawn any
 	if rev.Map != nil {
-		if drawn, err = json.Marshal(rev.Map); err != nil {
+		if drawn, err = jsonOf(rev.Map); err != nil {
 			return 0, err
 		}
 	}
+	now := nowStamp()
 	var id int64
 	var n int
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO revisions (scope, project_key, repo_slug, revision, summary, statements, chars,
-		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id, map)
-		VALUES ($1, $2, $3,
+		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id, map, created_at)
+		VALUES (?1, ?2, ?3,
 		    (SELECT COALESCE(MAX(revision), 0) + 1 FROM revisions
-		      WHERE scope = $1 AND project_key = $2 AND COALESCE(repo_slug, '') = $4),
-		    $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, $12, $13)
+		      WHERE scope = ?1 AND project_key = ?2 AND COALESCE(repo_slug, '') = ?4),
+		    ?5, ?6, ?7, ?8, NULLIF(?9, ''), NULLIF(?10, ''), ?11, ?12, ?13, ?14)
 		RETURNING id, revision`,
 		rev.Scope, rev.ProjectKey, repo, rev.RepoSlug, rev.Summary, statements, rev.Chars,
-		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn).Scan(&id, &n)
+		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn, now).Scan(&id, &n)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO pages (scope, project_key, repo_slug, current_revision_id) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (scope, project_key, repo_slug) DO UPDATE SET current_revision_id = EXCLUDED.current_revision_id, updated_at = now()`,
-		rev.Scope, rev.ProjectKey, rev.RepoSlug, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO pages (scope, project_key, repo_slug, current_revision_id, updated_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (scope, project_key, repo_slug) DO UPDATE SET current_revision_id = EXCLUDED.current_revision_id, updated_at = EXCLUDED.updated_at`,
+		rev.Scope, rev.ProjectKey, rev.RepoSlug, id, now); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -318,13 +319,13 @@ func (s *Store) InsertLLMCall(ctx context.Context, c LLMCall) (int64, error) {
 		purpose = PurposeMerge
 	}
 	var id int64
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO llm_calls (project_key, repo_slug, source_kind, source_pr_key, source_commit, purpose, baseline_run_id,
-		                       outcome, model, input_tokens, cached_tokens, output_tokens, cost_nano_usd, call_id)
-		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, NULLIF($9, ''), $10, $11, $12, $13, NULLIF($14, ''))
+		                       outcome, model, input_tokens, cached_tokens, output_tokens, cost_nano_usd, call_id, created_at)
+		VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?)
 		RETURNING id`,
 		c.ProjectKey, c.RepoSlug, fromKind(c.SourceKind), c.SourcePR, c.SourceCommit, purpose, c.BaselineRunID,
-		c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID).Scan(&id)
+		c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, nowStamp()).Scan(&id)
 	return id, err
 }
 

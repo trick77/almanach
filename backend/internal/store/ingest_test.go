@@ -52,7 +52,7 @@ func TestIngest_WritesEverything(t *testing.T) {
 	if n := count(t, s, "notes", "project_key = 'PRJ' AND repo_slug = 'svc' AND pr_id = 1 AND delivery_id = 'd-PRJ-svc-1' AND consolidated_at IS NULL"); n != 1 {
 		t.Errorf("note row = %d, want 1", n)
 	}
-	if n := count(t, s, "note_calls", "delivery_id = 'd-PRJ-svc-1' AND pr_id = 1 AND rounds = 2 AND warnings = '{w1}'"); n != 1 {
+	if n := count(t, s, "note_calls", "delivery_id = 'd-PRJ-svc-1' AND pr_id = 1 AND rounds = 2 AND warnings = '[\"w1\"]'"); n != 1 {
 		t.Errorf("note_calls row = %d, want 1", n)
 	}
 }
@@ -87,7 +87,7 @@ func TestIngest_RetryIsNoop(t *testing.T) {
 		}
 	}
 	var title string
-	if err := s.pool.QueryRow(ctx, `SELECT pr_title FROM notes WHERE pr_id = 1`).Scan(&title); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT pr_title FROM notes WHERE pr_id = 1`).Scan(&title); err != nil {
 		t.Fatal(err)
 	}
 	if title != "PR 1" {

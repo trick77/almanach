@@ -79,6 +79,12 @@ type Worker struct {
 	// placeSince is when each merge commit whose read failed first failed
 	// in the run.
 	placeSince map[string]time.Time
+	// busyRun and busyWrites count the step writes of one run a busy
+	// database refused in a row; a written step resets them. In memory:
+	// the row's attempts are the gateway's, reset by every answered call,
+	// and a busy database would refuse the count's own write.
+	busyRun    int64
+	busyWrites int
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the
@@ -102,9 +108,10 @@ func New(st Store, llm Merger, limits config.Limits, log *slog.Logger) *Worker {
 		quit: make(chan struct{}), done: make(chan struct{}), now: time.Now}
 }
 
-// hold pauses the worker after a gateway-class failure; retryAfter is the
+// hold pauses the worker after a gateway-class failure or a database that
+// stayed busy past its timeout (why names which); retryAfter is the
 // endpoint's own ask, zero when it made none.
-func (w *Worker) hold(ctx context.Context, retryAfter time.Duration) {
+func (w *Worker) hold(ctx context.Context, why string, retryAfter time.Duration) {
 	if w.backoff == 0 {
 		w.backoff = backoffMin
 	} else {
@@ -112,8 +119,14 @@ func (w *Worker) hold(ctx context.Context, retryAfter time.Duration) {
 	}
 	wait := max(w.backoff, retryAfter)
 	w.retryAt = w.now().Add(wait)
-	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: gateway hold for %s, no fold until then", wait))
+	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s hold for %s, no fold until then", why, wait))
 }
+
+// Why the worker holds.
+const (
+	holdGateway = "gateway"
+	holdBusy    = "database busy"
+)
 
 // holding reports whether a gateway hold is still on.
 func (w *Worker) holding() bool { return w.now().Before(w.retryAt) }
@@ -268,8 +281,9 @@ func gatewayClass(res inference.Call) (gateway bool, retryAfter time.Duration) {
 // Fold runs one note through the merge: the current pages in, the rewritten
 // ones out, each checked against the caps and written as a revision. The
 // note is marked consolidated whatever the model answered and after a
-// failure specific to this call; a gateway-class failure leaves it queued
-// with its attempt counted and holds the worker, up to maxFoldAttempts.
+// failure specific to this call; a gateway-class failure, or a database
+// that stayed busy past its timeout, leaves it queued with its attempt
+// counted and holds the worker, up to maxFoldAttempts.
 // Reports whether the drain may go on: false after a deferred note or a
 // mark the store refused, so the same note is not paid for again in the
 // same lap.
@@ -292,11 +306,13 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	repoPage, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, q.ProjectKey, q.RepoSlug)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: repository page read failed", logging.Err(err))
+		deferred = w.deferBusy(ctx, q, err)
 		return
 	}
 	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, q.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: project page read failed", logging.Err(err))
+		deferred = w.deferBusy(ctx, q, err)
 		return
 	}
 
@@ -312,20 +328,8 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res.Call); gateway {
-		w.hold(ctx, retryAfter)
-		attempts, derr := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID)
-		if derr != nil {
-			w.log.WarnContext(ctx, "consolidate: defer failed, drain paused", logging.Err(derr))
-			deferred = true
-			return
-		}
-		if attempts < maxFoldAttempts {
-			w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s, attempt %d of %d, kept for after the hold",
-				q.PRKey, res.Outcome, attempts, maxFoldAttempts), logging.Err(res.Err))
-			deferred = true
-			return
-		}
-		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s given up after %d failed calls: %s", q.PRKey, attempts, res.Outcome), logging.Err(res.Err))
+		w.hold(ctx, holdGateway, retryAfter)
+		deferred = w.deferNote(ctx, q, res.Outcome.String(), res.Err)
 		return
 	}
 	// The gateway answered: whatever it said, the hold is over.
@@ -340,22 +344,59 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	if callID != 0 {
 		id = &callID
 	}
-	w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, w.limits.RepoMaxStatements, w.limits.RepoMaxChars, id)
-	w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars, id)
+	if err := w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, w.limits.RepoMaxStatements, w.limits.RepoMaxChars, id); err != nil {
+		deferred = w.deferBusy(ctx, q, err)
+		return
+	}
+	if err := w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars, id); err != nil {
+		deferred = w.deferBusy(ctx, q, err)
+	}
 	return
 }
 
+// deferNote leaves a note queued with its failed attempt counted, after a
+// hold; reports whether it stays queued: false once maxFoldAttempts is
+// reached (the note is then marked, with a log line).
+func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome string, cause error) bool {
+	attempts, err := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID)
+	if err != nil {
+		w.log.WarnContext(ctx, "consolidate: defer failed, drain paused", logging.Err(err))
+		return true
+	}
+	if attempts < maxFoldAttempts {
+		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s, attempt %d of %d, kept for after the hold",
+			q.PRKey, outcome, attempts, maxFoldAttempts), logging.Err(cause))
+		return true
+	}
+	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s given up after %d failed attempts: %s", q.PRKey, attempts, outcome), logging.Err(cause))
+	return false
+}
+
+// deferBusy is a store error met during a fold. A database that stayed
+// busy past its timeout is temporary, like a gateway failure: the worker
+// holds and the note is tried again, its attempt counted. Anything else
+// ends the note's fold as before (reports false: the note is marked).
+func (w *Worker) deferBusy(ctx context.Context, q store.QueuedNote, err error) bool {
+	if !store.IsBusy(err) {
+		return false
+	}
+	w.hold(ctx, holdBusy, 0)
+	return w.deferNote(ctx, q, holdBusy, err)
+}
+
 // apply checks one rewritten description and writes it as a revision, or
-// logs why not. nil = the model wants no change.
-func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, d *inference.Description, maxStatements, maxChars int, callID *int64) {
+// logs why not. nil = the model wants no change. The error is only ever a
+// busy database's (store.IsBusy): the caller defers the note; any other
+// failure is logged here and the page stays.
+func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, d *inference.Description, maxStatements, maxChars int, callID *int64) error {
 	if d == nil {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
-		return
+		return nil
 	}
 	next, err := w.store.NextStatementID(ctx, scope, q.ProjectKey, repo)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
-		return
+		return busyOnly(err)
 	}
 	statements, stripped, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
 	logStripped(ctx, w.log, "consolidate: "+scope, stripped)
@@ -367,11 +408,11 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 	}
 	if reason != "" {
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s rewrite rejected (%s), page unchanged", scope, reason))
-		return
+		return nil
 	}
 	if summary == current.Summary && sameStatements(statements, current.Statements) {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description identical, no revision")
-		return
+		return nil
 	}
 	// The map is the baseline project step's alone: a note's fold carries
 	// the project's forward unchanged (a repository page has none).
@@ -381,10 +422,20 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 	})
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: "+scope+" revision write failed", logging.Err(err))
-		return
+		return busyOnly(err)
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %s description revision %d (%d statements, %d chars) from %s",
 		scope, n, len(statements), chars, q.PRKey))
+	return nil
+}
+
+// busyOnly passes a busy database's error on and swallows the rest, which
+// the caller has logged.
+func busyOnly(err error) error {
+	if store.IsBusy(err) {
+		return err
+	}
+	return nil
 }
 
 // Statement kinds a description may hold.

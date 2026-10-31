@@ -215,7 +215,7 @@ func TestPromptEval(t *testing.T) {
 	// The production defaults: config with only what it requires set.
 	app, err := config.Load(func(k string) string {
 		switch k {
-		case "DATABASE_URL", "ALMANACH_TEAM_KEYS_PATH", "ALMANACH_MODEL":
+		case "ALMANACH_DB_PATH", "ALMANACH_TEAM_KEYS_PATH", "ALMANACH_MODEL":
 			return "unused"
 		}
 		return ""

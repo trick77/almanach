@@ -20,7 +20,7 @@ func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 	ingest(t, s, noteFor("PRJ", "svc", 1))
 	ingest(t, s, noteFor("PRJ", "svc", 2))
 	// Order is received_at; pin it so the test never depends on the clock.
-	if _, err := s.pool.Exec(ctx, `UPDATE notes SET received_at = received_at - interval '1 minute' WHERE pr_id = 1`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE notes SET received_at = ? WHERE pr_id = 1`, stamp(mergedBase)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,7 +79,7 @@ func fixtureStatements() []Statement {
 }
 
 // Revisions number 1, 2, 3 per page, the page follows the newest, the
-// statements survive JSONB.
+// statements survive the JSON column.
 func TestInsertRevision_NumbersAndRepoints(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

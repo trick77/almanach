@@ -9,7 +9,7 @@ required, a commented line is optional and shows its default.
 
 | Variable | Meaning |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL DSN. `migrate` needs nothing else. |
+| `ALMANACH_DB_PATH` | The SQLite database file, e.g. `/data/almanach.db`; created on first open if missing. Its folder must exist and be writable (the file's `-wal` and `-shm` land beside it), checked at startup by `serve` and `migrate` alike. A local disk on its own volume, never a shared filesystem: WAL needs the locks of one host. `migrate` needs nothing else. |
 | `ALMANACH_TEAM_KEYS_PATH` | Path of the team-keys file: JSON `{"<team>": "<token>"}`, one token per team. The token is the team's identity; the same value goes into the team's `almanach:` block in noergler. Re-read when the file's modification time changes, so a new team needs no restart; a malformed file keeps the last good table and logs. Two teams sharing a token, or an empty entry, is a startup fault. Never committed. |
 | `LLMWIRE_LITELLM_BASE_URL` | Host of the OpenAI-compatible gateway. Read by llmwire. |
 | `LLMWIRE_LITELLM_API_KEY` | The gateway key. Read by llmwire. |
@@ -95,7 +95,7 @@ the provider's policy. `/webhooks/noergler`, `/auth/ping`, `/healthz`,
 | Command | What |
 | --- | --- |
 | `almanach serve` | Run the service. Refuses a schema that is behind. |
-| `almanach migrate` | Apply pending migrations and exit. |
+| `almanach migrate` | Apply pending migrations to `ALMANACH_DB_PATH` and exit. |
 | `almanach version` | Print the version. |
 | `almanach -healthcheck` | Probe `/healthz` on loopback, exit 0 on a 2xx. |
 | `almanach -readycheck` | Probe `/readyz`: the database answers. |

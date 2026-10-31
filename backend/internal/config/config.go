@@ -121,7 +121,9 @@ const minBaselineCalls = 3
 
 // App is the whole configuration.
 type App struct {
-	DatabaseURL  string
+	// DBPath is the SQLite database file; its folder must exist and be
+	// writable (the file and its -wal, -shm beside it).
+	DBPath       string
 	TeamKeysPath string
 	Host         string
 	Port         int
@@ -144,7 +146,7 @@ type App struct {
 func Load(lookup func(string) string) (*App, error) {
 	r := kitenv.New(lookup)
 	app := &App{
-		DatabaseURL:     r.Required("DATABASE_URL"),
+		DBPath:          r.Required("ALMANACH_DB_PATH"),
 		TeamKeysPath:    r.Required("ALMANACH_TEAM_KEYS_PATH"),
 		Host:            r.String("SERVER_HOST", "0.0.0.0"),
 		Port:            r.Int("SERVER_PORT", 8080),
@@ -299,8 +301,9 @@ func nonNegative(r *kitenv.Reader, name string, def int) int {
 	return v
 }
 
-// Summary is the config as the startup log prints it: no secret, no DSN;
-// of the sign-in only the issuer and the client id.
+// Summary is the config as the startup log prints it: no secret (not the
+// token key, the client secret, the session secret); of the sign-in only
+// the issuer and the client id, of the token key only whether it is set.
 func (a *App) Summary() string {
 	sources := "off"
 	if a.Sources.Enabled() {

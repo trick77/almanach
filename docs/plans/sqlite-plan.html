@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan · SQLite instead of PostgreSQL · Almanach</title>
+<style>
+  @font-face { font-family: "Anthropic Sans"; src: url("../../ui/src/fonts/SansWebVariable-TextRegular.woff2") format("woff2"); font-weight: 300 800; font-display: swap; }
+  @font-face { font-family: "Anthropic Serif"; src: url("../../ui/src/fonts/SerifWebVariable-TextRegular.woff2") format("woff2"); font-weight: 300 800; font-display: swap; }
+  @font-face { font-family: "Anthropic Mono"; src: url("../../ui/src/fonts/MonoVariableVariable-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+
+  /* Warm Editorial dark: ui/src/index.css, as in baseline-plan.html. */
+  :root {
+    --bg: #1f1f1e; --panel: #1b1b1a; --sunk: #171716; --active: #2c2c2a; --border: #323230; --border-soft: #2a2a28;
+    --ink: #faf9f5; --ink-dim: #e4e1d8; --muted: #9c9a92; --faint: #6f6d66;
+    --accent: #c6613f; --accent-strong: #d97757; --accent-dim: #5a3527; --accent-tint: rgba(217,119,87,.10);
+    --online: #5aa06a; --online-ink: #82c491; --danger: #c14638; --danger-ink: #ec7e7e;
+    --ochre: #d6a15a; --ochre-wash: rgba(214,161,90,.14);
+    --elevated: #363632; --elevated-border: #454540;
+    --sans: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
+    --mono: "Anthropic Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body { margin: 0; background: var(--bg); color: var(--ink-dim); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+  main { max-width: 980px; margin: 0 auto; padding: 40px 40px 80px; }
+  h1 { margin: 0 0 6px; font: 500 34px/1.15 var(--serif); color: var(--ink); letter-spacing: -.01em; }
+  h2 { margin: 48px 0 10px; font: 500 25px/1.2 var(--serif); color: var(--ink); }
+  h3 { margin: 28px 0 8px; font-size: 15.5px; font-weight: 600; color: var(--ink); }
+  p, li { max-width: 74ch; }
+  .lede { color: var(--muted); font-size: 15.5px; }
+  code, .mono { font: 13px var(--mono); color: var(--ink); }
+  a { color: var(--accent-strong); }
+  ul, ol { padding-left: 22px; }
+  li { margin: 3px 0; }
+  .meta { color: var(--faint); font-size: 13px; }
+  .toc { columns: 2; font-size: 14px; color: var(--muted); }
+
+  .decision { margin: 18px 0; padding: 14px 18px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--panel); }
+  .decision .tag { display: inline-block; margin-bottom: 6px; font: 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-strong); }
+  .decision p { margin: 6px 0; }
+  .decision b { color: var(--ink); }
+  .decision.decided { border-left-color: var(--online); }
+  .decision.decided .tag { color: var(--online-ink); }
+
+  .table-wrap { overflow-x: auto; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--border); text-align: left; font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+  td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  pre { overflow-x: auto; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--sunk); font: 12.5px/1.5 var(--mono); color: var(--ink-dim); }
+
+  .fig { margin: 22px 0; }
+  .fig .scroll { overflow-x: auto; }
+  .fig svg { display: block; }
+  .fig figcaption { margin-top: 8px; font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+  svg .nname { font: 600 12px var(--sans); fill: var(--ink); }
+  svg .nsub { font: 9px var(--mono); fill: var(--muted); }
+  svg .ntag { font: 7px var(--mono); letter-spacing: .08em; fill: var(--muted); }
+  svg .alab { font: 8px var(--mono); letter-spacing: .06em; fill: var(--muted); }
+  svg .lgnd { font: 8px var(--mono); letter-spacing: .14em; fill: var(--muted); }
+  svg .zlab { font: 8px var(--mono); letter-spacing: .14em; fill: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>SQLite instead of PostgreSQL</h1>
+<p class="meta">PR D · plan · 2026-10-31 · after G and B, before C · branch off <code>origin/master</code></p>
+<p class="lede">Almanach is one process with one serial worker and its clones on a local volume: a database server buys it nothing. PR D moves the store to one SQLite file on its own volume, the database's own, apart from the clones; the deployment gets a PVC for it. PostgreSQL goes, not kept beside it. Nothing is built until this plan is approved.</p>
+
+<ol class="toc">
+  <li><a href="#why">Why, and why not both</a></li>
+  <li><a href="#where">Where the state lives</a></li>
+  <li><a href="#store">The store on SQLite</a></li>
+  <li><a href="#writes">Writers and locks</a></li>
+  <li><a href="#config">Configuration, startup, migrate</a></li>
+  <li><a href="#tests">Tests and the gate</a></li>
+  <li><a href="#compose">Compose (PR C)</a></li>
+  <li><a href="#deploy">The deployment repository</a></li>
+  <li><a href="#decisions">Decisions</a></li>
+  <li><a href="#verify">Verification</a></li>
+</ol>
+
+<h2 id="why">1. Why, and why not both</h2>
+<ul>
+  <li><b>One instance by design.</b> One worker writes every page, one poller owns the clones, and the clones already need a volume on one node. A second replica is ruled out by the worker, not by the database.</li>
+  <li><b>Less to run.</b> No database container in compose, no password, no DSN; in the cluster no external database order. A backup is the volume.</li>
+  <li><b>Faster, simpler gate.</b> The store tests run against a temporary file: no docker, no <code>SHIP_TEST_DSN</code>, and a plain <code>go test</code> covers the store.</li>
+  <li><b>Small write load.</b> Webhook deliveries, the worker's revisions and the poller's state: a few writes a minute. One writer at a time is plenty.</li>
+</ul>
+<p><b>Not both.</b> Two dialects, two schema sets, every store test twice and every later change written twice: a lasting cost for a choice made once.</p>
+
+<h2 id="where">2. Where the state lives</h2>
+<figure class="fig"><div class="scroll">
+<svg viewBox="0 0 900 330" width="900" style="min-width:900px" role="img" aria-labelledby="where-title where-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="where-title">Where Almanach's state lives, before and after PR D</title>
+  <desc id="where-desc">Before: almanach talks to a PostgreSQL server over the network and keeps its clones on a repos volume. After: almanach opens one SQLite file on a data volume of its own, keeps the clones on a separate repos volume, and a one-shot migrate step opens the same file before almanach starts.</desc>
+  <defs>
+    <marker id="where-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9c9a92"/></marker>
+    <marker id="where-arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d97757"/></marker>
+  </defs>
+  <rect x="0" y="0" width="900" height="330" fill="#1f1f1e"/>
+
+  <!-- zones -->
+  <rect x="20" y="20" width="400" height="260" rx="8" fill="none" stroke="#323230"/>
+  <rect x="28" y="14" width="60" height="12" fill="#1f1f1e"/><text class="zlab" x="32" y="23">BEFORE</text>
+  <rect x="460" y="20" width="420" height="260" rx="8" fill="none" stroke="#323230"/>
+  <rect x="468" y="14" width="52" height="12" fill="#1f1f1e"/><text class="zlab" x="472" y="23">AFTER</text>
+
+  <!-- before: arrows first -->
+  <line x1="200" y1="120" x2="248" y2="120" stroke="#9c9a92" stroke-width="1.2" marker-end="url(#where-arrow)"/>
+  <rect x="202" y="100" width="44" height="12" fill="#1f1f1e"/><text class="alab" x="224" y="109" text-anchor="middle">SQL/TCP</text>
+  <path d="M125,144 L125,198" fill="none" stroke="#9c9a92" stroke-width="1.2" marker-end="url(#where-arrow)"/>
+  <rect x="133" y="165" width="44" height="12" fill="#1f1f1e"/><text class="alab" x="137" y="174">CLONES</text>
+
+  <!-- before: nodes -->
+  <rect x="50" y="96" width="150" height="48" rx="6" fill="#1b1b1a" stroke="#454540"/>
+  <text class="nname" x="125" y="118" text-anchor="middle">almanach</text><text class="nsub" x="125" y="132" text-anchor="middle">serve · worker · poller</text>
+  <rect x="250" y="96" width="150" height="48" rx="6" fill="#1b1b1a" stroke="#454540" stroke-dasharray="4,3"/>
+  <text class="nname" x="325" y="118" text-anchor="middle">PostgreSQL</text><text class="nsub" x="325" y="132" text-anchor="middle">container or external</text>
+  <rect x="50" y="200" width="150" height="44" rx="6" fill="#171716" stroke="#323230"/>
+  <text class="nname" x="125" y="220" text-anchor="middle">repos volume</text><text class="nsub" x="125" y="234" text-anchor="middle">&lt;project&gt;/&lt;slug&gt;</text>
+
+  <!-- after: arrows first -->
+  <path d="M575,144 L575,198" fill="none" stroke="#d97757" stroke-width="1.4" marker-end="url(#where-arrow-accent)"/>
+  <rect x="583" y="165" width="50" height="12" fill="#1f1f1e"/><text class="alab" x="587" y="174" fill="#d97757">ONE FILE</text>
+  <path d="M650,120 L767,120 Q775,120 775,128 L775,198" fill="none" stroke="#9c9a92" stroke-width="1.2" marker-end="url(#where-arrow)"/>
+  <rect x="690" y="100" width="44" height="12" fill="#1f1f1e"/><text class="alab" x="694" y="109">CLONES</text>
+  <path d="M500,48 L488,48 Q480,48 480,56 L480,220 Q480,228 488,228 L498,228" fill="none" stroke="#9c9a92" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#where-arrow)"/>
+
+  <!-- after: nodes -->
+  <rect x="500" y="30" width="150" height="36" rx="6" fill="#1b1b1a" stroke="#454540" stroke-dasharray="5,4"/>
+  <text class="nname" x="575" y="46" text-anchor="middle">almanach migrate</text><text class="nsub" x="575" y="58" text-anchor="middle">first, then exits</text>
+  <rect x="500" y="96" width="150" height="48" rx="6" fill="#1b1b1a" stroke="#454540"/>
+  <text class="nname" x="575" y="118" text-anchor="middle">almanach</text><text class="nsub" x="575" y="132" text-anchor="middle">serve · worker · poller</text>
+  <rect x="500" y="200" width="150" height="56" rx="6" fill="rgba(217,119,87,.10)" stroke="#d97757"/>
+  <text class="nname" x="575" y="220" text-anchor="middle">data volume</text><text class="nsub" x="575" y="234" text-anchor="middle">/data/almanach.db</text><text class="nsub" x="575" y="246" text-anchor="middle">+ -wal, -shm</text>
+  <rect x="700" y="200" width="150" height="44" rx="6" fill="#171716" stroke="#323230"/>
+  <text class="nname" x="775" y="220" text-anchor="middle">repos volume</text><text class="nsub" x="775" y="234" text-anchor="middle">&lt;project&gt;/&lt;slug&gt;</text>
+
+  <!-- legend -->
+  <line x1="20" y1="308" x2="44" y2="308" stroke="#d97757" stroke-width="1.4"/><text class="lgnd" x="50" y="311">THE DATABASE</text>
+  <line x1="150" y1="308" x2="174" y2="308" stroke="#9c9a92" stroke-width="1.2"/><text class="lgnd" x="180" y="311">READS / WRITES</text>
+  <line x1="290" y1="308" x2="314" y2="308" stroke="#9c9a92" stroke-width="1.2" stroke-dasharray="5,4"/><text class="lgnd" x="320" y="311">ONE-SHOT STEP</text>
+  <rect x="430" y="302" width="20" height="12" rx="2" fill="none" stroke="#454540" stroke-dasharray="4,3"/><text class="lgnd" x="456" y="311">GOES AWAY</text>
+</svg></div>
+<figcaption>Two volumes, as rongo has them: the database alone on one, the clones on the other. A clone volume can be wiped and refilled from the forge; the data volume cannot.</figcaption>
+</figure>
+
+<h2 id="store">3. The store on SQLite</h2>
+<p>The driver is <code>github.com/ncruces/go-sqlite3</code> (WASM, no cgo; 1,131 stars, last commit 2026-10-31) through <code>database/sql</code>, opened with kit's <code>sqlitex.DSN</code> (busy timeout 10 s, WAL, foreign keys) plus <code>_txlock=immediate</code>. Migrations stay on kit's <code>migrate</code>, switched from its PostgreSQL dialect (the advisory lock) to its SQLite one. pgx goes.</p>
+<p><b>One schema, fresh.</b> The five PostgreSQL migrations (and G's 0006) become one <code>0001_init.sql</code> in SQLite's dialect: a new database, so nothing applied is edited.</p>
+<div class="table-wrap"><table>
+  <tr><th>PostgreSQL</th><th>Uses</th><th>SQLite</th></tr>
+  <tr><td><code>TIMESTAMPTZ</code>, <code>now()</code></td><td>23 / 28</td><td><code>TEXT</code>, UTC, fixed-width RFC 3339 with nanoseconds, written by Go: sorts as text, keeps the order of merges a second apart (D3)</td></tr>
+  <tr><td><code>BIGSERIAL</code>, <code>BIGINT</code></td><td>4 / money</td><td><code>INTEGER PRIMARY KEY</code>, <code>INTEGER</code> (64-bit): nano-USD stays an integer</td></tr>
+  <tr><td><code>JSONB</code>, <code>jsonb_array_length/_elements/_typeof</code></td><td>notes, statements, plan</td><td><code>TEXT</code> checked <code>json_valid</code>; <code>json_array_length</code>, <code>json_each</code>, <code>json_type</code></td></tr>
+  <tr><td><code>CHECK</code>, <code>ON CONFLICT</code>, <code>RETURNING</code></td><td>18 / 8 / 6</td><td>Same syntax</td></tr>
+  <tr><td><code>DISTINCT ON</code>, <code>LEFT JOIN LATERAL</code></td><td>2 / 1</td><td><code>ROW_NUMBER() OVER (PARTITION BY …)</code>, a correlated subquery</td></tr>
+  <tr><td><code>pg_advisory_lock</code>, <code>pg_advisory_xact_lock(hashtext(…))</code></td><td>migrate, per page</td><td>Gone: one writer at a time is SQLite's own rule (section 4)</td></tr>
+  <tr><td><code>$1</code> placeholders, <code>pgx.ErrNoRows</code></td><td>everywhere</td><td><code>?</code>, <code>sql.ErrNoRows</code></td></tr>
+</table></div>
+<p>The store's API stays as it is: callers (api, consolidate, clone, ingest) do not change, beyond the store opening from a path.</p>
+
+<h2 id="writes">4. Writers and locks</h2>
+<p>Four places write: the webhook (a delivery, a note, the queue), the worker (revisions, run progress, the ledger), the poller (source and clone state) and the Quellen routes. Each write is a short transaction; none spans a model call or a git command.</p>
+<ul>
+  <li><b>Every writing transaction begins <code>IMMEDIATE</code></b> (<code>_txlock=immediate</code>): it takes the write lock at <code>BEGIN</code>, so it never holds a read snapshot and then fails its first write with "database is locked". A second writer waits up to the busy timeout (10 s).</li>
+  <li><b>Readers never wait</b> in WAL: the UI and the API read while the worker writes.</li>
+  <li><b>The per-page advisory lock goes.</b> It guarded a second worker that does not exist; with one writer at a time the page row's transaction is already serial.</li>
+  <li><b>A busy timeout that runs out is a persist failure:</b> the webhook answers 500, as for any failed write today ("persist failure = 500, never swallowed" stays).</li>
+</ul>
+
+<h2 id="config">5. Configuration, startup, migrate</h2>
+<ul>
+  <li><code>DATABASE_URL</code> goes; <code>ALMANACH_DB_PATH</code> (required) names the file, e.g. <code>/data/almanach.db</code>. Its folder must exist and be writable, checked at startup as <code>ALMANACH_REPOS_DIR</code> is.</li>
+  <li><code>almanach migrate</code> stays the one place that migrates, on the same path; <code>serve</code> never migrates and refuses a database whose schema is behind, as today.</li>
+  <li><code>/readyz</code> asks the database (a <code>SELECT 1</code>), as today.</li>
+  <li>CONFIGURATION, HOW_IT_WORKS (storage model, operations), README and <code>.env.example</code> follow. AGENTS.md: the store line becomes "SQLite, one file on its own volume, WAL, writes <code>BEGIN IMMEDIATE</code>; never a shared filesystem", within the 4k.</li>
+</ul>
+
+<h2 id="tests">6. Tests and the gate</h2>
+<ul>
+  <li><code>testStore</code> opens a migrated database in <code>t.TempDir()</code>: no skip, no docker. Every store test runs in a plain <code>go test</code>.</li>
+  <li><code>ship.yaml</code> drops its PostgreSQL service and <code>SHIP_TEST_DSN</code>; CI no longer starts a database.</li>
+  <li>New tests: two writers at once (the second waits, both land), a busy timeout run out (a 500, nothing half-written), the fixed-width timestamps sorting as time, the JSON checks refusing invalid text.</li>
+</ul>
+
+<h2 id="compose">7. Compose (PR C)</h2>
+<p>C is written after D, so it never has a database container. In rongo's shape:</p>
+<ul>
+  <li><code>almanach</code>: <code>ALMANACH_DB_PATH=/data/almanach.db</code>, the <b>data volume at <code>/data</code></b> and the repos volume at <code>/repos</code>, two volumes, never one.</li>
+  <li><code>migrate</code>: the same image and data volume, <code>almanach migrate</code>, and <code>almanach</code> starts after it completes (<code>depends_on: service_completed_successfully</code>).</li>
+  <li>No <code>POSTGRES_PASSWORD</code>, no DSN in <code>.env</code>. The dev override keeps the same volumes.</li>
+</ul>
+
+<h2 id="deploy">8. The deployment repository</h2>
+<p>The deployment lives in its own repository, which has no remote: edited on its checked-out branch, no PR. Today it runs one replica with an external PostgreSQL, no volume at all, the sources off and proxy mode. In rongo's deployment's shape:</p>
+<ul>
+  <li><b>Two PVCs</b>, <code>ReadWriteOnce</code> on the block storage class rongo's deployment claims: <code>almanach-data</code> (1 Gi, the database) and <code>almanach-repos</code> (20 Gi, the clones). Block, not a shared filesystem: SQLite in WAL needs POSIX locks on one node.</li>
+  <li><b>The deployment</b> keeps <code>replicas: 1</code> and <code>Recreate</code> (two pods on one RWO volume would not start, and must not). The data PVC at <code>/data</code>, the repos PVC at <code>/repos</code>; the migrate init container mounts the data PVC too.</li>
+  <li><b>Configuration:</b> <code>ALMANACH_DB_PATH=/data/almanach.db</code>; <code>DATABASE_URL</code> leaves the sealed secret; the sources on (<code>ALMANACH_REPOS_DIR=/repos</code>, <code>ALMANACH_SECRET_KEY</code> sealed) (D5).</li>
+  <li><b>Its README</b> (German) loses the database order and gains the PVCs.</li>
+  <li><b>Auth:</b> B removes proxy mode, which this deployment runs with an OAuth sidecar. Its switch to oidc is the same kind of change (D6).</li>
+</ul>
+
+<h2 id="decisions">9. Decisions</h2>
+
+<div class="decision decided"><span class="tag">D1 · decided (user)</span>
+<p><b>SQLite only, PostgreSQL removed.</b> The database on its own volume, apart from the clones; a PVC for it in the deployment, as rongo's.</p></div>
+
+<div class="decision decided"><span class="tag">D2 · decided: fresh start</span>
+<p><b>Recommend a fresh start.</b> The repository and project pages rebuild from the code by baseline runs; the sources are added again in Quellen. What is lost: the notes noergler delivered before the switch and the revision history.</p>
+<p><b>Alternative: a one-off <code>almanach import-postgres &lt;dsn&gt;</code></b> that copies every table into the new file. About 250 lines and tests, and pgx stays a dependency until it is deleted a release later.</p>
+<p>The deployment is a dev stage; if its notes matter, take the import.</p></div>
+
+<div class="decision decided"><span class="tag">D3 · decided: text</span>
+<p><b>Recommend <code>TEXT</code>, UTC, fixed-width RFC 3339 with nanoseconds</b>, written and parsed by the store: readable in the <code>sqlite3</code> shell, sorts as text, keeps sub-second order (merges, run steps).</p>
+<p>Alternative: <code>INTEGER</code> Unix nanoseconds: compact and exact, unreadable by hand. rongo's <code>datetime('now')</code> (seconds) loses the order of two merges in one second.</p></div>
+
+<div class="decision decided"><span class="tag">D4 · decided: G, B, D, C</span>
+<p><b>Recommend G → B → D → C.</b> G's migration 0006 lands in PostgreSQL and is folded into D's schema; B does not touch the store; C is written once, without a database container.</p>
+<p>Alternative: D first, G on SQLite: G (being built now) would rebase onto a new store, a larger conflict than folding one migration.</p></div>
+
+<div class="decision decided"><span class="tag">D5 · decided: on</span>
+<p><b>Recommend on</b>, with the repos PVC: the code is Almanach's starting point now, and without the sources the deployment only folds notes.</p>
+<p>Alternative: data PVC only, the sources stay off until later; one PVC and one secret fewer.</p></div>
+
+<div class="decision decided"><span class="tag">D6 · decided: oidc with the PVCs</span>
+<p><b>Recommend: switch it to oidc in the same round as D's PVCs</b>, after B and D are released: one change to the deployment, the OAuth sidecar removed. Needs the identity provider's client, which is yours to order.</p>
+<p>Alternative: the deployment stays on the last release with proxy mode until the client exists.</p></div>
+
+<h2 id="verify">10. Verification</h2>
+<ul>
+  <li><code>make check</code> without docker running: every store test runs, coverage floors hold.</li>
+  <li>A run of the binary on a fresh file: <code>almanach migrate</code>, <code>serve</code>, a webhook delivery, a source added, a baseline step written, <code>/readyz</code> green.</li>
+  <li>Compose (C): <code>docker compose config</code> shows two volumes and no published port; the stack comes up, the database file lands on the data volume only.</li>
+  <li>The deployment: <code>kustomize build</code> renders both PVCs, the mounts and no <code>DATABASE_URL</code>; the rollout itself is yours.</li>
+</ul>
+
+</main>
+</body>
+</html>

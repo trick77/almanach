@@ -12,7 +12,7 @@ func lookup(m map[string]string) func(string) string {
 
 func minimal() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":            "postgres://almanach:hunter2@db.internal:5432/almanach",
+		"ALMANACH_DB_PATH":        "/data/almanach.db",
 		"ALMANACH_TEAM_KEYS_PATH": "/run/secrets/team-keys.json",
 		"ALMANACH_MODEL":          "gpt-x",
 	}
@@ -23,7 +23,7 @@ func TestLoadRequiredMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load accepted an empty environment")
 	}
-	for _, name := range []string{"DATABASE_URL is required", "ALMANACH_TEAM_KEYS_PATH is required", "ALMANACH_MODEL is required"} {
+	for _, name := range []string{"ALMANACH_DB_PATH is required", "ALMANACH_TEAM_KEYS_PATH is required", "ALMANACH_MODEL is required"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error lacks %q:\n%v", name, err)
 		}
@@ -35,7 +35,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if app.DatabaseURL != minimal()["DATABASE_URL"] || app.TeamKeysPath != "/run/secrets/team-keys.json" || app.Model != "gpt-x" {
+	if app.DBPath != "/data/almanach.db" || app.TeamKeysPath != "/run/secrets/team-keys.json" || app.Model != "gpt-x" {
 		t.Errorf("required values = %+v", app)
 	}
 	if app.Host != "0.0.0.0" || app.Port != 8080 || app.AuthMode != AuthNone || app.ReasoningEffort != "" {
@@ -311,18 +311,27 @@ func TestInvalidEnum(t *testing.T) {
 	}
 }
 
-func TestSummaryHidesDSN(t *testing.T) {
-	app, err := Load(lookup(minimal()))
+// The startup line names no secret: not the sources' token key, not the
+// OIDC client secret, not the session secret.
+func TestSummaryHidesSecrets(t *testing.T) {
+	env := oidcEnv()
+	env["ALMANACH_REPOS_DIR"] = "/repos"
+	const tokenKey = "c2VjcmV0LWtleS1zZWNyZXQta2V5LXNlY3JldC1rZXk="
+	env["ALMANACH_SECRET_KEY"] = tokenKey
+	app, err := Load(lookup(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	s := app.Summary()
-	for _, secret := range []string{"hunter2", "postgres://", "db.internal", "/run/secrets"} {
+	for _, secret := range []string{tokenKey, "client-secret-xyz", sessionSecret} {
 		if strings.Contains(s, secret) {
 			t.Errorf("Summary leaks %q: %s", secret, s)
 		}
 	}
-	for _, want := range []string{"addr=0.0.0.0:8080", "auth=none", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars, diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
+	if !strings.Contains(s, "token_key true") {
+		t.Errorf("Summary lacks whether a token key is set: %s", s)
+	}
+	for _, want := range []string{"addr=0.0.0.0:8080", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars, diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Summary lacks %q: %s", want, s)
 		}

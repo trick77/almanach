@@ -31,6 +31,7 @@ type runStore struct {
 	*fakeStore
 	runs       []store.BaselineRun
 	saveErr    error
+	applyErr   error
 	repos      []store.SourceRepo
 	documented *store.BaselineRun
 	sources    map[string]bool
@@ -70,6 +71,9 @@ func (s *runStore) SaveRun(_ context.Context, r store.BaselineRun) (bool, error)
 }
 
 func (s *runStore) ApplyBaselineStep(ctx context.Context, rev store.NewRevision, r store.BaselineRun) (int, bool, error) {
+	if s.applyErr != nil {
+		return 0, false, s.applyErr
+	}
 	if ok, err := s.SaveRun(ctx, r); !ok || err != nil {
 		return 0, ok, err
 	}
@@ -469,6 +473,51 @@ func TestRun_GatewayHoldThenResume(t *testing.T) {
 	x.w.drain(context.Background())
 	if r := x.run(); r.State != store.RunDone || r.Attempts != 0 || r.Calls != 4 {
 		t.Fatalf("after the hold: %+v", r)
+	}
+}
+
+// A step's write a busy database refused holds the worker like a gateway
+// failure and leaves the run where it was; after the hold the step is
+// taken again. Busy in a row past maxFoldAttempts, the run fails.
+func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
+	subjects := []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
+	patch := inference.PatchResult{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}
+
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.models.catalogue = subjects
+	x.models.patches = []inference.PatchResult{patch}
+	x.st.applyErr = errors.Join(errors.New("apply"), store.ErrBusy)
+	x.w.drain(context.Background())
+	r := x.run()
+	if r.State != store.RunDescribing || r.Step != 0 || r.Error != "" || len(x.st.revisions) != 0 || !x.w.holding() {
+		t.Fatalf("busy write: %+v revisions %d holding %v; want the run at its step, held", r, len(x.st.revisions), x.w.holding())
+	}
+	x.w.drain(context.Background())
+	if len(x.st.revisions) != 0 {
+		t.Fatal("a drain inside the hold wrote a step")
+	}
+
+	x.w.retryAt = time.Time{}
+	x.st.applyErr = nil
+	x.models.patches = []inference.PatchResult{patch, {Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}}}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunDone || len(x.st.revisions) == 0 {
+		t.Fatalf("after the hold: %+v revisions %d", r, len(x.st.revisions))
+	}
+
+	y := newWorld(t, 16)
+	y.queue(store.RunFull, "")
+	y.models.catalogue = subjects
+	y.st.applyErr = store.ErrBusy
+	for i := 0; i < maxFoldAttempts; i++ {
+		y.models.patches = []inference.PatchResult{patch}
+		y.w.retryAt = time.Time{}
+		y.w.drain(context.Background())
+	}
+	if r := y.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "busy database writes") || r.Step != 0 {
+		t.Fatalf("busy %d times: %+v, want the run failed at its step", maxFoldAttempts, r)
 	}
 }
 
