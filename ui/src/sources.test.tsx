@@ -75,6 +75,7 @@ const sources: Sources = {
       missing: 0,
       last_listed_at: when,
       last_error: "",
+      auto_describe: true,
       created_at: when,
       updated_at: when,
     },
@@ -92,6 +93,7 @@ const sources: Sources = {
       missing: 0,
       last_listed_at: null,
       last_error: "",
+      auto_describe: true,
       created_at: when,
       updated_at: when,
     },
@@ -109,6 +111,7 @@ const detail: SourceDetail = {
   disk_bytes: 1_400_000_000,
   last_listed_at: null,
   last_error: "",
+  auto_describe: true,
   created_at: when,
   updated_at: when,
   repos: [
@@ -122,6 +125,23 @@ const detail: SourceDetail = {
       last_synced_at: when,
       last_error: "",
       created_at: when,
+      baseline: {
+        run_id: 7,
+        state: "done",
+        mode: "full",
+        trigger: "first_ready",
+        commit: "7e1d9a0abcdef",
+        step: 3,
+        steps: 4,
+        skipped: 0,
+        cost_usd: "2.418",
+        error: "",
+        queued_at: when,
+        started_at: when,
+        finished_at: when,
+        documented_commit: "5c3b2a1abcdef",
+        documented_at: when,
+      },
     },
     {
       slug: "acme-legacy",
@@ -133,6 +153,7 @@ const detail: SourceDetail = {
       last_synced_at: null,
       last_error: 'branch "develop": configured branch not found on the remote',
       created_at: when,
+      baseline: null,
     },
   ],
 };
@@ -190,9 +211,123 @@ describe("SourcesPage", () => {
         token: "pat",
         token_auth: "bearer",
         token_user: "",
+        auto_describe: true,
       },
     });
     await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
+  });
+
+  it("creates a source that describes nothing on its own", async () => {
+    const writes = serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
+      target: { value: "neu" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://bitbucket.example.invalid"),
+      { target: { value: "https://forge.example.invalid" } },
+    );
+    const auto = screen.getByLabelText(/Automatisch beschreiben/);
+    expect(auto).toBeChecked();
+    fireEvent.click(auto);
+    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect((writes[0]?.body as { auto_describe: boolean }).auto_describe).toBe(
+      false,
+    );
+  });
+});
+
+describe("SourcePage baseline", () => {
+  it("shows a repository's description state and queues runs", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    expect(await screen.findByText("Beschrieben")).toBeInTheDocument();
+    expect(screen.getByText(/^Bei 5c3b2a1 · \$2\.418 · /)).toBeInTheDocument();
+    expect(screen.getByText("Noch nicht")).toBeInTheDocument();
+    expect(screen.getByText(/1 beschrieben/)).toBeInTheDocument();
+    // The clone without a head cannot be described yet.
+    expect(screen.getByText("Beschreiben")).toBeDisabled();
+
+    fireEvent.click(screen.getByText("Aktualisieren"));
+    // The row is locked while its request runs: no second POST.
+    expect(screen.getByText("Neu beschreiben")).toBeDisabled();
+    await waitFor(() => expect(writes).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByText("Neu beschreiben")).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByText("Neu beschreiben"));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes).toEqual([
+      {
+        method: "POST",
+        path: "sources/werkzeuge/repos/acme-cli/describe",
+        body: { mode: "reconcile" },
+      },
+      {
+        method: "POST",
+        path: "sources/werkzeuge/repos/acme-cli/describe",
+        body: { mode: "full" },
+      },
+    ]);
+  });
+
+  it("shows a run under way, a partial and a failed one", async () => {
+    const run = detail.repos[0]?.baseline;
+    if (!run) throw new Error("fixture");
+    const repos = [
+      {
+        ...detail.repos[0],
+        slug: "a",
+        baseline: {
+          ...run,
+          state: "describing" as const,
+          step: 1,
+          steps: 4,
+          documented_commit: "",
+          cost_usd: "0.812",
+        },
+      },
+      { ...detail.repos[0], slug: "b", baseline: { ...run, skipped: 2 } },
+      {
+        ...detail.repos[0],
+        slug: "c",
+        baseline: {
+          ...run,
+          state: "failed" as const,
+          error: "the catalogue failed: unparseable",
+        },
+      },
+    ];
+    serve({ "sources/werkzeuge": { ...detail, repos } });
+    render(<SourcePage projectKey="werkzeuge" />);
+    expect(await screen.findByText("Beschreibt 2/3")).toBeInTheDocument();
+    expect(screen.getByText("Bei 7e1d9a0 · $0.812 bisher")).toBeInTheDocument();
+    expect(screen.getByText("Teilweise")).toBeInTheDocument();
+    expect(screen.getByText(/2 Themen übersprungen/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Beschreibung fehlgeschlagen: the catalogue failed/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Seite aktualisiert alle 3 s/)).toBeInTheDocument();
+    // A run under way blocks its row's button; the documented rows keep
+    // theirs.
+    expect(screen.getByText("Beschreiben")).toBeDisabled();
+    expect(screen.getAllByText("Aktualisieren")[0]).toBeEnabled();
+  });
+
+  it("turns the automatic runs off in the access form", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    fireEvent.click(await screen.findByText("Token"));
+    fireEvent.click(screen.getByLabelText(/Automatisch beschreiben/));
+    fireEvent.click(screen.getByText("Speichern"));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]?.body).toEqual({
+      token_auth: "basic",
+      token_user: "",
+      auto_describe: false,
+    });
   });
 });
 

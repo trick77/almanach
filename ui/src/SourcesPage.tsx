@@ -10,6 +10,7 @@ import {
 } from "./api";
 import { dayTime } from "./format";
 import { navigateTo, sourcePath } from "./routing";
+import { AutoDescribeField } from "./SourcePage";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import {
@@ -212,6 +213,7 @@ function NewSourceForm({
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>("bearer");
   const [user, setUser] = useState("");
+  const [auto, setAuto] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
@@ -232,6 +234,7 @@ function NewSourceForm({
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
+        auto_describe: auto,
       });
       if (created) onDone(created);
     } catch (e) {
@@ -325,6 +328,7 @@ function NewSourceForm({
             <span className={fieldHint}>{f.userHint}</span>
           </label>
         )}
+        <AutoDescribeField value={auto} onChange={setAuto} />
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button

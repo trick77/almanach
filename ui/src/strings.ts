@@ -19,7 +19,7 @@ export const S = {
   },
   projects: {
     title: "Projekte",
-    lede: "Was noergler beim Reviewen über jedes Projekt gelernt hat: pro Repository und pro Projekt eine Beschreibung, aus den Notizen gemergter Pull Requests, nie von Hand geschrieben.",
+    lede: "Was Almanach über jedes Projekt weiss: pro Repository und pro Projekt eine Beschreibung, aus dem Code gelesen und mit den Notizen gemergter Pull Requests fortgeschrieben, nie von Hand.",
     what: "die Projekte",
     empty:
       "Noch kein Projekt: die erste Notiz kommt mit dem ersten gemergten Pull Request eines Teams mit almanach-Block.",
@@ -29,7 +29,7 @@ export const S = {
     revision: (n: number) => `Revision ${n}`,
     noDescription: "noch keine Beschreibung",
     firstDescription:
-      "Die erste Beschreibung entsteht mit dem nächsten gemergten Pull Request.",
+      "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Klon bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
     problems: (n: number) =>
       n === 0
@@ -44,7 +44,7 @@ export const S = {
     description: "Beschreibung",
     noDescription: "Noch keine Beschreibung.",
     noDescriptionHint:
-      "Die erste Beschreibung entsteht mit dem nächsten gemergten Pull Request dieses Projekts.",
+      "Die erste Beschreibung entsteht, wenn Almanach ein Repository dieses Projekts aus dem Code beschreibt oder ein Pull Request gemergt wird.",
     descriptionRevision: (n: number) => `Beschreibung Revision ${n}`,
     repos: "Repositories",
     repoHeaders: ["Repository", "Beschreibung", "Notizen", "Letzter Merge"],
@@ -254,6 +254,7 @@ export const S = {
       "Head",
       "Zustand",
       "Letzter Sync",
+      "Beschreibung",
       "",
     ],
     noRepos: {
@@ -293,6 +294,43 @@ export const S = {
     listingErrorHint:
       "Die Repository-Liste ist die des letzten erfolgreichen Listings; bekannte Repositories werden weiter synchronisiert.",
   },
+  baseline: {
+    chip: (sha: string, repo?: string) =>
+      repo ? `Basis ${repo} ${sha}` : `Basis ${sha}`,
+    chipTitle: (sha: string, date: string) =>
+      date === ""
+        ? `Basis bei Commit ${sha}`
+        : `Basis bei Commit ${sha}, ${date}`,
+    checked: (sha: string) => `Geprüft ${sha}`,
+    checkedTitle: (sha: string) => `Gegen den Code bei Commit ${sha} geprüft`,
+    state: {
+      none: "Noch nicht",
+      queued: "Wartet",
+      cataloguing: "Katalog",
+      describing: (step: number, steps: number) =>
+        `Beschreibt ${step}/${steps}`,
+      project: "Projekt",
+      done: "Beschrieben",
+      partial: "Teilweise",
+      failed: "Fehlgeschlagen",
+    },
+    at: (sha: string) => `Bei ${sha}`,
+    soFar: "bisher",
+    skipped: (n: number) =>
+      n === 1 ? "1 Thema übersprungen" : `${n} Themen übersprungen`,
+    failedRun: "Beschreibung fehlgeschlagen:",
+    upToDate:
+      "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",
+    described: (n: number) => `${n} beschrieben`,
+    actions: {
+      describe: "Beschreiben",
+      reconcile: "Aktualisieren",
+      full: "Neu beschreiben",
+    },
+    auto: "Automatisch beschreiben",
+    autoHint:
+      "Ein Repository beim ersten Klon (ein Fehlschlag einen Tag später erneut), danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Knöpfe, für alle Repositories dieser Quelle.",
+  },
   faq: {
     title: "FAQ",
     what: "Was ist Almanach?",
@@ -300,13 +338,13 @@ export const S = {
       "Almanach ist das lebende Wiki, das noergler beim Reviewen füttert: nach jedem Review schreibt das Modell eine Notiz, was der Pull Request über das Repository lehrt, und beim Merge kommt sie hierher. Almanach fügt jede Notiz in die Beschreibung des Repositorys und des Projekts ein, als Dokumentation mit Quellen, nie von Hand geschrieben.",
     who: "Wer schreibt hier?",
     whoText:
-      "Niemand. Eine Beschreibung ändert sich nur, wenn ein gemergter Pull Request sie ändert; der nächste, der es richtig macht, korrigiert sie. Jede Revision bleibt erhalten.",
+      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Klon und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Lauf oder Pull Request. Jede Revision bleibt erhalten.",
     sources: "Woher kommt eine Aussage?",
     sourcesText:
-      "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips. Die Quellen setzt der Code, nie das Modell.",
+      "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",
     clones: "Was sind die Quellen?",
     clonesText:
-      "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Heute werden die Klone nur aktuell gehalten; in einem nächsten Schritt liest Almanach sie und schreibt daraus die Grundbeschreibung jedes Repositorys, die die Notizen dann fortschreiben.",
+      "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Almanach liest jeden Klon und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
   },
 } as const;
 

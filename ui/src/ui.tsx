@@ -33,33 +33,50 @@ export function Sep() {
 export function Link({
   to,
   className = "",
+  title,
   children,
 }: {
   to: string;
   className?: string;
+  title?: string;
   children: ReactNode;
 }) {
   return (
-    <a href={to} onClick={onNav(to)} className={className}>
+    <a href={to} onClick={onNav(to)} className={className} title={title}>
       {children}
     </a>
   );
 }
 
 /** Chip is a citation: a PR key in a small accent-bordered box, ../rongo's
- *  citation marker. It links to the note when the key has the API's shape. */
+ *  citation marker. It links to the note when the key has the API's shape.
+ *  quiet is a citation with nothing to link to, a baseline's commit. */
 export function Chip({
   to,
+  quiet = false,
+  title,
   children,
 }: {
   to: string | null;
+  quiet?: boolean;
+  title?: string;
   children: ReactNode;
 }) {
-  const cls =
-    "inline-flex items-center gap-1 rounded-[6px] border border-accent-dim bg-accent/10 px-[7px] py-px font-mono text-[11px] whitespace-nowrap text-accent-strong";
-  if (to === null) return <span className={cls}>{children}</span>;
+  const cls = quiet
+    ? "inline-flex items-center gap-1 rounded-[6px] border border-elevated-border px-[7px] py-px font-mono text-[11px] whitespace-nowrap text-muted"
+    : "inline-flex items-center gap-1 rounded-[6px] border border-accent-dim bg-accent/10 px-[7px] py-px font-mono text-[11px] whitespace-nowrap text-accent-strong";
+  if (to === null)
+    return (
+      <span className={cls} title={title}>
+        {children}
+      </span>
+    );
   return (
-    <Link to={to} className={cls + " hover:border-accent hover:text-ink"}>
+    <Link
+      to={to}
+      title={title}
+      className={cls + " hover:border-accent hover:text-ink"}
+    >
       {children}
     </Link>
   );

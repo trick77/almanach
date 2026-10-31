@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   ApiError,
   send,
+  type Baseline,
   type SourceDetail,
   type SourceRepo,
   type TokenAuth,
@@ -11,9 +12,11 @@ import {
   clock,
   day,
   dayTime,
+  money,
   shortSHA,
   stateLabel,
   stateTone,
+  type Tone,
 } from "./format";
 import { navigateTo, sourcesPath } from "./routing";
 import { S } from "./strings";
@@ -54,10 +57,18 @@ import {
 /** pollEvery is how often the page refetches while a clone runs. */
 const pollEvery = 3000;
 
-/** running reports whether a clone is in progress, which is when the page
- *  polls. */
+/** runOpen reports whether a baseline run is queued or under way. */
+export function runOpen(b: Baseline | null): boolean {
+  return b !== null && b.state !== "done" && b.state !== "failed";
+}
+
+/** running reports whether a clone or a baseline run is in progress, which
+ *  is when the page polls. */
 function running(d: SourceDetail | null): number {
-  return d?.repos.some((r) => r.state === "pending" || r.state === "syncing")
+  return d?.repos.some(
+    (r) =>
+      r.state === "pending" || r.state === "syncing" || runOpen(r.baseline),
+  )
     ? pollEvery
     : 0;
 }
@@ -105,6 +116,10 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
     (r) => r.state === "pending" || r.state === "syncing",
   ).length;
   const failed = data.repos.filter((r) => r.state === "failed").length;
+  const describing = data.repos.filter((r) => runOpen(r.baseline)).length;
+  const described = data.repos.filter(
+    (r) => r.baseline !== null && r.baseline.documented_commit !== "",
+  ).length;
   const lastSync = data.repos
     .map((r) => r.last_synced_at)
     .filter((t): t is string => t !== null)
@@ -191,6 +206,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
             note={[
               active > 0 ? S.sources.counts.active(active) : "",
               failed > 0 ? S.sources.counts.failed(failed) : "",
+              described > 0 ? S.baseline.described(described) : "",
             ]
               .filter((s) => s !== "")
               .join(", ")}
@@ -302,7 +318,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         {S.sources.repos}
         <span className="ml-auto font-normal tracking-normal normal-case">
           {S.sources.reposNote[data.kind]}
-          {active > 0 && (
+          {active + describing > 0 && (
             <>
               <Sep />
               {S.sources.polling}
@@ -318,6 +334,17 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           onSync={(slug) =>
             act(() =>
               send("POST", `${path}/repos/${encodeURIComponent(slug)}/sync`),
+            )
+          }
+          onDescribe={(slug, mode) =>
+            act(() =>
+              send(
+                "POST",
+                `${path}/repos/${encodeURIComponent(slug)}/describe`,
+                {
+                  mode,
+                },
+              ),
             )
           }
           removing={removing}
@@ -338,17 +365,19 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
 function ReposTable({
   data,
   onSync,
+  onDescribe,
   removing,
   onAskRemove,
   onRemove,
 }: {
   data: SourceDetail;
   onSync: (slug: string) => void;
+  onDescribe: (slug: string, mode: "reconcile" | "full") => Promise<void>;
   removing: string | null;
   onAskRemove: (slug: string | null) => void;
   onRemove: (slug: string) => void;
 }) {
-  const [hd0, hd1, hd2, hd3, hd4] = S.sources.repoHeaders;
+  const [hd0, hd1, hd2, hd3, hd4, hd5] = S.sources.repoHeaders;
   const rows = [...data.repos].sort((a, b) => a.slug.localeCompare(b.slug));
   return (
     <>
@@ -361,6 +390,7 @@ function ReposTable({
               <th className={th}>{hd2}</th>
               <th className={th}>{hd3}</th>
               <th className={th + " text-right"}>{hd4}</th>
+              <th className={th}>{hd5}</th>
               <th className={th}></th>
             </tr>
           </thead>
@@ -371,6 +401,7 @@ function ReposTable({
                 r={r}
                 isStatic={data.kind === "static"}
                 onSync={() => onSync(r.slug)}
+                onDescribe={(mode) => onDescribe(r.slug, mode)}
                 onAskRemove={() => onAskRemove(r.slug)}
               />
             ))}
@@ -406,21 +437,42 @@ function RepoRow({
   r,
   isStatic,
   onSync,
+  onDescribe,
   onAskRemove,
 }: {
   r: SourceRepo;
   isStatic: boolean;
   onSync: () => void;
+  onDescribe: (mode: "reconcile" | "full") => Promise<void>;
   onAskRemove: () => void;
 }) {
   const running = r.state === "pending" || r.state === "syncing";
   const removable = isStatic || r.state === "missing";
+  const documented = r.baseline !== null && r.baseline.documented_commit !== "";
+  const [sending, setSending] = useState(false);
+  const noRun = sending || runOpen(r.baseline) || r.head_commit === "";
+  // A reconcile of a head already documented would read nothing.
+  const upToDate =
+    documented && r.baseline?.documented_commit === r.head_commit;
+  const describe = async (mode: "reconcile" | "full") => {
+    setSending(true);
+    try {
+      await onDescribe(mode);
+    } finally {
+      setSending(false);
+    }
+  };
   return (
     <>
       <tr>
         <td className={tdMono}>
           {r.slug}
-          <div className="mt-0.5 text-[11.5px] text-faint">{r.clone_url}</div>
+          <div
+            className="mt-0.5 max-w-[220px] truncate text-[11.5px] text-faint"
+            title={r.clone_url}
+          >
+            {r.clone_url}
+          </div>
         </td>
         <td className={tdMono}>{r.branch === "" ? "—" : r.branch}</td>
         <td className={tdMono}>
@@ -434,41 +486,171 @@ function RepoRow({
         <td className={tdNum}>
           {r.last_synced_at === null ? "—" : dayTime(r.last_synced_at)}
         </td>
-        <td className={td + " text-right whitespace-nowrap"}>
-          {r.state !== "missing" && (
-            <button
-              type="button"
-              className={rowBtn}
-              disabled={running}
-              onClick={onSync}
-            >
-              {r.state === "failed"
-                ? S.sources.repoActions.retry
-                : S.sources.repoActions.sync}
-            </button>
-          )}
-          {removable && (
-            <button
-              type="button"
-              className={rowBtn + " hover:text-danger-ink"}
-              onClick={onAskRemove}
-            >
-              {r.state === "missing"
-                ? S.sources.repoActions.removeClone
-                : S.sources.repoActions.remove}
-            </button>
-          )}
+        <td className={td}>
+          <BaselineCell b={r.baseline} />
+        </td>
+        <td className={td + " text-right"}>
+          {/* Stacked: four actions side by side push the table past the
+              column on a source with long clone URLs. */}
+          <div className="flex flex-col items-end gap-0.5 whitespace-nowrap">
+            {r.state !== "missing" && (
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={running}
+                onClick={onSync}
+              >
+                {r.state === "failed"
+                  ? S.sources.repoActions.retry
+                  : S.sources.repoActions.sync}
+              </button>
+            )}
+            {r.state !== "missing" && (
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={noRun || upToDate}
+                title={upToDate ? S.baseline.upToDate : undefined}
+                onClick={() => describe("reconcile")}
+              >
+                {documented
+                  ? S.baseline.actions.reconcile
+                  : S.baseline.actions.describe}
+              </button>
+            )}
+            {r.state !== "missing" && documented && (
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={noRun}
+                onClick={() => describe("full")}
+              >
+                {S.baseline.actions.full}
+              </button>
+            )}
+            {removable && (
+              <button
+                type="button"
+                className={rowBtn + " hover:text-danger-ink"}
+                onClick={onAskRemove}
+              >
+                {r.state === "missing"
+                  ? S.sources.repoActions.removeClone
+                  : S.sources.repoActions.remove}
+              </button>
+            )}
+          </div>
         </td>
       </tr>
       {r.state === "failed" && r.last_error !== "" && (
         <tr>
           <td
-            colSpan={6}
+            colSpan={7}
             className="border-b border-border-soft py-1.5 text-[13px] text-danger-ink"
           >
             {r.slug}: {r.last_error}
           </td>
         </tr>
+      )}
+      {r.baseline !== null &&
+        r.baseline.state === "failed" &&
+        r.baseline.error !== "" && (
+          <tr>
+            <td
+              colSpan={7}
+              className="border-b border-border-soft py-1.5 text-[13px] text-danger-ink"
+            >
+              {r.slug}: {S.baseline.failedRun} {r.baseline.error}
+            </td>
+          </tr>
+        )}
+    </>
+  );
+}
+
+/** AutoDescribeField is the source's switch for runs that start on their
+ *  own, in the create form and the access form alike. */
+export function AutoDescribeField({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2.5 sm:col-span-2">
+      <input
+        type="checkbox"
+        className="mt-1 accent-accent"
+        checked={value}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>
+        <span className={fieldLabel}>{S.baseline.auto}</span>
+        <span className={fieldHint}>{S.baseline.autoHint}</span>
+      </span>
+    </label>
+  );
+}
+
+/** baselineState is a run's state as the column shows it: done with
+ *  skipped parts is partial. */
+function baselineState(b: Baseline): { label: string; tone: Tone } {
+  switch (b.state) {
+    case "done":
+      return b.skipped > 0
+        ? { label: S.baseline.state.partial, tone: "warn" }
+        : { label: S.baseline.state.done, tone: "ok" };
+    case "failed":
+      return { label: S.baseline.state.failed, tone: "fail" };
+    case "describing":
+      return {
+        label: S.baseline.state.describing(
+          // The worker saves the last step before it moves on to the project:
+          // the count never runs past its total.
+          Math.min(b.step + 1, Math.max(b.steps - 1, 1)),
+          Math.max(b.steps - 1, 1),
+        ),
+        tone: "warn",
+      };
+    default:
+      return { label: S.baseline.state[b.state], tone: "warn" };
+  }
+}
+
+/** BaselineCell is a repository's description state: the newest run, the
+ *  commit last documented, what the run cost, when it ended. */
+function BaselineCell({ b }: { b: Baseline | null }) {
+  if (b === null) {
+    return (
+      <Pill tone="quiet" dot>
+        {S.baseline.state.none}
+      </Pill>
+    );
+  }
+  const { label, tone } = baselineState(b);
+  const open = runOpen(b);
+  const sha =
+    b.documented_commit !== "" ? b.documented_commit : open ? b.commit : "";
+  const parts = [
+    sha !== "" ? S.baseline.at(shortSHA(sha)) : "",
+    b.cost_usd !== undefined
+      ? open
+        ? `${money(b.cost_usd)} ${S.baseline.soFar}`
+        : money(b.cost_usd)
+      : "",
+    !open && b.finished_at !== null ? day(b.finished_at) : "",
+    b.state === "done" && b.skipped > 0 ? S.baseline.skipped(b.skipped) : "",
+  ].filter((s) => s !== "");
+  return (
+    <>
+      <Pill tone={tone} dot>
+        {label}
+      </Pill>
+      {parts.length > 0 && (
+        <div className="mt-0.5 max-w-[190px] text-[11.5px] text-faint">
+          {parts.join(` ${S.common.sep} `)}
+        </div>
       )}
     </>
   );
@@ -496,6 +678,7 @@ function AccessForm({
     data.has_token ? "keep" : "replace",
   );
   const [token, setToken] = useState("");
+  const [auto, setAuto] = useState(data.auto_describe);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -503,9 +686,10 @@ function AccessForm({
     setBusy(true);
     setError("");
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, string | boolean> = {
         token_auth: auth,
         token_user: auth === "basic" ? user.trim() : "",
+        auto_describe: auto,
       };
       if (data.kind === "bitbucket") body.host = host.trim();
       // An empty replacement keeps the stored token: only Löschen clears.
@@ -611,6 +795,7 @@ function AccessForm({
             />
           )}
         </div>
+        <AutoDescribeField value={auto} onChange={setAuto} />
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button

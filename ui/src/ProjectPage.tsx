@@ -73,8 +73,12 @@ function Body({ data }: { data: ProjectDetail }) {
     <>
       <h2 className={h2}>{data.key}</h2>
       <p className={meta}>
-        {S.projects.team} <span className="text-ink-dim">{data.team}</span>
-        <Sep />
+        {data.team !== "" && (
+          <>
+            {S.projects.team} <span className="text-ink-dim">{data.team}</span>
+            <Sep />
+          </>
+        )}
         {S.projects.repos(data.repos.length)}
         <Sep />
         {S.projects.notes(notes)}

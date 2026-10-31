@@ -208,6 +208,16 @@ describe("ProjectsPage", () => {
       "/projekte/PAY",
     );
   });
+  it("leaves out the team of a project known only as a source", async () => {
+    serve({
+      projects: {
+        projects: [{ ...projects.projects[0]!, key: "tools", team: "" }],
+      },
+    });
+    render(<ProjectsPage />);
+    expect(await screen.findByText("tools")).toBeInTheDocument();
+    expect(screen.queryByText(/Team/)).not.toBeInTheDocument();
+  });
   it("shows the empty and the failed state", async () => {
     serve({ projects: { projects: [] } });
     render(<ProjectsPage />);
@@ -299,6 +309,94 @@ describe("RepoPage", () => {
         .closest("a")
         ?.getAttribute("href"),
     ).toBe("/projekte/PAY/repos/pay-clearing/notizen/51");
+  });
+
+  it("shows a baseline as a commit, a quiet chip that links nowhere", async () => {
+    const base = {
+      kind: "baseline" as const,
+      commit: "4e1f0c2abcdef",
+      committed_at: mergedAt,
+    };
+    serve({
+      "projects/PAY/repos/pay-clearing": {
+        ...repo,
+        revisions: [
+          {
+            revision: 3,
+            source_kind: "baseline",
+            source_pr_key: "",
+            source_commit: "4e1f0c2abcdef",
+            statements: 1,
+            chars: 30,
+            created_at: mergedAt,
+          },
+          ...repo.revisions,
+        ],
+        description: {
+          ...project.description!,
+          statements: [
+            {
+              id: "s1",
+              kind: "component",
+              name: "Abrechnungslauf",
+              text: "Rechnet ab.",
+              files: ["billing/run.go"],
+              // A PR source of before baselines has no kind.
+              sources: [
+                { pr_key: "PAY/pay-clearing#77", merged_at: mergedAt },
+                base,
+              ],
+              checked: "9a8b7c6abcdef",
+            },
+          ],
+        },
+      },
+    });
+    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    const chips = await screen.findAllByText("Basis 4e1f0c2");
+    expect(chips).toHaveLength(2);
+    for (const chip of chips) {
+      expect(chip.closest("a")).toBeNull();
+    }
+    // The statement's chip carries the commit's date; the revision row
+    // shows its own date beside it.
+    expect(chips[0]?.getAttribute("title")).toMatch(
+      /^Basis bei Commit 4e1f0c2, /,
+    );
+    expect(
+      screen
+        .getAllByText("PAY/pay-clearing#77")[0]
+        ?.closest("a")
+        ?.getAttribute("href"),
+    ).toBe("/projekte/PAY/repos/pay-clearing/notizen/77");
+    expect(screen.getByText("Geprüft 9a8b7c6")).toBeInTheDocument();
+  });
+
+  it("names the repository of a baseline source when it carries one", async () => {
+    serve({
+      "projects/PAY/repos/pay-clearing": {
+        ...repo,
+        description: {
+          ...project.description!,
+          statements: [
+            {
+              id: "s1",
+              kind: "entity",
+              name: "Auftrag",
+              text: "Ein Auftrag.",
+              files: [],
+              sources: [
+                { kind: "baseline", commit: "4e1f0c2abcdef", repo: "pay-api" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    expect(
+      await screen.findByText("Basis pay-api 4e1f0c2"),
+    ).toBeInTheDocument();
   });
 });
 
