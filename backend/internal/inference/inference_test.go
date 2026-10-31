@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -224,6 +225,24 @@ func TestStartup(t *testing.T) {
 	warning, err = testClient(answer(503, `{"error":{"message":"overloaded"}}`)).Startup(context.Background())
 	if err != nil || !strings.Contains(warning, "did not answer") {
 		t.Errorf("503: warning %q err %v; want a warning only", warning, err)
+	}
+}
+
+// "off" switches reasoning off where the profile allows it; any other value
+// must be a level the profile lists, and the refusal names off too.
+func TestEffortOff(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	c := testClient(srv.Client())
+	c.effort = EffortOff
+	if _, err := c.Startup(context.Background()); err != nil {
+		t.Fatalf("off on a model that can be switched off: %v", err)
+	}
+	if got := c.reasoning(); !reflect.DeepEqual(got, llmwire.ReasoningOff()) {
+		t.Errorf("reasoning() = %#v, want ReasoningOff", got)
+	}
+	c.effort = "bogus"
+	if _, err := c.Startup(context.Background()); err == nil || !strings.Contains(err.Error(), EffortOff) {
+		t.Errorf("bogus level: err = %v, want a refusal naming %q", err, EffortOff)
 	}
 }
 

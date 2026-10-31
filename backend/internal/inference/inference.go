@@ -59,8 +59,9 @@ func (o Outcome) String() string {
 type Options struct {
 	// Model is an llmwire profile id, never a gateway alias.
 	Model string
-	// ReasoningEffort is a level the profile lists, or "" for the model's
-	// balanced level.
+	// ReasoningEffort is a level the profile lists, EffortOff for no
+	// reasoning at all where the profile can be switched off, or "" for the
+	// model's balanced level.
 	ReasoningEffort string
 	Logger          *slog.Logger
 	// Lookup is the environment llmwire reads the gateway's variables from.
@@ -108,9 +109,12 @@ func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("inference: model %q: %w", c.model, err)
 	}
-	if c.effort != "" && !p.Reasoning.Accepts(c.effort) {
-		return "", fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)",
-			c.effort, c.model, strings.Join(p.Reasoning.EffortValues, ", "))
+	switch {
+	case c.effort == EffortOff && !p.Reasoning.CanBeDisabled:
+		return "", fmt.Errorf("inference: reasoning_effort=%q: %s cannot be switched off", c.effort, c.model)
+	case c.effort != "" && c.effort != EffortOff && !p.Reasoning.Accepts(c.effort):
+		return "", fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s, or %s where it can be switched off)",
+			c.effort, c.model, strings.Join(p.Reasoning.EffortValues, ", "), EffortOff)
 	}
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
@@ -172,9 +176,17 @@ const startupTimeout = 10 * time.Second
 // Model is the profile id.
 func (c *Client) Model() string { return c.model }
 
+// EffortOff switches a model's reasoning off where its profile allows it.
+// Measured on a baseline subject step (2026-10-31): of 22k output tokens,
+// about 1.5k were the patch, the rest thinking; time and cost follow.
+const EffortOff = "off"
+
 func (c *Client) reasoning() llmwire.ReasoningRequest {
-	if c.effort == "" {
+	switch c.effort {
+	case "":
 		return llmwire.ReasoningBalanced()
+	case EffortOff:
+		return llmwire.ReasoningOff()
 	}
 	return llmwire.ReasoningEffort(c.effort)
 }
