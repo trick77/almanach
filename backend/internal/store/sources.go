@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -146,13 +147,25 @@ func (s *Store) CreateSource(ctx context.Context, src ProjectSource) error {
 // in when it differs from key only by case, ok false when it does not: a
 // source must match noergler's key exactly, or every note of the project
 // is ignored.
+//
+// The case is folded in Go: SQLite's lower() folds ASCII only, and a key
+// "ÄRZTE" must find "ärzte".
 func (s *Store) ProjectSpelledOtherwise(ctx context.Context, key string) (string, bool, error) {
-	var known string
-	err := s.db.QueryRowContext(ctx, `SELECT key FROM projects WHERE lower(key) = lower(?1) AND key <> ?1 ORDER BY key LIMIT 1`, key).Scan(&known)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+	rows, err := s.db.QueryContext(ctx, `SELECT key FROM projects WHERE key <> ? ORDER BY key`, key)
+	if err != nil {
+		return "", false, err
 	}
-	return known, err == nil, err
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var known string
+		if err := rows.Scan(&known); err != nil {
+			return "", false, err
+		}
+		if strings.EqualFold(known, key) {
+			return known, true, nil
+		}
+	}
+	return "", false, rows.Err()
 }
 
 // UpdateSourceAccess changes a source's host and token settings. The token

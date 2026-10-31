@@ -72,7 +72,7 @@ func TestWriters_BusyTimeoutIsAnErrorAndWritesNothing(t *testing.T) {
 	n := noteFor("PRJ", "svc", 1)
 	start := time.Now()
 	ok, err := impatient.Ingest(ctx, deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: "PRJ"}})
-	if !errors.Is(err, sqlite3.BUSY) || ok {
+	if !IsBusy(err) || ok {
 		t.Fatalf("Ingest under a held lock = %v, %v; want a busy error", ok, err)
 	}
 	if waited := time.Since(start); waited < 40*time.Millisecond {
@@ -113,9 +113,9 @@ func TestStamps_FixedWidthSortAsTime(t *testing.T) {
 		if len(stamps[i]) != len(stampLayout) {
 			t.Errorf("stamp(%v) = %q, width %d, want %d", tm, stamps[i], len(stamps[i]), len(stampLayout))
 		}
-		back, err := parseStamp(stamps[i])
+		back, err := stampFormat.Decode(stamps[i])
 		if err != nil || !back.Equal(tm) {
-			t.Errorf("parseStamp(%q) = %v, %v; want %v", stamps[i], back, err, tm)
+			t.Errorf("Decode(%q) = %v, %v; want %v", stamps[i], back, err, tm)
 		}
 	}
 	byTime := make([]int, len(times))
@@ -158,13 +158,33 @@ func TestStamps_ReadStrictly(t *testing.T) {
 	ctx := context.Background()
 	var tm time.Time
 	var p *time.Time
-	for _, bad := range []string{`'2026-10-01T12:00:00Z'`, `'2026-10-01 12:00:00'`, `42`, `NULL`} {
-		if err := s.db.QueryRowContext(ctx, `SELECT `+bad).Scan(timeAt(&tm)); err == nil {
-			t.Errorf("%s read as a time: %v", bad, tm)
+	// A TEXT column reaches the scanner as text. (An expression such as
+	// MAX(merged_at) has no declared type; the driver hands that over as a
+	// time.Time it parsed itself, which the scanner takes as is.)
+	for _, bad := range []any{"2026-10-01T12:00:00Z", "2026-10-01 12:00:00", int64(42), nil} {
+		if err := timeAt(&tm).Scan(bad); err == nil {
+			t.Errorf("%v read as a time: %v", bad, tm)
 		}
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT CAST(? AS BLOB)`, stamp(mergedBase)).Scan(timeAt(&tm)); err != nil || !tm.Equal(mergedBase) {
-		t.Errorf("blob stamp = %v, %v", tm, err)
+	if err := timeOrNil(&p).Scan("yesterday"); err == nil {
+		t.Errorf("'yesterday' read as %v", p)
+	}
+	ingest(t, s, noteFor("PRJ", "svc", 9))
+	if err := s.db.QueryRowContext(ctx, `SELECT merged_at FROM notes`).Scan(timeAt(&tm)); err != nil || !tm.Equal(mergedBase.Add(9*time.Minute)) {
+		t.Errorf("merged_at = %v, %v", tm, err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(merged_at) FROM notes`).Scan(timeOrNil(&p)); err != nil || p == nil || !p.Equal(mergedBase.Add(9*time.Minute)) {
+		t.Errorf("MAX(merged_at) = %v, %v", p, err)
+	}
+
+	// The schema refuses any other shape: the driver's own encoding of a
+	// time.Time (trailing zeros cut, a zone kept) above all.
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	local := time.Date(2026, 10, 1, 14, 0, 0, 0, time.FixedZone("CEST", 2*3600))
+	for _, bad := range []any{"2026-10-01T12:00:00Z", "2026-10-01 12:00:00.000000000", mergedBase, local} {
+		if _, err := s.db.ExecContext(ctx, `UPDATE notes SET received_at = ?`, bad); !errors.Is(err, sqlite3.CONSTRAINT_CHECK) {
+			t.Errorf("received_at = %v: err = %v, want a CHECK failure", bad, err)
+		}
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT NULL`).Scan(timeOrNil(&p)); err != nil || p != nil {
 		t.Errorf("NULL = %v, %v; want nil", p, err)
@@ -222,6 +242,75 @@ func TestJSON_InvalidRefused(t *testing.T) {
 	} {
 		if _, err := s.db.ExecContext(ctx, q); !errors.Is(err, sqlite3.CONSTRAINT_CHECK) {
 			t.Errorf("%s: err = %v, want a CHECK failure", q, err)
+		}
+	}
+}
+
+// Two migrators on one file at once: both succeed, the schema lands once.
+// Each its own handle, as two processes would have.
+func TestMigrate_ConcurrentRunsApplyOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "almanach.db")
+	ctx := context.Background()
+	stores := []*Store{storeAt(t, path), storeAt(t, path), storeAt(t, path)}
+	errs := make(chan error, len(stores))
+	for _, s := range stores {
+		go func() { errs <- s.Migrate(ctx) }()
+	}
+	for range stores {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent migrate: %v", err)
+		}
+	}
+	if n := count(t, stores[0], "schema_migrations", ""); n != 1 {
+		t.Errorf("schema_migrations = %d rows, want the one file once", n)
+	}
+	for _, s := range stores {
+		if err := s.SchemaCurrent(ctx); err != nil {
+			t.Errorf("SchemaCurrent: %v", err)
+		}
+	}
+}
+
+// A migrator waiting for the lock gives up when its context ends.
+func TestMigrate_LockWaitEndsWithTheContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "almanach.db")
+	unlock, err := lockFile(context.Background(), path+"-migrate.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	if err := storeAt(t, path).Migrate(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("migrate under a held lock: err = %v, want the deadline", err)
+	}
+}
+
+// Readiness reads a real table: a file without the schema is not ready.
+func TestPing_ReadsTheSchema(t *testing.T) {
+	ctx := context.Background()
+	s := emptyStore(t)
+	if err := s.Ping(ctx); err == nil {
+		t.Fatal("ping answered on a file without the schema")
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Ping(ctx); err != nil {
+		t.Fatalf("ping after migrate: %v", err)
+	}
+}
+
+// IsBusy knows a busy or locked database, wrapped or not, and nothing else.
+func TestIsBusy(t *testing.T) {
+	for _, err := range []error{ErrBusy, sqlite3.BUSY_TIMEOUT, sqlite3.LOCKED, errors.Join(errors.New("write"), sqlite3.BUSY)} {
+		if !IsBusy(err) {
+			t.Errorf("IsBusy(%v) = false", err)
+		}
+	}
+	for _, err := range []error{nil, errors.New("disk full"), sqlite3.CONSTRAINT_CHECK} {
+		if IsBusy(err) {
+			t.Errorf("IsBusy(%v) = true", err)
 		}
 	}
 }

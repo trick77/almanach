@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/ncruces/go-sqlite3"
@@ -16,10 +15,20 @@ import (
 
 // stampLayout is every stored time: UTC, RFC 3339 with all nine digits of
 // the nanoseconds. Fixed width, so text order is time order, and the
-// sub-second order of two merges or two run steps survives. Never bind a
-// time.Time itself: the driver would write RFC 3339 with the trailing
-// zeros cut, a width that varies and sorts wrong.
+// sub-second order of two merges or two run steps survives. Every time
+// column's CHECK refuses any other shape.
+//
+// Written through stamp, not the driver's _timefmt: the driver formats a
+// custom layout in the time's own zone (only its built-in layouts are
+// turned to UTC first), so a local time.Time would land as its local clock
+// with a literal Z, a wrong instant the CHECK cannot see. And an
+// expression such as MAX(merged_at) has no declared type, so the driver
+// would not decode it either; stampFormat reads every one.
 const stampLayout = "2006-01-02T15:04:05.000000000Z"
+
+// stampFormat reads a stored time in stampLayout: anything else is an
+// error, never a zero time.
+const stampFormat = sqlite3.TimeFormat(stampLayout)
 
 // stamp is t as stored.
 func stamp(t time.Time) string { return t.UTC().Format(stampLayout) }
@@ -35,55 +44,36 @@ func stampOrNull(t *time.Time) any {
 	return stamp(*t)
 }
 
-// parseStamp reads a stored time; anything not in stampLayout is an error,
-// never a zero time.
-func parseStamp(v any) (time.Time, error) {
-	var s string
-	switch v := v.(type) {
-	case string:
-		s = v
-	case []byte:
-		s = string(v)
-	default:
-		return time.Time{}, fmt.Errorf("stored time: unexpected %T", v)
-	}
-	t, err := time.Parse(stampLayout, s)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("stored time %q: %w", s, err)
-	}
-	return t, nil
-}
-
 // timeAt scans a NOT NULL time column into t.
-func timeAt(t *time.Time) sql.Scanner { return timeScanner{t} }
+func timeAt(t *time.Time) sql.Scanner { return stampFormat.Scanner(t) }
 
 // timeOrNil scans a nullable time column into t: NULL is nil.
-func timeOrNil(t **time.Time) sql.Scanner { return nullTimeScanner{t} }
+func timeOrNil(t **time.Time) sql.Scanner { return nullTime{t} }
 
-type timeScanner struct{ t *time.Time }
+type nullTime struct{ t **time.Time }
 
-func (s timeScanner) Scan(v any) error {
-	t, err := parseStamp(v)
-	if err != nil {
-		return err
-	}
-	*s.t = t
-	return nil
-}
-
-type nullTimeScanner struct{ t **time.Time }
-
-func (s nullTimeScanner) Scan(v any) error {
+func (s nullTime) Scan(v any) error {
 	if v == nil {
 		*s.t = nil
 		return nil
 	}
-	t, err := parseStamp(v)
+	t, err := stampFormat.Decode(v)
 	if err != nil {
 		return err
 	}
 	*s.t = &t
 	return nil
+}
+
+// ErrBusy is the error a write meets when the database's write lock stayed
+// taken past the busy timeout: IsBusy reports it.
+var ErrBusy error = sqlite3.BUSY
+
+// IsBusy reports a write that waited out the busy timeout (or met a locked
+// table): temporary, worth a hold and a retry, never a failure of the
+// write's content.
+func IsBusy(err error) bool {
+	return errors.Is(err, sqlite3.BUSY) || errors.Is(err, sqlite3.LOCKED)
 }
 
 // jsonText is a JSON value as bound: text, never a blob, which json_valid

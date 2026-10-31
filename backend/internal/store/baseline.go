@@ -69,6 +69,10 @@ func (r BaselineRun) Open() bool { return r.State != RunDone && r.State != RunFa
 const runColumns = `id, project_key, slug, mode, trigger, base_commit, "commit", state, step, steps, plan,
 	attempts, calls, bytes, skipped, error, queued_at, started_at, finished_at`
 
+// lColumns is runColumns of a query's run aliased l, in the same order.
+const lColumns = `l.id, l.project_key, l.slug, l.mode, l.trigger, l.base_commit, l."commit", l.state, l.step, l.steps, l.plan,
+	l.attempts, l.calls, l.bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at`
+
 // scanner is *sql.Row and *sql.Rows.
 type scanner interface {
 	Scan(dest ...any) error
@@ -216,15 +220,16 @@ type RepoRuns struct {
 // SourceRuns is RepoRuns for every repository of a source that has a run,
 // by slug.
 func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns, error) {
+	// l is each repository's newest run, d its newest done one.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+runColumns+`,
+		SELECT `+lColumns+`,
 		       (SELECT SUM(c.cost_nano_usd) FROM llm_calls c WHERE c.baseline_run_id = l.id),
-		       (SELECT d."commit" FROM baseline_runs d
-		         WHERE d.project_key = l.project_key AND d.slug = l.slug AND d.state = 'done' ORDER BY d.id DESC LIMIT 1),
-		       (SELECT d.finished_at FROM baseline_runs d
-		         WHERE d.project_key = l.project_key AND d.slug = l.slug AND d.state = 'done' ORDER BY d.id DESC LIMIT 1)
+		       d."commit", d.finished_at
 		  FROM (SELECT `+runColumns+`, ROW_NUMBER() OVER (PARTITION BY slug ORDER BY id DESC) AS rn
-		          FROM baseline_runs WHERE project_key = ?) l
+		          FROM baseline_runs WHERE project_key = ?1) l
+		  LEFT JOIN (SELECT slug, "commit", finished_at, ROW_NUMBER() OVER (PARTITION BY slug ORDER BY id DESC) AS rn
+		               FROM baseline_runs WHERE project_key = ?1 AND state = 'done') d
+		    ON d.slug = l.slug AND d.rn = 1
 		 WHERE l.rn = 1`, key)
 	if err != nil {
 		return nil, err

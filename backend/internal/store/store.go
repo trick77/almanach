@@ -31,9 +31,15 @@ func migrations() fs.FS {
 
 // Store owns the database handle.
 type Store struct {
-	db  *sql.DB
-	log *slog.Logger
+	db   *sql.DB
+	path string
+	log  *slog.Logger
 }
+
+// maxConns caps the pool: each connection is a WASM instance of SQLite with
+// its own memory and page cache, and there is one writer at a time anyway.
+// Four leave readers (UI, API) room beside the worker's write.
+const maxConns = 4
 
 // Open opens (creating if needed) the database file at path and logs the
 // SQLite version. Callers run Migrate separately; serve never does.
@@ -60,13 +66,15 @@ func open(ctx context.Context, path string, log *slog.Logger, extra ...string) (
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
+	db.SetMaxOpenConns(maxConns)
+	db.SetMaxIdleConns(maxConns)
 	var version string
 	if err := db.QueryRowContext(ctx, `SELECT sqlite_version()`).Scan(&version); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	log.Info("SQLite database opened (" + version + ")")
-	return &Store{db: db, log: log}, nil
+	return &Store{db: db, path: path, log: log}, nil
 }
 
 // Close releases the database.
@@ -76,10 +84,21 @@ func (s *Store) Close() {
 }
 
 // Migrate applies every pending migration in file order, exactly once, each
-// in its own (IMMEDIATE) transaction: a second migrator waits for the
-// first. Idempotent.
+// in its own transaction. Idempotent.
+//
+// The whole run holds a lock on a file beside the database
+// (<path>-migrate.lock), so a second migrator waits for the first to end.
+// kit's migrate reads the applied list before its first write lock: two
+// runs at once would both see a file pending and the second fail on
+// "table already exists". The write lock cannot serve: the run's own
+// transactions need it, on the connection that would hold it.
 func (s *Store) Migrate(ctx context.Context) error {
-	_, err := migrate.Up(ctx, s.db, migrations(), s.migrateOptions())
+	unlock, err := lockFile(ctx, s.path+"-migrate.lock")
+	if err != nil {
+		return fmt.Errorf("migration lock: %w", err)
+	}
+	defer unlock()
+	_, err = migrate.Up(ctx, s.db, migrations(), s.migrateOptions())
 	return err
 }
 
@@ -87,10 +106,11 @@ func (s *Store) migrateOptions() migrate.Options {
 	return migrate.Options{Dialect: migrate.SQLite, Log: s.log}
 }
 
-// Ping is the readiness check: the database answers a query.
+// Ping is the readiness check: a read of a real table, so a volume gone or
+// a file no longer a database turns readiness red.
 func (s *Store) Ping(ctx context.Context) error {
-	var one int
-	return s.db.QueryRowContext(ctx, `SELECT 1`).Scan(&one)
+	var n int
+	return s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+migrate.Table).Scan(&n)
 }
 
 // SchemaCurrent reports whether every embedded migration has been applied,

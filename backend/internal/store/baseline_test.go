@@ -421,6 +421,16 @@ func TestCreateSource_AutoDescribeAndSpelling(t *testing.T) {
 			t.Errorf("ProjectSpelledOtherwise(%s) = %v %v, want no clash", key, ok, err)
 		}
 	}
+	// Beyond ASCII: SQLite's lower() would miss the umlaut.
+	ingest(t, s, noteFor("ärzte", "svc", 2))
+	for _, key := range []string{"ÄRZTE", "Ärzte"} {
+		if known, ok, err := s.ProjectSpelledOtherwise(ctx, key); err != nil || !ok || known != "ärzte" {
+			t.Errorf("ProjectSpelledOtherwise(%s) = %q %v %v, want ärzte", key, known, ok, err)
+		}
+	}
+	if _, ok, err := s.ProjectSpelledOtherwise(ctx, "ärzte"); err != nil || ok {
+		t.Errorf("ProjectSpelledOtherwise(ärzte) = %v %v, want no clash with itself", ok, err)
+	}
 }
 
 // A source stored before baselines existed reads as a PR; a baseline
