@@ -427,6 +427,81 @@ func TestRun_ProjectMap(t *testing.T) {
 	}
 }
 
+// A map that was due and not accepted is stored as the sentinel: asked
+// for, not drawn. A quiet reconcile then leaves the project alone instead
+// of folding it forever; a run that folds it anyway asks again.
+func TestRun_MapSentinel(t *testing.T) {
+	fold := func(page store.Page, answer *inference.Description) world {
+		x := newWorld(t, 16)
+		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = page
+		x.queue(store.RunFull, "")
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.project = inference.DescriptionResult{Call: called, Description: answer}
+		x.w.drain(context.Background())
+		return x
+	}
+	unmapped := store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Statements: []store.Statement{}}
+	projectMapOf := func(x world) *diagram.Diagram { return x.st.pages[pageKey(store.ScopeProject, "tools", "")].Map }
+
+	for name, answer := range map[string]*inference.Description{
+		"null map":    {Summary: "Werkzeuge, neu.", Statements: []inference.Statement{}},
+		"refused map": {Summary: "Werkzeuge, neu.", Statements: []inference.Statement{}, Map: &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR"}},
+		"no change":   nil,
+	} {
+		if m := projectMapOf(fold(unmapped, answer)); !diagram.IsSentinel(m) {
+			t.Errorf("%s: map = %+v, want the sentinel", name, m)
+		}
+	}
+
+	// With the sentinel stored a quiet reconcile makes no call.
+	plan, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p",
+		Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
+	y := newWorld(t, 16)
+	asked := unmapped
+	asked.Map = diagram.Sentinel()
+	y.st.pages[pageKey(store.ScopeProject, "tools", "")] = asked
+	y.st.documented = &store.BaselineRun{Commit: older40, Plan: plan, State: store.RunDone}
+	y.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
+	y.queue(store.RunReconcile, older40)
+	y.w.drain(context.Background())
+	if y.run().State != store.RunDone || len(y.st.calls) != 0 {
+		t.Errorf("quiet reconcile over the sentinel: run %+v, %d calls; want none", y.run(), len(y.st.calls))
+	}
+	// A full run asks again, and a good map replaces the sentinel.
+	if m := projectMapOf(fold(asked, &inference.Description{Summary: "Werkzeuge.", Statements: []inference.Statement{}, Map: drawnMap("svc")})); !diagram.Equal(m, drawnMap("svc")) {
+		t.Errorf("full run over the sentinel: map = %+v, want the new one", m)
+	}
+	if got := projectMap(asked); !strings.Contains(got, "None yet") {
+		t.Errorf("the prompt shows the sentinel as a map: %q", got)
+	}
+}
+
+// A carried map never names a repository that left the project: a null or
+// refused map, and a "no change" answer, carry the stored one without it.
+func TestRun_CarriedMapDropsDeparted(t *testing.T) {
+	stored := drawnMap("svc", "gone")
+	stored.Edges = append(stored.Edges, diagram.Edge{From: "gone", To: "pg", Label: "DB", Head: "end"})
+	want := drawnMap("svc")
+	for name, answer := range map[string]*inference.Description{
+		"null map":    {Summary: "Werkzeuge, neu.", Statements: []inference.Statement{}},
+		"refused map": {Summary: "Werkzeuge, neu.", Statements: []inference.Statement{}, Map: &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR"}},
+		"no change":   nil,
+	} {
+		x := newWorld(t, 16)
+		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.",
+			Statements: []store.Statement{}, Map: stored}
+		x.queue(store.RunFull, "")
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.project = inference.DescriptionResult{Call: called, Description: answer}
+		x.w.drain(context.Background())
+		if m := x.st.pages[pageKey(store.ScopeProject, "tools", "")].Map; !diagram.Equal(m, want) {
+			t.Errorf("%s: map = %+v, want the stored one without the departed repository", name, m)
+		}
+	}
+}
+
 // A project with more repositories than a map holds gets none: the step
 // asks for null, a returned map is not drawn, and a quiet reconcile does
 // not run the step again for the missing map.

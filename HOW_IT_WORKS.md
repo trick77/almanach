@@ -433,11 +433,15 @@ by how the parts talk (HTTP, event, DB, library, file), held to the
 drawing's limits. A larger project gets none, and the prompt asks for
 null. The map never costs the description: a repository that left the
 project is taken out of it first, and a map that still breaks a rule, or
-none returned, keeps the stored one with the reason logged. A "no change"
-for a project that is due a map and has none is skipped and redone, a
-quiet reconcile of one still runs the project step, and a note's fold
-carries the map forward unchanged. The project page shows a placeholder
-only where `map_expected` says a run will draw one. The UI draws both
+none returned, keeps the stored one (its departed repositories out too)
+with the reason logged. Where a map was due and none is stored, the
+revision carries the sentinel `{"kind": "none"}`: asked for, not drawn.
+A map is due only while `revisions.map` is NULL, so a quiet reconcile
+folds such a project once, not forever; a run that folds it anyway asks
+again. A zone needs no title, the UI titles zones by id. A note's fold
+carries the map forward unchanged. The API serves the sentinel as no map
+with `map_declined`, and the project page shows its placeholder only
+where `map_expected` holds and no map was declined. The UI draws both
 with rongo's copied layout, drawing and theme, no Mermaid; the map's
 repository nodes link to their pages.
 

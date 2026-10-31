@@ -225,7 +225,9 @@ func newWorld(t *testing.T, calls int) world {
 	// The project has its map from an earlier run, so a project step that
 	// answers no change leaves it as it is; TestRun_ProjectWithoutAMap
 	// starts without one.
-	st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{Map: drawnMap("svc")}
+	st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.",
+		Statements: []store.Statement{}, Map: drawnMap("svc")}
+	st.others = []store.RepoSummary{{Slug: "svc"}}
 	w := New(st, &fakeMerger{}, config.Limits{RepoMaxStatements: 4, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200,
 		DiagramMaxNodes: 12, DiagramMaxEdges: 20, MaxDiagrams: 6},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))

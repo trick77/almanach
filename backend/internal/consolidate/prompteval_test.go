@@ -14,6 +14,7 @@ import (
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/store"
@@ -271,7 +272,7 @@ func TestPromptEval(t *testing.T) {
 	} else {
 		onMap := map[string]bool{}
 		for _, n := range project.Map.Nodes {
-			onMap[n.ID] = n.Zone == baseline.ZoneRepositories
+			onMap[n.ID] = n.Zone == diagram.ZoneRepositories
 		}
 		for _, repo := range st.repos {
 			if !onMap[repo.Slug] {
