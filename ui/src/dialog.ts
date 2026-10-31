@@ -1,4 +1,5 @@
 // Copied from rongo (ui/src/dialog.ts), kept in step by hand.
+// Almanach: the comments name what this page has behind the scrim.
 import { useEffect, type RefObject } from "react";
 
 /** useEscape closes on Escape. On the window rather than the document: an
@@ -36,8 +37,8 @@ const TABBABLE =
 
 /** useTabTrap keeps Tab inside a modal dialog: past its last stop the ring
  * wraps to the first, and back. Without it Tab walks into the dimmed page
- * behind the scrim — the citation chips of the answer are focusable — and
- * Enter there opens a second overlay under this one. Between the ends the
+ * behind the scrim — the page's links are focusable — and Enter there acts
+ * under the overlay. Between the ends the
  * browser moves the focus itself. */
 export function useTabTrap(dialog: RefObject<HTMLElement | null>): void {
   useEffect(() => {

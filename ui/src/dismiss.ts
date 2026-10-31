@@ -1,4 +1,5 @@
 // Copied from rongo (ui/src/dismiss.ts), kept in step by hand.
+// Almanach: the comments name what this page has behind the scrim.
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 /**
@@ -6,8 +7,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
  *
  * On the click, not on the press: closing on pointerdown unmounts the overlay
  * before the browser dispatches the click, and that click is then delivered to
- * whatever the scrim was covering — a citation row, which opens the viewer
- * again, or the Ask button. The click is the last event of the gesture, so
+ * whatever the scrim was covering — a link or a button of the page. The
+ * click is the last event of the gesture, so
  * nothing is left to leak into the page behind.
  *
  * The listener sits on the scrim element itself rather than on React's
@@ -15,7 +16,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
  * an iPad has no Escape key to fall back on.
  *
  * Only a press that started AND ended on the scrim counts. A drag that began
- * inside the dialog — selecting code, panning a diagram — and ended out here
+ * inside the dialog — selecting a label, panning a diagram — and ended out here
  * is a drag, not a cancel, and so is one that began beside the dialog and
  * ended in it: the click is dispatched on the nearest ancestor the press and
  * the release have in common, which for either drag is the scrim itself.
