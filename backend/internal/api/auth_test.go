@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/oauth2"
@@ -21,11 +23,14 @@ import (
 )
 
 // fakeOIDC stands in for kit's flow: Start redirects to a fixed URL,
-// Callback answers what it is told.
+// Callback answers what it is told. down is a provider not discovered yet.
 type fakeOIDC struct {
 	claims auth.Claims
 	err    error
+	down   bool
 }
+
+func (f *fakeOIDC) Ready() bool { return !f.down }
 
 func (f *fakeOIDC) Start(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "https://auth.example.com/authorize", http.StatusFound)
@@ -37,7 +42,7 @@ func (f *fakeOIDC) Callback(http.ResponseWriter, *http.Request) (auth.Claims, er
 
 func testSessions(t *testing.T) *kitauth.Sessions {
 	t.Helper()
-	s, err := auth.NewSessions([]byte("0123456789abcdef0123456789abcdef"), true)
+	s, err := auth.NewSessions([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,12 +56,14 @@ func oidcHandler(t *testing.T, oidc OIDCService, sessions *kitauth.Sessions, buf
 	log := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	srv := httpapi.New(func(context.Context) error { return nil }, log)
 	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), Worker: &fakeWaker{}, AuthMode: config.AuthOIDC, ProblemWindow: 90,
-		OIDC: oidc, Sessions: sessions, Log: log})
+		OIDC: oidc, Sessions: sessions, RedirectURL: "https://almanach.example.com/api/auth/callback", Log: log})
 	return srv.Handler()
 }
 
+// get sends one request as the UI would: same-origin.
 func get(h http.Handler, method, path string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	for _, c := range cookies {
 		req.AddCookie(c)
 	}
@@ -213,6 +220,89 @@ func TestLogoutClearsTheCookie(t *testing.T) {
 	}
 }
 
+// A sibling site cannot sign the reader out, nor write a source.
+func TestCrossSiteChangesRefused(t *testing.T) {
+	var buf bytes.Buffer
+	s := testSessions(t)
+	h := oidcHandler(t, &fakeOIDC{}, s, &buf)
+	ck := sessionFor(t, s, auth.Claims{Subject: "sub-1"})
+	for _, path := range []string{"/api/auth/logout", "/api/sources"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		req.AddCookie(ck)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s from a sibling = %d %s, want 403", path, rec.Code, rec.Body.String())
+		}
+		if len(rec.Result().Cookies()) != 0 {
+			t.Errorf("%s: cookies changed: %v", path, rec.Result().Cookies())
+		}
+	}
+	// The webhook is no browser's: no such check.
+	if code, _ := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(8), nil); code != 202 {
+		t.Errorf("webhook = %d", code)
+	}
+}
+
+// A provider down at startup takes down the sign-in only: the webhook and
+// the ping work, the login says so, the wiki stays behind its 401.
+func TestProviderDownLeavesTheFeedUp(t *testing.T) {
+	var buf bytes.Buffer
+	h := oidcHandler(t, &fakeOIDC{down: true}, testSessions(t), &buf)
+	if code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(7), nil); code != 202 {
+		t.Errorf("webhook = %d %v", code, body)
+	}
+	if code, _ := do(t, h, "GET", "/auth/ping", "tok-platform", "", nil); code != 200 {
+		t.Errorf("ping = %d", code)
+	}
+	for _, p := range []string{"/api/auth/login", "/api/auth/callback?code=x&state=y"} {
+		rec := get(h, http.MethodGet, p)
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "not discovered") {
+			t.Errorf("%s = %d %s, want 503 JSON", p, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := get(h, http.MethodGet, "/api/projects"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("/api/projects = %d, want 401", rec.Code)
+	}
+}
+
+// The real provider: down at startup, discovered later, login then works.
+func TestLoginOnceDiscovered(t *testing.T) {
+	var up atomic.Bool
+	var iss *httptest.Server
+	iss = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !up.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": iss.URL, "authorization_endpoint": iss.URL + "/authorize", "token_endpoint": iss.URL + "/token",
+			"jwks_uri": iss.URL + "/jwks", "id_token_signing_alg_values_supported": []string{"RS256"},
+		})
+	}))
+	defer iss.Close()
+	var buf bytes.Buffer
+	p := auth.NewProvider(auth.Config{Issuer: iss.URL, ClientID: "almanach", ClientSecret: "s",
+		RedirectURL: "https://almanach.example.com/api/auth/callback"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := p.Discover(t.Context()); err == nil {
+		t.Fatal("discovered a provider that is down")
+	}
+	h := oidcHandler(t, p, testSessions(t), &buf)
+	if rec := get(h, http.MethodGet, "/api/auth/login"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("login while down = %d", rec.Code)
+	}
+	up.Store(true)
+	if err := p.Discover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rec := get(h, http.MethodGet, "/api/auth/login")
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), iss.URL+"/authorize?") {
+		t.Errorf("login once discovered = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
 func TestRegisterRefusesOIDCWithoutSessions(t *testing.T) {
 	for name, d := range map[string]Deps{
 		"oidc without sessions": {AuthMode: config.AuthOIDC, OIDC: &fakeOIDC{}},
@@ -257,7 +347,7 @@ func (b *fakeBackend) Verify(context.Context, *oauth2.Token) (auth.Claims, strin
 // PKCE cookies, the callback checks them and issues the session.
 func TestSignInThroughKitsFlow(t *testing.T) {
 	b := &fakeBackend{claims: auth.Claims{Subject: "sub-1", Email: "jan@example.com"}}
-	oidc := kitauth.NewOIDCWithBackend(b, auth.OIDCConfig(auth.Config{Secure: true}))
+	oidc := auth.ReadyProvider(kitauth.NewOIDCWithBackend(b, auth.OIDCConfig(auth.Config{})))
 	var buf bytes.Buffer
 	h := oidcHandler(t, oidc, testSessions(t), &buf)
 

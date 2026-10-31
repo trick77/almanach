@@ -95,11 +95,12 @@ func TestOIDCMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := OIDC{Issuer: "https://auth.example.com", ClientID: "almanach", ClientSecret: "client-secret-xyz",
+	// The issuer as written: its trailing slash stays.
+	want := OIDC{Issuer: "https://auth.example.com/", ClientID: "almanach", ClientSecret: "client-secret-xyz",
 		RedirectURL: "https://almanach.example.com/api/auth/callback", SessionKey: []byte(sessionSecret)}
 	if app.AuthMode != AuthOIDC || app.OIDC.Issuer != want.Issuer || app.OIDC.ClientID != want.ClientID ||
 		app.OIDC.ClientSecret != want.ClientSecret || app.OIDC.RedirectURL != want.RedirectURL ||
-		string(app.OIDC.SessionKey) != sessionSecret || !app.OIDC.CookieSecure() {
+		string(app.OIDC.SessionKey) != sessionSecret {
 		t.Errorf("OIDC = %+v, want %+v", app.OIDC, want)
 	}
 	// Any host: the dev stack and the production stack both bind 0.0.0.0.
@@ -107,7 +108,7 @@ func TestOIDCMode(t *testing.T) {
 		t.Errorf("Host = %q", app.Host)
 	}
 	s := app.Summary()
-	if !strings.Contains(s, "auth={oidc issuer https://auth.example.com, client almanach}") {
+	if !strings.Contains(s, "auth={oidc issuer https://auth.example.com/, client almanach}") {
 		t.Errorf("Summary = %s", s)
 	}
 	for _, secret := range []string{"client-secret-xyz", sessionSecret} {
@@ -130,12 +131,18 @@ func TestOIDCModeRequiresEverything(t *testing.T) {
 
 func TestOIDCModeRefusesBadValues(t *testing.T) {
 	for _, tc := range []struct{ name, value, want string }{
-		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com/realms/x", "want a bare origin"},
-		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com?x=1", "want a bare origin"},
-		{"ALMANACH_OIDC_ISSUER", "https://user@auth.example.com", "want a bare origin"},
-		{"ALMANACH_OIDC_ISSUER", "auth.example.com", "want a bare origin"},
-		{"ALMANACH_OIDC_ISSUER", "ftp://auth.example.com", "want a bare origin"},
-		{"ALMANACH_OIDC_REDIRECT_URL", "http://almanach.example.com/api/auth/callback", "want https"},
+		{"ALMANACH_OIDC_ISSUER", "auth.example.com", "want an absolute URL"},
+		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com/%zz", "want an absolute URL"},
+		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com?x=1", "want no user info, query or fragment"},
+		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com#x", "want no user info, query or fragment"},
+		{"ALMANACH_OIDC_ISSUER", "https://user@auth.example.com", "want no user info, query or fragment"},
+		{"ALMANACH_OIDC_ISSUER", "http://auth.example.com", "want https (http only on a loopback host)"},
+		{"ALMANACH_OIDC_ISSUER", "ftp://auth.example.com", "want https (http only on a loopback host)"},
+		{"ALMANACH_OIDC_REDIRECT_URL", "http://almanach.example.com/api/auth/callback", "want https://<host>/api/auth/callback"},
+		{"ALMANACH_OIDC_REDIRECT_URL", "https:///api/auth/callback", "want https://<host>/api/auth/callback"},
+		{"ALMANACH_OIDC_REDIRECT_URL", "https://almanach.example.com/", "want the path /api/auth/callback"},
+		{"ALMANACH_OIDC_REDIRECT_URL", "https://almanach.example.com/wiki/api/auth/callback", "want the path /api/auth/callback"},
+		{"ALMANACH_OIDC_REDIRECT_URL", "https://almanach.example.com/api/auth/callback?x=1", "want the path /api/auth/callback"},
 		{"ALMANACH_SESSION_SECRET", "too-short", "want at least 32 bytes"},
 	} {
 		env := oidcEnv()
@@ -143,6 +150,30 @@ func TestOIDCModeRefusesBadValues(t *testing.T) {
 		_, err := Load(lookup(env))
 		if err == nil || !strings.Contains(err.Error(), tc.name+": "+tc.want) {
 			t.Errorf("%s=%q: err = %v", tc.name, tc.value, err)
+		}
+	}
+}
+
+// Real providers' issuers: paths, a trailing slash, a local one on http.
+func TestOIDCIssuerAsWritten(t *testing.T) {
+	for _, issuer := range []string{
+		"https://idp.example.com/realms/wiki",
+		"https://login.example.com/00000000-0000-0000-0000-000000000000/v2.0",
+		"https://tenant.example.com/",
+		"https://auth.example.com/application/o/almanach/",
+		"http://127.0.0.1:5556/dex",
+		"http://localhost:8080",
+		"http://[::1]:8080",
+	} {
+		env := oidcEnv()
+		env["ALMANACH_OIDC_ISSUER"] = issuer
+		app, err := Load(lookup(env))
+		if err != nil {
+			t.Errorf("%s: %v", issuer, err)
+			continue
+		}
+		if app.OIDC.Issuer != issuer {
+			t.Errorf("Issuer = %q, want %q as written", app.OIDC.Issuer, issuer)
 		}
 	}
 }

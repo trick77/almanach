@@ -245,36 +245,27 @@ func serve(log *slog.Logger) error {
 	} else {
 		log.Info("Sources: off (ALMANACH_REPOS_DIR unset)")
 	}
-	// The sign-in: discovery talks to the provider, so an instance that
-	// cannot reach it fails here rather than coming up healthy and refusing
-	// every login. Its own timeout: the boot context has no deadline, and an
-	// unreachable provider would hang the process instead of reporting it.
+	// The sign-in. A provider that does not answer discovery is a warning,
+	// like the gateway: the webhook, the ping and the probes do not need
+	// it, and the provider retries in the background. Until it answers the
+	// login routes answer 503 and the wiki stays behind its 401.
 	var oidcSvc api.OIDCService
 	var sessions *kitauth.Sessions
 	if app.AuthMode == config.AuthOIDC {
 		o := app.OIDC
-		var faults []string
-		if s, err := auth.NewSessions(o.SessionKey, o.CookieSecure()); err != nil {
-			faults = append(faults, "session cookie: "+err.Error())
-		} else {
-			sessions = s
-		}
-		discoverCtx, cancelDiscover := context.WithTimeout(ctx, 30*time.Second)
-		svc, err := kitauth.NewOIDC(discoverCtx, auth.OIDCConfig(auth.Config{
-			Issuer: o.Issuer, ClientID: o.ClientID, ClientSecret: o.ClientSecret, RedirectURL: o.RedirectURL, Secure: o.CookieSecure(),
-		}))
-		cancelDiscover()
+		s, err := auth.NewSessions(o.SessionKey)
 		if err != nil {
-			faults = append(faults, err.Error())
-		} else {
-			oidcSvc = svc
+			panic("session cookie: config admitted a key kit refuses: " + err.Error())
 		}
-		if len(faults) > 0 {
-			log.Error("OIDC: "+strings.Join(faults, "; "), "issuer", o.Issuer)
-			checks = append(checks, "OIDC")
+		sessions = s
+		provider := auth.NewProvider(auth.Config{Issuer: o.Issuer, ClientID: o.ClientID, ClientSecret: o.ClientSecret, RedirectURL: o.RedirectURL}, log)
+		if err := provider.Discover(ctx); err != nil {
+			log.Warn("OIDC: provider discovery failed, sign-in unavailable until it answers", "issuer", o.Issuer, logging.Err(err))
+			go provider.Run(ctx)
 		} else {
 			log.Info("OIDC: OK", "issuer", o.Issuer)
 		}
+		oidcSvc = provider
 	}
 	if len(checks) > 0 {
 		return fmt.Errorf("startup aborted: %d check(s) failed: %s", len(checks), strings.Join(checks, ", "))
@@ -308,7 +299,7 @@ func serve(log *slog.Logger) error {
 
 	srv := httpapi.New(db.Ping, log)
 	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
-		OIDC: oidcSvc, Sessions: sessions, Log: log})
+		OIDC: oidcSvc, Sessions: sessions, RedirectURL: app.OIDC.RedirectURL, Log: log})
 
 	addr := net.JoinHostPort(app.Host, strconv.Itoa(app.Port))
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))

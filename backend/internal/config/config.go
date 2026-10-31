@@ -5,11 +5,14 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
 
 	kitenv "github.com/trick77/ship/kit/env"
+
+	"github.com/trick77/almanach/internal/auth"
 )
 
 // AuthMode is how the read API knows who asks.
@@ -28,24 +31,20 @@ const (
 // OIDC is the sign-in, all of it required in oidc mode and refused in
 // none, where it would look active and change nothing.
 type OIDC struct {
-	// Issuer is the provider's bare origin (https://auth.example.com): no
-	// path, a trailing slash trimmed. Anything else fails discovery.
+	// Issuer is taken exactly as configured: discovery compares it byte for
+	// byte with the provider's own, so a path (many providers have one) or
+	// a trailing slash stays. https, or http on a loopback host for a local
+	// provider.
 	Issuer       string
 	ClientID     string
 	ClientSecret string
-	// RedirectURL is the callback as the browser reaches it, https only:
-	// behind a TLS-terminating proxy the process sees plain HTTP, so this
-	// URL is the one place that says the cookies travel over TLS.
+	// RedirectURL is the callback as the browser reaches it:
+	// https://<host>/api/auth/callback. https only: behind a TLS-terminating
+	// proxy the process sees plain HTTP, and the cookies are always Secure.
 	RedirectURL string
 	// SessionKey signs the session cookie, at least 32 bytes. Rotating it
 	// signs everyone out; nothing else revokes a session.
 	SessionKey []byte
-}
-
-// CookieSecure is the Secure flag of the session and login cookies,
-// derived from the redirect URL, which Load refuses unless https.
-func (o OIDC) CookieSecure() bool {
-	return strings.HasPrefix(strings.ToLower(o.RedirectURL), "https://")
 }
 
 // minSessionSecret is kit's floor for the HMAC key.
@@ -199,16 +198,20 @@ func loadOIDC(r *kitenv.Reader) OIDC {
 		return v
 	}
 	o := OIDC{
-		Issuer:       strings.TrimRight(need("ALMANACH_OIDC_ISSUER"), "/"),
+		Issuer:       need("ALMANACH_OIDC_ISSUER"),
 		ClientID:     need("ALMANACH_OIDC_CLIENT_ID"),
 		ClientSecret: need("ALMANACH_OIDC_CLIENT_SECRET"),
 		RedirectURL:  need("ALMANACH_OIDC_REDIRECT_URL"),
 	}
-	if o.Issuer != "" && !bareOrigin(o.Issuer) {
-		r.Fail("ALMANACH_OIDC_ISSUER: want a bare origin like https://auth.example.com, got %q", o.Issuer)
+	if o.Issuer != "" {
+		if why := issuerFault(o.Issuer); why != "" {
+			r.Fail("ALMANACH_OIDC_ISSUER: %s, got %q", why, o.Issuer)
+		}
 	}
-	if o.RedirectURL != "" && !o.CookieSecure() {
-		r.Fail("ALMANACH_OIDC_REDIRECT_URL: want https, the session cookie is always Secure, got %q", o.RedirectURL)
+	if o.RedirectURL != "" {
+		if why := redirectFault(o.RedirectURL); why != "" {
+			r.Fail("ALMANACH_OIDC_REDIRECT_URL: %s, got %q", why, o.RedirectURL)
+		}
 	}
 	if secret := need("ALMANACH_SESSION_SECRET"); secret != "" {
 		if len(secret) < minSessionSecret {
@@ -220,12 +223,42 @@ func loadOIDC(r *kitenv.Reader) OIDC {
 	return o
 }
 
-// bareOrigin reports whether s is scheme and host alone: no user, path,
-// query or fragment.
-func bareOrigin(s string) bool {
+// issuerFault says what is wrong with an issuer, "" when nothing. A path
+// and a trailing slash are fine: the issuer is compared as written.
+func issuerFault(s string) string {
 	u, err := url.Parse(s)
-	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" &&
-		u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && !u.ForceQuery
+	switch {
+	case err != nil || u.Host == "":
+		return "want an absolute URL like https://auth.example.com"
+	case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+		return "want no user info, query or fragment"
+	case u.Scheme == "https", u.Scheme == "http" && loopback(u.Hostname()):
+		return ""
+	default:
+		return "want https (http only on a loopback host)"
+	}
+}
+
+// redirectFault says what is wrong with a redirect URL, "" when nothing.
+func redirectFault(s string) string {
+	u, err := url.Parse(s)
+	switch {
+	case err != nil || u.Scheme != "https" || u.Host == "":
+		return "want https://<host>" + auth.CallbackPath + ", the session cookie is always Secure"
+	case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Path != auth.CallbackPath:
+		return "want the path " + auth.CallbackPath + " and nothing else after the host"
+	}
+	return ""
+}
+
+// loopback reports whether host is this machine: only there may a local
+// provider speak plain http.
+func loopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func positive(r *kitenv.Reader, name string, def int) int {

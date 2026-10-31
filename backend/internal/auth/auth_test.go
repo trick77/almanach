@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ var testKey = []byte("0123456789abcdef0123456789abcdef")
 
 func sessions(t *testing.T) *kitauth.Sessions {
 	t.Helper()
-	s, err := NewSessions(testKey, true)
+	s, err := NewSessions(testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,14 +46,14 @@ func TestNewSessions(t *testing.T) {
 	if d := time.Until(c.Expires); d < SessionTTL-time.Minute || d > SessionTTL {
 		t.Errorf("expires in %s, want %s", d, SessionTTL)
 	}
-	if _, err := NewSessions([]byte("short"), true); err == nil {
+	if _, err := NewSessions([]byte("short")); err == nil {
 		t.Error("a short key was accepted")
 	}
 }
 
 func TestOIDCConfig(t *testing.T) {
 	got := OIDCConfig(Config{Issuer: "https://auth.example.com", ClientID: "almanach", ClientSecret: "s",
-		RedirectURL: "https://almanach.example.com/api/auth/callback", Secure: true})
+		RedirectURL: "https://almanach.example.com/api/auth/callback"})
 	if got.Issuer != "https://auth.example.com" || got.ClientID != "almanach" || got.ClientSecret != "s" ||
 		got.RedirectURL != "https://almanach.example.com/api/auth/callback" || !got.Secure || got.Group != "" {
 		t.Errorf("config = %+v", got)
@@ -62,18 +63,20 @@ func TestOIDCConfig(t *testing.T) {
 	}
 }
 
-func TestReader(t *testing.T) {
-	if got := Reader(Claims{Subject: "sub-1", Email: "jan@example.com"}); got != "jan@example.com" {
-		t.Errorf("with email = %q", got)
-	}
-	if got := Reader(Claims{Subject: "sub-1"}); got != "sub-1" {
-		t.Errorf("without email = %q", got)
-	}
+// The reader is kit's Username: preferred username, else email, else
+// subject.
+func TestReaderFrom(t *testing.T) {
 	if got := ReaderFrom(t.Context()); got != "" {
 		t.Errorf("no claims = %q", got)
 	}
-	if got := ReaderFrom(kitauth.NewContext(t.Context(), Claims{Subject: "sub-1"})); got != "sub-1" {
-		t.Errorf("claims = %q", got)
+	for want, c := range map[string]Claims{
+		"jan":             {Subject: "sub-1", Email: "jan@example.com", PreferredUsername: "jan"},
+		"jan@example.com": {Subject: "sub-1", Email: "jan@example.com"},
+		"sub-1":           {Subject: "sub-1"},
+	} {
+		if got := ReaderFrom(kitauth.NewContext(t.Context(), c)); got != want {
+			t.Errorf("%+v = %q, want %q", c, got, want)
+		}
 	}
 }
 
@@ -92,9 +95,11 @@ func serve(h http.Handler, path string, ck *http.Cookie) *httptest.ResponseRecor
 	return rec
 }
 
+const redirect = "https://almanach.example.com/api/auth/callback"
+
 func TestGate(t *testing.T) {
 	s := sessions(t)
-	h := Gate(s)(echo)
+	h := Gate(s, redirect)(echo)
 	for _, p := range []string{"/api", "/api/projects", "/api/sources/x/sync", "/api/me", "/api/auth/logout"} {
 		rec := serve(h, p, nil)
 		var body struct{ Error string }
@@ -118,7 +123,48 @@ func TestGate(t *testing.T) {
 }
 
 func TestGateOffInNoneMode(t *testing.T) {
-	if rec := serve(Gate(nil)(echo), "/api/projects", nil); rec.Code != http.StatusOK || rec.Body.String() != "" {
+	if rec := serve(Gate(nil, "")(echo), "/api/projects", nil); rec.Code != http.StatusOK || rec.Body.String() != "" {
 		t.Errorf("none mode = %d %q, want through, anonymous", rec.Code, rec.Body.String())
+	}
+}
+
+// A change must come from this site, by Sec-Fetch-Site or, failing that,
+// Origin; a read and everything outside /api are not asked.
+func TestGateRefusesCrossSiteChanges(t *testing.T) {
+	s := sessions(t)
+	h := Gate(s, redirect)(echo)
+	ck := sessionCookie(t, s, Claims{Subject: "sub-1"})
+	for _, tc := range []struct {
+		name, method, path string
+		hdr                map[string]string
+		want               int
+	}{
+		{"same-origin fetch", "POST", "/api/sources", map[string]string{"Sec-Fetch-Site": "same-origin"}, 200},
+		{"typed by hand", "DELETE", "/api/sources/x", map[string]string{"Sec-Fetch-Site": "none"}, 200},
+		{"sibling subdomain", "POST", "/api/auth/logout", map[string]string{"Sec-Fetch-Site": "same-site", "Origin": "https://evil.example.com"}, 403},
+		{"other site", "PATCH", "/api/sources/x", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+		{"Origin is the host", "PUT", "/api/sources/x", map[string]string{"Origin": "http://almanach.internal:8080"}, 200},
+		{"Origin is the redirect's", "POST", "/api/sources", map[string]string{"Origin": "https://Almanach.example.com"}, 200},
+		{"Origin elsewhere", "POST", "/api/sources", map[string]string{"Origin": "https://evil.example.com"}, 403},
+		{"Origin null", "POST", "/api/sources", map[string]string{"Origin": "null"}, 403},
+		{"Origin without host", "POST", "/api/sources", map[string]string{"Origin": "almanach"}, 403},
+		{"neither header", "POST", "/api/sources", nil, 403},
+		{"a read", "GET", "/api/projects", map[string]string{"Sec-Fetch-Site": "cross-site"}, 200},
+		{"outside /api", "POST", "/webhooks/noergler", map[string]string{"Sec-Fetch-Site": "cross-site"}, 200},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Host = "almanach.internal:8080"
+		req.AddCookie(ck)
+		for k, v := range tc.hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: %d %s, want %d", tc.name, rec.Code, rec.Body.String(), tc.want)
+		}
+		if tc.want == 403 && !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Errorf("%s: body %q, want JSON", tc.name, rec.Body.String())
+		}
 	}
 }

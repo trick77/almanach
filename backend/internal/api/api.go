@@ -61,10 +61,13 @@ type Deps struct {
 	// Sources is the clone feature; nil when ALMANACH_REPOS_DIR is unset,
 	// and the routes then say so.
 	Sources *SourcesDeps
-	// OIDC and Sessions are the sign-in, set in oidc mode only.
-	OIDC     OIDCService
-	Sessions *kitauth.Sessions
-	Log      *slog.Logger
+	// OIDC, Sessions and RedirectURL are the sign-in, set in oidc mode
+	// only; RedirectURL's origin is trusted for a change beside the
+	// request's own host.
+	OIDC        OIDCService
+	Sessions    *kitauth.Sessions
+	RedirectURL string
+	Log         *slog.Logger
 }
 
 // Register mounts every route.
@@ -200,8 +203,8 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusAccepted, acceptedBody{Status: outcome})
 }
 
-// user is who reads, off the session's claims in oidc mode (email, else
-// subject); anonymous in none. The read API serves the same to everyone;
+// user is who reads, off the session's claims in oidc mode (preferred
+// username, else email, else subject); anonymous in none. The read API serves the same to everyone;
 // the name is for the access log and a later audit, never a gate.
 func (d Deps) user(r *http.Request) string {
 	return auth.ReaderFrom(r.Context())

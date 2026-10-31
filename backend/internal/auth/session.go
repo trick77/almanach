@@ -21,15 +21,15 @@ const SessionTTL = 30 * 24 * time.Hour
 
 // NewSessions is kit's session store for Almanach: base64 JSON plus an
 // HMAC in the cookie, no session table, nothing revokes a single session;
-// rotating the key signs everyone out.
-func NewSessions(key []byte, secure bool) (*kitauth.Sessions, error) {
-	return kitauth.NewSessions(kitauth.SessionConfig{Name: SessionCookie, Key: key, TTL: SessionTTL, Secure: secure})
+// rotating the key signs everyone out. Always Secure: config refuses a
+// redirect URL that is not https.
+func NewSessions(key []byte) (*kitauth.Sessions, error) {
+	return kitauth.NewSessions(kitauth.SessionConfig{Name: SessionCookie, Key: key, TTL: SessionTTL, Secure: true})
 }
 
 // Config is kit's OIDC flow as Almanach runs it.
 type Config struct {
 	Issuer, ClientID, ClientSecret, RedirectURL string
-	Secure                                      bool
 }
 
 // OIDCConfig maps c onto kit's. No Group: who gets in at all is the
@@ -46,6 +46,6 @@ func OIDCConfig(c Config) kitauth.OIDCConfig {
 		// almanach_oidc_state and the rest: a sibling app on the parent
 		// domain must not overwrite a half-finished login.
 		CookiePrefix: "almanach_",
-		Secure:       c.Secure,
+		Secure:       true,
 	}
 }

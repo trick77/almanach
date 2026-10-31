@@ -16,9 +16,11 @@ import (
 var errNoSubject = errors.New("oidc claims carry no subject")
 
 // OIDCService is the login half of the sign-in as the routes need it.
-// kit's *auth.OIDC satisfies it; an interface so a test can fail a
-// callback without a provider.
+// auth.Provider satisfies it; an interface so a test can fail a callback
+// without a provider. Ready is false until the provider has answered
+// discovery: the login routes then answer 503.
 type OIDCService interface {
+	Ready() bool
 	Start(w http.ResponseWriter, r *http.Request)
 	Callback(w http.ResponseWriter, r *http.Request) (auth.Claims, error)
 }
@@ -30,7 +32,7 @@ func (d Deps) registerAuth(s *httpapi.Server) {
 	if (d.AuthMode == config.AuthOIDC) != (d.Sessions != nil && d.OIDC != nil) {
 		panic("api: oidc mode needs Sessions and OIDC, and only oidc mode has them")
 	}
-	s.Use(auth.Gate(d.Sessions))
+	s.Use(auth.Gate(d.Sessions, d.RedirectURL))
 	s.HandleFunc("GET /api/me", d.me)
 	s.HandleFunc("GET "+auth.LoginPath, d.login)
 	s.HandleFunc("GET "+auth.CallbackPath, d.callback)
@@ -39,7 +41,8 @@ func (d Deps) registerAuth(s *httpapi.Server) {
 
 type meBody struct {
 	Mode string `json:"mode"`
-	// User is the reader's name (email, else subject), "" in none mode.
+	// User is the reader's name (preferred username, else email, else
+	// subject), "" in none mode.
 	User string `json:"user"`
 }
 
@@ -50,17 +53,24 @@ func (d Deps) me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, meBody{Mode: string(d.AuthMode), User: d.user(r)})
 }
 
-// signInOff answers the sign-in routes in none mode: there is nobody to
-// sign in.
-func signInOff(w http.ResponseWriter) {
-	httpx.WriteError(w, http.StatusServiceUnavailable, "no sign-in in auth mode none")
+// signInOff answers the sign-in routes when there is none to offer: none
+// mode, or a provider not discovered yet. false means go on.
+func (d Deps) signInOff(w http.ResponseWriter) bool {
+	switch {
+	case d.OIDC == nil:
+		httpx.WriteError(w, http.StatusServiceUnavailable, "no sign-in in auth mode none")
+	case !d.OIDC.Ready():
+		httpx.WriteError(w, http.StatusServiceUnavailable, auth.ErrNotDiscovered.Error())
+	default:
+		return false
+	}
+	return true
 }
 
 // login hands the browser to the provider, state, nonce and PKCE in
 // transient cookies.
 func (d Deps) login(w http.ResponseWriter, r *http.Request) {
-	if d.OIDC == nil {
-		signInOff(w)
+	if d.signInOff(w) {
 		return
 	}
 	d.OIDC.Start(w, r)
@@ -72,8 +82,7 @@ func (d Deps) login(w http.ResponseWriter, r *http.Request) {
 // redirecting into the same failure again. The reason is logged, never
 // shown.
 func (d Deps) callback(w http.ResponseWriter, r *http.Request) {
-	if d.OIDC == nil {
-		signInOff(w)
+	if d.signInOff(w) {
 		return
 	}
 	ctx := r.Context()
@@ -91,7 +100,7 @@ func (d Deps) callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?auth_error=session_failed", http.StatusFound)
 		return
 	}
-	d.Log.InfoContext(ctx, "signed in", "user", auth.Reader(claims))
+	d.Log.InfoContext(ctx, "signed in", "user", claims.Username())
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -103,8 +112,9 @@ type logoutBody struct {
 // The provider's own session lives on, so the UI lands on a page that says
 // so instead of signing straight back in.
 func (d Deps) logout(w http.ResponseWriter, r *http.Request) {
+	// The provider is not asked: logout works while it is down.
 	if d.Sessions == nil {
-		signInOff(w)
+		d.signInOff(w)
 		return
 	}
 	d.reader(r)
