@@ -178,6 +178,11 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: run progress not saved, drain paused", logging.Err(err))
 		w.saveFailed = err
+		// A busy database is held off like a gateway: no next drain at
+		// once, into the same wait.
+		if store.IsBusy(err) {
+			w.hold(ctx, holdBusy, 0)
+		}
 		return errStop
 	}
 	if !ok {
@@ -185,6 +190,35 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 	}
 	return nil
 }
+
+// stepBusy handles a step's write (revision and progress, one transaction)
+// that failed. A database busy past its timeout is temporary, like a
+// gateway failure: the worker holds, the attempt is counted, and the step
+// is taken again after the hold (nothing of it was written); past
+// maxFoldAttempts in a row it fails the run, as it stood before the step
+// (prev). Any other failure pauses the drain as before.
+func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.BaselineRun, name string, err error) error {
+	if !store.IsBusy(err) {
+		return errStop
+	}
+	w.hold(ctx, holdBusy, 0)
+	if w.busyRun != r.ID {
+		w.busyRun, w.busyWrites = r.ID, 0
+	}
+	w.busyWrites++
+	if w.busyWrites >= maxFoldAttempts {
+		n := w.busyWrites
+		w.busyRun, w.busyWrites = 0, 0
+		*r = prev
+		return fmt.Errorf("%s step given up after %d busy database writes: %w", name, n, err)
+	}
+	w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s step not written: database busy, attempt %d of %d, kept for after the hold",
+		name, w.busyWrites, maxFoldAttempts), logging.Err(err))
+	return errStop
+}
+
+// stepWritten forgets the busy writes once a step's write got through.
+func (w *Worker) stepWritten() { w.busyRun, w.busyWrites = 0, 0 }
 
 // failRun ends a run with its reason on the row.
 func (w *Worker) failRun(ctx context.Context, r store.BaselineRun, reason string) {
@@ -240,7 +274,7 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s call %s (%s)", purpose, res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res); gateway {
-		w.hold(ctx, retryAfter)
+		w.hold(ctx, holdGateway, retryAfter)
 		r.Attempts++
 		if r.Attempts >= maxFoldAttempts {
 			return false, fmt.Errorf("%s step given up after %d gateway failures: %s", purpose, r.Attempts, res.Outcome)
@@ -598,6 +632,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if summary != page.Summary {
 		plan.SummaryChanged = true
 	}
+	prev := *r
 	r.Step++
 	if err := encodeInto(r, *plan); err != nil {
 		return err
@@ -613,8 +648,9 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	}, *r)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: revision write failed, drain paused", logging.Err(err))
-		return errStop
+		return w.stepBusy(ctx, r, prev, name, err)
 	}
+	w.stepWritten()
 	if ok {
 		w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: repository description revision %d (%d statements, %d chars)", name, n, len(statements), chars))
 	}
@@ -1030,14 +1066,16 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	// The project revision and the run's end in one transaction: a crash
 	// between them would pay for the project call again and write it twice.
+	prev := *r
 	if err := w.markDone(ctx, r, plan); err != nil {
 		return err
 	}
 	n, ok, err := w.base.Store.ApplyBaselineStep(ctx, *rev, *r)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: project revision write failed, drain paused", logging.Err(err))
-		return errStop
+		return w.stepBusy(ctx, r, prev, "project", err)
 	}
+	w.stepWritten()
 	if ok {
 		w.log.InfoContext(ctx, fmt.Sprintf("baseline: project description revision %d (%d statements, %d chars)", n, len(rev.Statements), rev.Chars))
 	}

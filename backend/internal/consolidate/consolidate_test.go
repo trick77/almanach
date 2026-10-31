@@ -40,6 +40,7 @@ type fakeStore struct {
 	calls        []store.LLMCall
 	nextQueuedN  int
 	revisionErr  error
+	pageErr      error
 	insertCallID int64
 	// history is every statement id a page ever used beyond the current
 	// page and the revisions written in the test: what NextStatementID
@@ -111,6 +112,9 @@ func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int)
 }
 
 func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) (store.Page, bool, error) {
+	if f.pageErr != nil {
+		return store.Page{}, false, f.pageErr
+	}
 	p, ok := f.pages[pageKey(scope, project, repo)]
 	return p, ok, nil
 }
@@ -479,6 +483,44 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 	w = newWorker(st, &fakeMerger{result: failed(inference.OutcomeError, errors.New("down"))})
 	if next := w.Fold(context.Background(), queued("PLAT/files#42")); next || len(st.marked) != 0 {
 		t.Errorf("defer failed: next %v marked %v; want paused and unmarked", next, st.marked)
+	}
+}
+
+// A database busy past its timeout is temporary, like the gateway: the
+// paid fold's note stays queued with its attempt counted and the worker
+// holds. Any other write failure ends the note as before: marked.
+func TestFoldBusyDatabaseDefers(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.revisionErr = fmt.Errorf("insert revision: %w", store.ErrBusy)
+	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{}}, nil)}
+	w := newWorker(st, m)
+	w.now = func() time.Time { return mergedAt }
+	if next := w.Fold(ctx, queued("PLAT/files#42")); next || len(st.marked) != 0 || st.attempts["PLAT|files|42"] != 1 || !w.holding() {
+		t.Fatalf("busy revision write: next %v marked %v attempts %v holding %v; want deferred, held", next, st.marked, st.attempts, w.holding())
+	}
+
+	// The hold over, the store answering: the same note folds.
+	w.clearHold()
+	st.revisionErr = nil
+	if next := w.Fold(ctx, queued("PLAT/files#42")); !next || len(st.marked) != 1 || len(st.revisions) != 1 {
+		t.Fatalf("after the hold: next %v marked %v revisions %d", next, st.marked, len(st.revisions))
+	}
+
+	// Another write failure: logged, the note marked, no hold.
+	st.revisionErr = errors.New("disk full")
+	if next := w.Fold(ctx, queued("PLAT/files#43")); !next || len(st.marked) != 2 || w.holding() {
+		t.Fatalf("disk full: next %v marked %v holding %v; want marked, no hold", next, st.marked, w.holding())
+	}
+
+	// A busy page read before the call defers too, and pays for nothing.
+	st = newFakeStore()
+	st.pageErr = store.ErrBusy
+	m = &fakeMerger{result: okResult(nil, nil)}
+	w = newWorker(st, m)
+	w.now = func() time.Time { return mergedAt }
+	if next := w.Fold(ctx, queued("PLAT/files#42")); next || len(st.marked) != 0 || st.attempts["PLAT|files|42"] != 1 || len(m.prompts) != 0 || !w.holding() {
+		t.Fatalf("busy page read: next %v marked %v attempts %v calls %d", next, st.marked, st.attempts, len(m.prompts))
 	}
 }
 
