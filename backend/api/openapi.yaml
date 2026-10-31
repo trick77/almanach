@@ -26,6 +26,10 @@ info:
       mode also the redirect URL's origin); anything else is
       `403 {"error": "cross-site request refused"}`. In oidc mode a write
       carrying neither header is refused too; in none mode it passes.
+    - The two Markdown exports, `GET /api/projects/{key}.md` and
+      `GET /api/projects/{key}/repos/{slug}.md`, also take a team bearer in
+      oidc mode, read-only: an agent outside a browser has no session. The
+      bearer opens nothing else under `/api`.
 
     ## Delivery dedup
 
@@ -160,6 +164,41 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/projects/{key}.md:
+    get:
+      tags: [wiki]
+      summary: A project's page as Markdown
+      description: |
+        The current revision as one Markdown file, for a coding agent to
+        pull into its context: the title and revision, the summary, the
+        system map as a fenced JSON block, then the statements grouped by
+        kind in the order invariants, rules, decisions, pitfalls,
+        extensions, components, entities, each with its files and PR keys
+        and its diagram as a fenced JSON block. A kind without statements
+        has no heading. Markdown is the frame only; a statement's text is
+        its paragraphs as stored. A project without a revision yet answers
+        200 with its title and a line saying so. In oidc mode a team bearer
+        opens this route (and the repository's export) read-only; nothing
+        else under `/api`.
+      operationId: getProjectMarkdown
+      security:
+        - {}
+        - session: []
+        - teamToken: []
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+      responses:
+        "200":
+          description: The page as Markdown.
+          content:
+            text/markdown:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/projects/{key}/problems:
     get:
       tags: [wiki]
@@ -212,6 +251,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepoDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/projects/{key}/repos/{slug}.md:
+    get:
+      tags: [wiki]
+      summary: A repository's page as Markdown
+      description: |
+        The repository's current revision as one Markdown file, framed as
+        the project's export (no map). In oidc mode a team bearer opens it
+        read-only, the same token the webhook takes.
+      operationId: getRepoMarkdown
+      security:
+        - {}
+        - session: []
+        - teamToken: []
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "200":
+          description: The page as Markdown.
+          content:
+            text/markdown:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/SignInRequired"
         "404":

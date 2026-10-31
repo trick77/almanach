@@ -30,7 +30,7 @@ func (d Deps) registerAuth(s *httpapi.Server) {
 	if (d.AuthMode == config.AuthOIDC) != (d.Sessions != nil && d.OIDC != nil) {
 		panic("api: oidc mode needs Sessions and OIDC, and only oidc mode has them")
 	}
-	s.Use(auth.Gate(d.Sessions, d.RedirectURL))
+	s.Use(auth.Gate(d.Sessions, d.RedirectURL, d.teamBearer))
 	s.HandleFunc("GET /api/me", d.me)
 	s.HandleFunc("GET "+auth.LoginPath, d.login)
 	s.HandleFunc("GET "+auth.CallbackPath, d.callback)

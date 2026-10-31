@@ -81,8 +81,10 @@ func Register(s *httpapi.Server, d Deps) {
 	s.HandleFunc("GET /auth/ping", d.ping)
 	s.Handle("POST /webhooks/noergler", httpx.MaxBody(maxBody)(http.HandlerFunc(d.webhook)))
 	s.HandleFunc("GET /api/projects", d.projects)
+	// Also GET /api/projects/{key}.md, the project's Markdown export.
 	s.HandleFunc("GET /api/projects/{key}", d.project)
 	s.HandleFunc("GET /api/projects/{key}/problems", d.problems)
+	// Also GET /api/projects/{key}/repos/{slug}.md, the repository's.
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
 	d.registerSources(s)
@@ -106,6 +108,26 @@ func (d Deps) team(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 	return team
+}
+
+// teamBearer reports whether the request carries a team's bearer, by the
+// webhook's lookup (constant time over every entry): what opens the
+// Markdown export in oidc mode. The team goes to the access log, as a
+// reader's name does; it gates nothing beyond the export.
+func (d Deps) teamBearer(r *http.Request) bool {
+	token, ok := httpx.Bearer(r)
+	if !ok || d.Keys == nil {
+		return false
+	}
+	team, reloadErr := d.Keys.Lookup(token)
+	if reloadErr != nil {
+		d.Log.WarnContext(r.Context(), "team keys reload failed, last good table in use", logging.Err(reloadErr))
+	}
+	if team == "" {
+		return false
+	}
+	httpx.LogAttrs(r.Context(), slog.String("team", team))
+	return true
 }
 
 type pingBody struct {
@@ -371,6 +393,12 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key := r.PathValue("key")
+	// GET /api/projects/{key}.md: the mux takes no wildcard inside a
+	// segment, so the export arrives here with its suffix.
+	if k, md := strings.CutSuffix(key, ".md"); md {
+		d.projectMarkdown(w, r, k)
+		return
+	}
 	team, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project")
@@ -475,6 +503,10 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key, slug := r.PathValue("key"), r.PathValue("slug")
+	if s, md := strings.CutSuffix(slug, ".md"); md {
+		d.repoMarkdown(w, r, key, s)
+		return
+	}
 	ok, err := d.Store.RepoExists(ctx, key, slug, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "repo")
