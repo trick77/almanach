@@ -301,8 +301,9 @@ func nonNegative(r *kitenv.Reader, name string, def int) int {
 	return v
 }
 
-// Summary is the config as the startup log prints it: no secret, no DSN;
-// of the sign-in only the issuer and the client id.
+// Summary is the config as the startup log prints it: no secret (not the
+// token key, the client secret, the session secret); of the sign-in only
+// the issuer and the client id, of the token key only whether it is set.
 func (a *App) Summary() string {
 	sources := "off"
 	if a.Sources.Enabled() {

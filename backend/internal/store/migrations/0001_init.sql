@@ -7,7 +7,8 @@
 -- SQLite, one file. Every time is TEXT, UTC, RFC 3339 with all nine digits
 -- of the nanoseconds (2026-10-01T12:00:00.000000000Z): fixed width, so text
 -- order is time order. The store writes every one; the schema has no clock
--- (no DEFAULT on a time column). JSON is TEXT that json_valid accepts; a
+-- (no DEFAULT on a time column), and every time column's CHECK refuses any
+-- other shape, a variable-width or zoned one above all. JSON is TEXT that json_valid accepts; a
 -- NULL passes a CHECK. Money is nano-USD in an INTEGER (64-bit).
 
 -- Every webhook body, whole, keyed by the sender's dedup key. Append-only:
@@ -16,7 +17,7 @@ CREATE TABLE deliveries (
     delivery_id TEXT PRIMARY KEY,
     team TEXT NOT NULL,
     event_type TEXT NOT NULL,
-    received_at TEXT NOT NULL,
+    received_at TEXT NOT NULL CHECK (received_at GLOB '????-??-??T??:??:??.?????????Z'),
     payload TEXT NOT NULL CHECK (json_valid(payload))
 );
 CREATE INDEX deliveries_team_idx ON deliveries (team, received_at);
@@ -26,28 +27,28 @@ CREATE INDEX deliveries_team_idx ON deliveries (team, received_at);
 -- the team's claims on the project (a NULL repo_slug is the whole project).
 CREATE TABLE teams (
     slug TEXT PRIMARY KEY,
-    first_seen TEXT NOT NULL,
-    last_seen TEXT NOT NULL
+    first_seen TEXT NOT NULL CHECK (first_seen GLOB '????-??-??T??:??:??.?????????Z'),
+    last_seen TEXT NOT NULL CHECK (last_seen GLOB '????-??-??T??:??:??.?????????Z')
 );
 CREATE TABLE projects (
     key TEXT PRIMARY KEY,
     team TEXT NOT NULL REFERENCES teams(slug),
-    first_seen TEXT NOT NULL,
-    last_seen TEXT NOT NULL
+    first_seen TEXT NOT NULL CHECK (first_seen GLOB '????-??-??T??:??:??.?????????Z'),
+    last_seen TEXT NOT NULL CHECK (last_seen GLOB '????-??-??T??:??:??.?????????Z')
 );
 CREATE TABLE repos (
     project_key TEXT NOT NULL REFERENCES projects(key),
     slug TEXT NOT NULL,
     team TEXT NOT NULL REFERENCES teams(slug),
-    first_seen TEXT NOT NULL,
-    last_seen TEXT NOT NULL,
+    first_seen TEXT NOT NULL CHECK (first_seen GLOB '????-??-??T??:??:??.?????????Z'),
+    last_seen TEXT NOT NULL CHECK (last_seen GLOB '????-??-??T??:??:??.?????????Z'),
     PRIMARY KEY (project_key, slug)
 );
 CREATE TABLE claims (
     team TEXT NOT NULL REFERENCES teams(slug),
     project_key TEXT NOT NULL,
     repo_slug TEXT,
-    seen_at TEXT NOT NULL
+    seen_at TEXT NOT NULL CHECK (seen_at GLOB '????-??-??T??:??:??.?????????Z')
 );
 CREATE UNIQUE INDEX claims_repo_idx ON claims (team, project_key, repo_slug) WHERE repo_slug IS NOT NULL;
 CREATE UNIQUE INDEX claims_project_idx ON claims (team, project_key) WHERE repo_slug IS NULL;
@@ -73,16 +74,16 @@ CREATE TABLE notes (
     reviewed_commit TEXT,
     source_commit TEXT NOT NULL,
     merge_commit TEXT,
-    merged_at TEXT NOT NULL,
+    merged_at TEXT NOT NULL CHECK (merged_at GLOB '????-??-??T??:??:??.?????????Z'),
     run_id INTEGER,
     model_label TEXT,
     issues_posted INTEGER NOT NULL DEFAULT 0,
     suggestions_posted INTEGER NOT NULL DEFAULT 0,
     delivery_id TEXT NOT NULL REFERENCES deliveries(delivery_id),
-    received_at TEXT NOT NULL,
+    received_at TEXT NOT NULL CHECK (received_at GLOB '????-??-??T??:??:??.?????????Z'),
     -- Set by the worker once the note is folded into the descriptions (or
     -- the fold was refused and logged); NULL = still queued.
-    consolidated_at TEXT,
+    consolidated_at TEXT CHECK (consolidated_at GLOB '????-??-??T??:??:??.?????????Z'),
     -- A fold the gateway failed (no answer, an error) is retried a bounded
     -- number of times before the note is taken off the queue for good. A
     -- wrong key must not consume every note that arrives before someone
@@ -135,7 +136,7 @@ CREATE TABLE note_calls (
     rounds_input_tokens INTEGER NOT NULL DEFAULT 0,
     rounds_output_tokens INTEGER NOT NULL DEFAULT 0,
     rounds_cost_nano_usd INTEGER,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z')
 );
 CREATE INDEX note_calls_team_idx ON note_calls (team, created_at);
 
@@ -168,7 +169,7 @@ CREATE TABLE revisions (
     llm_call_id INTEGER,
     baseline_run_id INTEGER,
     map TEXT CHECK (json_valid(map)),
-    created_at TEXT NOT NULL,
+    created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z'),
     CHECK ((scope = 'project') = (repo_slug IS NULL)),
     CONSTRAINT revisions_source_pr CHECK ((source_kind = 'pr') = (source_pr_key IS NOT NULL)),
     CONSTRAINT revisions_source_commit CHECK ((source_kind = 'baseline') = (source_commit IS NOT NULL)),
@@ -183,7 +184,7 @@ CREATE TABLE pages (
     project_key TEXT NOT NULL,
     repo_slug TEXT NOT NULL DEFAULT '',
     current_revision_id INTEGER NOT NULL REFERENCES revisions(id),
-    updated_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL CHECK (updated_at GLOB '????-??-??T??:??:??.?????????Z'),
     PRIMARY KEY (scope, project_key, repo_slug)
 );
 
@@ -206,7 +207,7 @@ CREATE TABLE llm_calls (
     output_tokens INTEGER,
     cost_nano_usd INTEGER,
     call_id TEXT,
-    created_at TEXT NOT NULL,
+    created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z'),
     CONSTRAINT llm_calls_source_pr CHECK ((source_kind = 'pr') = (source_pr_key IS NOT NULL)),
     CONSTRAINT llm_calls_source_commit CHECK ((source_kind = 'baseline') = (source_commit IS NOT NULL))
 );
@@ -228,9 +229,9 @@ CREATE TABLE sources (
     token_auth TEXT NOT NULL CHECK (token_auth IN ('bearer', 'basic')),
     token_user TEXT NOT NULL DEFAULT '',
     token_enc BLOB,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    last_listed_at TEXT,
+    created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z'),
+    updated_at TEXT NOT NULL CHECK (updated_at GLOB '????-??-??T??:??:??.?????????Z'),
+    last_listed_at TEXT CHECK (last_listed_at GLOB '????-??-??T??:??:??.?????????Z'),
     last_error TEXT NOT NULL DEFAULT '',
     auto_describe BOOLEAN NOT NULL DEFAULT 1 CHECK (auto_describe IN (0, 1))
 );
@@ -250,9 +251,9 @@ CREATE TABLE source_repos (
     branch TEXT,
     head_commit TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL CHECK (state IN ('pending', 'syncing', 'ready', 'failed', 'missing')),
-    last_synced_at TEXT,
+    last_synced_at TEXT CHECK (last_synced_at GLOB '????-??-??T??:??:??.?????????Z'),
     last_error TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
+    created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z'),
     PRIMARY KEY (project_key, slug)
 );
 
@@ -296,9 +297,9 @@ CREATE TABLE baseline_runs (
     bytes INTEGER NOT NULL DEFAULT 0,
     skipped INTEGER NOT NULL DEFAULT 0,
     error TEXT NOT NULL DEFAULT '',
-    queued_at TEXT NOT NULL,
-    started_at TEXT,
-    finished_at TEXT,
+    queued_at TEXT NOT NULL CHECK (queued_at GLOB '????-??-??T??:??:??.?????????Z'),
+    started_at TEXT CHECK (started_at GLOB '????-??-??T??:??:??.?????????Z'),
+    finished_at TEXT CHECK (finished_at GLOB '????-??-??T??:??:??.?????????Z'),
     FOREIGN KEY (project_key, slug) REFERENCES source_repos (project_key, slug) ON DELETE CASCADE,
     CHECK (mode = 'full' OR base_commit <> '')
 );
