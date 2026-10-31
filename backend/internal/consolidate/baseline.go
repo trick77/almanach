@@ -487,16 +487,17 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if r.Bytes+size > int64(w.base.Limits.MaxBytes) {
 		return w.skipPart(ctx, r, &plan, name, "over the run's byte budget")
 	}
-	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
-	if err != nil {
-		return readErr(err)
-	}
 	page, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
 		return errStop
 	}
+	// Before the files: a busy clone here costs no read.
 	newer, err := w.newerIDs(ctx, r, page.Statements, plan.CommittedAt)
+	if err != nil {
+		return readErr(err)
+	}
+	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
 		return readErr(err)
 	}
@@ -580,31 +581,48 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	return nil
 }
 
-// newerSlack is how much later than the read commit a pull request without
-// a merge commit may have been merged and still count as in it: the PR
-// whose merge commit is the head is recorded as merged a moment after the
-// commit is made.
+// newerSlack is how much later than the read commit a pull request git
+// cannot place may have been merged and still count as in it: the PR whose
+// merge commit is the head is recorded as merged a moment after the commit
+// is made.
 const newerSlack = 2 * time.Minute
+
+// ancestry is what git said of a PR's merge commit against a run's commit.
+type ancestry int8
+
+const (
+	// unplaced: git cannot say (no commit name, or a read that failed).
+	unplaced ancestry = iota
+	held
+	notHeld
+)
 
 // newerIDs is the statements a pull request taught that the commit a run
 // reads does not hold: the run pins the clone's last synced head, and a
 // note merged since may have been folded before the run started. Such a
-// statement describes code the run cannot see. A source naming its merge
-// commit is decided by ancestry, each commit asked once; one without (an
-// older note) by its merge time against the read commit's.
+// statement describes code the run cannot see.
+//
+// A merge commit the read commit holds is in it, whatever the clocks say (a
+// rebase merge's head is older than the PR's merge time). One it does not
+// hold is newer when merged after the read commit: one that never reaches
+// the branch (a release branch, a rewritten history) stops counting once a
+// later commit is read. A source git cannot place goes by the clock alone,
+// with newerSlack. Git is asked once per merge commit and run.
 func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements []store.Statement, at time.Time) (map[string]bool, error) {
+	if w.ancestryRun != r.ID || w.ancestry == nil {
+		w.ancestryRun, w.ancestry = r.ID, map[string]ancestry{}
+	}
 	newer := map[string]bool{}
-	held := map[string]bool{}
 	for _, s := range statements {
 		for _, src := range s.Sources {
 			if src.IsBaseline() {
 				continue
 			}
-			n, err := w.newerSource(ctx, r, src, at, held)
+			a, err := w.place(ctx, r, src.Commit)
 			if err != nil {
 				return nil, err
 			}
-			if n {
+			if newerSource(src, a, at) {
 				newer[s.ID] = true
 				break
 			}
@@ -613,22 +631,43 @@ func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements 
 	return newer, nil
 }
 
-func (w *Worker) newerSource(ctx context.Context, r *store.BaselineRun, src store.Source, at time.Time, held map[string]bool) (bool, error) {
-	if src.Commit != "" {
-		if in, asked := held[src.Commit]; asked {
-			return !in, nil
-		}
-		in, err := w.base.Code.Contains(ctx, r.ProjectKey, r.Slug, src.Commit, r.Commit)
-		if err == nil {
-			held[src.Commit] = in
-			return !in, nil
-		}
-		// Not a full commit name (noergler's to send): the clock decides.
-		if !errors.Is(err, gitrepo.ErrBadSHA) {
-			return false, err
-		}
+// place asks git whether the run's commit holds a merge commit, once per
+// run. Only a busy clone or the step's end is an error: a read that fails
+// for one old commit leaves it to the clock, it does not fail the step.
+func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string) (ancestry, error) {
+	if commit == "" {
+		return unplaced, nil
 	}
-	return !at.IsZero() && src.MergedAt.After(at.Add(newerSlack)), nil
+	if a, ok := w.ancestry[commit]; ok {
+		return a, nil
+	}
+	in, err := w.base.Code.Contains(ctx, r.ProjectKey, r.Slug, commit, r.Commit)
+	a := notHeld
+	switch {
+	case err == nil && in:
+		a = held
+	case err == nil:
+	case errors.Is(err, ErrCloneBusy) || ctx.Err() != nil:
+		return unplaced, err
+	default:
+		if !errors.Is(err, gitrepo.ErrBadSHA) {
+			w.log.WarnContext(ctx, "baseline: merge commit not placed, its merge time decides",
+				"commit", gitrepo.ShortSHA(commit), logging.Err(err))
+		}
+		a = unplaced
+	}
+	w.ancestry[commit] = a
+	return a, nil
+}
+
+func newerSource(src store.Source, a ancestry, at time.Time) bool {
+	switch {
+	case a == held || at.IsZero():
+		return false
+	case a == notHeld:
+		return src.MergedAt.After(at)
+	}
+	return src.MergedAt.After(at.Add(newerSlack))
 }
 
 // touchesNewer is the first id a patch edits, drops or confirms that a

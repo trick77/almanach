@@ -196,11 +196,15 @@ nothing, so a long queue of runs never holds the notes for hours. The run
 pins the clone's last synced head, so a note merged after that fetch may
 have been folded before the run started: a statement such a pull request
 taught is marked read-only in the run's prompts and a patch touching it is
-refused, since the code the run reads cannot show it. Git decides: the
-PR's merge commit is in the run's commit or it is not, whatever the clocks
-say (a rebase merge's head can be older than the PR's merge time). A PR
-source from before the merge commit was kept goes by its merge time
-against the commit's, with two minutes of slack. Runs among
+refused, since the code the run reads cannot show it. Git decides first: a
+merge commit the run's commit holds is in it, whatever the clocks say (a
+rebase merge's head can be older than the PR's merge time); one it does
+not hold counts as newer only when merged after the commit, so a merge
+commit that never reaches the branch (a release branch, a rewritten
+history) stops counting once a later commit is read. A PR source git
+cannot place (from before the merge commit was kept, or a read that
+failed) goes by its merge time with two minutes of slack. Git is asked
+once per merge commit and run. Runs among
 themselves go oldest first, one to its end before the next begins.
 
 ## 4. The read side
@@ -344,9 +348,10 @@ row had no head before), and queues a reconcile when the head left the
 documented commit and the last run ended more than
 `ALMANACH_BASELINE_RECONCILE` ago. A failed run, first, reconcile or a
 button's, is queued again in its own mode (trigger `retry`) a day after it
-ended, or after the interval when that is shorter, three times in a row;
-past that the repository is back on the interval, so a failure that is
-permanent costs a call a month, not a day. All only with the source's
+ended, or after the interval when that is shorter, three times in a row,
+whatever the head and even with reconciles off; past that the repository
+is back on the interval, so a failure that is permanent costs a call a
+month, not a day. All only with the source's
 `auto_describe` on. The buttons on the source page queue a reconcile
 (Aktualisieren, a full run before the first) or a full run with a fresh
 catalogue (Neu beschreiben). Repositories cloned before the baseline

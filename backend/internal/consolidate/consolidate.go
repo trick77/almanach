@@ -67,6 +67,11 @@ type Worker struct {
 	// rather than pay for the same step again.
 	base       *Baseline
 	saveFailed error
+	// ancestry is what git said of PR merge commits against the commit of
+	// run ancestryRun: the commit is pinned, so the answers hold for the
+	// whole run.
+	ancestryRun int64
+	ancestry    map[string]ancestry
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the

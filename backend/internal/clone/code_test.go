@@ -56,8 +56,11 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 			g.origins["/base/tools/cli"] = "https://x/cli.git"
 			g.heads["/base/tools/cli@main"] = c.head
 			if c.documented != "" {
-				s.documented = store.BaselineRun{ID: 1, Commit: c.documented, State: store.RunDone}
-				s.last = store.BaselineRun{ID: 2, FinishedAt: c.finished}
+				// The last run is the documented one, or one still open.
+				s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, Commit: c.documented, State: store.RunDone, FinishedAt: c.finished}
+				if c.finished == nil {
+					s.last.State = store.RunDescribing
+				}
 			}
 			wakes := 0
 			d := Describe{Reconcile: c.reconcile}
@@ -73,15 +76,19 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 			if got != c.want || (c.want != "") != (wakes == 1) {
 				t.Fatalf("queued %q, wakes %d; want %q", got, wakes, c.want)
 			}
+			// A done last run is the documented one: one query a cycle.
+			if s.docAsked != 0 {
+				t.Errorf("DocumentedRun asked %d times after a done run", s.docAsked)
+			}
 		})
 	}
 }
 
 // A failed run is queued again in its own mode a day after it ended (or
-// after the interval, when that is shorter), three times in a row; past
-// that the repository is back on the reconcile interval. A fresh failure,
-// a repository never described (cloned before the baseline) and a run done
-// since the documented check wait.
+// after the interval, when that is shorter), three times in a row, whatever
+// the head and even with reconciles off; past that the repository is back
+// on the reconcile interval. A fresh failure and a repository never
+// described (cloned before the baseline) wait.
 func TestDescribe_RetriesAFailedRun(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	month := 30 * 24 * time.Hour
@@ -106,8 +113,9 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 		"reconcile past the retries": {failedAt(store.RunReconcile, month+time.Hour), "d0", 4, month, "tools cli reconcile monthly d0 h1"},
 		"shorter interval":           {failedAt(store.RunReconcile, 3*time.Hour), "d0", 1, 2 * time.Hour, "tools cli reconcile retry d0 h1"},
 		"retry inside the interval":  {failedAt(store.RunReconcile, time.Hour), "d0", 1, 2 * time.Hour, ""},
-		"done since the documented":  {store.BaselineRun{ID: 2, Mode: store.RunFull, State: store.RunDone, FinishedAt: ptr(now.Add(-month - time.Hour))}, "", 0, month, ""},
-		"done since, buttons":        {store.BaselineRun{ID: 2, Mode: store.RunFull, State: store.RunDone, FinishedAt: ptr(now.Add(-time.Hour))}, "", 0, 0, ""},
+		"full read failed at head":   {failedAt(store.RunFull, 25*time.Hour), "h1", 1, month, "tools cli full retry  h1"},
+		"reconcile failed, off":      {failedAt(store.RunReconcile, 25*time.Hour), "d0", 1, 0, "tools cli reconcile retry d0 h1"},
+		"reconcile failed, no doc":   {failedAt(store.RunReconcile, 25*time.Hour), "", 1, month, "tools cli full retry  h1"},
 		"never ran":                  {store.BaselineRun{}, "", 0, month, ""},
 	} {
 		t.Run(name, func(t *testing.T) {

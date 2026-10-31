@@ -96,27 +96,34 @@ func TestSaveRun_KeepsTheMode(t *testing.T) {
 	}
 }
 
-// Failed runs count since the newest done one.
-func TestFailedRuns_SinceTheLastDone(t *testing.T) {
+// LastRun counts the failed runs since the newest done one, in the same
+// query; no run at all is not found.
+func TestLastRun_CountsTheFailuresSinceTheLastDone(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	sourceRepo(t, s, "tools", "svc")
+	if _, _, ok, err := s.LastRun(ctx, "tools", "svc"); err != nil || ok {
+		t.Fatalf("LastRun with no run: ok=%v err=%v", ok, err)
+	}
 	count := func() int {
-		n, err := s.FailedRuns(ctx, "tools", "svc")
-		if err != nil {
-			t.Fatal(err)
+		_, n, ok, err := s.LastRun(ctx, "tools", "svc")
+		if err != nil || !ok {
+			t.Fatalf("LastRun: ok=%v err=%v", ok, err)
 		}
 		return n
 	}
 	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
 	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
 	if n := count(); n != 2 {
-		t.Fatalf("FailedRuns = %d, want 2", n)
+		t.Fatalf("failed = %d, want 2", n)
 	}
 	finish(t, s, enqueue(t, s, "tools", "svc"), RunDone)
+	if n := count(); n != 0 {
+		t.Fatalf("failed right after a done run = %d, want 0", n)
+	}
 	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
 	if n := count(); n != 1 {
-		t.Fatalf("FailedRuns after a done run = %d, want 1", n)
+		t.Fatalf("failed after a done run = %d, want 1", n)
 	}
 }
 
@@ -325,7 +332,7 @@ func TestSourceRuns_LastDocumentedAndCost(t *testing.T) {
 	if b.Last.ID != open.ID || b.Documented != "" || b.DocumentedAt != nil || b.LastCost != nil {
 		t.Fatalf("b = last %d documented %q cost %v", b.Last.ID, b.Documented, b.LastCost)
 	}
-	if last, ok, err := s.LastRun(ctx, "tools", "a"); err != nil || !ok || last.ID != failed.ID {
+	if last, _, ok, err := s.LastRun(ctx, "tools", "a"); err != nil || !ok || last.ID != failed.ID {
 		t.Fatalf("LastRun = %d %v %v", last.ID, ok, err)
 	}
 	if doc, ok, err := s.DocumentedRun(ctx, "tools", "a"); err != nil || !ok || doc.ID != done.ID {

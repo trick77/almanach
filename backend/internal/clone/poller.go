@@ -35,9 +35,8 @@ type Store interface {
 	MarkRepoReady(ctx context.Context, key, slug, branch, head string) error
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
-	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
+	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, int, bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
-	FailedRuns(ctx context.Context, key, slug string) (int, error)
 }
 
 // Describe is when the poller queues baseline runs on its own: a clone's
@@ -331,58 +330,47 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	key, slug := j.Source.ProjectKey, j.Repo.Slug
 	mode, trigger, base := store.RunFull, store.TriggerFirstReady, ""
 	if j.Repo.HeadCommit != "" {
-		doc, documented, err := p.Store.DocumentedRun(ctx, key, slug)
-		if err != nil {
-			p.logRunCheck(err, key, slug)
-			return
-		}
-		// Nothing can be due: the head is documented, or reconciles are
-		// the buttons' only. Checked before the next query, every cycle.
-		if documented && (p.Describe.Reconcile <= 0 || doc.Commit == head) {
-			return
-		}
-		last, ok, err := p.Store.LastRun(ctx, key, slug)
+		last, failed, ok, err := p.Store.LastRun(ctx, key, slug)
 		if err != nil || !ok || last.FinishedAt == nil {
+			// No run yet (cloned before the baseline: its button's), or
+			// one still open.
 			p.logRunCheck(err, key, slug)
 			return
 		}
-		if last.State != store.RunFailed && !documented {
-			// Done since DocumentedRun looked: documented now, the next
-			// cycle sees it.
-			return
-		}
-		since := p.Now().Sub(*last.FinishedAt)
-		retry := false
-		if last.State == store.RunFailed && since >= p.retryAfter() {
-			// A failed run is tried again a bounded number of times: a
-			// failure that is permanent (a repository too large for one
-			// call) must not cost a call a day forever.
-			failed, err := p.Store.FailedRuns(ctx, key, slug)
-			if err != nil {
+		// A done last run is the documented one; the store is asked only
+		// after a failure.
+		doc, documented := last, last.State == store.RunDone
+		if !documented {
+			if doc, documented, err = p.Store.DocumentedRun(ctx, key, slug); err != nil {
 				p.logRunCheck(err, key, slug)
 				return
 			}
-			retry = failed <= maxRetries
 		}
+		since := p.Now().Sub(*last.FinishedAt)
 		switch {
-		case retry:
-			// The failed run's own mode: a full read the button asked for
-			// on a documented repository stays a full read.
+		case last.State == store.RunFailed && since >= p.retryAfter() && failed <= maxRetries:
+			// A failed run, first, reconcile or a button's, is tried again
+			// in its own mode whatever the head, a bounded number of
+			// times: a failure that is permanent (a repository too large
+			// for one call) must not cost a call a day forever.
 			mode, trigger = last.Mode, store.TriggerRetry
-			if mode == store.RunReconcile {
-				if !documented {
-					return
-				}
+			if mode == store.RunReconcile && documented {
 				base = doc.Commit
+			} else {
+				// A reconcile with nothing documented to start from reads
+				// afresh.
+				mode = store.RunFull
 			}
 		case p.Describe.Reconcile <= 0 || since < p.Describe.Reconcile:
 			return
-		case documented:
-			mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
-		default:
+		case !documented:
 			// Never documented and past its retries: the interval tries
 			// the full read again.
 			trigger = store.TriggerMonthly
+		case doc.Commit == head:
+			return
+		default:
+			mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
 		}
 	}
 	id, err := p.Store.EnqueueRun(ctx, key, slug, mode, trigger, base, head)

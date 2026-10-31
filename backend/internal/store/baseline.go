@@ -126,22 +126,26 @@ func (s *Store) RunByID(ctx context.Context, id int64) (BaselineRun, bool, error
 	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs WHERE id = $1`, id)
 }
 
-// LastRun is a repository's newest run, open or not.
-func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, bool, error) {
-	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs
-		WHERE project_key = $1 AND slug = $2 ORDER BY id DESC LIMIT 1`, key, slug)
-}
-
-// FailedRuns counts a repository's failed runs since its newest done run
-// (all of them before any): what bounds the automatic retries.
-func (s *Store) FailedRuns(ctx context.Context, key, slug string) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM baseline_runs
-		 WHERE project_key = $1 AND slug = $2 AND state = 'failed'
-		   AND id > COALESCE((SELECT MAX(id) FROM baseline_runs WHERE project_key = $1 AND slug = $2 AND state = 'done'), 0)`,
-		key, slug).Scan(&n)
-	return n, err
+// LastRun is a repository's newest run, open or not, and how many runs
+// failed since its newest done run (all of them before any): what bounds
+// the automatic retries, read in the same query.
+func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, int, bool, error) {
+	var failed int
+	r, err := scanRun(s.pool.QueryRow(ctx, `
+		SELECT `+runColumns+`,
+		       (SELECT COUNT(*) FROM baseline_runs f
+		         WHERE f.project_key = l.project_key AND f.slug = l.slug AND f.state = 'failed'
+		           AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
+		                                 WHERE d.project_key = l.project_key AND d.slug = l.slug AND d.state = 'done'), 0))
+		  FROM baseline_runs l
+		 WHERE l.project_key = $1 AND l.slug = $2 ORDER BY l.id DESC LIMIT 1`, key, slug), &failed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BaselineRun{}, 0, false, nil
+	}
+	if err != nil {
+		return BaselineRun{}, 0, false, err
+	}
+	return r, failed, true, nil
 }
 
 // DocumentedRun is a repository's newest done run: its commit is the one
