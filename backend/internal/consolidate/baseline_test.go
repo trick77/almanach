@@ -419,6 +419,142 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	}
 }
 
+// The budget is this part's weighted share of the page's room under both
+// ceilings: the overview weighs two while parts follow it, one alone; the
+// floors hold on a nearly full page but never past the room left; no
+// statement without room for one.
+func TestStepBudget(t *testing.T) {
+	l := config.Limits{RepoMaxChars: 60000, RepoMaxStatements: 40}
+	page := func(chars, statements int) store.Page {
+		return store.Page{Summary: strings.Repeat("x", chars), Statements: make([]store.Statement, statements)}
+	}
+	for _, c := range []struct {
+		name                     string
+		chars, statements, left  int
+		overview                 bool
+		wantChars, wantStatement int
+	}{
+		{"fresh page, overview of a 13-step run", 0, 0, 11, true, 9230, 6},
+		{"overview with one part after it: two thirds", 0, 0, 1, true, 40000, 26},
+		{"after it, the first subject", 10000, 6, 10, false, 4545, 3},
+		{"last subject", 50000, 30, 0, false, 10000, 10},
+		{"room under the floor", 59000, 30, 3, false, 1000, 2},
+		{"nearly full page", 59000, 39, 3, false, 1000, 1},
+		{"full on statements", 20000, 40, 3, false, 10000, 0},
+		{"full on prose", 60000, 10, 3, false, 0, 0},
+		{"prose room under a statement's size", 59800, 10, 0, false, 200, 0},
+		{"over lowered ceilings", 70000, 45, 3, false, 0, 0},
+		{"overview on a nearly full page", 59000, 39, 3, true, 1000, 1},
+		{"overview at the floor", 50000, 0, 9, true, minStepBudget, 7},
+		{"overview over the statement cap", 20000, 45, 3, true, 16000, 0},
+		{"overview alone", 20000, 10, 0, true, 40000, 30},
+	} {
+		got := stepBudget(l, page(c.chars, c.statements), c.left, c.overview)
+		if got != (budget{c.wantChars, c.wantStatement}) {
+			t.Errorf("%s: stepBudget = %+v, want %d chars, %d statements", c.name, got, c.wantChars, c.wantStatement)
+		}
+	}
+	// Each case reads as a sentence; with no room the prompt says what to
+	// do instead.
+	r := store.BaselineRun{ProjectKey: "PLAT", Slug: "files", Commit: head}
+	for b, want := range map[budget]string{
+		{2000, 3}: "This part's share of the room left: it may grow the description by at most about 2000 characters of prose and add at most 3 new statements. A corrected",
+		{2000, 1}: "and add at most 1 new statement. A corrected",
+		{2000, 0}: "at most about 2000 characters of prose but add no statement: deepen or merge existing ones instead. A corrected",
+		{0, 0}:    "This part's share of the room left: it may not grow the description or add a statement: correct, tighten or merge existing statements instead. A corrected",
+	} {
+		out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, b, "a subject", "", "_None._", nil)
+		if !strings.Contains(out, want) {
+			t.Errorf("describe prompt with budget %+v lacks %q", b, want)
+		}
+		// A share of the page's room, never a length quota on a statement.
+		if strings.Contains(out, "rather than many") || !strings.Contains(out, "a statement keeps the length its subject needs") {
+			t.Errorf("describe prompt with budget %+v reads as a length quota", b)
+		}
+	}
+}
+
+// A step's prompt names its budget; after the fold one line logs what the
+// page grew by against it and the statements returned as stored, which
+// belonged in confirmed. Over budget nothing is cut.
+func TestRun_StepBudgetLogged(t *testing.T) {
+	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	login := store.Statement{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}}
+	billing := store.Statement{ID: "s2", Kind: "rule", Name: "Rechnung", Text: "Monatlich.", Files: []string{"billing/run.go"}}
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{login, billing}}
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Werkzeugdienst.")}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{
+			stmt(ref("s1"), "rule", "Login", "Zweistufig.\n", " auth/login.go"),
+			stmt(ref("s2"), "rule", "Rechnung", "Monatlich, im Voraus.", "billing/run.go"),
+			stmt(nil, "rule", "Sperre", "Nach fünf Versuchen.", "auth/login.go"),
+		}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+
+	// 400-rune ceiling, 45 used: the floor held to the 355 left, then 347.
+	// 4 statements, 2 held: the overview two thirds of them, then both.
+	if !strings.Contains(x.models.prompts[1], "at most about 355 characters of prose and add at most 1 new statement.") ||
+		!strings.Contains(x.models.prompts[2], "at most about 347 characters of prose and add at most 2 new statements") {
+		t.Errorf("prompts lack their budgets:\n%s", x.models.prompts[2])
+	}
+	// Net: the summary 8 runes longer; then s2 11 longer and a new statement
+	// of 26, s1 returned as stored.
+	out := logs.String()
+	for _, want := range []string{
+		"the overview: page grew by 8 chars of prose, budget 355; 0 new statements, budget 1; 0 returned unchanged",
+		"Anmeldung: page grew by 37 chars of prose, budget 347; 1 new statement, budget 2; 1 returned unchanged",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if page := x.st.pages[key]; len(page.Statements) != 3 || page.Statements[1].Text != "Monatlich, im Voraus." {
+		t.Errorf("page = %+v, want the patch applied", page)
+	}
+}
+
+// A statement returned by id counts as unchanged when the fold left it as
+// stored; a changed one, a new one or one the fold dropped does not.
+func TestReturnedUnchanged(t *testing.T) {
+	before := []store.Statement{
+		{ID: "s1", Kind: "rule", Name: "Grösse", Text: "Gilt.", Files: []string{"a.go"}},
+		{ID: "s2", Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: seq("ruft")},
+		{ID: "s3", Kind: "rule", Name: "Weg", Text: "Gilt."},
+	}
+	// s1 as stored once attach's cleanup trimmed it; s2 with another kind;
+	// s3 with a path the fold would drop as invented, still an attempt; a
+	// new one and an unknown id are not returned statements.
+	p := inference.Patch{Statements: []inference.Statement{
+		stmt(ref("s1"), "rule", " Grösse ", "Gilt.\n", "a.go "), stmt(ref("s2"), "invariant", "Mit Bild", "Fluss."),
+		stmt(ref("s3"), "rule", "Weg", "Gilt.", "erfunden.go"), stmt(nil, "rule", "Neu", "Gilt."), stmt(ref("s9"), "rule", "Weg", "Gilt."),
+	}}
+	if got := returnedUnchanged(before, p); got != 1 {
+		t.Errorf("returnedUnchanged = %d, want 1", got)
+	}
+	// A statement whose only change was a new diagram the fold left out was
+	// a real attempt; one returned with its stored diagram or {"kind":
+	// "none"} on none was not.
+	p = inference.Patch{Statements: []inference.Statement{
+		{ID: ref("s2"), Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: dangling()},
+		{ID: ref("s3"), Kind: "rule", Name: "Weg", Text: "Gilt.", Diagram: &diagram.Diagram{Kind: diagram.KindNone}},
+	}}
+	if got := returnedUnchanged(before, p); got != 1 {
+		t.Errorf("returnedUnchanged with a left-out diagram = %d, want 1 (s3 only)", got)
+	}
+	p.Statements[0].Diagram = seq("ruft")
+	if got := returnedUnchanged(before, p); got != 2 {
+		t.Errorf("returnedUnchanged with the stored diagram echoed = %d, want 2", got)
+	}
+}
+
 // The project step learns which statements pull requests taught, not their
 // keys.
 func TestDescribeTaught(t *testing.T) {
@@ -522,9 +658,12 @@ func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
 }
 
 // A part the model fails or the rules refuse is skipped and named in the
-// plan for the next reconcile; a page at its ceiling ends the reading.
+// plan for the next reconcile; a patch over a ceiling costs its own part
+// only, the page unchanged, and the parts after it are still read.
 func TestRun_SkipsAndCeiling(t *testing.T) {
 	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "A", Purpose: "p", Paths: []string{"auth/"}}, {Name: "B", Purpose: "p", Paths: []string{"billing/"}}, {Name: "C", Purpose: "p", Paths: []string{"README.md"}},
@@ -537,15 +676,50 @@ func TestRun_SkipsAndCeiling(t *testing.T) {
 		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
 		{Call: inference.Call{Outcome: inference.OutcomeUnparseable}},
 		{Call: called, Patch: inference.Patch{Statements: many}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Kurz", "Gilt.", "README.md")}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 3 || r.Calls != 5 {
+	if r.State != store.RunDone || r.Skipped != 2 || r.Calls != 6 {
 		t.Fatalf("run = %+v", r)
 	}
-	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A", "B", "C"}) {
-		t.Errorf("skipped = %v, want A (failed), B (ceiling) and C (not read)", p.Skipped)
+	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A", "B"}) {
+		t.Errorf("skipped = %v, want A (failed) and B (ceiling)", p.Skipped)
+	}
+	if page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; len(page.Statements) != 1 || page.Statements[0].Name != "Kurz" {
+		t.Errorf("page = %+v, want B's rewrite rejected and C's statement taken", page.Statements)
+	}
+	// The rejected patch logs its rejection only, no growth against a budget.
+	if out := logs.String(); !strings.Contains(out, "B skipped: rewrite rejected") || strings.Contains(out, "B: page grew") {
+		t.Errorf("log for B:\n%s", out)
+	}
+}
+
+// A page already at a ceiling, a lowered one included, makes no call: the
+// reading ends before the first part, every part skipped, the project
+// step still taken.
+func TestRun_PageAtItsCeilingMakesNoCall(t *testing.T) {
+	for name, page := range map[string]store.Page{
+		"statements": {RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{
+			{ID: "s1", Kind: "rule", Name: "A", Text: "T"}, {ID: "s2", Kind: "rule", Name: "B", Text: "T"},
+			{ID: "s3", Kind: "rule", Name: "C", Text: "T"}, {ID: "s4", Kind: "rule", Name: "D", Text: "T"}}},
+		"prose": {RevisionID: 1, Revision: 1, Summary: strings.Repeat("x", 450), Statements: []store.Statement{}},
+	} {
+		x := newWorld(t, 16)
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = page
+		x.queue(store.RunFull, "")
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+			{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
+		x.models.project = inference.DescriptionResult{Call: called}
+		x.w.drain(context.Background())
+		r := x.run()
+		if r.State != store.RunDone || r.Calls != 2 || r.Skipped != 2 || len(x.models.prompts) != 2 {
+			t.Errorf("%s: run = %+v, %d prompts; want the catalogue and the project only", name, r, len(x.models.prompts))
+		}
+		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{overviewName, "A"}) {
+			t.Errorf("%s: skipped = %v", name, p.Skipped)
+		}
 	}
 }
 

@@ -20,7 +20,7 @@ required, a commented line is optional and shows its default.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALMANACH_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts; anything else is a startup fault. |
+| `ALMANACH_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts, or `off` for no reasoning (a no-op on a model that never reasons, a startup fault on one that reasons and cannot be switched off); anything else is a startup fault. Thinking is most of a call's output: measured on a baseline subject step, about 1.5k of 22k output tokens were the patch. |
 | `SERVER_HOST` | `0.0.0.0` | Listen address. |
 | `SERVER_PORT` | `8080` | Listen port. |
 | `ALMANACH_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `SERVER_HOST`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. `compose.yaml` fixes `oidc`, `compose.dev.yaml` `none`; `.env` sets neither. |
@@ -46,10 +46,11 @@ required, a commented line is optional and shows its default.
 Over any cap the merge call's rewrite is rejected whole and the page stays
 as it was; the caps are the one lever against endless growth, and the
 prompt tells the model the numbers. A statement diagram over a node or
-edge cap, or one that breaks a rule (an arrow to an undeclared node),
-rejects the whole rewrite the same way; one past the page's count is left
-out, its statement kept. The system map never costs a rewrite: one that
-fails is not drawn and the stored one stays.
+edge cap, one that breaks a rule (an arrow to an undeclared node), or one
+past the page's count never costs a rewrite: it is left out and logged,
+its statement kept. The diagram the statement had stays while its name
+and text stay, and goes when they changed. The system map never costs a
+rewrite either: one that fails is not drawn and the stored one stays.
 
 ## Signing in
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -224,6 +225,57 @@ func TestStartup(t *testing.T) {
 	warning, err = testClient(answer(503, `{"error":{"message":"overloaded"}}`)).Startup(context.Background())
 	if err != nil || !strings.Contains(warning, "did not answer") {
 		t.Errorf("503: warning %q err %v; want a warning only", warning, err)
+	}
+}
+
+// "off" switches reasoning off where the profile allows it; any other value
+// must be a level the profile lists.
+func TestEffortOff(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	c := testClient(srv.Client())
+	c.effort = EffortOff
+	if _, err := c.Startup(context.Background()); err != nil {
+		t.Fatalf("off on a model that can be switched off: %v", err)
+	}
+	if got := c.reasoning(); !reflect.DeepEqual(got, llmwire.ReasoningOff()) {
+		t.Errorf("reasoning() = %#v, want ReasoningOff", got)
+	}
+	c.effort = "bogus"
+	// The test profile lists "none": that is its way off, named once.
+	if _, err := c.Startup(context.Background()); err == nil || !strings.Contains(err.Error(), "(accepted: none, low, medium, high)") {
+		t.Errorf("bogus level: err = %v, want a refusal naming the levels, none among them, and not off", err)
+	}
+}
+
+// Off is refused only where the model reasons and cannot be switched off;
+// on a model that never reasons it is a no-op. A refused level offers off
+// only where off switches something.
+func TestCheckEffort(t *testing.T) {
+	toggle := llmwire.Reasoning{Supported: true, CanBeDisabled: true, EffortValues: []string{"low", "high"}}
+	fixed := llmwire.Reasoning{Supported: true, EffortValues: []string{"low", "high"}}
+	never := llmwire.Reasoning{}
+	for _, c := range []struct {
+		name, effort string
+		r            llmwire.Reasoning
+		want         string // "" for no error, else a part of it
+	}{
+		{"unset", "", fixed, ""},
+		{"a listed level", "high", fixed, ""},
+		{"off where it can be switched off", EffortOff, toggle, ""},
+		{"off on a model that never reasons", EffortOff, never, ""},
+		{"off where it reasons and cannot be switched off", EffortOff, fixed, "cannot be switched off"},
+		{"bogus where off switches something", "bogus", toggle, "(accepted: low, high, off)"},
+		{"bogus where the levels list none", "bogus", llmwire.Reasoning{Supported: true, CanBeDisabled: true, EffortValues: []string{"none", "high"}}, "(accepted: none, high)"},
+		{"bogus where it cannot be switched off", "bogus", fixed, "(accepted: low, high)"},
+		{"bogus on a model that never reasons", "bogus", never, "takes no reasoning level"},
+	} {
+		err := checkEffort(c.effort, "m", c.r)
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: err = %v, want none", c.name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: err = %v, want one with %q", c.name, err, c.want)
+		}
 	}
 }
 

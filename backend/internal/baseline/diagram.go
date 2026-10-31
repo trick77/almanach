@@ -18,8 +18,10 @@ import (
 // twice, every node has an id, a known shape and a label, labels are Swiss
 // and capped, and the size is capped from config. On the system map a
 // repository node is a source repository of the project: an unknown slug is
-// invented. Anything off rejects the rewrite whole, like an invented
-// statement id; the page stays.
+// invented. Anything off is left out, never stored: a statement keeps its
+// text, and the diagram it had while its name and text stay (consolidate's
+// statementDiagram); a map that fails is not drawn, the stored one
+// staying. One bad drawing never costs the text around it.
 //
 // The checks are the ones rongo's toIR made of a mermaid parse (ui/src/
 // diagramIR.ts): what passes here is what rongo's copied layout was written

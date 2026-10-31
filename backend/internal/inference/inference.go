@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -59,8 +60,9 @@ func (o Outcome) String() string {
 type Options struct {
 	// Model is an llmwire profile id, never a gateway alias.
 	Model string
-	// ReasoningEffort is a level the profile lists, or "" for the model's
-	// balanced level.
+	// ReasoningEffort is a level the profile lists, EffortOff for no
+	// reasoning at all where the profile can be switched off, or "" for the
+	// model's balanced level.
 	ReasoningEffort string
 	Logger          *slog.Logger
 	// Lookup is the environment llmwire reads the gateway's variables from.
@@ -108,9 +110,8 @@ func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("inference: model %q: %w", c.model, err)
 	}
-	if c.effort != "" && !p.Reasoning.Accepts(c.effort) {
-		return "", fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)",
-			c.effort, c.model, strings.Join(p.Reasoning.EffortValues, ", "))
+	if err := checkEffort(c.effort, c.model, p.Reasoning); err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
@@ -172,9 +173,45 @@ const startupTimeout = 10 * time.Second
 // Model is the profile id.
 func (c *Client) Model() string { return c.model }
 
+// EffortOff switches a model's reasoning off where its profile allows it.
+// Measured on a baseline subject step (2026-10-31): of 22k output tokens,
+// about 1.5k were the patch, the rest thinking; time and cost follow.
+const EffortOff = "off"
+
+// checkEffort holds the configured level to the profile. Off on a model
+// that never reasons is what it does anyway, so no fault; off is refused
+// only where the model reasons and cannot be switched off. A refused level
+// names off as an alternative only where off switches something.
+func checkEffort(effort, model string, r llmwire.Reasoning) error {
+	switch {
+	case effort == "":
+		return nil
+	case effort == EffortOff:
+		if r.Supported && !r.CanBeDisabled {
+			return fmt.Errorf("inference: reasoning_effort=%q: %s reasons and cannot be switched off", effort, model)
+		}
+		return nil
+	case r.Accepts(effort):
+		return nil
+	}
+	// Off is offered only where it switches something the listed levels do
+	// not already: a profile that lists "none" names its own way off.
+	accepted := slices.Clone(r.EffortValues)
+	if r.Supported && r.CanBeDisabled && !slices.Contains(accepted, "none") {
+		accepted = append(accepted, EffortOff)
+	}
+	if len(accepted) == 0 {
+		return fmt.Errorf("inference: reasoning_effort=%q: %s takes no reasoning level", effort, model)
+	}
+	return fmt.Errorf("inference: reasoning_effort=%q is not accepted by %s (accepted: %s)", effort, model, strings.Join(accepted, ", "))
+}
+
 func (c *Client) reasoning() llmwire.ReasoningRequest {
-	if c.effort == "" {
+	switch c.effort {
+	case "":
 		return llmwire.ReasoningBalanced()
+	case EffortOff:
+		return llmwire.ReasoningOff()
 	}
 	return llmwire.ReasoningEffort(c.effort)
 }
