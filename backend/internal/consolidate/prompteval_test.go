@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
@@ -267,6 +268,7 @@ func TestPromptEval(t *testing.T) {
 			t.Errorf("project summary never names %s", repo.Slug)
 		}
 	}
+	checkSpelling(t, "project", project)
 	// Every project carries its map, every repository on it, beside what
 	// they talk to; the store holds only maps the checks passed.
 	if project.Map == nil {
@@ -323,20 +325,73 @@ func checkPage(t *testing.T, slug string, p store.Page, exists func(string) bool
 				t.Errorf("%s %s: file %s not in the tree", slug, s.ID, f)
 			}
 		}
-		if w := spelledOut.FindString(codeSpan.ReplaceAllString(s.Name+"\n"+s.Text, "")); w != "" {
+	}
+	checkSpelling(t, slug, p)
+}
+
+// checkSpelling holds a page's prose, summary and statements, to the
+// prompts' umlaut rule.
+func checkSpelling(t *testing.T, slug string, p store.Page) {
+	t.Helper()
+	if w := spelledOutWord(p.Summary); w != "" {
+		t.Errorf("%s summary: umlaut spelled out (%s)", slug, w)
+	}
+	for _, s := range p.Statements {
+		if w := spelledOutWord(s.Name + "\n" + s.Text); w != "" {
 			t.Errorf("%s %s %q: umlaut spelled out (%s)", slug, s.ID, s.Name, w)
 		}
 	}
 }
 
-// codeSpan is an inline code span: a quoted identifier may spell an
-// umlaut out (an eval quoted a test's `Datenueberpruefung`).
-var codeSpan = regexp.MustCompile("`[^`\n]*`")
+// spelledOutWord is the first word of s whose umlauts are spelled out
+// ("ergaenzen", "fuer"), the slip the prompts' spelling rule forbids; ""
+// when none. A token shaped like an identifier (a backtick, a slash, a dot
+// or an underscore in it, or a capital inside it) is a quote, never prose:
+// an eval quoted a test's `Datenueberpruefung`.
+func spelledOutWord(s string) string {
+	for _, tok := range strings.Fields(s) {
+		if strings.ContainsAny(tok, "`/._") || innerCapital(tok) {
+			continue
+		}
+		if w := strings.TrimFunc(tok, func(r rune) bool { return !unicode.IsLetter(r) }); spelledOut.MatchString(w) {
+			return w
+		}
+	}
+	return ""
+}
 
-// spelledOut finds the common German words whose umlauts a model writes
-// out ("ergaenzen", "fuer"), the slip the prompts' spelling rule forbids,
-// outside code spans.
-var spelledOut = regexp.MustCompile(`(?i)\b(fuer|ueber\w*|\w*aender\w*|\w*pruef\w*|\w*fueg\w*|\w*ergaenz\w*|moeglich\w*|\w*groess\w*|waehr\w*|koenn\w*|muess\w*|naechst\w*|spaet\w*)\b`)
+// The eval's spelling check finds a spelled-out word in prose wherever it
+// stands, and passes an identifier however it is quoted.
+func TestSpelledOutWord(t *testing.T) {
+	for s, want := range map[string]string{
+		"Gilt für jede Datei.":                        "",
+		"Gilt fuer jede Datei.":                       "fuer",
+		"Ein ` Zeichen fuer die Suche `x`":            "fuer",
+		"Wert`x` ueber alles":                         "ueber",
+		"Die Regel (`Datenueberpruefung` ist gleich)": "",
+		"in internal/pruefung/handler.go":             "",
+		"heisst DatenUeberpruefung im Code":           "",
+		"eine neue Queue, aktuell":                    "",
+		"Aenderungen, die bleiben.":                   "Aenderungen",
+	} {
+		if got := spelledOutWord(s); got != want {
+			t.Errorf("spelledOutWord(%q) = %q, want %q", s, got, want)
+		}
+	}
+}
+
+func innerCapital(tok string) bool {
+	for i, r := range tok {
+		if i > 0 && unicode.IsUpper(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// spelledOut matches one word, the common German ones a model writes with
+// their umlauts spelled out.
+var spelledOut = regexp.MustCompile(`(?i)^(fuer|ueber\w*|\w*aender\w*|\w*pruef\w*|\w*fueg\w*|\w*ergaenz\w*|moeglich\w*|\w*groess\w*|waehr\w*|koenn\w*|muess\w*|naechst\w*|spaet\w*)$`)
 
 func dump(t *testing.T, dir, name string, p store.Page) {
 	t.Helper()
