@@ -15,7 +15,10 @@ The description of repository `{repo}` in project `{project}` was just written f
   - `component`: the interfaces between repositories (APIs, events, shared libraries, files), which repository owns each and which consume it. This is where breaking changes live.
   - `entity`: the entities that cross repositories, which repository is their system of record, and how their identifiers travel.
   - `rule` and `invariant`: ordering, idempotency, consistency, authentication and tenancy boundaries that span repositories.
-- Add nothing about a repository's tech stack, nothing only one repository's page needs, and no history.
+  - `decision`: a choice that spans repositories, its reason and what was given up; only with a reason the descriptions state, never guessed.
+  - `pitfall`: something that broke across repositories and how not to break it again; only from what the descriptions record as broken (a repository's pitfall, a statement learned from pull requests), never inferred.
+  - No `extension`: where and how to make a change is a repository's page's.
+- Add nothing about a repository's tech stack, nothing only one repository's page needs, and no history. No technical debt, no tutorials.
 - Keep every statement that still holds, with its `id` unchanged, whatever it was learned from; edit it when the descriptions add to or correct it. Leave out only what they show to be wrong, and a statement about the inside of `{repo}` alone that its description below holds and that no pull request taught: that is repository detail. A statement learned from pull requests stays unless shown wrong. A new fact is a new statement with `id` null. Two statements about one fact become one, the kept `id` first.
 - A repository listed without a summary below, or with a shortened one: keep what the project description says about it, and write nothing about it that you cannot read here.
 - `summary`: prose about the project as it is now; never a changelog, no PR numbers, no dates, no names of people.

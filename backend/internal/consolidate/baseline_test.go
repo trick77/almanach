@@ -17,6 +17,7 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -40,6 +41,13 @@ type runStore struct {
 	othersErr error
 	// saved is every state a run was saved in, in order.
 	saved []string
+	// problems is the repository's problem areas; problemsErr fails the read.
+	problems    []store.RepoProblem
+	problemsErr error
+}
+
+func (s *runStore) RepoProblems(context.Context, string, string) ([]store.RepoProblem, error) {
+	return s.problems, s.problemsErr
 }
 
 func (s *runStore) NextRun(context.Context) (store.BaselineRun, bool, error) {
@@ -450,7 +458,7 @@ func TestStepBudget(t *testing.T) {
 	}
 	// At the cap the prompt asks for none and says what to do instead.
 	r := store.BaselineRun{ProjectKey: "PLAT", Slug: "files", Commit: head}
-	out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, budget{2000, 0}, "a subject", "", "_None._", nil)
+	out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, budget{2000, 0}, "a subject", "", "_None._", "_None._", nil)
 	if !strings.Contains(out, "2000 characters of prose and no new statements: deepen or merge existing ones; its prose is") {
 		t.Errorf("describe prompt at the cap lacks the no-new-statements budget")
 	}
@@ -1067,5 +1075,102 @@ func TestDrain_IgnoresNotesWithoutASource(t *testing.T) {
 	}
 	if len(x.st.marked) != 2 {
 		t.Fatalf("marked = %v, want both off the queue", x.st.marked)
+	}
+}
+
+// A subject's problem areas are those whose directory is one of its files'
+// directories, holds one or lies inside one; the root holds none but its
+// own files.
+func TestProblemsFor(t *testing.T) {
+	areas := []store.RepoProblem{
+		{Area: "internal/auth"}, {Area: "internal"}, {Area: "internal/auth/oidc"}, {Area: "internal/authz"},
+		{Area: "billing"}, {Area: ""},
+	}
+	names := func(ps []store.RepoProblem) []string {
+		out := []string{}
+		for _, p := range ps {
+			out = append(out, p.Area)
+		}
+		return out
+	}
+	got := names(problemsFor(areas, []baseline.File{{Path: "internal/auth/login.go"}}))
+	if want := []string{"internal/auth", "internal", "internal/auth/oidc"}; !slices.Equal(got, want) {
+		t.Errorf("subject in internal/auth: %v, want %v", got, want)
+	}
+	if got := names(problemsFor(areas, []baseline.File{{Path: "main.go"}})); !slices.Equal(got, []string{""}) {
+		t.Errorf("subject at the root: %v, want the root area alone", got)
+	}
+	if got := problemsFor(areas, []baseline.File{{Path: "docs/x.md"}}); len(got) != 0 {
+		t.Errorf("subject elsewhere: %v, want none", got)
+	}
+	if got := renderProblems(nil); got != "_None._" {
+		t.Errorf("no areas = %q", got)
+	}
+	out := renderProblems([]store.RepoProblem{{Area: "auth", Bugfixes: 3, TopCause: "logic", PRKeys: []string{"T/svc#9", "T/svc#4"}}, {Area: "", Bugfixes: 1, TopCause: "other", PRKeys: []string{"T/svc#1"}}})
+	if !strings.Contains(out, "- `auth/`: 3 bugfixes, cause seen most `logic`, newest fixes T/svc#9, T/svc#4") || !strings.Contains(out, "the repository root") {
+		t.Errorf("rendered = %q", out)
+	}
+}
+
+// The prompts define the kinds for agents, the project's without an
+// extension; describe and merge hold the summary's order and route the
+// evidence to pitfalls.
+func TestPromptsDefineAgentKinds(t *testing.T) {
+	for name, p := range map[string]string{"describe": prompts.Describe, "merge": prompts.Merge} {
+		for _, want := range []string{"- `decision`:", "- `extension`:", "- `pitfall`:", "working on it", "No technical debt",
+			`"pitfall"`, `"extension"`, `"decision"`} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s prompt lacks %q", name, want)
+			}
+		}
+	}
+	if !strings.Contains(prompts.Describe, "A pitfall only where a problem area below or a bugfix note backs it; without one, write none.") ||
+		!strings.Contains(prompts.Describe, "{problem_areas}") {
+		t.Error("describe prompt lacks the pitfall rule or the problem areas")
+	}
+	if !strings.Contains(prompts.Merge, "A note of kind `bugfix` is that evidence") {
+		t.Error("merge prompt does not route a bugfix note to a pitfall")
+	}
+	if !strings.Contains(prompts.Project, `"decision" | "pitfall"`) || strings.Contains(prompts.Project, `"extension"`) {
+		t.Error("project prompt offers the wrong kinds")
+	}
+}
+
+// A subject step is told the problem areas its files sit in, the overview
+// none; a failed read pauses the drain before any call.
+func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.st.problems = []store.RepoProblem{{Area: "auth", Bugfixes: 2, TopCause: "logic", PRKeys: []string{"tools/svc#7"}},
+		{Area: "billing", Bugfixes: 1, TopCause: "config", PRKeys: []string{"tools/svc#3"}}}
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "pitfall", "Sperre vergessen", "Brach.", "auth/login.go")}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	overview, auth := x.models.prompts[1], x.models.prompts[2]
+	if !strings.Contains(overview, "directories bugfixes keep touching)\n\n_None._") {
+		t.Errorf("overview prompt is told of problem areas:\n%s", overview)
+	}
+	if !strings.Contains(auth, "- `auth/`: 2 bugfixes, cause seen most `logic`, newest fixes tools/svc#7") || strings.Contains(auth, "`billing/`") {
+		t.Errorf("subject prompt's problem areas:\n%s", auth)
+	}
+	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
+	if len(page.Statements) != 1 || page.Statements[0].Kind != "pitfall" {
+		t.Errorf("page = %+v", page.Statements)
+	}
+
+	y := newWorld(t, 16)
+	y.queue(store.RunFull, "")
+	y.st.problemsErr = errors.New("db gone")
+	y.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	y.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	y.w.drain(context.Background())
+	if r := y.run(); r.State != store.RunDescribing || r.Calls != 2 {
+		t.Errorf("run after a failed problem read = %+v, want the subject step held", r)
 	}
 }

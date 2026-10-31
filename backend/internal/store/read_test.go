@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -323,5 +324,43 @@ func TestProblems(t *testing.T) {
 	}
 	if ps, err := s.Problems(ctx, "NONE", 30); err != nil || len(ps) != 0 {
 		t.Errorf("Problems(NONE) = %v, %v; want empty", ps, err)
+	}
+}
+
+// RepoProblems is one repository's areas over its whole history: the
+// stale fix counts, another repository's and a feature do not; the newest
+// three fixes' keys, newest first; most bugfixes first.
+func TestRepoProblems(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	ingest(t, s, bugfixFor("PRJ", "svc", 1, "internal/files", "logic", now.Add(-400*24*time.Hour)))
+	ingest(t, s, bugfixFor("PRJ", "svc", 2, "internal/files", "config", now.Add(-72*time.Hour)))
+	ingest(t, s, bugfixFor("PRJ", "svc", 3, "internal/files", "config", now.Add(-48*time.Hour)))
+	ingest(t, s, bugfixFor("PRJ", "svc", 4, "internal/files", "logic", now.Add(-24*time.Hour)))
+	ingest(t, s, bugfixFor("PRJ", "svc", 5, "internal/api", "logic", now.Add(-time.Hour)))
+	ingest(t, s, bugfixFor("PRJ", "other", 6, "internal/files", "logic", now.Add(-time.Hour)))
+	feature := noteFor("PRJ", "svc", 7)
+	feature.MergedAt = now
+	ingest(t, s, feature)
+
+	ps, err := s.RepoProblems(ctx, "PRJ", "svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ps) != 2 {
+		t.Fatalf("RepoProblems = %+v, want two areas", ps)
+	}
+	files := ps[0]
+	// logic and config tie at two; the tie breaks on the name.
+	if files.Area != "internal/files" || files.Bugfixes != 4 || files.TopCause != "config" ||
+		strings.Join(files.PRKeys, ",") != "PRJ/svc#4,PRJ/svc#3,PRJ/svc#2" {
+		t.Errorf("files = %+v", files)
+	}
+	if api := ps[1]; api.Area != "internal/api" || api.Bugfixes != 1 || api.TopCause != "logic" || strings.Join(api.PRKeys, ",") != "PRJ/svc#5" {
+		t.Errorf("api = %+v", api)
+	}
+	if ps, err := s.RepoProblems(ctx, "PRJ", "none"); err != nil || len(ps) != 0 {
+		t.Errorf("RepoProblems(none) = %v, %v; want empty", ps, err)
 	}
 }
