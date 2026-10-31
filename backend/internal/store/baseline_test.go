@@ -161,7 +161,7 @@ func TestNextRun_StartedBeforeQueued(t *testing.T) {
 	if err != nil || !ok || next.ID != b.ID {
 		t.Fatalf("b started: next=%d ok=%v err=%v, want %d", next.ID, ok, err, b.ID)
 	}
-	if next.Step != 2 || next.Steps != 5 || next.StartedAt == nil || next.Commit != "pinned" || string(next.Plan) != `{"subjects": []}` {
+	if next.Step != 2 || next.Steps != 5 || next.StartedAt == nil || next.Commit != "pinned" || string(next.Plan) != `{"subjects":[]}` {
 		t.Fatalf("saved progress = step %d/%d started %v commit %s plan %s", next.Step, next.Steps, next.StartedAt, next.Commit, next.Plan)
 	}
 	finish(t, s, next, RunDone)
@@ -233,7 +233,7 @@ func TestApplyBaselineStep_RevisionAndProgressTogether(t *testing.T) {
 		t.Fatalf("statement = %+v", st)
 	}
 	var runID *int64
-	if err := s.pool.QueryRow(ctx, `SELECT baseline_run_id FROM revisions`).Scan(&runID); err != nil || runID == nil || *runID != r.ID {
+	if err := s.db.QueryRowContext(ctx, `SELECT baseline_run_id FROM revisions`).Scan(&runID); err != nil || runID == nil || *runID != r.ID {
 		t.Fatalf("baseline_run_id = %v err=%v, want %d", runID, err, r.ID)
 	}
 	// The page's history reads a revision without a PR key.

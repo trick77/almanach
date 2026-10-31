@@ -1,42 +1,23 @@
-# The in-network DSN, once: the postgres service's user, password and db.
-x-dsn: &dsn DATABASE_URL=postgresql://almanach:changeme@postgres:5432/almanach
+# The database file, once: on the data volume, which both services mount.
+x-db-path: &db-path ALMANACH_DB_PATH=/data/almanach.db
 
 services:
-  postgres:
-    image: postgres:18-alpine
-    environment:
-      POSTGRES_USER: almanach
-      POSTGRES_PASSWORD: changeme
-      POSTGRES_DB: almanach
-    ports:
-      - "5433:5432"
-    # The parent, not .../data: from 18 the image keeps PGDATA in a
-    # versioned subdirectory and refuses to start on the old mount.
-    volumes:
-      - pgdata:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U almanach"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   # Same as the init container in the deployment: migrations run before the
-  # service, never inside it.
+  # service, never inside it. Same image, same data volume.
   migrate:
     build:
       context: .
       dockerfile: Containerfile
     command: ["migrate"]
-    # No env_file: migrate needs the DSN and nothing else, least of all the
-    # gateway key. Fixed, not interpolated: .env's DATABASE_URL is the
-    # host's view (localhost:5433, for the binary run outside compose) and
-    # must not reach a container, where only the service name resolves.
+    # No env_file: migrate needs the database path and nothing else, least
+    # of all the gateway key. Fixed, not interpolated: .env's
+    # ALMANACH_DB_PATH is the host's view (for the binary run outside
+    # compose) and must not reach a container.
     environment:
-      - *dsn
+      - *db-path
       - LOG_LEVEL=INFO
-    depends_on:
-      postgres:
-        condition: service_healthy
+    volumes:
+      - data:/data
 
   almanach:
     build:
@@ -45,12 +26,12 @@ services:
     ports:
       - "8081:8080"
     env_file: .env
-    # What the container must not take from .env: the DSN, the keys path
-    # and the listener. A loopback SERVER_HOST or proxy mode set for a host
-    # run would bind inside the container's own namespace, with the port
-    # mapping dead and the healthcheck (same env) still green.
+    # What the container must not take from .env: the database path, the
+    # keys path and the listener. A loopback SERVER_HOST or proxy mode set
+    # for a host run would bind inside the container's own namespace, with
+    # the port mapping dead and the healthcheck (same env) still green.
     environment:
-      - *dsn
+      - *db-path
       - ALMANACH_TEAM_KEYS_PATH=/app/team-keys.json
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
@@ -59,10 +40,16 @@ services:
       # (a path outside compose) must not reach the container.
       - ALMANACH_REPOS_DIR=/app/repos
     volumes:
+      # The database alone: the file and its -wal, -shm. Owned by uid 1000
+      # from the image's own /data on first mount. Never a shared
+      # filesystem: SQLite in WAL needs the locks of one local disk.
+      - data:/data
       # One token per team; see team-keys.example.json.
       - ./team-keys.json:/app/team-keys.json:ro
       # Every source's clones, <project>/<slug>. Owned by uid 1000 from the
-      # image's own /app/repos on first mount.
+      # image's own /app/repos on first mount. Apart from the database: a
+      # clone volume can be wiped and refilled from the forge, the data
+      # volume cannot.
       - repos:/app/repos
     depends_on:
       migrate:
@@ -70,5 +57,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
+  data:
   repos:

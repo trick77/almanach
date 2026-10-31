@@ -6,17 +6,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// testStore opens a store on a fresh schema, migrates it and drops the
-// schema at cleanup. SHIP_TEST_DSN comes from ship check, which starts the
-// Postgres of ship.yaml; a plain go test without it skips.
+// testStore opens a migrated database in a file of the test's own temp
+// dir: no server, no skip, every store test runs in a plain go test.
 func testStore(t *testing.T) *Store {
 	t.Helper()
 	s := emptyStore(t)
@@ -29,30 +26,14 @@ func testStore(t *testing.T) *Store {
 // emptyStore is testStore before any migration ran.
 func emptyStore(t *testing.T) *Store {
 	t.Helper()
-	dsn := os.Getenv("SHIP_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SHIP_TEST_DSN not set")
-	}
-	ctx := context.Background()
-	schema := fmt.Sprintf("t_%d_%d", time.Now().UnixNano(), os.Getpid())
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	admin, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE")
-		admin.Close()
-	})
-	cfg2, _ := pgxpool.ParseConfig(dsn)
-	cfg2.ConnConfig.RuntimeParams["search_path"] = schema
-	s, err := openConfig(ctx, cfg2, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return storeAt(t, filepath.Join(t.TempDir(), "almanach.db"))
+}
+
+// storeAt opens the database at path, closed when the test ends; extra are
+// DSN parameters after the store's own.
+func storeAt(t *testing.T, path string, extra ...string) *Store {
+	t.Helper()
+	s, err := open(context.Background(), path, slog.New(slog.NewTextHandler(io.Discard, nil)), extra...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,13 +41,13 @@ func emptyStore(t *testing.T) *Store {
 	return s
 }
 
-// The startup gate: an unmigrated schema names what is pending, a migrated
-// one passes.
+// The startup gate: an unmigrated database names what is pending, a
+// migrated one passes, and a second migrate applies nothing.
 func TestSchemaCurrent_FailsUntilMigrated(t *testing.T) {
 	s := emptyStore(t)
 	ctx := context.Background()
 	err := s.SchemaCurrent(ctx)
-	if err == nil || !strings.Contains(err.Error(), "0001_initial.sql") {
+	if err == nil || !strings.Contains(err.Error(), "0001_init.sql") {
 		t.Fatalf("unmigrated: err = %v, want the pending file named", err)
 	}
 	if err := s.Migrate(ctx); err != nil {
@@ -75,12 +56,31 @@ func TestSchemaCurrent_FailsUntilMigrated(t *testing.T) {
 	if err := s.SchemaCurrent(ctx); err != nil {
 		t.Fatalf("migrated: err = %v, want nil", err)
 	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	if err := s.Ping(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+}
+
+// A folder that does not exist is an error at open, naming the path.
+func TestOpen_MissingFolder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent", "almanach.db")
+	s, err := Open(context.Background(), path, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil {
+		s.Close()
+		t.Fatal("opened a database in a folder that does not exist")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("err = %v, want the path named", err)
+	}
 }
 
 // Fixtures shared by the store tests.
 
-// mergedBase is a merge time Postgres stores exactly (microseconds), so the
-// fixtures compare with Equal after a round-trip.
+// mergedBase is the fixtures' merge time; stored times keep every
+// nanosecond, so they compare with Equal after a round-trip.
 var mergedBase = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 
 // noteFor is a plain feature note of one PR; the body carries three items
@@ -170,7 +170,7 @@ func count(t *testing.T, s *Store, table, where string) int {
 		q += " WHERE " + where
 	}
 	var n int
-	if err := s.pool.QueryRow(context.Background(), q).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(context.Background(), q).Scan(&n); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return n

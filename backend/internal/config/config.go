@@ -87,7 +87,9 @@ const minBaselineCalls = 3
 
 // App is the whole configuration.
 type App struct {
-	DatabaseURL  string
+	// DBPath is the SQLite database file; its folder must exist and be
+	// writable (the file and its -wal, -shm beside it).
+	DBPath       string
 	TeamKeysPath string
 	Host         string
 	Port         int
@@ -108,7 +110,7 @@ type App struct {
 func Load(lookup func(string) string) (*App, error) {
 	r := kitenv.New(lookup)
 	app := &App{
-		DatabaseURL:     r.Required("DATABASE_URL"),
+		DBPath:          r.Required("ALMANACH_DB_PATH"),
 		TeamKeysPath:    r.Required("ALMANACH_TEAM_KEYS_PATH"),
 		Host:            r.String("SERVER_HOST", "0.0.0.0"),
 		Port:            r.Int("SERVER_PORT", 8080),

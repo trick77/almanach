@@ -12,7 +12,7 @@ func lookup(m map[string]string) func(string) string {
 
 func minimal() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":            "postgres://almanach:hunter2@db.internal:5432/almanach",
+		"ALMANACH_DB_PATH":        "/data/almanach.db",
 		"ALMANACH_TEAM_KEYS_PATH": "/run/secrets/team-keys.json",
 		"ALMANACH_MODEL":          "gpt-x",
 	}
@@ -23,7 +23,7 @@ func TestLoadRequiredMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load accepted an empty environment")
 	}
-	for _, name := range []string{"DATABASE_URL is required", "ALMANACH_TEAM_KEYS_PATH is required", "ALMANACH_MODEL is required"} {
+	for _, name := range []string{"ALMANACH_DB_PATH is required", "ALMANACH_TEAM_KEYS_PATH is required", "ALMANACH_MODEL is required"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error lacks %q:\n%v", name, err)
 		}
@@ -35,7 +35,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if app.DatabaseURL != minimal()["DATABASE_URL"] || app.TeamKeysPath != "/run/secrets/team-keys.json" || app.Model != "gpt-x" {
+	if app.DBPath != "/data/almanach.db" || app.TeamKeysPath != "/run/secrets/team-keys.json" || app.Model != "gpt-x" {
 		t.Errorf("required values = %+v", app)
 	}
 	if app.Host != "0.0.0.0" || app.Port != 8080 || app.AuthMode != AuthNone || app.ReasoningEffort != "" {
@@ -213,7 +213,7 @@ func TestSummaryHidesDSN(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	s := app.Summary()
-	for _, secret := range []string{"hunter2", "postgres://", "db.internal", "/run/secrets"} {
+	for _, secret := range []string{"/run/secrets"} {
 		if strings.Contains(s, secret) {
 			t.Errorf("Summary leaks %q: %s", secret, s)
 		}

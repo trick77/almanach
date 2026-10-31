@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -124,38 +125,47 @@ func startModel(ctx context.Context, log *slog.Logger, label, model, effort stri
 	return llm, true
 }
 
-// writableDir proves the base folder exists and takes a file: a volume
-// mounted read-only or owned by another user fails here, at startup, not at
-// the first clone.
-func writableDir(dir string) error {
-	info, err := os.Stat(dir)
+// writableDir proves the folder named by the variable env exists and takes
+// a file: a volume mounted read-only or owned by another user fails here,
+// at startup, not at the first clone or write.
+func writableDir(env, dir string) error {
+	info, err := os.Stat(dir) //nolint:gosec // the operator's configured folder, by design
 	if err != nil {
-		return fmt.Errorf("ALMANACH_REPOS_DIR: %w", err)
+		return fmt.Errorf("%s: %w", env, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("ALMANACH_REPOS_DIR: %s is not a directory", dir)
+		return fmt.Errorf("%s: %s is not a directory", env, dir)
 	}
 	probe, err := os.CreateTemp(dir, ".almanach-probe-*")
 	if err != nil {
-		return fmt.Errorf("ALMANACH_REPOS_DIR: not writable: %w", err)
+		return fmt.Errorf("%s: not writable: %w", env, err)
 	}
 	name := probe.Name()
 	_ = probe.Close()
-	return os.Remove(name)
+	return os.Remove(name) //nolint:gosec // the probe file just created there
+}
+
+// openDB opens the database file after proving its folder takes the file
+// and its -wal and -shm beside it.
+func openDB(ctx context.Context, path string, log *slog.Logger) (*store.Store, error) {
+	if err := writableDir("ALMANACH_DB_PATH", filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	return store.Open(ctx, path, log)
 }
 
 // migrate applies pending migrations and exits: the init container's job.
-// Only DATABASE_URL is needed.
+// Only ALMANACH_DB_PATH is needed.
 func migrate(log *slog.Logger) error {
 	if _, err := logging.ParseLevel(os.Getenv("LOG_LEVEL")); err != nil {
 		return fmt.Errorf("LOG_LEVEL: %w", err)
 	}
-	dsn := strings.TrimSpace(os.Getenv("DATABASE_URL"))
-	if dsn == "" {
-		return errors.New("environment variable DATABASE_URL is not set")
+	path := strings.TrimSpace(os.Getenv("ALMANACH_DB_PATH"))
+	if path == "" {
+		return errors.New("environment variable ALMANACH_DB_PATH is not set")
 	}
 	ctx := context.Background()
-	db, err := store.Open(ctx, dsn, log)
+	db, err := openDB(ctx, path, log)
 	if err != nil {
 		return err
 	}
@@ -183,7 +193,7 @@ func serve(log *slog.Logger) error {
 	// Every check runs before the abort so the log names all the failures
 	// at once rather than one per restart. serve never migrates.
 	var checks []string
-	db, err := store.Open(ctx, app.DatabaseURL, log)
+	db, err := openDB(ctx, app.DBPath, log)
 	if err == nil {
 		defer db.Close()
 		err = db.SchemaCurrent(ctx)
@@ -192,7 +202,7 @@ func serve(log *slog.Logger) error {
 		log.Error("Database: " + err.Error())
 		checks = append(checks, "Database")
 	} else {
-		log.Info("Database: OK")
+		log.Info("Database: OK", "path", app.DBPath)
 	}
 	keys, err := teamkeys.Load(app.TeamKeysPath)
 	if err != nil {
@@ -226,7 +236,7 @@ func serve(log *slog.Logger) error {
 		} else {
 			gitBin = b
 		}
-		if err := writableDir(app.Sources.ReposDir); err != nil {
+		if err := writableDir("ALMANACH_REPOS_DIR", app.Sources.ReposDir); err != nil {
 			faults = append(faults, err.Error())
 		}
 		if k, err := secret.Parse(app.Sources.SecretKey); err != nil {
@@ -250,12 +260,12 @@ func serve(log *slog.Logger) error {
 	// The worker runs on its own context, detached from the signal: the
 	// server stops first, then Stop lets the fold in flight finish (a paid
 	// call and its writes) and only past the grace cuts it off, before the
-	// pool closes under it.
+	// database closes under it.
 	worker := consolidate.New(db, llm, app.Limits, log)
 
 	// The poller too runs past the signal: the server drains first, then
 	// Stop cuts the clone in flight (the next cycle redoes it), before the
-	// pool closes. With the sources on, the worker also drains the
+	// database closes. With the sources on, the worker also drains the
 	// baseline runs, reading the clones through the poller's lock.
 	var sources *api.SourcesDeps
 	var poller *clone.Poller

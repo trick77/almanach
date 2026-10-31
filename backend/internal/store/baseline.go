@@ -2,12 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // The baseline runs: one repository documented at one commit, one model call
@@ -67,16 +65,22 @@ type BaselineRun struct {
 // Open reports whether the run is neither done nor failed.
 func (r BaselineRun) Open() bool { return r.State != RunDone && r.State != RunFailed }
 
-const runColumns = `id, project_key, slug, mode, trigger, base_commit, commit, state, step, steps, plan,
+// runColumns quotes "commit": a keyword in SQLite, a column name here.
+const runColumns = `id, project_key, slug, mode, trigger, base_commit, "commit", state, step, steps, plan,
 	attempts, calls, bytes, skipped, error, queued_at, started_at, finished_at`
+
+// scanner is *sql.Row and *sql.Rows.
+type scanner interface {
+	Scan(dest ...any) error
+}
 
 // scanRun reads runColumns, then extra destinations for whatever a query
 // selects after them.
-func scanRun(row pgx.Row, extra ...any) (BaselineRun, error) {
+func scanRun(row scanner, extra ...any) (BaselineRun, error) {
 	var r BaselineRun
 	var plan []byte
 	dest := append([]any{&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
-		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, &r.QueuedAt, &r.StartedAt, &r.FinishedAt}, extra...)
+		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, timeAt(&r.QueuedAt), timeOrNil(&r.StartedAt), timeOrNil(&r.FinishedAt)}, extra...)
 	err := row.Scan(dest...)
 	if len(plan) > 0 {
 		r.Plan = json.RawMessage(plan)
@@ -85,9 +89,9 @@ func scanRun(row pgx.Row, extra ...any) (BaselineRun, error) {
 }
 
 // oneRun is a single-row run query, ok false when there is none.
-func (s *Store) oneRun(ctx context.Context, sql string, args ...any) (BaselineRun, bool, error) {
-	r, err := scanRun(s.pool.QueryRow(ctx, sql, args...))
-	if errors.Is(err, pgx.ErrNoRows) {
+func (s *Store) oneRun(ctx context.Context, query string, args ...any) (BaselineRun, bool, error) {
+	r, err := scanRun(s.db.QueryRowContext(ctx, query, args...))
+	if errors.Is(err, sql.ErrNoRows) {
 		return BaselineRun{}, false, nil
 	}
 	if err != nil {
@@ -101,12 +105,11 @@ func (s *Store) oneRun(ctx context.Context, sql string, args ...any) (BaselineRu
 // is no source repository.
 func (s *Store) EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error) {
 	var id int64
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO baseline_runs (project_key, slug, mode, trigger, base_commit, commit, state)
-		VALUES ($1, $2, $3, $4, $5, $6, 'queued') RETURNING id`,
-		key, slug, mode, trigger, baseCommit, commit).Scan(&id)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO baseline_runs (project_key, slug, mode, trigger, base_commit, "commit", state, queued_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'queued', ?) RETURNING id`,
+		key, slug, mode, trigger, baseCommit, commit, nowStamp()).Scan(&id)
+	if isForeignKey(err) {
 		return 0, ErrNoRepo
 	}
 	return id, uniqueAsExists(err)
@@ -123,7 +126,7 @@ func (s *Store) NextRun(ctx context.Context) (BaselineRun, bool, error) {
 
 // RunByID is one run, ok false when it is gone (its repository removed).
 func (s *Store) RunByID(ctx context.Context, id int64) (BaselineRun, bool, error) {
-	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs WHERE id = $1`, id)
+	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs WHERE id = ?`, id)
 }
 
 // LastRun is a repository's newest run, open or not, and how many runs
@@ -131,15 +134,15 @@ func (s *Store) RunByID(ctx context.Context, id int64) (BaselineRun, bool, error
 // the automatic retries, read in the same query.
 func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, int, bool, error) {
 	var failed int
-	r, err := scanRun(s.pool.QueryRow(ctx, `
+	r, err := scanRun(s.db.QueryRowContext(ctx, `
 		SELECT `+runColumns+`,
 		       (SELECT COUNT(*) FROM baseline_runs f
 		         WHERE f.project_key = l.project_key AND f.slug = l.slug AND f.state = 'failed'
 		           AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
 		                                 WHERE d.project_key = l.project_key AND d.slug = l.slug AND d.state = 'done'), 0))
 		  FROM baseline_runs l
-		 WHERE l.project_key = $1 AND l.slug = $2 ORDER BY l.id DESC LIMIT 1`, key, slug), &failed)
-	if errors.Is(err, pgx.ErrNoRows) {
+		 WHERE l.project_key = ? AND l.slug = ? ORDER BY l.id DESC LIMIT 1`, key, slug), &failed)
+	if errors.Is(err, sql.ErrNoRows) {
 		return BaselineRun{}, 0, false, nil
 	}
 	if err != nil {
@@ -152,7 +155,7 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, int
 // the page was last read against.
 func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRun, bool, error) {
 	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs
-		WHERE project_key = $1 AND slug = $2 AND state = 'done' ORDER BY id DESC LIMIT 1`, key, slug)
+		WHERE project_key = ? AND slug = ? AND state = 'done' ORDER BY id DESC LIMIT 1`, key, slug)
 }
 
 // SaveRun writes a run's progress: the commit it pinned, its mode (a reconcile
@@ -161,27 +164,22 @@ func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRu
 // reports false when the run is done, failed or gone (its repository
 // removed), and writes nothing.
 func (s *Store) SaveRun(ctx context.Context, r BaselineRun) (bool, error) {
-	return saveRun(ctx, s.pool, r)
+	return saveRun(ctx, s.db, r)
 }
 
+// execer is *sql.DB and *sql.Tx.
 type execer interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
-	var plan any
-	if len(r.Plan) > 0 {
-		plan = []byte(r.Plan)
-	}
-	tag, err := db.Exec(ctx, `
-		UPDATE baseline_runs SET state = $2, step = $3, steps = $4, plan = $5, attempts = $6, calls = $7, bytes = $8,
-		       skipped = $9, error = $10, started_at = $11, finished_at = $12, commit = $13, mode = $14
-		 WHERE id = $1 AND state NOT IN ('done', 'failed')`,
-		r.ID, r.State, r.Step, r.Steps, plan, r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error, r.StartedAt, r.FinishedAt, r.Commit, r.Mode)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	n, err := affected(db.ExecContext(ctx, `
+		UPDATE baseline_runs SET state = ?, step = ?, steps = ?, plan = ?, attempts = ?, calls = ?, bytes = ?,
+		       skipped = ?, error = ?, started_at = ?, finished_at = ?, "commit" = ?, mode = ?
+		 WHERE id = ? AND state NOT IN ('done', 'failed')`,
+		r.State, r.Step, r.Steps, jsonOrNull(r.Plan), r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error,
+		stampOrNull(r.StartedAt), stampOrNull(r.FinishedAt), r.Commit, r.Mode, r.ID))
+	return n == 1, err
 }
 
 // ApplyBaselineStep writes a step's revision and the run's progress in one
@@ -189,20 +187,20 @@ func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 // after the restart. Returns the revision number; ok false, and nothing
 // written, when the run is over or gone.
 func (s *Store) ApplyBaselineStep(ctx context.Context, rev NewRevision, r BaselineRun) (int, bool, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, false, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	ok, err := saveRun(ctx, tx, r)
+	var n int
+	var ok bool
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		if ok, err = saveRun(ctx, tx, r); err != nil || !ok {
+			return err
+		}
+		n, err = insertRevision(ctx, tx, rev)
+		return err
+	})
 	if err != nil || !ok {
 		return 0, false, err
 	}
-	n, err := insertRevision(ctx, tx, rev)
-	if err != nil {
-		return 0, false, err
-	}
-	return n, true, tx.Commit(ctx)
+	return n, true, nil
 }
 
 // RepoRuns is what the source page shows of one repository's runs: the
@@ -218,23 +216,25 @@ type RepoRuns struct {
 // SourceRuns is RepoRuns for every repository of a source that has a run,
 // by slug.
 func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+runColumns+`,
 		       (SELECT SUM(c.cost_nano_usd) FROM llm_calls c WHERE c.baseline_run_id = l.id),
-		       d.doc_commit, d.doc_at
-		  FROM (SELECT DISTINCT ON (slug) * FROM baseline_runs WHERE project_key = $1 ORDER BY slug, id DESC) l
-		  LEFT JOIN LATERAL (SELECT commit AS doc_commit, finished_at AS doc_at FROM baseline_runs
-		                      WHERE project_key = l.project_key AND slug = l.slug AND state = 'done'
-		                      ORDER BY id DESC LIMIT 1) d ON true`, key)
+		       (SELECT d."commit" FROM baseline_runs d
+		         WHERE d.project_key = l.project_key AND d.slug = l.slug AND d.state = 'done' ORDER BY d.id DESC LIMIT 1),
+		       (SELECT d.finished_at FROM baseline_runs d
+		         WHERE d.project_key = l.project_key AND d.slug = l.slug AND d.state = 'done' ORDER BY d.id DESC LIMIT 1)
+		  FROM (SELECT `+runColumns+`, ROW_NUMBER() OVER (PARTITION BY slug ORDER BY id DESC) AS rn
+		          FROM baseline_runs WHERE project_key = ?) l
+		 WHERE l.rn = 1`, key)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]RepoRuns{}
 	for rows.Next() {
 		var rr RepoRuns
 		var documented *string
-		last, err := scanRun(rows, &rr.LastCost, &documented, &rr.DocumentedAt)
+		last, err := scanRun(rows, &rr.LastCost, &documented, timeOrNil(&rr.DocumentedAt))
 		if err != nil {
 			return nil, err
 		}

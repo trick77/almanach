@@ -2,8 +2,6 @@
 go:
   dir: backend
   coverpkg: ./internal/...
-# The store tests' Postgres: compose.yaml's image, the major the deployment runs.
-postgres: compose:postgres
 ui:
   # ship empties it but for .gitkeep before the build (vite's emptyOutDir is off).
   embed: backend/web/dist
