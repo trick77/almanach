@@ -46,10 +46,11 @@ required, a commented line is optional and shows its default.
 Over any cap the merge call's rewrite is rejected whole and the page stays
 as it was; the caps are the one lever against endless growth, and the
 prompt tells the model the numbers. A statement diagram over a node or
-edge cap, or one that breaks a rule (an arrow to an undeclared node),
-rejects the whole rewrite the same way; one past the page's count is left
-out, its statement kept. The system map never costs a rewrite: one that
-fails is not drawn and the stored one stays.
+edge cap, one that breaks a rule (an arrow to an undeclared node), or one
+past the page's count never costs a rewrite: it is left out and logged,
+its statement kept. The diagram the statement had stays while its name
+and text stay, and goes when they changed. The system map never costs a
+rewrite either: one that fails is not drawn and the stored one stays.
 
 ## Signing in
 

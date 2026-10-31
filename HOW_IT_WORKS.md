@@ -565,20 +565,22 @@ capped, the nodes and edges per diagram from config, within the drawing's
 own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule,
 or one added past the page's count (`ALMANACH_MAX_DIAGRAMS`), is left out
 and logged with its reason (once the rewrite passed its ceilings), on the
-merge and every baseline step alike: its statement is kept. A diagram it
-had stays beside an unchanged name and text and goes, logged, when they
-changed, never left picturing what is no longer said. On the merge and
-the project step a statement nothing else changed keeps its sources and
-last check; on a describe step a returned statement is checked against
-the commit read, like any it returns. One bad drawing never costs a
-part's text, and the reading goes on. With the count at 0 no schema
-offers a diagram. Code carries a statement's diagram by id like
-provenance: `diagram: null` keeps it, `{"kind": "none"}` removes it, a
-new one replaces it; the prompts show it as JSON to correct. A changed
-diagram is a changed statement (reordering is none), and only a new or
-changed one meets today's caps, so lowering a cap never freezes a page; a page over the count may keep it, not grow. Every
-project with no more source repositories than a map holds (15, room left
-for one more node) carries a system map, the project step's alone
+merge and every baseline step alike: its statement is kept. On the merge
+and the project step a statement nothing else changed keeps its sources
+and last check; on a describe step a returned statement is checked
+against the commit read, like any it returns. One bad drawing never
+costs a part's text, and the reading goes on. With the count at 0 no
+schema offers a diagram. Code carries a statement's diagram by id like
+provenance: `diagram: null` keeps it while the statement's name and text
+stay, `{"kind": "none"}` removes it, a new one replaces it, the stored
+one returned keeps it; the prompts show it as JSON to correct. Whenever
+no returned diagram is taken (null, or one left out), a stored diagram
+beside a changed name or text goes, logged: it would picture what is no
+longer said. A changed diagram is a changed statement (reordering is
+none), and only a new or changed one meets today's caps, so lowering a
+cap never freezes a page; a page over the count may keep it, not grow.
+Every project with no more source repositories than a map holds (15,
+room left for one more node) carries a system map, the project step's alone
 (`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
 a repository node named by a source repository's slug, an edge labelled
 by how the parts talk (HTTP, event, DB, library, file), held to the
@@ -611,14 +613,16 @@ note, with the step's attempt counted on the run; eight fail the run. A
 full run's catalogue that fails on its own fails the run: there is no plan
 to read. A part's call that fails on its own, or a patch the rules refuse,
 skips that part; a project step refused or unpaid is skipped too. A patch
-that takes the page over a ceiling is rejected whole, the page stays, and
-only that part is skipped: the parts after it are still read, so a full
-page keeps taking corrections and refuses only what would grow it. The
-calls (`ALMANACH_BASELINE_MAX_CALLS`) are checked before each call, and
-when they are spent the rest is skipped. The bytes
+that takes the page over a ceiling from free room is rejected whole, the
+page stays, and only that part is skipped: the parts after it are still
+read. A page already at a ceiling (a lowered one included) ends the
+reading before the next part's call, so no part pays for an answer the
+ceiling would refuse, on this run or any reconcile after it. The calls
+(`ALMANACH_BASELINE_MAX_CALLS`) are checked before each call, and when
+they are spent the rest is skipped. The bytes
 (`ALMANACH_BASELINE_MAX_BYTES`, the catalogue's docs and every part's
-files) are checked per part: a part
-over what is left is skipped, a smaller one after it may still be read. A
+files) are checked per part: a part over what is left is skipped, a
+smaller one after it may still be read. A
 run that ends with skipped parts is shown as partial and still records
 its commit; the next reconcile reads the skipped parts again, the docs and
 the project included. A clone the poller holds (a long

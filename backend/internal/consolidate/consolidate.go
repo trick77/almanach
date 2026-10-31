@@ -467,14 +467,13 @@ func kindSet(list []string) map[string]bool {
 // to baseline.CheckDiagram; one that breaks a rule, or one past the page's
 // count, is left out (its statement kept) and named in leftOut: one bad
 // diagram costs that diagram, never the statements of a whole part. A
-// stored diagram stays beside an unchanged name and text, and goes with
-// the stored picture when they changed, never left beside text it no
-// longer shows. A changed diagram is a changed statement, like changed
-// text. The commit a statement was last checked against stays while its
-// name, text and diagram do; a change voids it, the caller sets a new one
-// when it read the code. A kind the scope's page may not hold (any unknown
-// one, an extension on the project page) rejects the rewrite like an
-// invented id.
+// stored diagram stays beside an unchanged name and text and goes when
+// they changed unless returned again (statementDiagram), named in leftOut
+// too. A changed diagram is a changed statement, like changed text. The
+// commit a statement was last checked against stays while its name, text
+// and diagram do; a change voids it, the caller sets a new one when it read
+// the code. A kind the scope's page may not hold (any unknown one, an
+// extension on the project page) rejects the rewrite like an invented id.
 func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, leftOut diagramsLeftOut, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
@@ -487,7 +486,7 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 		if !kinds[scope][p.Kind] {
 			return nil, diagramsLeftOut{}, "statement kind " + p.Kind + " not on a " + scope + " page"
 		}
-		s := store.Statement{Kind: p.Kind, Name: lang.SwissSS(strings.TrimSpace(p.Name)), Text: lang.SwissSS(strings.TrimSpace(p.Text)), Files: cleanFiles(p.Files)}
+		s := cleanStatement(p)
 		if s.Name == "" || s.Text == "" {
 			return nil, diagramsLeftOut{}, "empty statement"
 		}
@@ -503,19 +502,12 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			seen[*p.ID] = true
 			old = &o
 		}
-		d, why := statementDiagram(p.Diagram, old, dl.caps)
+		d, stale, why := statementDiagram(p.Diagram, old, s, dl.caps)
 		if why != "" {
-			// Left out. The stored one stays beside an unchanged name and
-			// text, so the statement voids no check and gains no source;
-			// beside changed ones it would picture what is no longer said.
-			d = nil
-			switch {
-			case old != nil && old.Name == s.Name && old.Text == s.Text:
-				d = old.Diagram
-			case old != nil && old.Diagram != nil:
-				why += "; the stored one dropped with the changed text"
-			}
 			leftOut.invalid = append(leftOut.invalid, fmt.Sprintf("%q (%s)", s.Name, why))
+		}
+		if stale {
+			leftOut.stale = append(leftOut.stale, s.Name)
 		}
 		s.Diagram = d
 		out = append(out, s)
@@ -541,6 +533,12 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 	return out, leftOut, ""
 }
 
+// cleanStatement is a returned statement's kind, name, text and files as
+// attach stores them: trimmed, Swiss, empty paths dropped.
+func cleanStatement(p inference.Statement) store.Statement {
+	return store.Statement{Kind: p.Kind, Name: lang.SwissSS(strings.TrimSpace(p.Name)), Text: lang.SwissSS(strings.TrimSpace(p.Text)), Files: cleanFiles(p.Files)}
+}
+
 // diagramLimits is what a page's statement diagrams are held to: the caps
 // per diagram, and how many a page may hold.
 type diagramLimits struct {
@@ -552,19 +550,35 @@ func limitsOf(l config.Limits) diagramLimits {
 	return diagramLimits{caps: baseline.DiagramCaps{MaxNodes: l.DiagramMaxNodes, MaxEdges: l.DiagramMaxEdges}, max: l.MaxDiagrams}
 }
 
-// statementDiagram is the diagram a statement keeps. Carried by id in code,
-// like provenance: null keeps the stored one, {"kind": "none"} removes it,
-// a new one replaces it. Only a new or changed diagram is held to the caps
-// of today: one stored under higher caps stays as it is, or lowering a cap
-// would freeze every page that has one.
-func statementDiagram(proposed *diagram.Diagram, old *store.Statement, caps baseline.DiagramCaps) (*diagram.Diagram, string) {
+// statementDiagram is the diagram a statement keeps, s its new name and
+// text. Carried by id in code, like provenance: null keeps the stored one
+// while the name and text stay, {"kind": "none"} removes it, a new one
+// replaces it, the stored one returned keeps it. Whenever no diagram the
+// model returned is taken, null or one that breaks a rule, a stored one
+// beside a changed name or text goes (stale): it would picture what is no
+// longer said. Only a new or changed diagram is held to the caps of today:
+// one stored under higher caps stays as it is, or lowering a cap would
+// freeze every page that has one. why is the rule a returned one broke.
+func statementDiagram(proposed *diagram.Diagram, old *store.Statement, s store.Statement, caps baseline.DiagramCaps) (d *diagram.Diagram, stale bool, why string) {
 	if proposed != nil && proposed.Kind == diagram.KindNone {
-		return nil, ""
+		return nil, false, ""
 	}
-	if old != nil && (proposed == nil || diagram.Equal(proposed, old.Diagram)) {
-		return old.Diagram, ""
+	if old != nil && proposed != nil && diagram.Equal(proposed, old.Diagram) {
+		return old.Diagram, false, ""
 	}
-	return baseline.CheckDiagram(proposed, caps)
+	if proposed != nil {
+		if d, why = baseline.CheckDiagram(proposed, caps); why == "" {
+			return d, false, ""
+		}
+	}
+	// No returned diagram taken: the stored one, while it still fits.
+	if old == nil || old.Diagram == nil {
+		return nil, false, why
+	}
+	if old.Name == s.Name && old.Text == s.Text {
+		return old.Diagram, false, why
+	}
+	return nil, true, why
 }
 
 // stripOverCount holds the page to allowed diagrams (the cap, or the
@@ -589,10 +603,11 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 	return stripped
 }
 
-// diagramsLeftOut is the statements attach left a new diagram out of: by
-// name past the page's count, by name and reason for breaking a rule.
+// diagramsLeftOut is the statements attach left a diagram out of: by name
+// past the page's count, by name and reason for breaking a rule, and by
+// name the stored diagrams gone stale beside a changed name or text.
 type diagramsLeftOut struct {
-	overCount, invalid []string
+	overCount, invalid, stale []string
 }
 
 // logLeftOut says which statements lost a diagram, and why. Called once
@@ -600,6 +615,9 @@ type diagramsLeftOut struct {
 func logLeftOut(ctx context.Context, log *slog.Logger, at string, s diagramsLeftOut) {
 	if len(s.invalid) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: diagram breaking a rule left out: %s", at, strings.Join(s.invalid, ", ")))
+	}
+	if len(s.stale) > 0 {
+		log.InfoContext(ctx, fmt.Sprintf("%s: stored diagram dropped with a changed name or text: %s", at, strings.Join(s.stale, ", ")))
 	}
 	if len(s.overCount) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: diagram over the page's count left out: %s", at, strings.Join(s.overCount, ", ")))
@@ -765,8 +783,9 @@ func diagramChange(l config.Limits) string {
 // an id the page does not have is invented and rejects the rewrite. The
 // schema keeps new statements in `added`, where no id can be written.
 const (
-	noneYet         = "_None yet: every statement you write is new and goes in `added`; `statements` stays empty._"
-	noStatementsYet = "\n_No statements yet: every statement you write is new and goes in `added`; `statements` stays empty._\n"
+	allNew          = "every statement you write is new and goes in `added`; `statements` stays empty"
+	noneYet         = "_None yet: " + allNew + "._"
+	noStatementsYet = "\n_No statements yet: " + allNew + "._\n"
 )
 
 // describe renders a page the prompt writes: the summary, then one line per
@@ -817,18 +836,20 @@ func describePage(p store.Page, v pageView) string {
 			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
 		}
 		b.WriteString(diagramLine(s.Diagram))
-		var prs []string
-		for _, src := range s.Sources {
-			if !src.IsBaseline() {
-				prs = append(prs, src.PRKey)
+		if v.prs != prNone {
+			var prs []string
+			for _, src := range s.Sources {
+				if !src.IsBaseline() {
+					prs = append(prs, src.PRKey)
+				}
 			}
-		}
-		switch {
-		case len(prs) == 0 || v.prs == prNone:
-		case v.prs == prKeys:
-			fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
-		default:
-			b.WriteString("\nLearned from pull requests.\n")
+			switch {
+			case len(prs) == 0:
+			case v.prs == prKeys:
+				fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
+			default:
+				b.WriteString("\nLearned from pull requests.\n")
+			}
 		}
 		b.WriteString(leftAloneNote(v.newer[s.ID]))
 	}
