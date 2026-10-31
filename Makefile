@@ -81,6 +81,17 @@ EVAL_PROMPT ?=
 # sh's "." looks a bare name up on PATH only. No spaces in them.
 evalpath = $(if $(1),$(abspath $(patsubst ~/%,$(HOME)/%,$(1))))
 
+# The pages an eval wrote (EVAL_OUT/*.json) loaded into EVAL_DB, a new
+# SQLite file, for the UI: serve it as ALMANACH_DB_PATH with
+# ALMANACH_REPOS_DIR set. No model call, no key.
+EVAL_DB ?=
+
+.PHONY: prompt-eval-db
+prompt-eval-db:
+	@test -n "$(EVAL_DB)" || { echo "EVAL_DB=<new .db file> required"; exit 1; }
+	cd backend && EVAL_REPOS="$(EVAL_REPOS)" EVAL_OUT="$(call evalpath,$(EVAL_OUT))" EVAL_DB="$(call evalpath,$(EVAL_DB))" \
+		go test -run '^TestEvalLoad$$' -count=1 -v ./internal/consolidate/
+
 .PHONY: prompt-eval
 prompt-eval:
 	@test -n "$(EVAL_ENV)" || { echo "EVAL_ENV=<file exporting EVAL_API_KEY> required"; exit 1; }

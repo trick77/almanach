@@ -199,10 +199,22 @@ func TestCheckMap(t *testing.T) {
 	if out, reason := CheckMap(untitled, slugs, caps); reason != "" || out.Zones[0].Title != "" {
 		t.Errorf("untitled zone: %+v, reason %q", out, reason)
 	}
-	unlabelled := mapOf(node("api", ir.ZoneRepositories))
-	unlabelled.Nodes[0].Label = ""
+	unlabelled := mapOf(node("api", ir.ZoneRepositories), node("pg", ir.ZoneStores))
+	unlabelled.Nodes[1].Label = ""
 	if _, reason := CheckMap(unlabelled, slugs, caps); !strings.Contains(reason, "empty label") {
 		t.Errorf("unlabelled node: reason %q", reason)
+	}
+	// A repository node is labelled by its slug, whatever was written, but
+	// for a slug longer than a label; the map handed in stays as it was.
+	long := strings.Repeat("r", labelMaxChars+1)
+	renamed := mapOf(node("api", ir.ZoneRepositories), node(long, ir.ZoneRepositories), node("pg", ir.ZoneStores))
+	renamed.Nodes[0].Label, renamed.Nodes[1].Label, renamed.Nodes[2].Label = "die API", "lang", "Datenbank"
+	out = LabelRepos(renamed)
+	if out.Nodes[0].Label != "api" || out.Nodes[1].Label != "lang" || out.Nodes[2].Label != "Datenbank" || renamed.Nodes[0].Label != "die API" {
+		t.Errorf("labelled = %+v, input %+v", out.Nodes, renamed.Nodes)
+	}
+	if LabelRepos(nil) != nil {
+		t.Error("LabelRepos(nil) is a map")
 	}
 	withEdge := func(d *ir.Diagram, e ir.Edge) *ir.Diagram { d.Edges = append(d.Edges, e); return d }
 	cases := map[string]struct {

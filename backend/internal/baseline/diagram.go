@@ -115,6 +115,25 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 	return checkFlow(d, caps)
 }
 
+// LabelRepos labels each repository node of a proposed map by its id, the
+// slug, whatever the model wrote ("rongos Zwischenform" once): the reader
+// finds the repository by it. A slug longer than a label may be keeps the
+// model's label. A copy; nil stays nil. Only a new map: a stored one is
+// carried as drawn, so no revision is written for a label alone.
+func LabelRepos(d *ir.Diagram) *ir.Diagram {
+	if d == nil {
+		return nil
+	}
+	out := *d
+	out.Nodes = slices.Clone(d.Nodes)
+	for i, n := range out.Nodes {
+		if n.Zone == ir.ZoneRepositories && utf8.RuneCountInString(n.ID) <= labelMaxChars {
+			out.Nodes[i].Label = n.ID
+		}
+	}
+	return &out
+}
+
 // DropDeparted takes out of a map the repository nodes whose slug is no
 // source repository of the project any more, with their edges, and names
 // them: a repository removed since the map was drawn is history, not an

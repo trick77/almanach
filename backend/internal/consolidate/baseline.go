@@ -1183,17 +1183,65 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 
 // projectRevision is the project description a run's last step returned,
 // held to the same rules as a note's fold of it; nil when it is refused or
-// identical, the map included. The map never sinks the description: see
-// revisionMap. slugs are the project's source repositories.
+// identical, the map included. Its statements are a patch, as a subject
+// step's: edits by id, a statement not named kept, removals in drop, so an
+// answer that names none no longer empties the page (an eval's second
+// repository wiped the first one's eleven so). The project has no one tree,
+// so no file decides a drop: a PR-taught statement is never dropped here
+// (a note's fold, which carries what the PR taught, may rewrite it), its
+// drop left out and logged; an edit may change any statement's files.
+// When only the new statements take the page over a ceiling, they are left
+// out and the rest stands, so a full page still gets its summary, map,
+// edits and drops. The map never sinks the description: see revisionMap.
+// slugs are the project's source repositories.
 func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
-	statements, leftOut, reason := attachDescription(store.ScopeProject, page.Statements, d, runSource(*r, plan), next, limitsOf(w.limits))
+	taught := map[string]bool{}
+	for _, s := range page.Statements {
+		taught[s.ID] = baseline.FromPR(s)
+	}
+	var drop, kept, unknown []string
+	for _, id := range d.Drop {
+		pr, on := taught[id]
+		switch {
+		case !on:
+			unknown = append(unknown, id)
+		case pr:
+			kept = append(kept, id)
+		default:
+			drop = append(drop, id)
+		}
+	}
+	if len(unknown) > 0 {
+		w.log.WarnContext(ctx, "baseline: "+projectName+": unknown ids left out", slog.Any("ids", unknown))
+	}
+	if len(kept) > 0 {
+		w.log.WarnContext(ctx, "baseline: "+projectName+": drop of statements a pull request taught left out", slog.Any("ids", kept))
+	}
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
-	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
+	fold := func(added []inference.Statement) ([]store.Statement, diagramsLeftOut, int, string, string) {
+		applied, reason := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: added, Drop: drop}, noTree)
+		if reason != "" {
+			return nil, diagramsLeftOut{}, 0, reason, ""
+		}
+		statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits))
+		if reason != "" {
+			return nil, diagramsLeftOut{}, 0, reason, ""
+		}
+		chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
+		return statements, leftOut, chars, "", capReason
+	}
+	statements, leftOut, chars, reason, capReason := fold(d.Added)
+	if reason == "" && capReason != "" && len(d.Added) > 0 {
+		if s, l, c, re, ca := fold(nil); re == "" && ca == "" {
+			w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(d.Added), "new statement"), capReason))
+			statements, leftOut, chars, capReason = s, l, c, ""
+		}
+	}
 	if reason == "" {
 		reason = capReason
 	}
@@ -1230,13 +1278,16 @@ func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *dia
 		w.log.WarnContext(ctx, at+": none returned, the stored one kept")
 		return w.carriedMap(ctx, page, slugs)
 	}
-	drawn, why := baseline.CheckMap(w.withoutDeparted(ctx, proposed, slugs), slugs, baseline.DrawCaps)
+	drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, proposed, slugs)), slugs, baseline.DrawCaps)
 	if why != "" {
 		w.log.WarnContext(ctx, at+" refused ("+why+"), the stored one kept")
 		return w.carriedMap(ctx, page, slugs)
 	}
 	return drawn
 }
+
+// noTree is the project's file check: no path pins a project statement.
+func noTree(string) bool { return false }
 
 // carriedMap is the stored map as a revision carries it on: its departed
 // repositories taken out, so a carried map never names a repository that

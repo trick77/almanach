@@ -2,6 +2,7 @@ package consolidate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -193,11 +194,8 @@ func TestPromptEval(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := evalStore{&runStore{fakeStore: newFakeStore(), sources: map[string]bool{}}}
-	for _, pair := range strings.Split(repos, ",") {
-		slug, url, ok := strings.Cut(pair, "=")
-		if !ok {
-			t.Fatalf("EVAL_REPOS entry %q: want slug=url", pair)
-		}
+	for _, repo := range evalRepos(t, repos) {
+		slug, url := repo[0], repo[1]
 		dir := filepath.Join(root, evalProject, slug)
 		if b, err := exec.CommandContext(ctx, gitBin, "clone", "--bare", "--quiet", url, dir).CombinedOutput(); err != nil {
 			t.Fatalf("clone %s: %v\n%s", url, err, b)
@@ -286,6 +284,21 @@ func TestPromptEval(t *testing.T) {
 	dump(t, out, "_project", project)
 }
 
+// evalRepos is EVAL_REPOS as slug, url pairs in order; a malformed entry
+// fails the test.
+func evalRepos(t *testing.T, list string) [][2]string {
+	t.Helper()
+	var out [][2]string
+	for _, pair := range strings.Split(list, ",") {
+		slug, url, ok := strings.Cut(pair, "=")
+		if !ok || slug == "" || url == "" {
+			t.Fatalf("EVAL_REPOS entry %q: want slug=url", pair)
+		}
+		out = append(out, [2]string{slug, url})
+	}
+	return out
+}
+
 // checkPage holds a repository page to the structure a reader relies on:
 // a summary, statements of a known kind, each with text and files in the
 // tree.
@@ -325,4 +338,97 @@ func dump(t *testing.T, dir, name string, p store.Page) {
 	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The page as stored, for TestEvalLoad.
+	j, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".json"), j, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEvalLoad loads the pages an eval of EVAL_REPOS wrote (EVAL_OUT, one
+// <slug>.json each and _project.json) into EVAL_DB, a new SQLite file the
+// app serves as ALMANACH_DB_PATH with ALMANACH_REPOS_DIR set: project EVAL
+// as a static source, each repository on it ready, each page one baseline
+// revision. Only EVAL_REPOS' pages, so another run's left in EVAL_OUT never
+// joins in; a missing one fails, and a failed load leaves no file behind.
+// The pages and their diagrams are then read in the UI, as a reader sees
+// them. No model call: `make prompt-eval-db`.
+func TestEvalLoad(t *testing.T) {
+	out, path := os.Getenv("EVAL_OUT"), os.Getenv("EVAL_DB")
+	if out == "" || path == "" {
+		t.Skip("EVAL_OUT and EVAL_DB unset: make prompt-eval-db")
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("%s exists: EVAL_DB names a new file", path)
+	}
+	read := func(name string) store.Page {
+		b, err := os.ReadFile(filepath.Join(out, name+".json"))
+		if err != nil {
+			t.Fatalf("%v: run make prompt-eval for these EVAL_REPOS first", err)
+		}
+		var p store.Page
+		if err := json.Unmarshal(b, &p); err != nil {
+			t.Fatalf("%s.json: %v", name, err)
+		}
+		return p
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, path, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		st.Close()
+		if t.Failed() {
+			for _, f := range []string{path, path + "-wal", path + "-shm", path + "-migrate.lock"} {
+				_ = os.Remove(f)
+			}
+		}
+	})
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSource(ctx, store.ProjectSource{ProjectKey: evalProject, Kind: store.SourceStatic, TokenAuth: store.TokenBasic}); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(name string, rev store.NewRevision, p store.Page) {
+		rev.ProjectKey, rev.Summary, rev.Statements = evalProject, p.Summary, p.Statements
+		rev.Chars, rev.SourceKind, rev.SourceCommit = prose(p.Summary, p.Statements), store.FromBaseline, evalCommit(p)
+		if _, err := st.InsertRevision(ctx, rev); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		t.Logf("%s: %d statements", name, len(p.Statements))
+	}
+	for _, repo := range evalRepos(t, os.Getenv("EVAL_REPOS")) {
+		slug, url := repo[0], repo[1]
+		p := read(slug)
+		if err := st.AddSourceRepo(ctx, store.SourceRepo{ProjectKey: evalProject, Slug: slug, CloneURL: url, Origin: store.OriginManual}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.MarkRepoReady(ctx, evalProject, slug, "", evalCommit(p)); err != nil {
+			t.Fatal(err)
+		}
+		insert(slug, store.NewRevision{Scope: store.ScopeRepository, RepoSlug: slug}, p)
+	}
+	p := read("_project")
+	insert("_project", store.NewRevision{Scope: store.ScopeProject, Map: p.Map}, p)
+}
+
+// evalCommit is the commit a dumped page was read at, from its statements'
+// baseline sources; "eval" when none names one.
+func evalCommit(p store.Page) string {
+	if p.SourceCommit != "" {
+		return p.SourceCommit
+	}
+	for _, s := range p.Statements {
+		for _, src := range s.Sources {
+			if src.IsBaseline() && src.Commit != "" {
+				return src.Commit
+			}
+		}
+	}
+	return "eval"
 }

@@ -149,6 +149,7 @@ make check     # everything CI runs; the store tests use a temporary file
 make lint      # quick lint while editing
 make build     # bin/almanach
 make prompt-eval EVAL_ENV=<file>   # full baselines through a real model, paid
+make prompt-eval-db EVAL_DB=<file> # its pages into a new SQLite file, for the UI
 ```
 
 The Go module lives in `backend/`. Releases are built on GitHub only:

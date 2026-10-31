@@ -230,13 +230,16 @@ type Statement struct {
 	Diagram *diagram.Diagram `json:"diagram"`
 }
 
-// Description is one rewritten description. Map is the project step's
-// system map; the merge never returns one.
+// Description is one rewritten description. Map and Drop are the project
+// step's, which the merge never returns.
 type Description struct {
 	Summary string `json:"summary"`
-	// Statements is every statement kept, by id; Added the new ones.
+	// Statements is, on the merge, every statement kept, by id; on the
+	// project step only the edits, a statement not named kept. Added is
+	// the new ones; Drop the project step's removals by id.
 	Statements []Statement      `json:"statements"`
 	Added      []Statement      `json:"added"`
+	Drop       []string         `json:"drop,omitempty"`
 	Map        *diagram.Diagram `json:"map,omitempty"`
 }
 
@@ -456,12 +459,14 @@ func statementProps(diagrams bool, kinds []string) map[string]any {
 }
 
 // projectDescription is the project step's description: the merge's shape
-// plus the system map, null only for a project too large to draw.
+// plus `drop` and the system map (null only for a project too large to
+// draw). Its statements are a patch's edits: one not named stays.
 func projectDescription(diagrams bool) map[string]any {
 	return nullable(object(map[string]any{
 		"summary":    map[string]any{"type": "string", "minLength": 1},
 		"statements": statements(diagrams, ProjectKinds),
 		"added":      added(diagrams, ProjectKinds),
+		"drop":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"map":        nullable(mapSchema()),
 	}))
 }

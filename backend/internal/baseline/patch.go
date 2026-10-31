@@ -51,7 +51,7 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		if _, twice := edits[id]; twice {
 			return Applied{}, "statement id used twice " + id
 		}
-		if old := byID[id]; fromPR(old) {
+		if old := byID[id]; FromPR(old) {
 			if lost := shed(old.Files, st.Files, exists); lost != "" {
 				return Applied{}, "edit of " + id + ", which a pull request taught, drops its file " + lost + " the tree still has"
 			}
@@ -68,7 +68,7 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		if _, edited := edits[id]; edited {
 			return Applied{}, "statement " + id + " both edited and dropped"
 		}
-		if fromPR(s) && !gone(s.Files, exists) {
+		if FromPR(s) && !gone(s.Files, exists) {
 			return Applied{}, "drop of " + id + ", which a pull request taught and whose files still exist"
 		}
 		dropped[id] = true
@@ -110,8 +110,8 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 	return out, ""
 }
 
-// fromPR reports whether a pull request is among a statement's sources.
-func fromPR(s store.Statement) bool {
+// FromPR reports whether a pull request is among a statement's sources.
+func FromPR(s store.Statement) bool {
 	for _, src := range s.Sources {
 		if !src.IsBaseline() {
 			return true
