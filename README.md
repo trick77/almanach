@@ -57,10 +57,6 @@ ceiling is refused, never truncated. A JSON API serves all of it
 compiled into the binary, shows it. The wiki is read-only; the sources
 are the one thing the UI configures.
 
-In the works: a system map on every project page and diagrams where a
-picture says more than a paragraph, a login of its own (OIDC), and a
-compose stack behind Traefik.
-
 ## How it is built
 
 One Go process and one SQLite database file on its own volume. The
@@ -78,14 +74,21 @@ reasons: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Every knob:
 ## Running it
 
 Almanach needs an OpenAI-compatible gateway (a LiteLLM proxy) for the
-model; its database is a file it keeps itself.
+model; its database is a file it keeps itself. `compose.yaml` is the
+production stack; for local work `compose.dev.yaml` goes on top: port
+8081, no sign-in, no Traefik.
 
 ```sh
 cp .env.example .env            # fill in the gateway and the model; for private
                                 # repositories ALMANACH_SECRET_KEY (openssl rand -base64 32)
-cp team-keys.example.json team-keys.json
-docker compose up --build       # migrate, then almanach on :8081
+cp conf/team-keys.example.json conf/team-keys.json
+docker compose -f compose.yaml -f compose.dev.yaml up --build   # migrate, then almanach on :8081
 ```
+
+The copied `.env` is needed even locally: `compose.yaml` checks
+`PUBLIC_FQDN` and the OIDC lines before the override applies, and the
+example's placeholders pass; the override blanks the OIDC lines and runs
+`ALMANACH_AUTH_MODE=none`.
 
 The database lives on the `data` volume (`/data/almanach.db`), the clones
 on the `repos` volume: two volumes, the database alone on its own. A
@@ -102,7 +105,7 @@ curl http://localhost:8081/api/projects
 curl http://localhost:8081/api/projects/<KEY>/repos/<slug>
 ```
 
-For noergler's notes: one token per team in `team-keys.json`, the same
+For noergler's notes: one token per team in `conf/team-keys.json`, the same
 token in that team's `almanach:` block in noergler's `teams.yaml`.
 noergler checks it at startup:
 
@@ -111,12 +114,22 @@ curl -H "Authorization: Bearer <token>" http://localhost:8081/auth/ping
 # {"status":"ok","team":"platform"}
 ```
 
-The read API, the UI and the source writes are open as this compose runs
-them (`ALMANACH_AUTH_MODE=none`): keep it off any network others reach.
-In production Almanach signs readers in itself over OIDC
-(`ALMANACH_AUTH_MODE=oidc`) at your identity provider, behind a
-TLS-terminating reverse proxy; the webhook and the ping stay bearer only.
-See `ALMANACH_AUTH_MODE` in [CONFIGURATION.md](CONFIGURATION.md).
+The read API, the UI and the source writes are open as the dev override
+runs them (`ALMANACH_AUTH_MODE=none`): keep it off any network others
+reach.
+
+In production, `docker compose up -d --build` with `compose.yaml` alone:
+no host port, the only way in is a Traefik router on the external
+`traefik` network (entrypoint `websecure`, TLS) for `PUBLIC_FQDN`.
+Almanach signs readers in itself over OIDC at your identity provider;
+`ALMANACH_AUTH_MODE=oidc` is fixed in the file, so `.env` cannot turn it
+off. `.env` carries `PUBLIC_FQDN`, the OIDC block (issuer, client id and
+secret, redirect URL `https://<PUBLIC_FQDN>/api/auth/callback`) and
+`ALMANACH_SESSION_SECRET`. A missing hostname, issuer, client id or
+redirect URL stops `up` with its name; a missing secret stops `serve`.
+The webhook and the ping stay bearer only. The first-run steps
+are at the top of `compose.yaml`; see `ALMANACH_AUTH_MODE` in
+[CONFIGURATION.md](CONFIGURATION.md).
 
 ## Development
 

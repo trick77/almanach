@@ -1,0 +1,30 @@
+# Local work, on top of compose.yaml:
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up --build
+#
+# Almanach on http://localhost:8081, no sign-in, no Traefik. Still needs .env
+# copied from .env.example: compose.yaml checks PUBLIC_FQDN and the OIDC
+# lines before any override applies, and the example's placeholders pass.
+# Never on a network others reach: the read API, the UI and the source
+# writes are open.
+services:
+  almanach:
+    ports:
+      - "8081:8080"
+    environment:
+      ALMANACH_AUTH_MODE: none
+      # Blank, so an .env filled in for oidc still starts here: serve refuses
+      # every oidc variable under none, and blank counts as unset. Over
+      # env_file too: environment wins.
+      ALMANACH_OIDC_ISSUER: ""
+      ALMANACH_OIDC_CLIENT_ID: ""
+      ALMANACH_OIDC_CLIENT_SECRET: ""
+      ALMANACH_OIDC_REDIRECT_URL: ""
+      ALMANACH_SESSION_SECRET: ""
+    # No router, no traefik network: the dev stack needs no Traefik running.
+    labels: !reset {}
+    networks: !override
+      - default
+
+networks:
+  traefik: !reset {}

@@ -10,7 +10,7 @@ required, a commented line is optional and shows its default.
 | Variable | Meaning |
 | --- | --- |
 | `ALMANACH_DB_PATH` | The SQLite database file, e.g. `/data/almanach.db`; created on first open if missing. Its folder must exist and be writable (the file's `-wal` and `-shm` land beside it), checked at startup by `serve` and `migrate` alike. A local disk on its own volume, never a shared filesystem: WAL needs the locks of one host. `migrate` needs nothing else. |
-| `ALMANACH_TEAM_KEYS_PATH` | Path of the team-keys file: JSON `{"<team>": "<token>"}`, one token per team. The token is the team's identity; the same value goes into the team's `almanach:` block in noergler. Re-read when the file's modification time changes, so a new team needs no restart; a malformed file keeps the last good table and logs. Two teams sharing a token, or an empty entry, is a startup fault. Never committed. |
+| `ALMANACH_TEAM_KEYS_PATH` | Path of the team-keys file: JSON `{"<team>": "<token>"}`, one token per team. The token is the team's identity; the same value goes into the team's `almanach:` block in noergler. Re-read when the file's modification time changes, so a new team needs no restart; a malformed file keeps the last good table and logs. Two teams sharing a token, or an empty entry, is a startup fault. Never committed. compose mounts the folder `./conf` read-only at `/conf` and sets `/conf/team-keys.json` (`cp conf/team-keys.example.json conf/team-keys.json`): a folder, because Docker turns a missing bind-mounted file into a directory. |
 | `LLMWIRE_LITELLM_BASE_URL` | Host of the OpenAI-compatible gateway. Read by llmwire. |
 | `LLMWIRE_LITELLM_API_KEY` | The gateway key. Read by llmwire. |
 | `LLMWIRE_LITELLM_MODELS` | `<profile>=<alias>,...`: which llmwire profiles the gateway serves, under which alias. |
@@ -23,7 +23,7 @@ required, a commented line is optional and shows its default.
 | `ALMANACH_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts; anything else is a startup fault. |
 | `SERVER_HOST` | `0.0.0.0` | Listen address. |
 | `SERVER_PORT` | `8080` | Listen port. |
-| `ALMANACH_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `SERVER_HOST`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. |
+| `ALMANACH_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `SERVER_HOST`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. `compose.yaml` fixes `oidc`, `compose.dev.yaml` `none`; `.env` sets neither. |
 | `ALMANACH_REPO_MAX_STATEMENTS` | `40` | Statements a repository description may hold. |
 | `ALMANACH_PROJECT_MAX_STATEMENTS` | `24` | Statements a project description may hold. |
 | `ALMANACH_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
@@ -89,6 +89,27 @@ host (or, in oidc mode, the redirect URL's origin); anything else is a
 none mode a client like curl still writes. Who may sign in at all is
 the provider's policy. `/webhooks/noergler`, `/auth/ping`, `/healthz`,
 `/readyz` and the UI shell are outside the sign-in.
+
+## Compose
+
+`compose.yaml` is the production stack: no host port, a Traefik router on
+the external `traefik` network, `oidc` fixed. It reads `.env` whole
+(`env_file`, optional), then sets what must not come from there: the
+database, keys and clone paths, the listener, `HOME` and `TMPDIR` for git
+on the read-only root filesystem, and the mode. `compose.dev.yaml` on top
+publishes port 8081, sets `none`, blanks the OIDC lines and drops the
+router and the network. Compose checks these before any override applies,
+so the dev stack needs them in `.env` too, where the example's
+placeholders pass:
+
+| Variable | Meaning |
+| --- | --- |
+| `PUBLIC_FQDN` | The hostname Traefik routes Almanach on. Read by compose only. |
+| `ALMANACH_OIDC_ISSUER`, `ALMANACH_OIDC_CLIENT_ID`, `ALMANACH_OIDC_REDIRECT_URL` | As in [Signing in](#signing-in). The client secret and `ALMANACH_SESSION_SECRET` reach the container through `.env` alone, unchecked by compose; `serve` refuses to start without them. |
+
+The stop grace is 11 minutes: the worker waits up to the call timeout
+plus 15 s for a paid call in flight before it cuts it off, and Docker's
+default 10 s would kill it.
 
 ## Commands
 
