@@ -524,10 +524,10 @@ func (w *Worker) asNew(ctx context.Context, where string, current []store.Statem
 // attachDescription is attach over a whole description's edits and new
 // statements; an edit without an id rejects it like an invented one (on a
 // page without statements asNew has made every edit new before).
-func attachDescription(scope string, current []store.Statement, d *inference.Description, src store.Source, next int, dl diagramLimits) ([]store.Statement, diagramsLeftOut, string) {
+func attachDescription(scope string, current []store.Statement, d *inference.Description, src store.Source, next int, dl diagramLimits) ([]store.Statement, leftOutParts, string) {
 	proposed, reason := d.Proposed()
 	if reason != "" {
-		return nil, diagramsLeftOut{}, reason
+		return nil, leftOutParts{}, reason
 	}
 	return attach(scope, current, proposed, src, next, dl)
 }
@@ -548,7 +548,7 @@ func attachDescription(scope string, current []store.Statement, d *inference.Des
 // and diagram do; a change voids it, the caller sets a new one when it read
 // the code. A kind the scope's page may not hold (any unknown one, an
 // extension on the project page) rejects the rewrite like an invented id.
-func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, leftOut diagramsLeftOut, reason string) {
+func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, leftOut leftOutParts, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
@@ -558,23 +558,34 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 	seen := map[string]bool{}
 	for _, p := range proposed {
 		if !kinds[scope][p.Kind] {
-			return nil, diagramsLeftOut{}, "statement kind " + p.Kind + " not on a " + scope + " page"
+			return nil, leftOutParts{}, "statement kind " + p.Kind + " not on a " + scope + " page"
 		}
 		s := cleanStatement(p)
 		if s.Name == "" || s.Text == "" {
-			return nil, diagramsLeftOut{}, "empty statement"
+			return nil, leftOutParts{}, "empty statement"
 		}
 		var old *store.Statement
 		if p.ID != nil && *p.ID != "" {
 			o, ok := byID[*p.ID]
 			if !ok {
-				return nil, diagramsLeftOut{}, "unknown statement id " + *p.ID
+				return nil, leftOutParts{}, "unknown statement id " + *p.ID
 			}
 			if seen[*p.ID] {
-				return nil, diagramsLeftOut{}, "statement id used twice " + *p.ID
+				return nil, leftOutParts{}, "statement id used twice " + *p.ID
 			}
 			seen[*p.ID] = true
 			old = &o
+		}
+		// One statement over a field cap costs that statement, never the
+		// rewrite (user, 2026-10-31: an eval lost seven parts so): a new one
+		// is left out, an edit leaves the statement as stored.
+		if why := fieldCap(s); why != "" {
+			leftOut.overCap = append(leftOut.overCap, fmt.Sprintf("%q (%s)", s.Name, why))
+			if old != nil {
+				out = append(out, *old)
+				olds = append(olds, old)
+			}
+			continue
 		}
 		d, stale, why := statementDiagram(p.Diagram, old, s, dl.caps)
 		if why != "" {
@@ -679,16 +690,22 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 	return stripped
 }
 
-// diagramsLeftOut is the statements attach left a diagram out of: by name
-// past the page's count, by name and reason for breaking a rule, and by
-// name the stored diagrams gone stale beside a changed name or text.
-type diagramsLeftOut struct {
-	overCount, invalid, stale []string
+// leftOutParts is what attach left out of the statements it kept: the
+// diagrams, by name past the page's count, by name and reason for breaking
+// a rule, by name gone stale beside a changed name or text; and overCap,
+// by name and reason, the statements over a field cap (fieldCap), a new
+// one left out, an edited one kept as stored.
+type leftOutParts struct {
+	overCount, invalid, stale, overCap []string
 }
 
-// logLeftOut says which statements lost a diagram, and why. Called once
-// the rewrite passed its ceilings: a rejected one logs its rejection only.
-func logLeftOut(ctx context.Context, log *slog.Logger, at string, s diagramsLeftOut) {
+// logLeftOut says which statements lost a diagram or were left out, and
+// why. Called once the rewrite passed its ceilings: a rejected one logs its
+// rejection only.
+func logLeftOut(ctx context.Context, log *slog.Logger, at string, s leftOutParts) {
+	if len(s.overCap) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: statement over a field cap left out: %s", at, strings.Join(s.overCap, ", ")))
+	}
 	if len(s.invalid) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: diagram breaking a rule left out: %s", at, strings.Join(s.invalid, ", ")))
 	}
@@ -757,22 +774,26 @@ func check(summary string, statements []store.Statement, maxStatements, maxChars
 	if size > maxChars {
 		return 0, fmt.Sprintf("description is %d characters, over the cap of %d", size, maxChars)
 	}
-	for _, s := range statements {
-		if utf8.RuneCountInString(s.Name) > nameMaxChars {
-			return 0, fmt.Sprintf("statement %s name over %d characters", s.ID, nameMaxChars)
-		}
-		if len(s.Files) > filesMax {
-			return 0, fmt.Sprintf("statement %s names %d files, over %d", s.ID, len(s.Files), filesMax)
-		}
-		for _, f := range s.Files {
-			if utf8.RuneCountInString(f) > pathMaxChars || strings.ContainsAny(f, " \t\n") {
-				return 0, fmt.Sprintf("statement %s has a path over %d characters or with whitespace", s.ID, pathMaxChars)
-			}
-		}
-	}
 	// chars on the revision is the figure the ceiling gated, so the API
 	// shows the same number the cap applies to.
 	return size, ""
+}
+
+// fieldCap is why a statement, as stored (trimmed, Swiss), is over a cap
+// of one of its fields: its name, its file count, a path; "" when none.
+func fieldCap(s store.Statement) string {
+	if utf8.RuneCountInString(s.Name) > nameMaxChars {
+		return fmt.Sprintf("name over %d characters", nameMaxChars)
+	}
+	if len(s.Files) > filesMax {
+		return fmt.Sprintf("names %d files, over %d", len(s.Files), filesMax)
+	}
+	for _, f := range s.Files {
+		if utf8.RuneCountInString(f) > pathMaxChars || strings.ContainsAny(f, " \t\n") {
+			return fmt.Sprintf("a path over %d characters or with whitespace", pathMaxChars)
+		}
+	}
+	return ""
 }
 
 // sameStatement compares what a reader sees of a statement: its id, kind,

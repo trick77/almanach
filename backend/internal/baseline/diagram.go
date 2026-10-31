@@ -115,6 +115,31 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 	return checkFlow(d, caps)
 }
 
+// RepairMap takes out of a proposed map the edges that say nothing: one
+// pointing at its own node, and one repeating an edge before it (same ends,
+// same label). One such edge refused a whole map once ("almanach →
+// almanach"); every other rule still refuses it in CheckMap. A copy, with
+// the edges taken out named; nil stays nil.
+func RepairMap(d *ir.Diagram) (*ir.Diagram, []string) {
+	if d == nil {
+		return nil, nil
+	}
+	out := *d
+	out.Edges = nil
+	var dropped []string
+	seen := map[[3]string]bool{}
+	for _, e := range d.Edges {
+		key := [3]string{e.From, e.To, strings.TrimSpace(e.Label)}
+		if e.From == e.To || seen[key] {
+			dropped = append(dropped, e.From+" → "+e.To)
+			continue
+		}
+		seen[key] = true
+		out.Edges = append(out.Edges, e)
+	}
+	return &out, dropped
+}
+
 // LabelRepos labels each repository node of a proposed map by its id, the
 // slug, whatever the model wrote ("rongos Zwischenform" once): the reader
 // finds the repository by it. A slug longer than a label may be keeps the

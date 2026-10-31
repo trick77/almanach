@@ -1191,12 +1191,12 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 // so no file decides a drop: a PR-taught statement is never dropped here
 // (a note's fold, which carries what the PR taught, may rewrite it), its
 // drop left out and logged; an edit may change any statement's files.
-// When only the new statements take a page with statements over a ceiling,
-// they are left out and the rest stands, so a full page still gets its
-// summary, map, edits and drops; a first page over one is refused whole, never
-// written without statements. The map never sinks the description: see
-// revisionMap.
-// slugs are the project's source repositories.
+// When the new statements take the page over a ceiling, as many as fit are
+// kept in the order written and the rest left out, so a full page still
+// gets its summary, map, edits and drops, and a first page its first
+// statements; a first page is never written without any. The map never
+// sinks the description: see revisionMap. slugs are the project's source
+// repositories.
 func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
@@ -1229,22 +1229,30 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: "+projectName+": drop of statements a pull request taught left out", slog.Any("ids", kept))
 	}
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
-	fold := func(added []inference.Statement) ([]store.Statement, diagramsLeftOut, int, string, string) {
+	fold := func(added []inference.Statement) ([]store.Statement, leftOutParts, int, string, string) {
 		applied, reason := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: added, Drop: drop}, noTree)
 		if reason != "" {
-			return nil, diagramsLeftOut{}, 0, reason, ""
+			return nil, leftOutParts{}, 0, reason, ""
 		}
 		statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits))
 		if reason != "" {
-			return nil, diagramsLeftOut{}, 0, reason, ""
+			return nil, leftOutParts{}, 0, reason, ""
 		}
 		chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 		return statements, leftOut, chars, "", capReason
 	}
 	statements, leftOut, chars, reason, capReason := fold(d.Added)
-	if reason == "" && capReason != "" && len(d.Added) > 0 && len(page.Statements) > 0 {
-		if s, l, c, re, ca := fold(nil); re == "" && ca == "" {
-			w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(d.Added), "new statement"), capReason))
+	// Over a ceiling with new statements: as many as fit are kept, in the
+	// order written, the rest left out (user, 2026-10-31: a first page of
+	// 25 against 24 was refused whole). A page is never written without
+	// statements it had none of.
+	least := 0
+	if len(page.Statements) == 0 {
+		least = 1
+	}
+	for n := len(d.Added) - 1; reason == "" && capReason != "" && n >= least; n-- {
+		if s, l, c, re, ca := fold(d.Added[:n]); re == "" && ca == "" {
+			w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(d.Added)-n, "new statement"), capReason))
 			statements, leftOut, chars, capReason = s, l, c, ""
 		}
 	}
@@ -1268,8 +1276,10 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 }
 
 // revisionMap is the map a project revision carries. A project too large for
-// one gets none. Otherwise the returned map, its departed repositories
-// taken out, is held to the map's rules and the drawing's limits (not the
+// one gets none. Otherwise the returned map, its self and repeated edges
+// and its departed repositories taken out (RepairMap, DropDeparted), its
+// repository nodes labelled by slug, is held to the map's rules and the
+// drawing's limits (not the
 // statement diagrams' caps); one that fails, or none returned, keeps the
 // stored map, with the reason logged: the map never costs the description.
 func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *diagram.Diagram, slugs []string) *diagram.Diagram {
@@ -1284,7 +1294,11 @@ func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *dia
 		w.log.WarnContext(ctx, at+": none returned, the stored one kept")
 		return w.carriedMap(ctx, page, slugs)
 	}
-	drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, proposed, slugs)), slugs, baseline.DrawCaps)
+	repaired, dropped := baseline.RepairMap(proposed)
+	if len(dropped) > 0 {
+		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
+	}
+	drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, repaired, slugs)), slugs, baseline.DrawCaps)
 	if why != "" {
 		w.log.WarnContext(ctx, at+" refused ("+why+"), the stored one kept")
 		return w.carriedMap(ctx, page, slugs)
