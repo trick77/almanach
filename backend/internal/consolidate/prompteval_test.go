@@ -101,6 +101,64 @@ func (c evalCode) ReadFiles(ctx context.Context, key, slug, sha string, files []
 	return out, nil
 }
 
+// evalModels writes every prompt to dir before it goes out, numbered, so a
+// stalled or odd call can be read and replayed.
+type evalModels struct {
+	llm *inference.Client
+	dir string
+	n   *int
+}
+
+func (m evalModels) keep(kind, prompt string) {
+	*m.n++
+	_ = os.MkdirAll(m.dir, 0o755)
+	_ = os.WriteFile(filepath.Join(m.dir, fmt.Sprintf("%02d-%s.txt", *m.n, kind)), []byte(prompt), 0o644)
+}
+
+func (m evalModels) Catalogue(ctx context.Context, prompt string) inference.CatalogueResult {
+	m.keep("catalogue", prompt)
+	return m.llm.Catalogue(ctx, prompt)
+}
+
+func (m evalModels) Patch(ctx context.Context, prompt string) inference.PatchResult {
+	m.keep("patch", prompt)
+	return m.llm.Patch(ctx, prompt)
+}
+
+func (m evalModels) Describe(ctx context.Context, prompt string) inference.DescriptionResult {
+	m.keep("project", prompt)
+	return m.llm.Describe(ctx, prompt)
+}
+
+// evalClient is EVAL_MODEL at EVAL_EFFORT.
+func evalClient(t *testing.T, log *slog.Logger) *inference.Client {
+	t.Helper()
+	llm, err := inference.New(inference.Options{Model: os.Getenv("EVAL_MODEL"), ReasoningEffort: os.Getenv("EVAL_EFFORT"),
+		Logger: log, Lookup: os.LookupEnv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return llm
+}
+
+// TestPromptReplay sends the patch prompt in EVAL_PROMPT once and logs what
+// came back: a stalled step, alone.
+func TestPromptReplay(t *testing.T) {
+	file := os.Getenv("EVAL_PROMPT")
+	if file == "" || os.Getenv("EVAL_MODEL") == "" {
+		t.Skip("EVAL_PROMPT and EVAL_MODEL unset")
+	}
+	prompt, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	start := time.Now()
+	res := evalClient(t, log).Patch(context.Background(), string(prompt))
+	t.Logf("%s after %s: %d statements, summary %v, err %v", res.Outcome, time.Since(start).Round(time.Second),
+		len(res.Patch.Statements), res.Patch.Summary != nil, res.Err)
+}
+
 // TestPromptEval runs EVAL_REPOS (slug=url pairs) through EVAL_MODEL and writes
 // the pages to EVAL_OUT.
 func TestPromptEval(t *testing.T) {
@@ -137,13 +195,10 @@ func TestPromptEval(t *testing.T) {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	llm, err := inference.New(inference.Options{Model: model, Logger: log, Lookup: os.LookupEnv})
-	if err != nil {
-		t.Fatal(err)
-	}
+	models := evalModels{llm: evalClient(t, log), dir: filepath.Join(out, "prompts"), n: new(int)}
 	limits := config.Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, RepoMaxChars: 60000, ProjectMaxChars: 40000}
 	w := New(st, &fakeMerger{}, limits, log)
-	w.WithBaseline(Baseline{Store: st, Code: evalCode{git}, Catalogue: llm, Describer: llm,
+	w.WithBaseline(Baseline{Store: st, Code: evalCode{git}, Catalogue: models, Describer: models,
 		Limits: config.Baseline{MaxCalls: 16, MaxBytes: 2_000_000}})
 
 	for _, repo := range st.repos {
@@ -154,7 +209,7 @@ func TestPromptEval(t *testing.T) {
 		for lap := 0; run().Open() && lap < 40; lap++ {
 			w.drain(ctx)
 			if run().Open() && w.holding() {
-				time.Sleep(30 * time.Second)
+				time.Sleep(time.Until(w.retryAt))
 			}
 		}
 		r := run()

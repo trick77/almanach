@@ -80,7 +80,11 @@ func New(opt Options) (*Client, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	wire, err := llmwire.FromEnv(opt.Model, llmwire.Config{CallTimeout: CallTimeout, Logger: opt.Logger, Lookup: opt.Lookup})
+	// No call streams: the answer's body arrives whole, after the model has
+	// written all of it, so llmwire's idle bound (90s) would cut every answer
+	// that takes longer to write. A baseline overview took 4m48s
+	// (2026-10-31); the call cap is the only bound.
+	wire, err := llmwire.FromEnv(opt.Model, llmwire.Config{CallTimeout: CallTimeout, IdleTimeout: CallTimeout, Logger: opt.Logger, Lookup: opt.Lookup})
 	if err != nil {
 		return nil, fmt.Errorf("inference: build client for %s: %w", opt.Model, err)
 	}
