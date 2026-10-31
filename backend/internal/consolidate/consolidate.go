@@ -398,13 +398,14 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
 		return nil
 	}
+	answer := *d
+	answer.Statements, answer.Added = w.asNew(ctx, "consolidate: "+scope, current.Statements, d.Statements, d.Added)
 	// A bugfix note is a pitfall's evidence on the merge path; any other
 	// note backs none.
 	if q.ChangeKind != "bugfix" {
-		backed := *d
-		backed.Added = unbackedPitfalls(ctx, w.log, "consolidate: "+scope, d.Added)
-		d = &backed
+		answer.Added = unbackedPitfalls(ctx, w.log, "consolidate: "+scope, answer.Added)
 	}
+	d = &answer
 	next, err := w.store.NextStatementID(ctx, scope, q.ProjectKey, repo)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
@@ -482,8 +483,47 @@ func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added
 	return kept
 }
 
+// asNew is an answer's edits and new statements for a page without
+// statements: there is nothing to edit there, so an edit is the model
+// numbering what it writes, the mistake the empty page's note warns of (an
+// eval's project step was refused whole for "unknown statement id s2" so).
+// Its edits join the new statements, their ids cleared by Proposed and
+// ApplyPatch, logged; an edit repeating a new statement's kind and name is
+// that statement twice and goes. An id used twice is no numbering but a
+// muddle: nothing moves, and the rules refuse it as before. On a page with
+// statements nothing moves either. Every path that applies an answer to a
+// page calls it first.
+func (w *Worker) asNew(ctx context.Context, where string, current []store.Statement, edits, added []inference.Statement) ([]inference.Statement, []inference.Statement) {
+	if len(current) > 0 || len(edits) == 0 {
+		return edits, added
+	}
+	ids := map[string]bool{}
+	for _, e := range edits {
+		if e.ID == nil || *e.ID == "" {
+			continue
+		}
+		if ids[*e.ID] {
+			return edits, added
+		}
+		ids[*e.ID] = true
+	}
+	named := map[string]bool{}
+	for _, a := range added {
+		named[a.Kind+"\x00"+strings.TrimSpace(a.Name)] = true
+	}
+	moved := make([]inference.Statement, 0, len(edits)+len(added))
+	for _, e := range edits {
+		if !named[e.Kind+"\x00"+strings.TrimSpace(e.Name)] {
+			moved = append(moved, e)
+		}
+	}
+	w.log.InfoContext(ctx, fmt.Sprintf("%s: %s on a page without statements taken as new", where, plural(len(moved), "edit")))
+	return []inference.Statement{}, append(moved, added...)
+}
+
 // attachDescription is attach over a whole description's edits and new
-// statements; an edit without an id rejects it like an invented one.
+// statements; an edit without an id rejects it like an invented one (on a
+// page without statements asNew has made every edit new before).
 func attachDescription(scope string, current []store.Statement, d *inference.Description, src store.Source, next int, dl diagramLimits) ([]store.Statement, diagramsLeftOut, string) {
 	proposed, reason := d.Proposed()
 	if reason != "" {

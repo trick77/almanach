@@ -608,6 +608,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if !ok {
 		return w.skipPart(ctx, r, &plan, name, "the call failed: "+res.Outcome.String())
 	}
+	res.Patch.Statements, res.Patch.Added = w.asNew(ctx, "baseline: "+name, page.Statements, res.Patch.Statements, res.Patch.Added)
 	// A step shown no problem area had no evidence for a new pitfall.
 	if len(problems) == 0 {
 		res.Patch.Added = unbackedPitfalls(ctx, w.log, "baseline: "+name, res.Patch.Added)
@@ -1190,9 +1191,11 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 // so no file decides a drop: a PR-taught statement is never dropped here
 // (a note's fold, which carries what the PR taught, may rewrite it), its
 // drop left out and logged; an edit may change any statement's files.
-// When only the new statements take the page over a ceiling, they are left
-// out and the rest stands, so a full page still gets its summary, map,
-// edits and drops. The map never sinks the description: see revisionMap.
+// When only the new statements take a page with statements over a ceiling,
+// they are left out and the rest stands, so a full page still gets its
+// summary, map, edits and drops; a first page over one is refused whole, never
+// written without statements. The map never sinks the description: see
+// revisionMap.
 // slugs are the project's source repositories.
 func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
@@ -1200,6 +1203,9 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
+	answer := *d
+	answer.Statements, answer.Added = w.asNew(ctx, "baseline: "+projectName, page.Statements, d.Statements, d.Added)
+	d = &answer
 	taught := map[string]bool{}
 	for _, s := range page.Statements {
 		taught[s.ID] = baseline.FromPR(s)
@@ -1236,7 +1242,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		return statements, leftOut, chars, "", capReason
 	}
 	statements, leftOut, chars, reason, capReason := fold(d.Added)
-	if reason == "" && capReason != "" && len(d.Added) > 0 {
+	if reason == "" && capReason != "" && len(d.Added) > 0 && len(page.Statements) > 0 {
 		if s, l, c, re, ca := fold(nil); re == "" && ca == "" {
 			w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(d.Added), "new statement"), capReason))
 			statements, leftOut, chars, capReason = s, l, c, ""
