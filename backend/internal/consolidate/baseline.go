@@ -37,7 +37,7 @@ type RunStore interface {
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
-	RepoProblems(ctx context.Context, project, repo string) ([]store.RepoProblem, error)
+	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -574,10 +574,11 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		return readErr(err)
 	}
 	// The evidence a pitfall needs: the problem areas the subject's files
-	// sit in. The overview reads docs and gets none.
+	// sit in, from fixes merged by the pinned commit's time. The overview
+	// reads docs and gets none.
 	var problems []store.RepoProblem
 	if subject {
-		all, err := w.base.Store.RepoProblems(ctx, r.ProjectKey, r.Slug)
+		all, err := w.base.Store.RepoProblems(ctx, r.ProjectKey, r.Slug, plan.CommittedAt)
 		if err != nil {
 			w.log.WarnContext(ctx, "baseline: problem areas read failed, drain paused", logging.Err(err))
 			return errStop
@@ -1176,12 +1177,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
-	proposed, reason := d.Proposed()
-	var statements []store.Statement
-	var leftOut diagramsLeftOut
-	if reason == "" {
-		statements, leftOut, reason = attach(store.ScopeProject, page.Statements, proposed, runSource(*r, plan), next, limitsOf(w.limits))
-	}
+	statements, leftOut, reason := attachDescription(store.ScopeProject, page.Statements, d, runSource(*r, plan), next, limitsOf(w.limits))
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 	if reason == "" {
@@ -1465,22 +1461,24 @@ func returnedUnchanged(before []store.Statement, p inference.Patch) int {
 
 // problemsFor is the problem areas a subject's files sit in: an area whose
 // directory is one of the files' directories, holds one or lies inside
-// one. The root is a directory of its own, never one holding all: fixes
-// that share nothing but the root back no subject in particular, and a
-// subject with a file at the root is not tied to every area.
+// one. The root area backs no subject: ingest files a fix there whose
+// files share no directory, or that named none, so it is no evidence about
+// root files; and a subject with a file at the root is not tied to every
+// area.
 func problemsFor(problems []store.RepoProblem, files []baseline.File) []store.RepoProblem {
 	dirs := map[string]bool{}
 	for _, f := range files {
-		d := path.Dir(f.Path)
-		if d == "." {
-			d = ""
+		if d := path.Dir(f.Path); d != "." {
+			dirs[d] = true
 		}
-		dirs[d] = true
 	}
 	var out []store.RepoProblem
 	for _, p := range problems {
+		if p.Area == "" {
+			continue
+		}
 		for d := range dirs {
-			if p.Area == d || (p.Area != "" && strings.HasPrefix(d, p.Area+"/")) || (d != "" && strings.HasPrefix(p.Area, d+"/")) {
+			if p.Area == d || strings.HasPrefix(d, p.Area+"/") || strings.HasPrefix(p.Area, d+"/") {
 				out = append(out, p)
 				break
 			}
@@ -1497,11 +1495,7 @@ func renderProblems(problems []store.RepoProblem) string {
 	}
 	var b strings.Builder
 	for _, p := range problems {
-		area := "`" + p.Area + "/`"
-		if p.Area == "" {
-			area = "the repository root"
-		}
-		fmt.Fprintf(&b, "- %s: %d bugfixes, cause seen most `%s`, newest fixes %s\n", area, p.Bugfixes, p.TopCause, strings.Join(p.PRKeys, ", "))
+		fmt.Fprintf(&b, "- `%s/`: %d bugfixes, cause seen most `%s`, newest fixes %s\n", p.Area, p.Bugfixes, p.TopCause, strings.Join(p.PRKeys, ", "))
 	}
 	return b.String()
 }

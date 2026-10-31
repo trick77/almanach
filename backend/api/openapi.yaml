@@ -176,10 +176,13 @@ paths:
         extensions, components, entities, each with its files and PR keys
         and its diagram as a fenced JSON block. A kind without statements
         has no heading. Markdown is the frame only; a statement's text is
-        its paragraphs as stored. A project without a revision yet answers
-        200 with its title and a line saying so. In oidc mode a team bearer
-        opens this route (and the repository's export) read-only; nothing
-        else under `/api`.
+        its paragraphs as stored, a line that would read as a heading,
+        quote, fence or underline escaped with a backslash. A project
+        without a revision yet answers 200 with its title and a line saying
+        so. A key that itself ends in `.md` and is listed keeps its JSON
+        route; its export is `{key}.md.md`. In oidc mode a team bearer opens
+        this route (and the repository's export) read-only, GET and HEAD,
+        and is always served the export; nothing else under `/api`.
       operationId: getProjectMarkdown
       security:
         - {}
@@ -262,8 +265,10 @@ paths:
       summary: A repository's page as Markdown
       description: |
         The repository's current revision as one Markdown file, framed as
-        the project's export (no map). In oidc mode a team bearer opens it
-        read-only, the same token the webhook takes.
+        the project's export (no map). A slug that itself ends in `.md` and
+        is listed keeps its JSON route; its export is `{slug}.md.md`. In
+        oidc mode a team bearer opens it read-only, the same token the
+        webhook takes.
       operationId: getRepoMarkdown
       security:
         - {}

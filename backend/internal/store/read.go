@@ -381,15 +381,16 @@ type RepoProblem struct {
 // repoProblemPRs is how many of an area's newest fixes a step is told of.
 const repoProblemPRs = 3
 
-// RepoProblems lists a repository's problem areas over its whole history,
-// most bugfixes first: what broke before does not expire like the
-// dashboard's window. Grouped by bugfix_area like Problems.
-func (s *Store) RepoProblems(ctx context.Context, project, repo string) ([]RepoProblem, error) {
+// RepoProblems lists a repository's problem areas over its whole history up
+// to until, most bugfixes first: what broke before does not expire like the
+// dashboard's window, and a fix merged after the commit a run reads is no
+// evidence about that code. Grouped by bugfix_area like Problems.
+func (s *Store) RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]RepoProblem, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT COALESCE(bugfix_area, ''), COALESCE(bugfix ->> '$.cause_kind', 'other'), pr_key
 		  FROM notes
-		 WHERE project_key = ? AND repo_slug = ? AND change_kind = 'bugfix'
-		 ORDER BY merged_at DESC, pr_key`, project, repo)
+		 WHERE project_key = ? AND repo_slug = ? AND change_kind = 'bugfix' AND merged_at <= ?
+		 ORDER BY merged_at DESC, pr_key`, project, repo, stamp(until))
 	if err != nil {
 		return nil, err
 	}

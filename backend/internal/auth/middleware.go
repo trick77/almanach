@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,12 +38,14 @@ const (
 // the webhook and the ping (bearer), the probes, and the SPA shell, which
 // holds no data. The claims go on the request context (ReaderFrom).
 //
-// One door more in oidc mode: a GET of the Markdown export (ExportPath)
-// passes on a team bearer, which bearer checks (the webhook's lookup,
-// constant time, any team), so an agent outside a browser can read a page.
-// It opens nothing else: every other route, the JSON of the same page
-// included, still needs the session, and a bearer that is no team's falls
-// through to it.
+// One door more in oidc mode: a GET or HEAD of the Markdown export
+// (ExportPath) passes on a team bearer, which bearer checks (the webhook's
+// lookup, constant time, any team), so an agent outside a browser can read
+// a page. It opens nothing else: every other route, the JSON of the same
+// page included, still needs the session, and a bearer that is no team's
+// falls through to it. A request let in so carries ExportOnly, and the
+// handler serves it the export even where a slug ending in .md names a
+// repository of its own.
 func Gate(sessions *kitauth.Sessions, redirectURL string, bearer func(*http.Request) bool) func(http.Handler) http.Handler {
 	cop := http.NewCrossOriginProtection()
 	if o := origin(redirectURL); o != "" {
@@ -75,13 +78,23 @@ func Gate(sessions *kitauth.Sessions, redirectURL string, bearer func(*http.Requ
 				httpx.WriteError(w, http.StatusForbidden, "cross-site request refused")
 				return
 			}
-			if sessions != nil && bearer != nil && r.Method == http.MethodGet && ExportPath(r.URL.EscapedPath()) && bearer(r) {
-				next.ServeHTTP(w, r)
+			if sessions != nil && bearer != nil && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+				ExportPath(r.URL.EscapedPath()) && bearer(r) {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), exportOnlyKey{}, true)))
 				return
 			}
 			guarded.ServeHTTP(w, r)
 		})
 	}
+}
+
+type exportOnlyKey struct{}
+
+// ExportOnly reports whether the gate let the request in on a team bearer,
+// for the Markdown export alone.
+func ExportOnly(ctx context.Context) bool {
+	v, _ := ctx.Value(exportOnlyKey{}).(bool)
+	return v
 }
 
 // gated reports whether p needs a session: /api and below, but the login's

@@ -146,8 +146,10 @@ func TestGateOpensTheExportToABearer(t *testing.T) {
 		return rec.Code
 	}
 	for _, p := range []string{"/api/projects/PAY.md", "/api/projects/PAY/repos/pay-api.md"} {
-		if got := call(http.MethodGet, p, "good"); got != http.StatusOK {
-			t.Errorf("GET %s with a team bearer = %d, want through", p, got)
+		for _, m := range []string{http.MethodGet, http.MethodHead} {
+			if got := call(m, p, "good"); got != http.StatusOK {
+				t.Errorf("%s %s with a team bearer = %d, want through", m, p, got)
+			}
 		}
 		for _, token := range []string{"", "bad"} {
 			if got := call(http.MethodGet, p, token); got != http.StatusUnauthorized {
@@ -171,6 +173,15 @@ func TestGateOpensTheExportToABearer(t *testing.T) {
 		if ExportPath(p) != want {
 			t.Errorf("ExportPath(%q) = %v", p, !want)
 		}
+	}
+	// The handler learns the bearer let the request in, for the export alone.
+	var marked bool
+	mark := Gate(s, redirect, known)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { marked = ExportOnly(r.Context()) }))
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/PAY.md", nil)
+	req.Header.Set("Authorization", "Bearer good")
+	mark.ServeHTTP(httptest.NewRecorder(), req)
+	if !marked {
+		t.Error("a bearer-let export request is not marked ExportOnly")
 	}
 	// None mode has no session to stand in for: the bearer is not asked.
 	if got := serve(Gate(nil, "", known)(echo), "/api/projects/PAY.md", nil); got.Code != http.StatusOK {

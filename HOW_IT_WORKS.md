@@ -285,16 +285,19 @@ grouped by kind in the order invariants, rules, decisions, pitfalls,
 extensions, components, entities (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame only; a statement's text goes in as
-its paragraphs. An unknown project or repository is a 404, as on the JSON
-routes; a page without a revision yet is its title and a line saying so.
-The mux takes no wildcard inside a segment, so the export arrives at the
-JSON routes' handlers and is told apart by its `.md` suffix: the JSON
-route of a repository whose slug itself ends in `.md` is shadowed by the
-export of the slug without it.
+its paragraphs, a line that would read as structure (a heading, a quote,
+a fence, an underline) escaped with a backslash, and a fence or code span
+longer than any backtick run inside it. An unknown project or repository
+is a 404, as on the JSON routes; a page without a revision yet is its
+title and a line saying so. The mux takes no wildcard inside a segment, so
+the export arrives at the JSON routes' handlers and is told apart by its
+`.md` suffix: a key or slug that itself ends in `.md` and is listed keeps
+its JSON route, its export is `<name>.md.md`.
 
 An agent outside a browser has no session. In oidc mode a team's bearer
 token, the one the webhook takes, checked the same way (constant time,
-any team), opens these two GET routes read-only and nothing else: every
+any team), opens these two GET (and HEAD) routes read-only and nothing
+else, and is always served the export, never a JSON page: every
 other route under `/api`, the JSON of the same page included, still needs
 the session, a wrong bearer gets the session's 401, and the team goes to
 the access log. The gate matches the export by the escaped path, a key
@@ -518,13 +521,14 @@ resumes after a restart. The run pins the clone's head when it starts.
    `cat-file --batch`, the current page beside them, and for a reconcile
    the ids of the statements resting on changed files. Beside the files,
    as untrusted data, the repository's problem areas the subject's files
-   sit in (`RepoProblems`, the whole history, not the dashboard's window:
-   what broke does not expire): an area whose `bugfix_area` is one of the
-   files' directories, holds one or lies inside one, with its bugfix
-   count, the cause seen most and the newest three fixes' PR keys;
-   `_None._` when there is none, and always for the overview. The root is
-   a directory of its own, never one holding all: fixes that share nothing
-   but the root back no subject in particular. The prompt's rule: a
+   sit in (`RepoProblems`, the whole history up to the pinned commit's
+   time, not the dashboard's window: what broke does not expire, and a
+   fix merged later is no evidence about the code read): an area whose
+   `bugfix_area` is one of the files' directories, holds one or lies
+   inside one, with its bugfix count, the cause seen most and the newest
+   three fixes' PR keys; `_None._` when there is none, and always for the
+   overview. The root area backs no subject: ingest files a fix there
+   whose files share no directory, or that named none. The prompt's rule: a
    pitfall only where a problem area or a bugfix note backs it; without
    one, none. The answer is a patch (edits by id, new statements in
    `added` without one, drops, confirmations, a summary or null), applied

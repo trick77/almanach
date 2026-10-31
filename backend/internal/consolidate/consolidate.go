@@ -398,12 +398,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return busyOnly(err)
 	}
-	proposed, reason := d.Proposed()
-	var statements []store.Statement
-	var leftOut diagramsLeftOut
-	if reason == "" {
-		statements, leftOut, reason = attach(scope, current.Statements, proposed, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
-	}
+	statements, leftOut, reason := attachDescription(scope, current.Statements, d, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, maxStatements, maxChars)
@@ -456,6 +451,16 @@ func kindSet(list []string) map[string]bool {
 		out[k] = true
 	}
 	return out
+}
+
+// attachDescription is attach over a whole description's edits and new
+// statements; an edit without an id rejects it like an invented one.
+func attachDescription(scope string, current []store.Statement, d *inference.Description, src store.Source, next int, dl diagramLimits) ([]store.Statement, diagramsLeftOut, string) {
+	proposed, reason := d.Proposed()
+	if reason != "" {
+		return nil, diagramsLeftOut{}, reason
+	}
+	return attach(scope, current, proposed, src, next, dl)
 }
 
 // attach turns the model's statements into stored ones: a kept id carries

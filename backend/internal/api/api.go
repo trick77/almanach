@@ -110,6 +110,17 @@ func (d Deps) team(w http.ResponseWriter, r *http.Request) string {
 	return team
 }
 
+// wholeName reports whether a key or slug ending in .md names a listed
+// project or repository with its suffix (exists asks), which then gets its
+// JSON rather than the export of the name without it. A request the gate
+// let in on a bearer gets the export always: the export is all it opens.
+func (d Deps) wholeName(ctx context.Context, exists func() (bool, error)) (bool, error) {
+	if auth.ExportOnly(ctx) {
+		return false, nil
+	}
+	return exists()
+}
+
 // teamBearer reports whether the request carries a team's bearer, by the
 // webhook's lookup (constant time over every entry): what opens the
 // Markdown export in oidc mode. The team goes to the access log, as a
@@ -396,8 +407,18 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	// GET /api/projects/{key}.md: the mux takes no wildcard inside a
 	// segment, so the export arrives here with its suffix.
 	if k, md := strings.CutSuffix(key, ".md"); md {
-		d.projectMarkdown(w, r, k)
-		return
+		whole, err := d.wholeName(ctx, func() (bool, error) {
+			_, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
+			return ok, err
+		})
+		if err != nil {
+			httpx.ServerError(w, r, err, "project")
+			return
+		}
+		if !whole {
+			d.projectMarkdown(w, r, k)
+			return
+		}
 	}
 	team, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
 	if err != nil {
@@ -504,8 +525,15 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	d.reader(r)
 	key, slug := r.PathValue("key"), r.PathValue("slug")
 	if s, md := strings.CutSuffix(slug, ".md"); md {
-		d.repoMarkdown(w, r, key, s)
-		return
+		whole, err := d.wholeName(ctx, func() (bool, error) { return d.Store.RepoExists(ctx, key, slug, d.Sources != nil) })
+		if err != nil {
+			httpx.ServerError(w, r, err, "repo")
+			return
+		}
+		if !whole {
+			d.repoMarkdown(w, r, key, s)
+			return
+		}
 	}
 	ok, err := d.Store.RepoExists(ctx, key, slug, d.Sources != nil)
 	if err != nil {

@@ -3,9 +3,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -161,5 +165,76 @@ func TestMarkdownBearerInOIDC(t *testing.T) {
 	ck := sessionFor(t, s, auth.Claims{Subject: "sub-1", Email: "jan@example.com"})
 	if rec := getMD(h, "/api/projects/PAY/repos/pay-api.md", "", ck); rec.Code != http.StatusOK {
 		t.Errorf("export with a session = %d", rec.Code)
+	}
+}
+
+// Model text never becomes the export's structure: a heading, quote, fence
+// or underline line is escaped, a fence in a diagram label outlasted, a
+// backtick in a path kept inside its code span.
+func TestMarkdownEscapesModelText(t *testing.T) {
+	label := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "x ```` y", Shape: "step"}}}
+	md := renderMarkdown("T", store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel",
+		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen", Text: "Satz.\n## Regeln\n```\n> zitiert\n---",
+			Files: []string{"a`b.go"}, Diagram: label}}}, true)
+	for _, want := range []string{"\\# Kein Titel\n", "### Zwei Zeilen\n", "Satz.\n\\## Regeln\n\\```\n\\> zitiert\n\\---\n", "Dateien: `` a`b.go ``\n", "`````json\n"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("export lacks %q:\n%s", want, md)
+		}
+	}
+	if strings.Count(md, "\n## ") != 1 {
+		t.Errorf("model text opened a heading:\n%s", md)
+	}
+}
+
+// The export's kinds are the UI's: the same order as Description.tsx's
+// KINDS, each heading the label strings.ts gives the kind.
+func TestMarkdownKindsMatchTheUI(t *testing.T) {
+	read := func(p string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "..", "ui", "src", p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	desc, copyTS := read("Description.tsx"), read("strings.ts")
+	_, list, _ := strings.Cut(desc, "const KINDS: Kind[] = [")
+	list, _, _ = strings.Cut(list, "]")
+	var ui []string
+	for _, f := range strings.Split(list, ",") {
+		if f = strings.Trim(strings.TrimSpace(f), `"`); f != "" {
+			ui = append(ui, f)
+		}
+	}
+	var got []string
+	for _, k := range markdownKinds {
+		got = append(got, k.kind)
+		if !strings.Contains(copyTS, fmt.Sprintf("    %s: %q,\n", k.kind, k.heading)) {
+			t.Errorf("strings.ts labels %s otherwise than %q", k.kind, k.heading)
+		}
+	}
+	if !slices.Equal(got, ui) {
+		t.Errorf("export order %v, UI order %v", got, ui)
+	}
+}
+
+// A key or slug that itself ends in .md keeps its JSON route; a bearer,
+// opened for the export alone, still gets the export.
+func TestMarkdownSuffixOfARealName(t *testing.T) {
+	st := exportStore()
+	st.teams["DOC.md"] = "platform"
+	st.repos["PAY"] = append(st.repos["PAY"], store.RepoRow{Slug: "notes.md"})
+	h := handler(t, st, &fakeWaker{}, config.AuthNone)
+	for _, p := range []string{"/api/projects/PAY/repos/notes.md", "/api/projects/DOC.md"} {
+		if rec := getMD(h, p, ""); rec.Code != http.StatusOK || !strings.HasPrefix(rec.Body.String(), "{") {
+			t.Errorf("%s = %d %q, want its JSON", p, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := getMD(h, "/api/projects/PAY/repos/notes.md.md", ""); rec.Code != http.StatusOK || !strings.HasPrefix(rec.Body.String(), "# Repository notes.md") {
+		t.Errorf("export of notes.md = %d %q", rec.Code, rec.Body.String())
+	}
+	var buf bytes.Buffer
+	o := oidcExport(t, st, testSessions(t), &buf)
+	if rec := getMD(o, "/api/projects/PAY/repos/notes.md", "tok-billing"); rec.Code != http.StatusNotFound || strings.HasPrefix(rec.Body.String(), "{\"project_key\"") {
+		t.Errorf("bearer on notes.md = %d %q, want the export of notes, unknown", rec.Code, rec.Body.String())
 	}
 }

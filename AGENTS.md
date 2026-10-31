@@ -30,8 +30,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   sentence/paragraph quota (user, 2026-10-28). Ceilings: statement counts, page runes from config;
   name, file caps constants; checked on stored Swiss text. Over: rewrite rejected whole, page stays,
   never truncated. Identical rewrite = no revision.
-- Provenance is code's: `sources` carried by id, current PR appended on text change. Unknown id =
-  invented, rejected. New id: `NextStatementID` over whole history, never reissued.
+- Provenance is code's: `sources` carried by id, current PR appended on text change. Unknown id on
+  an edit = invented, rejected; on a step's drop/confirmed skipped, logged. New statements in
+  id-less `added`; id from `NextStatementID` over whole history, never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:

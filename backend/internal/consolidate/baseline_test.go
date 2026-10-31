@@ -44,9 +44,12 @@ type runStore struct {
 	// problems is the repository's problem areas; problemsErr fails the read.
 	problems    []store.RepoProblem
 	problemsErr error
+	// problemsUntil is the cutoff the last problem read asked for.
+	problemsUntil time.Time
 }
 
-func (s *runStore) RepoProblems(context.Context, string, string) ([]store.RepoProblem, error) {
+func (s *runStore) RepoProblems(_ context.Context, _, _ string, until time.Time) ([]store.RepoProblem, error) {
+	s.problemsUntil = until
 	return s.problems, s.problemsErr
 }
 
@@ -1151,8 +1154,7 @@ func TestDrain_IgnoresNotesWithoutASource(t *testing.T) {
 }
 
 // A subject's problem areas are those whose directory is one of its files'
-// directories, holds one or lies inside one; the root holds none but its
-// own files.
+// directories, holds one or lies inside one; the root area backs none.
 func TestProblemsFor(t *testing.T) {
 	areas := []store.RepoProblem{
 		{Area: "internal/auth"}, {Area: "internal"}, {Area: "internal/auth/oidc"}, {Area: "internal/authz"},
@@ -1169,8 +1171,8 @@ func TestProblemsFor(t *testing.T) {
 	if want := []string{"internal/auth", "internal", "internal/auth/oidc"}; !slices.Equal(got, want) {
 		t.Errorf("subject in internal/auth: %v, want %v", got, want)
 	}
-	if got := names(problemsFor(areas, []baseline.File{{Path: "main.go"}})); !slices.Equal(got, []string{""}) {
-		t.Errorf("subject at the root: %v, want the root area alone", got)
+	if got := problemsFor(areas, []baseline.File{{Path: "main.go"}}); len(got) != 0 {
+		t.Errorf("subject at the root: %v, want none, the root area included", got)
 	}
 	if got := problemsFor(areas, []baseline.File{{Path: "docs/x.md"}}); len(got) != 0 {
 		t.Errorf("subject elsewhere: %v, want none", got)
@@ -1178,8 +1180,8 @@ func TestProblemsFor(t *testing.T) {
 	if got := renderProblems(nil); got != "_None._" {
 		t.Errorf("no areas = %q", got)
 	}
-	out := renderProblems([]store.RepoProblem{{Area: "auth", Bugfixes: 3, TopCause: "logic", PRKeys: []string{"T/svc#9", "T/svc#4"}}, {Area: "", Bugfixes: 1, TopCause: "other", PRKeys: []string{"T/svc#1"}}})
-	if !strings.Contains(out, "- `auth/`: 3 bugfixes, cause seen most `logic`, newest fixes T/svc#9, T/svc#4") || !strings.Contains(out, "the repository root") {
+	out := renderProblems([]store.RepoProblem{{Area: "auth", Bugfixes: 3, TopCause: "logic", PRKeys: []string{"T/svc#9", "T/svc#4"}}})
+	if !strings.Contains(out, "- `auth/`: 3 bugfixes, cause seen most `logic`, newest fixes T/svc#9, T/svc#4") {
 		t.Errorf("rendered = %q", out)
 	}
 }
@@ -1259,6 +1261,9 @@ func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
 	}
 	if !strings.Contains(auth, "- `auth/`: 2 bugfixes, cause seen most `logic`, newest fixes tools/svc#7") || strings.Contains(auth, "`billing/`") {
 		t.Errorf("subject prompt's problem areas:\n%s", auth)
+	}
+	if !x.st.problemsUntil.Equal(mergedAt) {
+		t.Errorf("problem areas read until %v, want the pinned commit's time %v", x.st.problemsUntil, mergedAt)
 	}
 	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
 	if len(page.Statements) != 1 || page.Statements[0].Kind != "pitfall" {

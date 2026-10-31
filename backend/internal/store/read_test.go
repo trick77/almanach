@@ -343,8 +343,10 @@ func TestRepoProblems(t *testing.T) {
 	feature := noteFor("PRJ", "svc", 7)
 	feature.MergedAt = now
 	ingest(t, s, feature)
+	// Merged after the commit read: no evidence about it.
+	ingest(t, s, bugfixFor("PRJ", "svc", 8, "internal/later", "logic", now.Add(time.Hour)))
 
-	ps, err := s.RepoProblems(ctx, "PRJ", "svc")
+	ps, err := s.RepoProblems(ctx, "PRJ", "svc", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +362,7 @@ func TestRepoProblems(t *testing.T) {
 	if api := ps[1]; api.Area != "internal/api" || api.Bugfixes != 1 || api.TopCause != "logic" || strings.Join(api.PRKeys, ",") != "PRJ/svc#5" {
 		t.Errorf("api = %+v", api)
 	}
-	if ps, err := s.RepoProblems(ctx, "PRJ", "none"); err != nil || len(ps) != 0 {
+	if ps, err := s.RepoProblems(ctx, "PRJ", "none", now); err != nil || len(ps) != 0 {
 		t.Errorf("RepoProblems(none) = %v, %v; want empty", ps, err)
 	}
 }

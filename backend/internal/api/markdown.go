@@ -14,10 +14,12 @@ import (
 // The Markdown export: a page as one file an agent pulls into its context,
 // the way it reads a repository's agent notes. Markdown is the frame only
 // (headings, file and PR lines, fenced diagrams); a statement's text goes
-// in as the paragraphs it is, never rewritten into Markdown.
+// in as the paragraphs it is, never rewritten into Markdown, only a line
+// that would read as structure escaped (prose).
 
 // markdownKinds is the export's order: what must not break and why first,
-// where to change and the parts after. The headings are the UI's labels.
+// where to change and the parts after. Order and headings are the UI's
+// (Description.tsx KINDS, strings.ts S.kinds), held to them by a test.
 var markdownKinds = []struct{ kind, heading string }{
 	{"invariant", "Invarianten"},
 	{"rule", "Regeln"},
@@ -91,7 +93,7 @@ func renderMarkdown(title string, p store.Page, found bool) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "Revision %d, Stand %s.\n\n", p.Revision, p.UpdatedAt.UTC().Format("2006-01-02"))
-	if s := strings.TrimSpace(p.Summary); s != "" {
+	if s := prose(p.Summary); s != "" {
 		b.WriteString(s + "\n\n")
 	}
 	// The sentinel is no map: asked for, not drawn.
@@ -118,11 +120,11 @@ func renderMarkdown(title string, p store.Page, found bool) string {
 }
 
 func writeStatement(b *strings.Builder, s store.Statement) {
-	fmt.Fprintf(b, "### %s\n\n%s\n\n", s.Name, strings.TrimSpace(s.Text))
+	fmt.Fprintf(b, "### %s\n\n%s\n\n", strings.Join(strings.Fields(s.Name), " "), prose(s.Text))
 	if len(s.Files) > 0 {
 		files := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
-			files = append(files, "`"+f+"`")
+			files = append(files, codeSpan(f))
 		}
 		fmt.Fprintf(b, "Dateien: %s\n", strings.Join(files, ", "))
 	}
@@ -143,11 +145,52 @@ func writeStatement(b *strings.Builder, s store.Statement) {
 	}
 }
 
-// writeJSONBlock writes a diagram as the fenced JSON it is stored as.
+// writeJSONBlock writes a diagram as the fenced JSON it is stored as, the
+// fence longer than any run of backticks in a label.
 func writeJSONBlock(b *strings.Builder, d *diagram.Diagram) {
 	j, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return
 	}
-	b.WriteString("```json\n" + string(j) + "\n```\n\n")
+	fence := strings.Repeat("`", max(3, longestRun(string(j), '`')+1))
+	b.WriteString(fence + "json\n" + string(j) + "\n" + fence + "\n\n")
+}
+
+// prose is model-written text as text, never as the export's structure: a
+// line that would open a heading, a quote or a fence, or underline the line
+// above into a heading, gets a backslash before it.
+func prose(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	for i, l := range lines {
+		t := strings.TrimLeft(l, " \t")
+		if strings.HasPrefix(t, "#") || strings.HasPrefix(t, ">") || strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") ||
+			(t != "" && strings.Trim(t, "=- \t") == "") {
+			lines[i] = l[:len(l)-len(t)] + `\` + t
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// codeSpan is s as inline code, its delimiter longer than any run of
+// backticks in s.
+func codeSpan(s string) string {
+	n := longestRun(s, '`')
+	if n == 0 {
+		return "`" + s + "`"
+	}
+	tick := strings.Repeat("`", n+1)
+	return tick + " " + s + " " + tick
+}
+
+func longestRun(s string, c byte) int {
+	best, run := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			run++
+			best = max(best, run)
+		} else {
+			run = 0
+		}
+	}
+	return best
 }
