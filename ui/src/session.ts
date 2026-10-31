@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Me } from "./api";
+import { armSignIn, authMarkers, signedIn, signIn } from "./signin";
 import { S } from "./strings";
 
 /** The session gate, like ../rongo's. /api/me is the one request made
@@ -11,14 +12,16 @@ import { S } from "./strings";
  *  redirect from becoming a loop: a failed callback and a finished
  *  sign-out both land on a URL that says so, and the gate offers a button
  *  there instead of sending the browser back to a provider that returns
- *  it to the same place. */
+ *  it to the same place. A check that could not be made halts too, with a
+ *  button that tries again. */
 export type Session =
   | { state: "checking" }
   | { state: "in"; me: Me }
   | { state: "out" }
-  | { state: "halted"; message: string };
+  | { state: "halted"; message: string; action: "signIn" | "retry" };
 
-/** haltReason is why the gate must not redirect on its own:
+/** haltReason is why the gate must not redirect on its own, asked only in
+ *  oidc mode without a session:
  *  - after a failed callback the provider still has a live session, answers
  *    the next login without a prompt, and the callback fails the same way;
  *  - after sign-out the provider's session is untouched and hands out a new
@@ -30,6 +33,20 @@ export function haltReason(search: string): string | null {
   return null;
 }
 
+/** stripMarkers drops the markers from the address once they mean
+ *  nothing: with a session, or in none mode. */
+function stripMarkers() {
+  const params = new URLSearchParams(window.location.search);
+  if (!authMarkers.some((m) => params.has(m))) return;
+  for (const m of authMarkers) params.delete(m);
+  const q = params.toString();
+  window.history.replaceState(
+    window.history.state,
+    "",
+    window.location.pathname + (q ? `?${q}` : ""),
+  );
+}
+
 /** anonymous is the reader when the check itself could not be made. */
 const anonymous: Me = { mode: "none", user: "" };
 
@@ -38,12 +55,12 @@ export function useSession(): Session {
 
   useEffect(() => {
     let cancelled = false;
+    const settle = (s: Session) => {
+      if (cancelled) return;
+      armSignIn(s.state === "in" && s.me.mode === "oidc");
+      setSession(s);
+    };
     void (async () => {
-      const halt = haltReason(window.location.search);
-      if (halt !== null) {
-        setSession({ state: "halted", message: halt });
-        return;
-      }
       let res: Response;
       try {
         res = await fetch("/api/me");
@@ -51,23 +68,46 @@ export function useSession(): Session {
         // A network error is not a signed-out session: redirecting would
         // bounce the reader to the provider whenever the connection drops.
         // The wiki renders and its pages report their own failures.
-        if (!cancelled) setSession({ state: "in", me: anonymous });
+        settle({ state: "in", me: anonymous });
         return;
       }
       if (cancelled) return;
       if (res.status === 401) {
-        setSession({ state: "out" });
+        const halt = haltReason(window.location.search);
+        if (halt !== null) {
+          settle({ state: "halted", message: halt, action: "signIn" });
+          return;
+        }
         // A full navigation, not a fetch: the provider answers with a login
         // page and a redirect chain a fetch cannot follow.
-        window.location.href = "/api/auth/login";
+        if (signIn()) settle({ state: "out" });
+        else
+          settle({ state: "halted", message: S.auth.loop, action: "signIn" });
         return;
       }
       if (!res.ok) {
-        setSession({ state: "halted", message: S.auth.unchecked(res.status) });
+        settle({
+          state: "halted",
+          message: S.auth.unchecked(res.status),
+          action: "retry",
+        });
         return;
       }
-      const me = (await res.json()) as Me;
-      if (!cancelled) setSession({ state: "in", me });
+      let me: Me;
+      try {
+        me = (await res.json()) as Me;
+      } catch {
+        // A 200 that is no JSON: a proxy's page where the answer should be.
+        settle({
+          state: "halted",
+          message: S.auth.unreadable,
+          action: "retry",
+        });
+        return;
+      }
+      signedIn();
+      stripMarkers();
+      settle({ state: "in", me });
     })();
     return () => {
       cancelled = true;

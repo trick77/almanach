@@ -355,8 +355,12 @@ export const S = {
       "Die Anmeldung konnte nicht abgeschlossen werden. Bitte erneut versuchen; schlägt sie wieder fehl, steht der Grund im Server-Log.",
     unchecked: (status: number) =>
       `Die Sitzung konnte nicht geprüft werden (HTTP ${status}).`,
+    unreadable:
+      "Die Sitzung konnte nicht geprüft werden: die Antwort des Servers war unlesbar.",
+    loop: "Die Anmeldung hat gerade eben keine Sitzung ergeben. Bitte erneut anmelden; geschieht das wieder, steht der Grund im Server-Log.",
     signIn: "Anmelden",
     signOut: "Abmelden",
+    retry: "Erneut versuchen",
   },
 } as const;
 

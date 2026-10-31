@@ -25,10 +25,19 @@ export default function App() {
         {session.state === "out" && S.auth.redirecting}
         {session.state === "halted" && session.message}
       </p>
-      {session.state === "halted" && (
+      {session.state === "halted" && session.action === "signIn" && (
         <a href="/api/auth/login" className={btnPrimary + " mt-4"}>
           {S.auth.signIn}
         </a>
+      )}
+      {session.state === "halted" && session.action === "retry" && (
+        <button
+          type="button"
+          className={btnPrimary + " mt-4"}
+          onClick={() => window.location.reload()}
+        >
+          {S.auth.retry}
+        </button>
       )}
     </main>
   );

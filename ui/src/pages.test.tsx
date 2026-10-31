@@ -6,6 +6,7 @@ import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
+import { armSignIn } from "./signin";
 import type {
   Me,
   NoteDetail,
@@ -460,7 +461,10 @@ const anonymous: Me = { mode: "none", user: "" };
 
 /** answer stubs fetch with one response for /api/me and the table's for
  *  the rest, recording every call. */
-function answer(me: { status: number; body?: unknown } | Error) {
+function answer(
+  me: { status: number; body?: unknown; unreadable?: boolean } | Error,
+  projectsStatus = 200,
+) {
   const calls: { url: string; method: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -471,7 +475,17 @@ function answer(me: { status: number; body?: unknown } | Error) {
         return {
           ok: me.status < 300,
           status: me.status,
-          json: async () => me.body,
+          json: async () => {
+            if (me.unreadable) throw new SyntaxError("Unexpected token <");
+            return me.body;
+          },
+        };
+      }
+      if (url === "/api/projects" && projectsStatus !== 200) {
+        return {
+          ok: false,
+          status: projectsStatus,
+          json: async () => ({ error: "sign-in required" }),
         };
       }
       if (url === "/api/auth/logout") {
@@ -499,6 +513,11 @@ function stubLocation(search = "") {
 }
 
 describe("session gate", () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+    armSignIn(false);
+  });
+
   it("renders the wiki without a name or Abmelden in none mode", async () => {
     answer({ status: 200, body: anonymous });
     render(<App />);
@@ -547,10 +566,61 @@ describe("session gate", () => {
         "href",
         "/api/auth/login",
       );
-      expect(calls).toEqual([]);
+      // /api/me first: the markers count only without a session.
+      expect(calls).toEqual([{ url: "/api/me", method: "GET" }]);
       expect(loc.href).toBe("/");
     },
   );
+
+  it.each([
+    ["none mode", anonymous],
+    ["a session", { mode: "oidc", user: "jan" }],
+  ])("ignores and strips the markers with %s", async (_, me) => {
+    window.history.replaceState({}, "", "/?signed_out=1&x=2");
+    answer({ status: 200, body: me });
+    render(<App />);
+    expect(await screen.findByText("PAY")).toBeInTheDocument();
+    expect(window.location.search).toBe("?x=2");
+  });
+
+  it("halts with a retry when /api/me answers no JSON", async () => {
+    answer({ status: 200, unreadable: true });
+    render(<App />);
+    expect(
+      await screen.findByText(/die Antwort des Servers war unlesbar/),
+    ).toBeInTheDocument();
+    const loc = stubLocation();
+    fireEvent.click(screen.getByText("Erneut versuchen"));
+    expect(loc.reload).toHaveBeenCalled();
+  });
+
+  it("signs in again on a later 401 in oidc mode", async () => {
+    const loc = stubLocation();
+    answer({ status: 200, body: { mode: "oidc", user: "jan" } }, 401);
+    render(<App />);
+    await waitFor(() => expect(loc.href).toBe("/api/auth/login"));
+  });
+
+  it("does not on a later 401 in none mode", async () => {
+    const loc = stubLocation();
+    answer({ status: 200, body: anonymous }, 401);
+    render(<App />);
+    expect(
+      await screen.findByText("die Projekte konnte nicht geladen werden."),
+    ).toBeInTheDocument();
+    expect(loc.href).toBe("/");
+  });
+
+  it("halts instead of looping when a sign-in just happened", async () => {
+    window.sessionStorage.setItem("almanach.signin", String(Date.now()));
+    const loc = stubLocation();
+    answer({ status: 401 });
+    render(<App />);
+    expect(
+      await screen.findByText(/hat gerade eben keine Sitzung ergeben/),
+    ).toBeInTheDocument();
+    expect(loc.href).toBe("/");
+  });
 
   it("halts when the session cannot be checked", async () => {
     answer({ status: 500 });
