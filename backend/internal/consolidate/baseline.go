@@ -565,8 +565,8 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	focus := w.focus(plan, page, newer)
 	left := plan.steps() - i - 1
-	budget := stepBudget(w.limits.RepoMaxChars, prose(page.Summary, page.Statements), left, name == overviewName)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, left, budget, part, focus, renderFiles(read, bodies), newer)
+	b := stepBudget(w.limits, page, left, name == overviewName)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, left, b, part, focus, renderFiles(read, bodies), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -578,8 +578,8 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	// Measured, never enforced: the page's ceilings reject a rewrite whole,
 	// and a patch is never cut.
-	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: patch holds %d chars of prose, budget %d, %d statements returned unchanged",
-		name, patchProse(res.Patch), budget, unchanged(page.Statements, res.Patch)))
+	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: patch holds %d chars of prose, budget %d; %d new statements, budget %d; %d statements returned unchanged",
+		name, patchProse(res.Patch), b.chars, newStatements(res.Patch), b.statements, unchanged(page.Statements, res.Patch)))
 	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer)
 }
 
@@ -1319,26 +1319,47 @@ func renderCatalogue(r store.BaselineRun, listing, docs, placing string, maxSubj
 	).Replace(prompts.Catalogue)
 }
 
-// The prose budget of a describe step: the ceiling is for the whole page,
-// so what it has left is spread over this part and those after it. The
+// The budget of a describe step: the ceilings are for the whole page, so
+// what it has left is spread over this part and those after it. The
 // overview takes overviewShare shares, the summary and what spans the
 // repository being its to write; minStepBudget keeps room for a correction
-// on a page near its ceiling.
+// on a page near its prose ceiling, and a step may always add one
+// statement.
 const (
 	minStepBudget = 2000
 	overviewShare = 2
 )
 
-// stepBudget is the prose a step's patch should hold at most: the page's
-// room under maxChars spread evenly over this part and the left after it.
-// The overview's extra share is taken from the parts after it, so with none
-// left it has one share like any other.
-func stepBudget(maxChars, chars, left int, overview bool) int {
-	b := max(minStepBudget, (maxChars-chars)/(left+1))
+// budget is what a step's patch should hold at most: characters of prose
+// and new statements.
+type budget struct {
+	chars, statements int
+}
+
+// stepBudget spreads the page's room under both ceilings evenly over this
+// part and the left after it. The overview's extra share is taken from the
+// parts after it, so with none left it has one share like any other.
+func stepBudget(l config.Limits, page store.Page, left int, overview bool) budget {
+	b := budget{
+		chars:      max(minStepBudget, (l.RepoMaxChars-prose(page.Summary, page.Statements))/(left+1)),
+		statements: max(1, (l.RepoMaxStatements-len(page.Statements))/(left+1)),
+	}
 	if overview && left > 0 {
-		b *= overviewShare
+		b.chars *= overviewShare
+		b.statements *= overviewShare
 	}
 	return b
+}
+
+// newStatements counts the statements a patch adds, those without an id.
+func newStatements(p inference.Patch) int {
+	n := 0
+	for _, s := range p.Statements {
+		if s.ID == nil || *s.ID == "" {
+			n++
+		}
+	}
+	return n
 }
 
 // patchProse is the prose a patch returns, counted like the ceiling: the
@@ -1377,11 +1398,11 @@ func unchanged(current []store.Statement, p inference.Patch) int {
 	return n
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left, budget int, part, focus, files string, newer map[string]string) string {
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, b budget, part, focus, files string, newer map[string]string) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
-		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{step_budget}", fmt.Sprint(budget),
-		"{part}", part, "{focus}", focus,
+		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left),
+		"{step_budget}", fmt.Sprint(b.chars), "{step_statements}", fmt.Sprint(b.statements), "{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
 		"{repo_description}", describeSourced(page, newer), "{files}", files, "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),

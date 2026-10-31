@@ -272,15 +272,15 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	r := store.BaselineRun{ProjectKey: "PLAT", Slug: "files", Commit: head}
 	left := regexp.MustCompile(`\{[a-z_]+\}`)
 	for name, out := range map[string]string{
-		"describe": renderDescribe(r, existingRepoPage(), limits, 1, 2, 1, 4321, "the overview", "", "_None._", nil),
+		"describe": renderDescribe(r, existingRepoPage(), limits, 1, 2, 1, budget{4321, 3}, "the overview", "", "_None._", nil),
 		"project":  renderProject(r, existingRepoPage(), store.Page{Map: drawnMap("files")}, "_None._", []string{"files", "portal"}, limits),
 		"merge":    render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, limits),
 	} {
 		if ph := left.FindAllString(out, -1); len(ph) > 0 {
 			t.Errorf("%s prompt: placeholders left: %v", name, ph)
 		}
-		if name == "describe" && !strings.Contains(out, "at most about 4321 characters of prose") {
-			t.Error("describe prompt lacks the step's prose budget")
+		if name == "describe" && !strings.Contains(out, "at most about 4321 characters of prose and 3 new statements") {
+			t.Error("describe prompt lacks the step's budget")
 		}
 		// The shared rules, once, their caps filled in; the field offered.
 		if !strings.Contains(out, "At most 4 nodes") || strings.Count(out, "## Diagrams") != 1 || !strings.Contains(out, `"diagram": <diagram>`) {
@@ -292,7 +292,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	off := limits
 	off.MaxDiagrams = 0
 	for name, out := range map[string]string{
-		"describe": renderDescribe(r, existingRepoPage(), off, 1, 2, 1, 4321, "the overview", "", "_None._", nil),
+		"describe": renderDescribe(r, existingRepoPage(), off, 1, 2, 1, budget{4321, 3}, "the overview", "", "_None._", nil),
 		"project":  renderProject(r, existingRepoPage(), store.Page{}, "_None._", []string{"files"}, off),
 		"merge":    render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, off),
 	} {

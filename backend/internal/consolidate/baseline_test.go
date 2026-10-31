@@ -419,26 +419,32 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	}
 }
 
-// The budget spreads the page's room over this part and those after it:
-// the overview a double share, the floor on a nearly full page, one share
-// for an overview with nothing after it.
+// The budget spreads the page's room under both ceilings over this part and
+// those after it: the overview a double share, the floors on a nearly full
+// page, one share for an overview with nothing after it.
 func TestStepBudget(t *testing.T) {
+	l := config.Limits{RepoMaxChars: 60000, RepoMaxStatements: 40}
+	page := func(chars, statements int) store.Page {
+		return store.Page{Summary: strings.Repeat("x", chars), Statements: make([]store.Statement, statements)}
+	}
 	for _, c := range []struct {
-		name             string
-		max, chars, left int
-		overview         bool
-		want             int
+		name                     string
+		chars, statements, left  int
+		overview                 bool
+		wantChars, wantStatement int
 	}{
-		{"fresh page, overview of a 13-step run", 60000, 0, 11, true, 10000},
-		{"after it, the first subject", 60000, 10000, 10, false, 4545},
-		{"last subject", 60000, 50000, 0, false, 10000},
-		{"nearly full page", 60000, 59000, 3, false, minStepBudget},
-		{"over a lowered ceiling", 60000, 70000, 3, false, minStepBudget},
-		{"overview on a nearly full page", 60000, 59000, 3, true, 2 * minStepBudget},
-		{"overview alone", 60000, 20000, 0, true, 40000},
+		{"fresh page, overview of a 13-step run", 0, 0, 11, true, 10000, 6},
+		{"after it, the first subject", 10000, 6, 10, false, 4545, 3},
+		{"last subject", 50000, 30, 0, false, 10000, 10},
+		{"nearly full page", 59000, 39, 3, false, minStepBudget, 1},
+		{"full on statements", 20000, 40, 3, false, 10000, 1},
+		{"over lowered ceilings", 70000, 45, 3, false, minStepBudget, 1},
+		{"overview on a nearly full page", 59000, 39, 3, true, 2 * minStepBudget, 2},
+		{"overview alone", 20000, 10, 0, true, 40000, 30},
 	} {
-		if got := stepBudget(c.max, c.chars, c.left, c.overview); got != c.want {
-			t.Errorf("%s: stepBudget = %d, want %d", c.name, got, c.want)
+		got := stepBudget(l, page(c.chars, c.statements), c.left, c.overview)
+		if got != (budget{c.wantChars, c.wantStatement}) {
+			t.Errorf("%s: stepBudget = %+v, want %d chars, %d statements", c.name, got, c.wantChars, c.wantStatement)
 		}
 	}
 }
@@ -469,14 +475,15 @@ func TestRun_StepBudgetLogged(t *testing.T) {
 	x.w.drain(context.Background())
 
 	// 400-rune ceiling, 45 used, two parts: the floor, the overview's twice.
-	if !strings.Contains(x.models.prompts[1], "at most about 4000 characters of prose") ||
-		!strings.Contains(x.models.prompts[2], "at most about 2000 characters of prose") {
+	// 4 statements, 2 held: one each, the overview's twice; then both.
+	if !strings.Contains(x.models.prompts[1], "at most about 4000 characters of prose and 2 new statements") ||
+		!strings.Contains(x.models.prompts[2], "at most about 2000 characters of prose and 2 new statements") {
 		t.Errorf("prompts lack their budgets:\n%s", x.models.prompts[2])
 	}
 	out := logs.String()
 	for _, want := range []string{
-		"the overview: patch holds 19 chars of prose, budget 4000, 0 statements returned unchanged",
-		"Anmeldung: patch holds 72 chars of prose, budget 2000, 1 statements returned unchanged",
+		"the overview: patch holds 19 chars of prose, budget 4000; 0 new statements, budget 2; 0 statements returned unchanged",
+		"Anmeldung: patch holds 72 chars of prose, budget 2000; 1 new statements, budget 2; 1 statements returned unchanged",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log lacks %q:\n%s", want, out)
