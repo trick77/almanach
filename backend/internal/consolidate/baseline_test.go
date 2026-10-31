@@ -328,41 +328,47 @@ func TestOtherRepos(t *testing.T) {
 	}
 }
 
-// In the overview a statement resting on a file that is no doc is read-only
-// and says so; one on docs alone, or already held for a newer PR, is not
+// In the overview a statement resting on code alone is read-only and says
+// so; one naming a doc beside code ("./", "/" and a docs directory
+// forgiven), one without files, or one already held for a newer PR is not
 // marked again.
 func TestCodeBacked(t *testing.T) {
 	statements := []store.Statement{
 		{ID: "s1", Files: []string{"README.md", "./docs/flow.puml"}},
-		{ID: "s2", Files: []string{"README.md", "auth/login.go"}},
+		{ID: "s2", Files: []string{"/README.md", "auth/login.go"}},
 		{ID: "s3", Files: []string{"billing/run.go"}},
 		{ID: "s4"},
+		{ID: "s5", Files: []string{"auth/login.go", "docs/"}},
+		{ID: "s6", Files: []string{"auth/login.go", "docs/gen.go"}},
 	}
 	got := codeBacked(statements, map[string]string{"s3": byNewerPR})
-	if want := map[string]string{"s2": byCode, "s3": byNewerPR}; !reflect.DeepEqual(got, want) {
+	if want := map[string]string{"s3": byNewerPR, "s6": byCode}; !reflect.DeepEqual(got, want) {
 		t.Errorf("codeBacked = %v, want %v", got, want)
 	}
-	if got := codeBacked(statements[:1], nil); got != nil {
-		t.Errorf("docs only = %v, want nil", got)
+	if got := codeBacked(statements[:2], nil); got != nil {
+		t.Errorf("docs named = %v, want nil", got)
 	}
-	page := store.Page{RevisionID: 1, Statements: statements[1:2]}
+	page := store.Page{RevisionID: 1, Statements: statements[5:]}
 	if s := describeSourced(page, codeBacked(page.Statements, nil)); !strings.Contains(s, "rests on code, which the overview does not read") {
 		t.Errorf("describeSourced:\n%s", s)
 	}
 }
 
-// An overview patch that edits a statement resting on code is refused: the
-// part is skipped, the statement stays as the code's step wrote it.
+// The overview's edit and confirmation of a statement resting on code are
+// struck from its patch, the rest applied: the summary lands, the statement
+// stays as the code's step wrote it, the part is not skipped.
 func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	x := newWorld(t, 16)
 	key := pageKey(store.ScopeRepository, "tools", "svc")
 	login := store.Statement{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}}
-	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{login}}
+	billing := store.Statement{ID: "s2", Kind: "rule", Name: "Rechnung", Text: "Monatlich.", Files: []string{"billing/run.go"}}
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{login, billing}}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s1"), "rule", "Login", "Laut README einstufig.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Laut README ein Werkzeugdienst."), Confirmed: []string{"s2"},
+			Statements: []inference.Statement{stmt(ref("s1"), "rule", "Login", "Laut README einstufig.", "auth/login.go")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
@@ -370,11 +376,22 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	if !strings.Contains(x.models.prompts[1], "rests on code, which the overview does not read") {
 		t.Errorf("overview prompt does not mark s1:\n%s", x.models.prompts[1])
 	}
-	if p := x.plan(t); !slices.Contains(p.Skipped, overviewName) {
-		t.Errorf("skipped = %v, want the overview", p.Skipped)
+	if p := x.plan(t); slices.Contains(p.Skipped, overviewName) {
+		t.Errorf("skipped = %v, want the overview applied", p.Skipped)
 	}
-	if got := x.st.pages[key].Statements[0]; got.Text != "Zweistufig." {
-		t.Errorf("s1 = %+v, want it as the code's step wrote it", got)
+	page := x.st.pages[key]
+	if page.Summary != "Laut README ein Werkzeugdienst." || page.Statements[0].Text != "Zweistufig." || page.Statements[1].Checked != "" {
+		t.Errorf("page = %+v, want the summary, s1 as the code's step wrote it, s2 unconfirmed", page)
+	}
+}
+
+// The project step learns which statements pull requests taught, not their
+// keys.
+func TestDescribeTaught(t *testing.T) {
+	page := store.Page{RevisionID: 1, Summary: "Projekt.", Statements: []store.Statement{
+		{ID: "s1", Kind: "rule", Name: "Regel", Text: "Gilt.", Sources: []store.Source{{PRKey: "tools/svc#42"}}}}}
+	if s := describeTaught(page); !strings.Contains(s, "Learned from pull requests.\n") || strings.Contains(s, "#42") {
+		t.Errorf("describeTaught:\n%s", s)
 	}
 }
 
@@ -392,6 +409,8 @@ func TestShorten(t *testing.T) {
 		// An early break would waste the share: cut late instead.
 		{"Kurz.\n\n" + strings.Repeat("x", 60), 45, "Kurz.\n\n" + strings.Repeat("x", 23) + shortenedMark},
 		{"zu lang für den Anteil", 10, ""},
+		// An abbreviation is no sentence end.
+		{"Erster Satz hier. Danach z. B. Kafka und mehr Text dahinter.", 46, "Erster Satz hier." + shortenedMark},
 	} {
 		if got := shorten(c.in, c.n); got != c.want || len(got) > max(c.n, len(c.in)) {
 			t.Errorf("shorten(%q, %d) = %q, want %q", c.in, c.n, got, c.want)

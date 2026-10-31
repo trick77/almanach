@@ -517,7 +517,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return readErr(err)
 	}
-	focus := w.focus(plan, page)
+	focus := w.focus(plan, page, newer)
 	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
@@ -534,13 +534,17 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 // foldPatch applies a step's patch to the page under the rules of a fold
 // and writes the revision with the run's progress in one transaction.
 func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string) error {
+	// A code-backed statement the overview names is struck from its patch,
+	// not the patch refused: nearly every statement rests on code, and a
+	// refusal would throw away the summary over a confirmation.
+	patch, struck := strikeCode(patch, newer)
+	if len(struck) > 0 {
+		w.log.InfoContext(ctx, "baseline: "+name+": left alone, resting on code: "+strings.Join(struck, ", "))
+	}
 	if id := touchesNewer(newer, patch); id != "" {
 		why := " was taught by a pull request newer than the commit read"
-		switch newer[id] {
-		case byUnplaced:
+		if newer[id] == byUnplaced {
 			why = " rests on a merge commit git could not place"
-		case byCode:
-			why = " rests on code, which the overview does not read"
 		}
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+id+why)
 	}
@@ -631,24 +635,37 @@ const (
 	byCode     = "code"
 )
 
-// codeBacked adds to newer the statements resting on a file that is no doc:
-// the overview reads docs alone, and code wins over them.
+// codeBacked adds to newer the statements resting on code alone, none of
+// their files a doc: the overview reads docs alone, and code wins over
+// them. One that names a doc beside code is the overview's to keep up.
 func codeBacked(statements []store.Statement, newer map[string]string) map[string]string {
 	for _, s := range statements {
-		if newer[s.ID] != "" {
+		if newer[s.ID] != "" || len(s.Files) == 0 || slices.ContainsFunc(s.Files, baseline.IsDoc) {
 			continue
 		}
-		for _, f := range s.Files {
-			if !baseline.IsDoc(strings.TrimPrefix(f, "./")) {
-				if newer == nil {
-					newer = map[string]string{}
-				}
-				newer[s.ID] = byCode
-				break
-			}
+		if newer == nil {
+			newer = map[string]string{}
 		}
+		newer[s.ID] = byCode
 	}
 	return newer
+}
+
+// strikeCode takes the code-backed ids out of a patch, edits, drops and
+// confirmations alike, and names them.
+func strikeCode(p inference.Patch, newer map[string]string) (inference.Patch, []string) {
+	var struck []string
+	held := func(id string) bool {
+		if newer[id] == byCode {
+			struck = append(struck, id)
+			return true
+		}
+		return false
+	}
+	p.Statements = slices.DeleteFunc(slices.Clone(p.Statements), func(s inference.Statement) bool { return s.ID != nil && held(*s.ID) })
+	p.Drop = slices.DeleteFunc(slices.Clone(p.Drop), held)
+	p.Confirmed = slices.DeleteFunc(slices.Clone(p.Confirmed), held)
+	return p, struck
 }
 
 // errPlaceAgain is a merge commit git could not place: the step is taken
@@ -914,7 +931,7 @@ const overviewPart = "the repository's documentation, manifests and diagram sour
 
 // focus is what a reconcile's step must look at besides its files: the
 // statements resting on paths that changed, the paths that are gone.
-func (w *Worker) focus(plan runPlan, page store.Page) string {
+func (w *Worker) focus(plan runPlan, page store.Page, newer map[string]string) string {
 	if len(plan.Changed) == 0 {
 		return "This is a fresh reading: document what this part's code shows."
 	}
@@ -922,7 +939,8 @@ func (w *Worker) focus(plan runPlan, page store.Page) string {
 	for _, p := range plan.Changed {
 		changed[p] = true
 	}
-	ids := baseline.Resting(page.Statements, changed)
+	// A statement the step must leave alone is no statement to check.
+	ids := slices.DeleteFunc(baseline.Resting(page.Statements, changed), func(id string) bool { return newer[id] != "" })
 	var b strings.Builder
 	b.WriteString("This reading follows earlier ones: the code changed since the last. Check what the description says against the files below.")
 	if len(ids) > 0 {
@@ -1131,7 +1149,7 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
-		"{project_description}", describeSourced(projectPage, nil), "{repo_description}", describe(repoPage), "{other_repos}", others,
+		"{project_description}", describeTaught(projectPage), "{repo_description}", describe(repoPage), "{other_repos}", others,
 	).Replace(prompts.Project)
 }
 
@@ -1154,8 +1172,12 @@ func otherRepos(repos []store.RepoSummary, self string) string {
 	text := map[string]string{}
 	left := baseline.ProjectReposMaxBytes
 	for i, r := range bySize {
-		text[r.Slug] = shorten(r.Summary, left/(len(bySize)-i))
-		left -= len(text[r.Slug])
+		// The heading counts against the share; the names after are not.
+		frame := len(repoEntry(r.Slug, ""))
+		if s := shorten(r.Summary, left/(len(bySize)-i)-frame); s != "" {
+			text[r.Slug] = s
+			left -= frame + len(s)
+		}
 	}
 	var b strings.Builder
 	var named []string
@@ -1165,7 +1187,7 @@ func otherRepos(repos []store.RepoSummary, self string) string {
 		case text[r.Slug] == "":
 			named = append(named, r.Slug)
 		default:
-			fmt.Fprintf(&b, "### %s\n\n%s\n\n", r.Slug, text[r.Slug])
+			b.WriteString(repoEntry(r.Slug, text[r.Slug]))
 		}
 	}
 	if len(named) > 0 {
@@ -1197,15 +1219,41 @@ func shorten(s string, n int) string {
 	}
 	if i := strings.LastIndex(cut, "\n\n"); i > len(cut)/2 {
 		cut = cut[:i]
-	} else if i := strings.LastIndex(cut, ". "); i > len(cut)/2 {
+	} else if i := sentenceEnd(cut); i > len(cut)/2 {
 		cut = cut[:i+1]
 	}
 	return cut + shortenedMark
 }
 
+// abbreviations end in a period without ending a sentence ("z. B." and
+// its kin are single letters, caught apart).
+var abbreviations = map[string]bool{"bzw": true, "usw": true, "etc": true, "inkl": true, "ggf": true, "evtl": true,
+	"vgl": true, "sog": true, "bspw": true, "max": true, "min": true, "ca": true, "Nr": true, "resp": true}
+
+// sentenceEnd is the index of the last ". " in s that ends a sentence, not
+// an abbreviation; -1 when none does.
+func sentenceEnd(s string) int {
+	for i := strings.LastIndex(s, ". "); i > 0; i = strings.LastIndex(s[:i], ". ") {
+		word := s[strings.LastIndexAny(s[:i], " \n(")+1 : i]
+		if utf8.RuneCountInString(word) > 1 && !abbreviations[word] {
+			return i
+		}
+	}
+	return -1
+}
+
+func repoEntry(slug, summary string) string { return "### " + slug + "\n\n" + summary + "\n\n" }
+
 // describeSourced is describe with each statement's provenance: a step
 // must know which statements a pull request taught.
-func describeSourced(p store.Page, newer map[string]string) string {
+func describeSourced(p store.Page, newer map[string]string) string { return sourced(p, newer, true) }
+
+// describeTaught is describe saying which statements pull requests taught,
+// without their keys: the project step needs the fact, and keys shown are
+// keys copied into the prose.
+func describeTaught(p store.Page) string { return sourced(p, nil, false) }
+
+func sourced(p store.Page, newer map[string]string, keys bool) string {
 	if p.RevisionID == 0 {
 		return "_None yet._"
 	}
@@ -1223,8 +1271,11 @@ func describeSourced(p store.Page, newer map[string]string) string {
 				prs = append(prs, src.PRKey)
 			}
 		}
-		if len(prs) > 0 {
+		switch {
+		case len(prs) > 0 && keys:
 			fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
+		case len(prs) > 0:
+			b.WriteString("\nLearned from pull requests.\n")
 		}
 		switch newer[s.ID] {
 		case byNewerPR:
