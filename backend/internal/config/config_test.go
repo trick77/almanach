@@ -54,7 +54,6 @@ func TestLoadOverrides(t *testing.T) {
 	env := minimal()
 	env["SERVER_HOST"] = "127.0.0.1"
 	env["SERVER_PORT"] = "9090"
-	env["ALMANACH_AUTH_MODE"] = "proxy"
 	env["ALMANACH_REASONING_EFFORT"] = "high"
 	env["ALMANACH_REPO_MAX_STATEMENTS"] = "10"
 	env["ALMANACH_PROJECT_MAX_STATEMENTS"] = "5"
@@ -66,7 +65,7 @@ func TestLoadOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if app.Host != "127.0.0.1" || app.Port != 9090 || app.AuthMode != AuthProxy || app.ReasoningEffort != "high" {
+	if app.Host != "127.0.0.1" || app.Port != 9090 || app.AuthMode != AuthNone || app.ReasoningEffort != "high" {
 		t.Errorf("server values = %+v", app)
 	}
 	want := Limits{RepoMaxStatements: 10, ProjectMaxStatements: 5, RepoMaxChars: 800, ProjectMaxChars: 120}
@@ -78,24 +77,98 @@ func TestLoadOverrides(t *testing.T) {
 	}
 }
 
-func TestProxyModeNeedsLoopback(t *testing.T) {
-	for host, ok := range map[string]bool{"0.0.0.0": false, "": false, "10.0.0.5": false, "127.0.0.1": true, "localhost": true} {
-		env := minimal()
-		env["ALMANACH_AUTH_MODE"] = "proxy"
-		if host != "" {
-			env["SERVER_HOST"] = host
+const sessionSecret = "0123456789abcdef0123456789abcdef"
+
+func oidcEnv() map[string]string {
+	env := minimal()
+	env["ALMANACH_AUTH_MODE"] = "oidc"
+	env["ALMANACH_OIDC_ISSUER"] = "https://auth.example.com/"
+	env["ALMANACH_OIDC_CLIENT_ID"] = "almanach"
+	env["ALMANACH_OIDC_CLIENT_SECRET"] = "client-secret-xyz"
+	env["ALMANACH_OIDC_REDIRECT_URL"] = "https://almanach.example.com/api/auth/callback"
+	env["ALMANACH_SESSION_SECRET"] = sessionSecret
+	return env
+}
+
+func TestOIDCMode(t *testing.T) {
+	app, err := Load(lookup(oidcEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := OIDC{Issuer: "https://auth.example.com", ClientID: "almanach", ClientSecret: "client-secret-xyz",
+		RedirectURL: "https://almanach.example.com/api/auth/callback", SessionKey: []byte(sessionSecret)}
+	if app.AuthMode != AuthOIDC || app.OIDC.Issuer != want.Issuer || app.OIDC.ClientID != want.ClientID ||
+		app.OIDC.ClientSecret != want.ClientSecret || app.OIDC.RedirectURL != want.RedirectURL ||
+		string(app.OIDC.SessionKey) != sessionSecret || !app.OIDC.CookieSecure() {
+		t.Errorf("OIDC = %+v, want %+v", app.OIDC, want)
+	}
+	// Any host: the dev stack and the production stack both bind 0.0.0.0.
+	if app.Host != "0.0.0.0" {
+		t.Errorf("Host = %q", app.Host)
+	}
+	s := app.Summary()
+	if !strings.Contains(s, "auth={oidc issuer https://auth.example.com, client almanach}") {
+		t.Errorf("Summary = %s", s)
+	}
+	for _, secret := range []string{"client-secret-xyz", sessionSecret} {
+		if strings.Contains(s, secret) {
+			t.Errorf("Summary leaks %q: %s", secret, s)
 		}
+	}
+}
+
+func TestOIDCModeRequiresEverything(t *testing.T) {
+	for _, name := range oidcVars {
+		env := oidcEnv()
+		delete(env, name)
 		_, err := Load(lookup(env))
-		if ok && err != nil {
-			t.Errorf("host %q: Load failed: %v", host, err)
+		if err == nil || !strings.Contains(err.Error(), "ALMANACH_AUTH_MODE=oidc requires "+name) {
+			t.Errorf("without %s: err = %v", name, err)
 		}
-		if !ok {
-			if err == nil {
-				t.Errorf("host %q: Load accepted proxy mode", host)
-			} else if !strings.Contains(err.Error(), "ALMANACH_AUTH_MODE=proxy needs SERVER_HOST=127.0.0.1") {
-				t.Errorf("host %q: error = %v", host, err)
+	}
+}
+
+func TestOIDCModeRefusesBadValues(t *testing.T) {
+	for _, tc := range []struct{ name, value, want string }{
+		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com/realms/x", "want a bare origin"},
+		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com?x=1", "want a bare origin"},
+		{"ALMANACH_OIDC_ISSUER", "https://user@auth.example.com", "want a bare origin"},
+		{"ALMANACH_OIDC_ISSUER", "auth.example.com", "want a bare origin"},
+		{"ALMANACH_OIDC_ISSUER", "ftp://auth.example.com", "want a bare origin"},
+		{"ALMANACH_OIDC_REDIRECT_URL", "http://almanach.example.com/api/auth/callback", "want https"},
+		{"ALMANACH_SESSION_SECRET", "too-short", "want at least 32 bytes"},
+	} {
+		env := oidcEnv()
+		env[tc.name] = tc.value
+		_, err := Load(lookup(env))
+		if err == nil || !strings.Contains(err.Error(), tc.name+": "+tc.want) {
+			t.Errorf("%s=%q: err = %v", tc.name, tc.value, err)
+		}
+	}
+}
+
+// Set under none, an oidc variable would look active and change nothing.
+func TestNoneModeRefusesOIDCVariables(t *testing.T) {
+	for _, name := range oidcVars {
+		env := oidcEnv()
+		env["ALMANACH_AUTH_MODE"] = "none"
+		for _, other := range oidcVars {
+			if other != name {
+				delete(env, other)
 			}
 		}
+		_, err := Load(lookup(env))
+		if err == nil || !strings.Contains(err.Error(), name+" is read in oidc mode only, got ALMANACH_AUTH_MODE=none") {
+			t.Errorf("%s under none: err = %v", name, err)
+		}
+	}
+}
+
+func TestProxyModeIsGone(t *testing.T) {
+	env := minimal()
+	env["ALMANACH_AUTH_MODE"] = "proxy"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `ALMANACH_AUTH_MODE: "proxy", want one of none, oidc`) {
+		t.Errorf("err = %v", err)
 	}
 }
 
@@ -178,7 +251,7 @@ func TestInvalidEnum(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load accepted ALMANACH_AUTH_MODE=basic")
 	}
-	if !strings.Contains(err.Error(), `ALMANACH_AUTH_MODE: "basic", want one of none, proxy`) {
+	if !strings.Contains(err.Error(), `ALMANACH_AUTH_MODE: "basic", want one of none, oidc`) {
 		t.Errorf("error = %v", err)
 	}
 }

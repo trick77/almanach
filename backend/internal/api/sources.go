@@ -17,8 +17,8 @@ import (
 )
 
 // The sources routes: the first writes beside the webhook. Gated like the
-// read routes, by the sidecar in proxy mode and by nobody in none; the user
-// header is logged and decides nothing. A token is sealed here and never
+// read routes, by the session in oidc mode and by nobody in none; the
+// reader is logged and decides nothing. A token is sealed here and never
 // read back out: the body carries has_token, never the token.
 
 // SourceStore is what the sources routes need of the store.

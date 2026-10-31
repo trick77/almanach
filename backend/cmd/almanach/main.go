@@ -22,12 +22,14 @@ import (
 	"strings"
 	"time"
 
+	kitauth "github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
 	"github.com/trick77/ship/kit/run"
 	"github.com/trick77/ship/kit/version"
 
 	"github.com/trick77/almanach/internal/api"
+	"github.com/trick77/almanach/internal/auth"
 	"github.com/trick77/almanach/internal/bitbucket"
 	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/config"
@@ -243,6 +245,37 @@ func serve(log *slog.Logger) error {
 	} else {
 		log.Info("Sources: off (ALMANACH_REPOS_DIR unset)")
 	}
+	// The sign-in: discovery talks to the provider, so an instance that
+	// cannot reach it fails here rather than coming up healthy and refusing
+	// every login. Its own timeout: the boot context has no deadline, and an
+	// unreachable provider would hang the process instead of reporting it.
+	var oidcSvc api.OIDCService
+	var sessions *kitauth.Sessions
+	if app.AuthMode == config.AuthOIDC {
+		o := app.OIDC
+		var faults []string
+		if s, err := auth.NewSessions(o.SessionKey, o.CookieSecure()); err != nil {
+			faults = append(faults, "session cookie: "+err.Error())
+		} else {
+			sessions = s
+		}
+		discoverCtx, cancelDiscover := context.WithTimeout(ctx, 30*time.Second)
+		svc, err := kitauth.NewOIDC(discoverCtx, auth.OIDCConfig(auth.Config{
+			Issuer: o.Issuer, ClientID: o.ClientID, ClientSecret: o.ClientSecret, RedirectURL: o.RedirectURL, Secure: o.CookieSecure(),
+		}))
+		cancelDiscover()
+		if err != nil {
+			faults = append(faults, err.Error())
+		} else {
+			oidcSvc = svc
+		}
+		if len(faults) > 0 {
+			log.Error("OIDC: "+strings.Join(faults, "; "), "issuer", o.Issuer)
+			checks = append(checks, "OIDC")
+		} else {
+			log.Info("OIDC: OK", "issuer", o.Issuer)
+		}
+	}
 	if len(checks) > 0 {
 		return fmt.Errorf("startup aborted: %d check(s) failed: %s", len(checks), strings.Join(checks, ", "))
 	}
@@ -274,7 +307,8 @@ func serve(log *slog.Logger) error {
 	worker.Start(context.WithoutCancel(ctx))
 
 	srv := httpapi.New(db.Ping, log)
-	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources, Log: log})
+	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
+		OIDC: oidcSvc, Sessions: sessions, Log: log})
 
 	addr := net.JoinHostPort(app.Host, strconv.Itoa(app.Port))
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))
