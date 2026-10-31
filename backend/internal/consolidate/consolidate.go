@@ -593,7 +593,9 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 		if old != nil {
 			s.ID = old.ID
 			s.Sources = old.Sources
-			if old.Text != s.Text || old.Name != s.Name || !diagram.Equal(old.Diagram, s.Diagram) {
+			// Umlauts written in where old text had ae, oe, ue are spelling,
+			// not something this source taught: stored, never credited.
+			if !lang.SameButSpelling(old.Text, s.Text) || !lang.SameButSpelling(old.Name, s.Name) || !diagram.Equal(old.Diagram, s.Diagram) {
 				s.Sources = appendSource(s.Sources, src)
 			} else {
 				s.Checked = old.Checked
@@ -649,7 +651,7 @@ func statementDiagram(proposed *diagram.Diagram, old *store.Statement, s store.S
 	if old == nil || old.Diagram == nil {
 		return nil, false, why
 	}
-	if old.Name == s.Name && old.Text == s.Text {
+	if lang.SameButSpelling(old.Name, s.Name) && lang.SameButSpelling(old.Text, s.Text) {
 		return old.Diagram, false, why
 	}
 	return nil, true, why

@@ -4,7 +4,7 @@ A statement may carry a `diagram`; most statements have none. Draw one only wher
 
 - `diagram` null keeps the diagram while the statement's name and text stay, or leaves a statement without one; change them and return the diagram again to keep it, a picture of what is no longer said goes. Return a new one only to add or replace it. `{"kind": "none"}` removes a statement's diagram when it no longer says anything the paragraphs need. A statement shown with a `Diagram:` line has one, there to read and to correct.
 - Every edge's and every message's `from` and `to` is a declared node, participant or entity `id`; ids are unique and nothing appears twice. A flow edge and an entity relationship never point at themselves; a sequence message may, a part calling itself.
-- Labels: short, German, Swiss spelling, at most 80 characters. A `start` or `stop` node is a dot without text.
+- Labels: short, German, Swiss spelling ("ss", never "ß"; umlauts stay ä, ö, ü, Ä, Ö, Ü, never spelled out as ae, oe, ue), at most 80 characters. A `start` or `stop` node is a dot without text.
 - At most {diagram_max_nodes} nodes (participants, entities) and {diagram_max_edges} edges (messages, relationships) per diagram, and at most 20 rows in a sequence, frames included; past about 12 nodes a picture stops reading, so draw two diagrams on two statements rather than one crowded one. A diagram over a limit, or one that breaks a rule here, is left out and the drawing is wasted: its statement is kept without it, and a diagram it had stays only when the statement's name and text stay too.
 - At most {max_diagrams} statement diagrams on a page; a diagram added past that is left out, its statement kept.
 

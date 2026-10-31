@@ -3,6 +3,13 @@ package lang
 
 import "strings"
 
+var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")
+
+// SameButSpelling reports whether a and b say the same, umlauts written
+// out as two letters or not: a model writing "fuer" once and "für" later
+// said one thing. The prompts ask for umlauts; older text may lack them.
+func SameButSpelling(a, b string) bool { return a == b || umlauts.Replace(a) == umlauts.Replace(b) }
+
 // SwissSS writes the model's German prose with Swiss spelling: ß becomes ss
 // (ẞ becomes SS). The prompt asks for it, and a model does not always obey;
 // this is the blunt rule that makes it hold. Code is left alone: fenced

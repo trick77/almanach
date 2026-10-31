@@ -212,6 +212,12 @@ func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	if p.Skipped != nil {
 		t.Errorf("Skipped = %v, want a new plan's own", p.Skipped)
 	}
+	// A subject named with umlauts where the old plan wrote them out is the
+	// same subject, not a second one.
+	spelled := Plan{Subjects: []Subject{{Name: "Datenueberpruefung", Purpose: "p", Files: []File{{"auth/login.go", 100}}}}}
+	if got := names(MergePlan(spelled, []inference.Subject{subject("Datenüberprüfung", "auth/new.go")}, files, 2)); !reflect.DeepEqual(got, []string{"Datenueberpruefung:auth/login.go,auth/new.go"}) {
+		t.Errorf("respelled subject = %v, want the old one with the new file", got)
+	}
 	// Files that grew are held to the step budget again, in their order.
 	grown := Plan{Subjects: []Subject{{Name: "Big", Files: []File{{"a.go", 100}, {"b.go", 100}, {"c.go", 10}}}}}
 	half := StepMaxBytes / 2
