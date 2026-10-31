@@ -1,9 +1,11 @@
 package inference
 
+import "github.com/trick77/almanach/internal/diagram"
+
 // The diagrams' strict schemas: rongo's intermediate form (a flow, a
 // sequence, an entity model) as JSON the model fills in. The schema keeps
-// the shape; the rules no schema can say (ends declared, no self edges,
-// caps, slugs) are baseline/diagram.go's.
+// the shape, its vocabularies internal/diagram's; the rules no schema can
+// say (ends declared, no self edges, caps, slugs) are baseline/diagram.go's.
 
 // object is a strict object, the one builder of every schema here: every
 // property required, nothing else allowed, the required list in one order
@@ -21,8 +23,12 @@ func object(properties map[string]any) map[string]any {
 	}
 }
 
-func enum(values ...any) map[string]any {
-	return map[string]any{"type": "string", "enum": values}
+func enum(values ...string) map[string]any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return map[string]any{"type": "string", "enum": out}
 }
 
 func str() map[string]any { return map[string]any{"type": "string"} }
@@ -40,18 +46,17 @@ func flowSchema() map[string]any {
 // mapSchema is the project's system map: a flow whose every node sits in
 // one of the four zones.
 func mapSchema() map[string]any {
-	zones := []any{"clients", "repositories", "stores", "external"}
-	return flow(enum(zones...), enum(zones...))
+	return flow(enum(diagram.MapZones...), enum(diagram.MapZones...))
 }
 
 func flow(nodeZone, zoneID map[string]any) map[string]any {
 	return object(map[string]any{
-		"kind":      enum("flow"),
-		"direction": enum("TB", "LR"),
+		"kind":      enum(diagram.KindFlow),
+		"direction": enum(diagram.Directions...),
 		"nodes": array(object(map[string]any{
 			"id":    str(),
 			"label": str(),
-			"shape": enum("pill", "step", "decision", "start", "stop"),
+			"shape": enum(diagram.Shapes...),
 			"zone":  nodeZone,
 		})),
 		"edges": array(object(map[string]any{
@@ -59,7 +64,7 @@ func flow(nodeZone, zoneID map[string]any) map[string]any {
 			"to":     str(),
 			"label":  str(),
 			"dashed": map[string]any{"type": "boolean"},
-			"head":   enum("end", "both", "none"),
+			"head":   enum(diagram.Heads...),
 		})),
 		"zones": array(object(map[string]any{"id": zoneID, "title": str()})),
 	})
@@ -69,22 +74,20 @@ func flow(nodeZone, zoneID map[string]any) map[string]any {
 // messages, notes and frames top to bottom.
 func sequenceSchema() map[string]any {
 	return object(map[string]any{
-		"kind":   enum("sequence"),
+		"kind":   enum(diagram.KindSequence),
 		"actors": array(object(map[string]any{"id": str(), "label": str()})),
 		"rows": array(map[string]any{"anyOf": []any{
 			object(map[string]any{
-				"type": enum("message"), "from": str(), "to": str(), "label": str(),
-				"line": enum("solid", "dashed"), "head": enum("filled", "open", "none", "cross", "both"),
+				"type": enum(diagram.RowMessage), "from": str(), "to": str(), "label": str(),
+				"line": enum(diagram.SeqLines...), "head": enum(diagram.SeqHeads...),
 			}),
 			object(map[string]any{
-				"type": enum("note"), "from": str(), "to": str(), "label": str(),
-				"side": enum("over", "left", "right"),
+				"type": enum(diagram.RowNote), "from": str(), "to": str(), "label": str(),
+				"side": enum(diagram.Sides...),
 			}),
-			object(map[string]any{
-				"type": enum("frame"), "keyword": enum("loop", "alt", "opt", "par", "critical", "break"), "label": str(),
-			}),
-			object(map[string]any{"type": enum("divider"), "keyword": enum("else", "and", "option"), "label": str()}),
-			object(map[string]any{"type": enum("end")}),
+			object(map[string]any{"type": enum(diagram.RowFrame), "keyword": enum(diagram.Frames...), "label": str()}),
+			object(map[string]any{"type": enum(diagram.RowDivider), "keyword": enum(diagram.Dividers...), "label": str()}),
+			object(map[string]any{"type": enum(diagram.RowEnd)}),
 		}}),
 	})
 }
@@ -92,16 +95,16 @@ func sequenceSchema() map[string]any {
 // erSchema is entities with their fields and the relationships between
 // them.
 func erSchema() map[string]any {
-	card := enum("one", "zeroOrOne", "oneOrMore", "zeroOrMore")
+	card := enum(diagram.Cards...)
 	return object(map[string]any{
-		"kind":      enum("er"),
-		"direction": enum("TB", "LR"),
+		"kind":      enum(diagram.KindER),
+		"direction": enum(diagram.Directions...),
 		"entities": array(object(map[string]any{
 			"id":    str(),
 			"label": str(),
 			"attrs": array(object(map[string]any{
 				"type": str(), "name": str(), "comment": str(),
-				"keys": array(enum("PK", "FK", "UK")),
+				"keys": array(enum(diagram.KeyMarks...)),
 			})),
 		})),
 		"rels": array(object(map[string]any{
@@ -115,5 +118,5 @@ func erSchema() map[string]any {
 // or replace it, {"kind": "none"} to remove it, null to keep what it has.
 func statementDiagram() map[string]any {
 	return map[string]any{"anyOf": []any{flowSchema(), sequenceSchema(), erSchema(),
-		object(map[string]any{"kind": enum("none")}), map[string]any{"type": "null"}}}
+		object(map[string]any{"kind": enum(diagram.KindNone)}), map[string]any{"type": "null"}}}
 }

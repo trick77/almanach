@@ -42,28 +42,18 @@ const (
 	idMaxChars    = 64
 )
 
-// The system map's zones, the only four it may have.
-const (
-	ZoneClients      = "clients"
-	ZoneRepositories = "repositories"
-	ZoneStores       = "stores"
-	ZoneExternal     = "external"
-)
-
-// MapZones is the four in the order the prompt names them.
-var MapZones = []string{ZoneClients, ZoneRepositories, ZoneStores, ZoneExternal}
-
+// The vocabularies are internal/diagram's, shared with the schema.
 var (
-	directions = []string{"TB", "LR"}
-	shapes     = []string{"pill", "step", "decision", "start", "stop"}
-	heads      = []string{"end", "both", "none"}
-	seqLines   = []string{"solid", "dashed"}
-	seqHeads   = []string{"filled", "open", "none", "cross", "both"}
-	sides      = []string{"over", "left", "right"}
-	frames     = []string{"loop", "alt", "opt", "par", "critical", "break"}
-	dividers   = []string{"else", "and", "option"}
-	cards      = []string{"one", "zeroOrOne", "oneOrMore", "zeroOrMore"}
-	attrKeys   = []string{"PK", "FK", "UK"}
+	directions = ir.Directions
+	shapes     = ir.Shapes
+	heads      = ir.Heads
+	seqLines   = ir.SeqLines
+	seqHeads   = ir.SeqHeads
+	sides      = ir.Sides
+	frames     = ir.Frames
+	dividers   = ir.Dividers
+	cards      = ir.Cards
+	attrKeys   = ir.KeyMarks
 )
 
 // maxFrameDepth is how deep a sequence's frames may sit in one another.
@@ -99,8 +89,8 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 		return nil, fmt.Sprintf("the map is a %q, not a flow", d.Kind)
 	}
 	for _, z := range d.Zones {
-		if !slices.Contains(MapZones, z.ID) {
-			return nil, fmt.Sprintf("zone %q is none of %s", z.ID, strings.Join(MapZones, ", "))
+		if !slices.Contains(ir.MapZones, z.ID) {
+			return nil, fmt.Sprintf("zone %q is none of %s", z.ID, strings.Join(ir.MapZones, ", "))
 		}
 	}
 	repos := 0
@@ -109,11 +99,11 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 		switch {
 		case n.Zone == "":
 			return nil, fmt.Sprintf("node %q sits in no zone", n.ID)
-		case n.Zone == ZoneRepositories && !isSlug:
+		case n.Zone == ir.ZoneRepositories && !isSlug:
 			return nil, fmt.Sprintf("repository node %q is no source repository of the project", n.ID)
-		case n.Zone != ZoneRepositories && isSlug:
-			return nil, fmt.Sprintf("repository %q sits in zone %q, not %s", n.ID, n.Zone, ZoneRepositories)
-		case n.Zone == ZoneRepositories:
+		case n.Zone != ir.ZoneRepositories && isSlug:
+			return nil, fmt.Sprintf("repository %q sits in zone %q, not %s", n.ID, n.Zone, ir.ZoneRepositories)
+		case n.Zone == ir.ZoneRepositories:
 			repos++
 		}
 	}
@@ -135,7 +125,7 @@ func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
 	out := *d
 	out.Nodes = nil
 	for _, n := range d.Nodes {
-		if n.Zone == ZoneRepositories && !slices.Contains(slugs, n.ID) {
+		if n.Zone == ir.ZoneRepositories && !slices.Contains(slugs, n.ID) {
 			gone[n.ID] = true
 			continue
 		}
@@ -170,7 +160,8 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 		if reason := checkID("zone", z.ID, zones); reason != "" {
 			return nil, reason
 		}
-		title, reason := label("zone "+z.ID, z.Title, true)
+		// A title may be empty: the UI titles zones from strings.ts by id.
+		title, reason := label("zone "+z.ID, z.Title, false)
 		if reason != "" {
 			return nil, reason
 		}

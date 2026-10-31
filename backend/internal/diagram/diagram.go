@@ -35,6 +35,40 @@ const (
 	DrawMaxAttrs    = 12
 )
 
+// The vocabularies, once: the schema the model fills in (inference) and the
+// validator (baseline) both read them. openapi.yaml is written by hand.
+var (
+	Directions = []string{"TB", "LR"}
+	Shapes     = []string{"pill", "step", "decision", "start", "stop"}
+	Heads      = []string{"end", "both", "none"}
+	SeqLines   = []string{"solid", "dashed"}
+	SeqHeads   = []string{"filled", "open", "none", "cross", "both"}
+	Sides      = []string{"over", "left", "right"}
+	Frames     = []string{"loop", "alt", "opt", "par", "critical", "break"}
+	Dividers   = []string{"else", "and", "option"}
+	Cards      = []string{"one", "zeroOrOne", "oneOrMore", "zeroOrMore"}
+	KeyMarks   = []string{"PK", "FK", "UK"}
+)
+
+// The system map's zones, the only four it may have.
+const (
+	ZoneClients      = "clients"
+	ZoneRepositories = "repositories"
+	ZoneStores       = "stores"
+	ZoneExternal     = "external"
+)
+
+// MapZones is the four in the order the prompt names them.
+var MapZones = []string{ZoneClients, ZoneRepositories, ZoneStores, ZoneExternal}
+
+// Sentinel is the map a project revision carries when a map was due and
+// none was accepted: asked for, not drawn. The API and the UI read it as
+// no map; the baseline does not run a step again to ask for one.
+func Sentinel() *Diagram { return &Diagram{Kind: KindNone} }
+
+// IsSentinel reports whether d is the sentinel.
+func IsSentinel(d *Diagram) bool { return d != nil && d.Kind == KindNone }
+
 // MapFits reports whether a project of this many source repositories can
 // have a system map: every repository a node, and room for at least one
 // node beside them. A larger project gets none.

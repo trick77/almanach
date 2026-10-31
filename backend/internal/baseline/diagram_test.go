@@ -110,7 +110,6 @@ func TestCheckDiagramRefuses(t *testing.T) {
 		"node label empty":  {func() *ir.Diagram { d := flowOf("a"); d.Nodes[0].Label = " "; return d }(), "empty label"},
 		"node label long":   {func() *ir.Diagram { d := flowOf("a"); d.Nodes[0].Label = long; return d }(), "label over 80"},
 		"node zone":         {func() *ir.Diagram { d := flowOf("a"); d.Nodes[0].Zone = "nowhere"; return d }(), "undeclared zone"},
-		"zone title":        {func() *ir.Diagram { d := flowOf("a"); d.Zones = []ir.Zone{{ID: "z"}}; return d }(), "empty label"},
 		"seq no actor":      {&ir.Diagram{Kind: ir.KindSequence, Rows: []ir.Row{msg("a", "b")}}, "0 participants"},
 		"seq dangling":      {seqOf(msg("a", "c")), "no declared participant"},
 		"seq note dangling": {seqOf(msg("a", "b"), ir.Row{Type: ir.RowNote, From: "c", To: "c", Side: "over"}), "no declared participant"},
@@ -180,18 +179,30 @@ func TestCheckDiagramDrawingCeilings(t *testing.T) {
 
 func mapOf(nodes ...ir.Node) *ir.Diagram {
 	return &ir.Diagram{Kind: ir.KindFlow, Direction: "LR", Nodes: nodes,
-		Zones: []ir.Zone{{ID: ZoneRepositories, Title: "Repos"}, {ID: ZoneStores, Title: "Speicher"}, {ID: ZoneExternal, Title: "Extern"}}}
+		Zones: []ir.Zone{{ID: ir.ZoneRepositories, Title: "Repos"}, {ID: ir.ZoneStores, Title: "Speicher"}, {ID: ir.ZoneExternal, Title: "Extern"}}}
 }
 
 func node(id, zone string) ir.Node { return ir.Node{ID: id, Label: id, Shape: "step", Zone: zone} }
 
 func TestCheckMap(t *testing.T) {
 	slugs := []string{"api", "web"}
-	good := mapOf(node("api", ZoneRepositories), node("pg", ZoneStores))
+	good := mapOf(node("api", ir.ZoneRepositories), node("pg", ir.ZoneStores))
 	good.Edges = []ir.Edge{edge("api", "pg", "DB")}
 	out, reason := CheckMap(good, slugs, caps)
 	if reason != "" || len(out.Zones) != 2 {
 		t.Fatalf("map = %+v, reason %q; want held, the unused zone gone", out, reason)
+	}
+	// A zone without a title holds: the UI titles zones by id. A node
+	// without a label does not.
+	untitled := mapOf(node("api", ir.ZoneRepositories))
+	untitled.Zones[0].Title = " "
+	if out, reason := CheckMap(untitled, slugs, caps); reason != "" || out.Zones[0].Title != "" {
+		t.Errorf("untitled zone: %+v, reason %q", out, reason)
+	}
+	unlabelled := mapOf(node("api", ir.ZoneRepositories))
+	unlabelled.Nodes[0].Label = ""
+	if _, reason := CheckMap(unlabelled, slugs, caps); !strings.Contains(reason, "empty label") {
+		t.Errorf("unlabelled node: reason %q", reason)
 	}
 	withEdge := func(d *ir.Diagram, e ir.Edge) *ir.Diagram { d.Edges = append(d.Edges, e); return d }
 	cases := map[string]struct {
@@ -200,14 +211,14 @@ func TestCheckMap(t *testing.T) {
 	}{
 		"missing":          {nil, "no map"},
 		"not a flow":       {seqOf(msg("a", "b")), "not a flow"},
-		"zone not allowed": {func() *ir.Diagram { d := mapOf(node("api", ZoneRepositories)); d.Zones[2].ID = "cloud"; return d }(), `zone "cloud" is none of`},
-		"node in no zone":  {mapOf(node("api", ZoneRepositories), node("pg", "")), "sits in no zone"},
-		"invented slug":    {mapOf(node("api", ZoneRepositories), node("billing", ZoneRepositories)), `"billing" is no source repository`},
-		"slug elsewhere":   {mapOf(node("api", ZoneRepositories), node("web", ZoneExternal)), `repository "web" sits in zone "external"`},
-		"no repository":    {mapOf(node("pg", ZoneStores)), "holds no repository"},
-		"dangling edge":    {withEdge(mapOf(node("api", ZoneRepositories)), edge("api", "ghost", "HTTP")), "no declared node"},
-		"self edge":        {withEdge(mapOf(node("api", ZoneRepositories)), edge("api", "api", "HTTP")), "points at itself"},
-		"over the cap":     {mapOf(node("api", ZoneRepositories), node("a", ZoneExternal), node("b", ZoneExternal), node("c", ZoneExternal), node("d", ZoneExternal)), "5 nodes"},
+		"zone not allowed": {func() *ir.Diagram { d := mapOf(node("api", ir.ZoneRepositories)); d.Zones[2].ID = "cloud"; return d }(), `zone "cloud" is none of`},
+		"node in no zone":  {mapOf(node("api", ir.ZoneRepositories), node("pg", "")), "sits in no zone"},
+		"invented slug":    {mapOf(node("api", ir.ZoneRepositories), node("billing", ir.ZoneRepositories)), `"billing" is no source repository`},
+		"slug elsewhere":   {mapOf(node("api", ir.ZoneRepositories), node("web", ir.ZoneExternal)), `repository "web" sits in zone "external"`},
+		"no repository":    {mapOf(node("pg", ir.ZoneStores)), "holds no repository"},
+		"dangling edge":    {withEdge(mapOf(node("api", ir.ZoneRepositories)), edge("api", "ghost", "HTTP")), "no declared node"},
+		"self edge":        {withEdge(mapOf(node("api", ir.ZoneRepositories)), edge("api", "api", "HTTP")), "points at itself"},
+		"over the cap":     {mapOf(node("api", ir.ZoneRepositories), node("a", ir.ZoneExternal), node("b", ir.ZoneExternal), node("c", ir.ZoneExternal), node("d", ir.ZoneExternal)), "5 nodes"},
 	}
 	for name, c := range cases {
 		_, reason := CheckMap(c.d, slugs, caps)
@@ -220,7 +231,7 @@ func TestCheckMap(t *testing.T) {
 // A repository node whose slug left the project goes, with its edges; a
 // node of another zone named like nothing stays for CheckMap to judge.
 func TestDropDeparted(t *testing.T) {
-	m := mapOf(node("api", ZoneRepositories), node("old", ZoneRepositories), node("pg", ZoneStores))
+	m := mapOf(node("api", ir.ZoneRepositories), node("old", ir.ZoneRepositories), node("pg", ir.ZoneStores))
 	m.Edges = []ir.Edge{edge("api", "pg", "DB"), edge("old", "pg", "DB"), edge("api", "old", "HTTP")}
 	out, gone := DropDeparted(m, []string{"api"})
 	if len(gone) != 1 || gone[0] != "old" || len(out.Nodes) != 2 || len(out.Edges) != 1 || out.Edges[0].To != "pg" {
