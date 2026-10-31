@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -231,6 +232,69 @@ func TestFoldNewStatement(t *testing.T) {
 	}
 	if len(s.Sources) != 1 || s.Sources[0].PRKey != "PLAT/files#42" || s.Sources[0].TicketKey != "PLAT-7" || !s.Sources[0].MergedAt.Equal(mergedAt) {
 		t.Errorf("Sources = %+v", s.Sources)
+	}
+}
+
+// The three kinds for agents land on the pages like any other: decision,
+// extension and pitfall on the repository's, decision and pitfall on the
+// project's.
+func TestFoldAgentKinds(t *testing.T) {
+	st := newFakeStore()
+	repo := &inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{
+		{Kind: "decision", Name: "Ein Worker", Text: "Seriell, weil zwei Schreiber eine Seite verlieren.", Files: []string{"w.go"}},
+		{Kind: "extension", Name: "Neue Route", Text: "api.go, dann openapi.yaml.", Files: []string{"api.go", "openapi.yaml"}},
+		{Kind: "pitfall", Name: "Retry ohne Backoff", Text: "Brach den Upload ab.", Files: []string{"upload.go"}},
+	}}
+	project := &inference.Description{Summary: "Das Projekt.", Statements: []inference.Statement{
+		{Kind: "decision", Name: "Eine Datenbank", Text: "Weil.", Files: []string{"files/db.go"}},
+		{Kind: "pitfall", Name: "Doppelte Zustellung", Text: "Brach.", Files: []string{"files/hook.go"}},
+	}}
+	newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 2 {
+		t.Fatalf("revisions = %+v, want both pages", st.revisions)
+	}
+	var got []string
+	for _, rev := range st.revisions {
+		for _, s := range rev.Statements {
+			got = append(got, rev.Scope+":"+s.Kind)
+		}
+	}
+	want := []string{"repository:decision", "repository:extension", "repository:pitfall", "project:decision", "project:pitfall"}
+	if !slices.Equal(got, want) {
+		t.Errorf("kinds = %v, want %v", got, want)
+	}
+}
+
+// An extension is a repository's change recipe: on the project page it is
+// refused like an unknown kind, the project rewrite rejected whole and the
+// repository's applied.
+func TestFoldProjectExtensionRefused(t *testing.T) {
+	st := newFakeStore()
+	repo := &inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{Kind: "extension", Name: "Neue Route", Text: "api.go.", Files: []string{"api.go"}},
+	}}
+	project := &inference.Description{Summary: "Das Projekt.", Statements: []inference.Statement{
+		{Kind: "extension", Name: "Neuer Dienst", Text: "Überall.", Files: []string{"x.go"}},
+	}}
+	for _, kind := range []string{"extension", "tutorial"} {
+		project.Statements[0].Kind = kind
+		st.revisions = nil
+		newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), queued("PLAT/files#42"))
+		for _, rev := range st.revisions {
+			if rev.Scope == store.ScopeProject {
+				t.Errorf("%s: project revision written: %+v", kind, rev)
+			}
+		}
+	}
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason == "" {
+		t.Error("attach took an unknown kind on the project page")
+	}
+	project.Statements[0].Kind = "extension"
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); !strings.Contains(reason, "extension not on a project page") {
+		t.Errorf("reason = %q", reason)
+	}
+	if _, _, reason := attach(store.ScopeRepository, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason != "" {
+		t.Errorf("repository extension refused: %q", reason)
 	}
 }
 

@@ -616,7 +616,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	statements, stripped, reason := attach(page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits))
+	statements, stripped, reason := attach(store.ScopeRepository, page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits))
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
@@ -1149,7 +1149,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
-	statements, stripped, reason := attach(page.Statements, d.Statements, runSource(*r, plan), next, limitsOf(w.limits))
+	statements, stripped, reason := attach(store.ScopeProject, page.Statements, d.Statements, runSource(*r, plan), next, limitsOf(w.limits))
 	logStripped(ctx, w.log, "baseline: "+projectName, stripped)
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)

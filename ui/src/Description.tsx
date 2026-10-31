@@ -5,12 +5,23 @@ import { notePathFor } from "./routing";
 import { S } from "./strings";
 import { Chip, Empty, Prose, Summary, eyebrow, mono } from "./ui";
 
-const KINDS: Kind[] = ["component", "rule", "invariant", "entity"];
+/** The kinds in the order the Markdown export has them: what must not
+ *  break and why first, the parts after. */
+const KINDS: Kind[] = [
+  "invariant",
+  "rule",
+  "decision",
+  "pitfall",
+  "extension",
+  "component",
+  "entity",
+];
 
 /** DescriptionView is a page's description: the summary as prose, then the
  *  statements grouped by kind, each a block with its name, its text as
  *  paragraphs, its files and its sources as citation chips. pageRepo is
- *  the repository a repository page shows, whose slug its chips leave out. */
+ *  the repository a repository page shows, whose slug its chips leave out;
+ *  without it the page is a project's, which holds no extension. */
 export function DescriptionView({
   description,
   emptyHint,
@@ -20,6 +31,8 @@ export function DescriptionView({
   emptyHint: string;
   pageRepo?: string;
 }) {
+  const kinds =
+    pageRepo === undefined ? KINDS.filter((k) => k !== "extension") : KINDS;
   if (description === null) {
     return (
       <>
@@ -34,7 +47,7 @@ export function DescriptionView({
     <>
       <div className={eyebrow}>{S.project.description}</div>
       <Summary text={description.summary} />
-      {KINDS.map((kind) => {
+      {kinds.map((kind) => {
         const list = description.statements.filter((s) => s.kind === kind);
         return (
           <section key={kind}>

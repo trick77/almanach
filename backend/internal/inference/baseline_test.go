@@ -183,7 +183,7 @@ func TestDiagramSchemas(t *testing.T) {
 		t.Errorf("map not nullable: %v", props["map"])
 	}
 	// The merge's description has no map: the merge never draws one.
-	if _, ok := description(true)["properties"].(map[string]any)["map"]; ok {
+	if _, ok := description(true, RepoKinds)["properties"].(map[string]any)["map"]; ok {
 		t.Error("the merge's description carries a map")
 	}
 	zone := mapSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["zone"].(map[string]any)
@@ -206,14 +206,14 @@ func TestNoDiagramsSchemas(t *testing.T) {
 	}
 	for name, st := range map[string]map[string]any{
 		"patch":   patchFormat(false).Schema["properties"].(map[string]any)["statements"].(map[string]any),
-		"merge":   description(false)["properties"].(map[string]any)["statements"].(map[string]any),
+		"merge":   description(false, RepoKinds)["properties"].(map[string]any)["statements"].(map[string]any),
 		"project": projectDescription(false)["properties"].(map[string]any)["statements"].(map[string]any),
 	} {
 		if _, ok := statementProps(st)["diagram"]; ok {
 			t.Errorf("%s statements offer a diagram with diagrams off", name)
 		}
 	}
-	if _, ok := statementProps(statements(true))["diagram"]; !ok {
+	if _, ok := statementProps(statements(true, RepoKinds))["diagram"]; !ok {
 		t.Error("statements without a diagram with diagrams on")
 	}
 	if _, ok := projectDescription(false)["properties"].(map[string]any)["map"]; !ok {
@@ -227,5 +227,33 @@ func TestNoDiagramsSchemas(t *testing.T) {
 	body, _ := json.Marshal(srv.Last().Body)
 	if strings.Contains(string(body), `"diagram"`) || !strings.Contains(string(body), `"statements"`) {
 		t.Error("the merge request offered a diagram with diagrams off")
+	}
+}
+
+// Every format offers the new kinds; a project description never offers an
+// extension, a repository's change recipe.
+func TestSchemaKinds(t *testing.T) {
+	kindsOf := func(st map[string]any) []any {
+		return st["items"].(map[string]any)["properties"].(map[string]any)["kind"].(map[string]any)["enum"].([]any)
+	}
+	merge := mergeFormat(true).Schema["properties"].(map[string]any)
+	for name, tc := range map[string]struct {
+		st        map[string]any
+		extension bool
+	}{
+		"patch":         {patchFormat(true).Schema["properties"].(map[string]any)["statements"].(map[string]any), true},
+		"merge repo":    {merge["repository"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), true},
+		"merge project": {merge["project"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), false},
+		"project":       {projectDescription(true)["properties"].(map[string]any)["statements"].(map[string]any), false},
+	} {
+		got := kindsOf(tc.st)
+		for _, k := range []string{"component", "rule", "invariant", "entity", "decision", "pitfall"} {
+			if !slices.Contains(got, any(k)) {
+				t.Errorf("%s: kinds %v lack %s", name, got, k)
+			}
+		}
+		if slices.Contains(got, any("extension")) != tc.extension {
+			t.Errorf("%s: kinds %v, extension offered = %v", name, got, !tc.extension)
+		}
 	}
 }

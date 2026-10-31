@@ -39,7 +39,7 @@ At most {project_max_statements} statements and {project_max_chars} characters o
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity", "name": "<short name>", "text": "<prose>", "files": ["<path>", ...]{diagram_field}}, ...], "map": <flow> | null} | null}`.
+Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": "<prose>", "files": ["<path>", ...]{diagram_field}}, ...], "map": <flow> | null} | null}`.
 
 ## Untrusted input
 

@@ -352,10 +352,17 @@ func deref(p *int64) int64 {
 // MergeSchemaName is the strict schema's name on the wire.
 const MergeSchemaName = "almanach_merge"
 
-func description(diagrams bool) map[string]any {
+// The statement kinds. A repository page holds them all; a project page
+// all but extension, a change recipe inside one repository.
+var (
+	RepoKinds    = []string{"component", "rule", "invariant", "entity", "decision", "extension", "pitfall"}
+	ProjectKinds = []string{"component", "rule", "invariant", "entity", "decision", "pitfall"}
+)
+
+func description(diagrams bool, kinds []string) map[string]any {
 	return nullable(object(map[string]any{
 		"summary":    map[string]any{"type": "string", "minLength": 1},
-		"statements": statements(diagrams),
+		"statements": statements(diagrams, kinds),
 	}))
 }
 
@@ -368,11 +375,11 @@ func nullable(o map[string]any) map[string]any {
 // statements is the array of statements as a description or a patch
 // carries them: id null for a new one, diagram null to keep the one it has
 // (or have none). Without diagrams (ALMANACH_MAX_DIAGRAMS=0) the field is
-// not offered at all.
-func statements(diagrams bool) map[string]any {
+// not offered at all. kinds is what the page may hold.
+func statements(diagrams bool, kinds []string) map[string]any {
 	props := map[string]any{
 		"id":    map[string]any{"type": []any{"string", "null"}},
-		"kind":  enum("component", "rule", "invariant", "entity"),
+		"kind":  enum(kinds...),
 		"name":  map[string]any{"type": "string", "minLength": 1},
 		"text":  map[string]any{"type": "string", "minLength": 1},
 		"files": array(str()),
@@ -388,11 +395,11 @@ func statements(diagrams bool) map[string]any {
 func projectDescription(diagrams bool) map[string]any {
 	return nullable(object(map[string]any{
 		"summary":    map[string]any{"type": "string", "minLength": 1},
-		"statements": statements(diagrams),
+		"statements": statements(diagrams, ProjectKinds),
 		"map":        nullable(mapSchema()),
 	}))
 }
 
 func mergeFormat(diagrams bool) llmwire.ResponseFormat {
-	return strict(MergeSchemaName, map[string]any{"repository": description(diagrams), "project": description(diagrams)})
+	return strict(MergeSchemaName, map[string]any{"repository": description(diagrams, RepoKinds), "project": description(diagrams, ProjectKinds)})
 }

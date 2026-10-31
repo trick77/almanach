@@ -1272,7 +1272,12 @@ components:
           type: string
         kind:
           type: string
-          enum: [component, rule, invariant, entity]
+          description: |
+            `decision` is a choice the code embodies with its stated reason,
+            `extension` where and how a kind of change is made (a repository's
+            alone, never on a project page), `pitfall` what broke before and
+            how not to break it again.
+          enum: [component, rule, invariant, entity, decision, extension, pitfall]
         name:
           type: string
         text:

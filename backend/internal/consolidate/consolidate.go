@@ -398,7 +398,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return busyOnly(err)
 	}
-	statements, stripped, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
+	statements, stripped, reason := attach(scope, current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
 	logStripped(ctx, w.log, "consolidate: "+scope, stripped)
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
@@ -438,8 +438,20 @@ func busyOnly(err error) error {
 	return nil
 }
 
-// Statement kinds a description may hold.
-var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, "entity": true}
+// The statement kinds a page of each scope may hold: a project page no
+// extension, which is a change recipe inside one repository.
+var kinds = map[string]map[string]bool{
+	store.ScopeRepository: kindSet(inference.RepoKinds),
+	store.ScopeProject:    kindSet(inference.ProjectKinds),
+}
+
+func kindSet(list []string) map[string]bool {
+	out := make(map[string]bool, len(list))
+	for _, k := range list {
+		out[k] = true
+	}
+	return out
+}
 
 // attach turns the model's statements into stored ones: a kept id carries
 // its sources forward and gains src (this PR, or a baseline run's commit)
@@ -453,8 +465,9 @@ var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, 
 // whole part. A changed diagram is a changed statement, like changed text.
 // The commit a statement was last checked against stays while its name,
 // text and diagram do; a change voids it, the caller sets a new one when it
-// read the code.
-func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, stripped struck, reason string) {
+// read the code. A kind the scope's page may not hold (any unknown one, an
+// extension on the project page) rejects the rewrite like an invented id.
+func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, stripped struck, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
@@ -463,8 +476,8 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 	olds := make([]*store.Statement, 0, len(proposed))
 	seen := map[string]bool{}
 	for _, p := range proposed {
-		if !kinds[p.Kind] {
-			return nil, struck{}, "unknown statement kind " + p.Kind
+		if !kinds[scope][p.Kind] {
+			return nil, struck{}, "statement kind " + p.Kind + " not on a " + scope + " page"
 		}
 		s := store.Statement{Kind: p.Kind, Name: lang.SwissSS(strings.TrimSpace(p.Name)), Text: lang.SwissSS(strings.TrimSpace(p.Text)), Files: cleanFiles(p.Files)}
 		if s.Name == "" || s.Text == "" {
