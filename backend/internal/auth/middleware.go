@@ -17,20 +17,30 @@ const (
 
 // Gate guards everything under /api with a session, so a route added later
 // is guarded without anyone remembering to. No valid cookie is a 401 JSON;
-// the UI answers any 401 from /api with a full navigation to the login. A
-// change (POST, PUT, PATCH, DELETE) must also come from this site: the
-// cookie is SameSite Lax, which still lets a sibling subdomain post, so
-// Sec-Fetch-Site must say same-origin or none, or, from a browser that
-// sends none, Origin must name the request's host or the redirect URL's
-// origin; anything else is a 403 JSON. The login and its callback pass,
-// and so does everything outside /api: the webhook and the ping (bearer),
-// the probes, and the SPA shell, which holds no data. The claims go on the
-// request context (ReaderFrom). nil sessions (none mode) gate nothing.
+// the UI answers any 401 from /api with a full navigation to the login.
+//
+// A change (POST, PUT, PATCH, DELETE) must also come from this site: the
+// cookie is SameSite Lax, which still lets a sibling subdomain post. Go's
+// CrossOriginProtection decides, the check kit's httpx.CrossOrigin wraps,
+// built here directly to trust the redirect URL's origin beside the
+// request's own host; plus one rule of ours: a change carrying neither Sec-Fetch-Site nor Origin is refused,
+// where Go lets it through as a non-browser client; every browser that
+// holds the cookie sends one. A refusal is a 403 JSON.
+//
+// The login and its callback pass, and so does everything outside /api:
+// the webhook and the ping (bearer), the probes, and the SPA shell, which
+// holds no data. The claims go on the request context (ReaderFrom). nil
+// sessions (none mode) gate nothing.
 func Gate(sessions *kitauth.Sessions, redirectURL string) func(http.Handler) http.Handler {
 	if sessions == nil {
 		return func(next http.Handler) http.Handler { return next }
 	}
-	trusted := origin(redirectURL)
+	cop := http.NewCrossOriginProtection()
+	if o := origin(redirectURL); o != "" {
+		if err := cop.AddTrustedOrigin(o); err != nil {
+			panic("auth: redirect URL origin " + o + ": " + err.Error()) // config checked the URL
+		}
+	}
 	require := sessions.Require("", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "sign-in required")
 	}))
@@ -41,7 +51,7 @@ func Gate(sessions *kitauth.Sessions, redirectURL string) func(http.Handler) htt
 				next.ServeHTTP(w, r)
 				return
 			}
-			if unsafe(r.Method) && !sameSite(r, trusted) {
+			if unsafe(r.Method) && (cop.Check(r) != nil || (r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Origin") == "")) {
 				httpx.WriteError(w, http.StatusForbidden, "cross-site request refused")
 				return
 			}
@@ -65,24 +75,6 @@ func unsafe(method string) bool {
 		return true
 	}
 	return false
-}
-
-// sameSite reports whether a change comes from this site. Sec-Fetch-Site
-// decides when the browser sends it; otherwise Origin must, and a request
-// with neither is refused: every browser that holds the cookie sends one.
-func sameSite(r *http.Request, trusted string) bool {
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
-		return site == "same-origin" || site == "none"
-	}
-	o := r.Header.Get("Origin")
-	if o == "" || o == "null" {
-		return false
-	}
-	u, err := url.Parse(o)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	return strings.EqualFold(u.Host, r.Host) || origin(o) == trusted
 }
 
 // origin is scheme://host of s, "" when s has none.

@@ -23,14 +23,11 @@ import (
 )
 
 // fakeOIDC stands in for kit's flow: Start redirects to a fixed URL,
-// Callback answers what it is told. down is a provider not discovered yet.
+// Callback answers what it is told.
 type fakeOIDC struct {
 	claims auth.Claims
 	err    error
-	down   bool
 }
-
-func (f *fakeOIDC) Ready() bool { return !f.down }
 
 func (f *fakeOIDC) Start(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "https://auth.example.com/authorize", http.StatusFound)
@@ -184,6 +181,37 @@ func TestCallbackSignsIn(t *testing.T) {
 	}
 }
 
+// A deep link survives the provider's round trip; a foreign one does not.
+func TestSignInReturnsToTheDeepLink(t *testing.T) {
+	var buf bytes.Buffer
+	h := oidcHandler(t, &fakeOIDC{claims: auth.Claims{Subject: "sub-1"}}, testSessions(t), &buf)
+	for next, want := range map[string]string{
+		"/projekte/PAY/repos/api?x=1":   "/projekte/PAY/repos/api?x=1",
+		"//evil.example.com/":           "/",
+		"https://evil.example.com/":     "/",
+		"/\\evil.example.com":           "/",
+		"/x\r\nSet-Cookie: a=b":         "/",
+		"/x%0D%0Ay":                     "/x%0D%0Ay", // escaped: a path on this site
+		"":                              "/",
+		"%2F%2Fevil.example.com%2Fpath": "/",
+	} {
+		login := get(h, http.MethodGet, "/api/auth/login?next="+url.QueryEscape(next))
+		ck := cookieNamed(t, login, auth.NextCookie)
+		cb := get(h, http.MethodGet, "/api/auth/callback?code=abc&state=xyz", ck)
+		if got := cb.Header().Get("Location"); got != want {
+			t.Errorf("next %q: callback to %q, want %q", next, got, want)
+		}
+		if c := cookieNamed(t, cb, auth.NextCookie); c.MaxAge >= 0 {
+			t.Errorf("next %q: cookie not cleared: %+v", next, c)
+		}
+	}
+	// A next cookie planted by someone else is checked again.
+	cb := get(h, http.MethodGet, "/api/auth/callback?code=abc&state=xyz", &http.Cookie{Name: auth.NextCookie, Value: url.QueryEscape("//evil.example.com")})
+	if got := cb.Header().Get("Location"); got != "/" {
+		t.Errorf("planted cookie: callback to %q", got)
+	}
+}
+
 func TestCallbackFailureHalts(t *testing.T) {
 	for name, f := range map[string]*fakeOIDC{
 		"provider":   {err: errors.New("exchange oidc code: provider said no")},
@@ -247,20 +275,22 @@ func TestCrossSiteChangesRefused(t *testing.T) {
 }
 
 // A provider down at startup takes down the sign-in only: the webhook and
-// the ping work, the login says so, the wiki stays behind its 401.
+// the ping work, the login lands on a page that halts with a button, the
+// wiki stays behind its 401.
 func TestProviderDownLeavesTheFeedUp(t *testing.T) {
 	var buf bytes.Buffer
-	h := oidcHandler(t, &fakeOIDC{down: true}, testSessions(t), &buf)
+	never := auth.NewProvider(auth.Config{Issuer: "https://auth.example.com"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := oidcHandler(t, never, testSessions(t), &buf)
 	if code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(7), nil); code != 202 {
 		t.Errorf("webhook = %d %v", code, body)
 	}
 	if code, _ := do(t, h, "GET", "/auth/ping", "tok-platform", "", nil); code != 200 {
 		t.Errorf("ping = %d", code)
 	}
-	for _, p := range []string{"/api/auth/login", "/api/auth/callback?code=x&state=y"} {
+	for _, p := range []string{"/api/auth/login?next=/faq", "/api/auth/callback?code=x&state=y"} {
 		rec := get(h, http.MethodGet, p)
-		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "not discovered") {
-			t.Errorf("%s = %d %s, want 503 JSON", p, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != auth.UnavailableURL {
+			t.Errorf("%s = %d %q, want the halting page", p, rec.Code, rec.Header().Get("Location"))
 		}
 	}
 	if rec := get(h, http.MethodGet, "/api/projects"); rec.Code != http.StatusUnauthorized {
@@ -290,8 +320,8 @@ func TestLoginOnceDiscovered(t *testing.T) {
 		t.Fatal("discovered a provider that is down")
 	}
 	h := oidcHandler(t, p, testSessions(t), &buf)
-	if rec := get(h, http.MethodGet, "/api/auth/login"); rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("login while down = %d", rec.Code)
+	if rec := get(h, http.MethodGet, "/api/auth/login"); rec.Header().Get("Location") != auth.UnavailableURL {
+		t.Errorf("login while down = %d %q", rec.Code, rec.Header().Get("Location"))
 	}
 	up.Store(true)
 	if err := p.Discover(t.Context()); err != nil {
@@ -347,7 +377,7 @@ func (b *fakeBackend) Verify(context.Context, *oauth2.Token) (auth.Claims, strin
 // PKCE cookies, the callback checks them and issues the session.
 func TestSignInThroughKitsFlow(t *testing.T) {
 	b := &fakeBackend{claims: auth.Claims{Subject: "sub-1", Email: "jan@example.com"}}
-	oidc := auth.ReadyProvider(kitauth.NewOIDCWithBackend(b, auth.OIDCConfig(auth.Config{})))
+	oidc := kitauth.NewOIDCWithBackend(b, auth.OIDCConfig(auth.Config{}))
 	var buf bytes.Buffer
 	h := oidcHandler(t, oidc, testSessions(t), &buf)
 

@@ -16,11 +16,9 @@ import (
 var errNoSubject = errors.New("oidc claims carry no subject")
 
 // OIDCService is the login half of the sign-in as the routes need it.
-// auth.Provider satisfies it; an interface so a test can fail a callback
-// without a provider. Ready is false until the provider has answered
-// discovery: the login routes then answer 503.
+// auth.Provider satisfies it, and answers a provider not discovered yet
+// itself; kit's *auth.OIDC does too, for a test.
 type OIDCService interface {
-	Ready() bool
 	Start(w http.ResponseWriter, r *http.Request)
 	Callback(w http.ResponseWriter, r *http.Request) (auth.Claims, error)
 }
@@ -53,40 +51,42 @@ func (d Deps) me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, meBody{Mode: string(d.AuthMode), User: d.user(r)})
 }
 
-// signInOff answers the sign-in routes when there is none to offer: none
-// mode, or a provider not discovered yet. false means go on.
+// signInOff answers the sign-in routes in none mode: there is nobody to
+// sign in. false means go on.
 func (d Deps) signInOff(w http.ResponseWriter) bool {
-	switch {
-	case d.OIDC == nil:
-		httpx.WriteError(w, http.StatusServiceUnavailable, "no sign-in in auth mode none")
-	case !d.OIDC.Ready():
-		httpx.WriteError(w, http.StatusServiceUnavailable, auth.ErrNotDiscovered.Error())
-	default:
+	if d.OIDC != nil {
 		return false
 	}
+	httpx.WriteError(w, http.StatusServiceUnavailable, "no sign-in in auth mode none")
 	return true
 }
 
 // login hands the browser to the provider, state, nonce and PKCE in
-// transient cookies.
+// transient cookies, and remembers ?next=, the page to come back to.
 func (d Deps) login(w http.ResponseWriter, r *http.Request) {
 	if d.signInOff(w) {
 		return
 	}
+	auth.SetNext(w, r.URL.Query().Get("next"))
 	d.OIDC.Start(w, r)
 }
 
 // callback finishes a sign-in: kit checked state, PKCE, the ID token and
-// its nonce; the claims become the session cookie. A failure lands on a
-// URL that says so, and the UI halts there with a button rather than
-// redirecting into the same failure again. The reason is logged, never
-// shown.
+// its nonce; the claims become the session cookie and the browser returns
+// to the page it started from. A failure lands on a URL that says so, and
+// the UI halts there with a button rather than redirecting into the same
+// failure again. The reason is logged, never shown.
 func (d Deps) callback(w http.ResponseWriter, r *http.Request) {
 	if d.signInOff(w) {
 		return
 	}
 	ctx := r.Context()
+	next := auth.TakeNext(w, r)
 	claims, err := d.OIDC.Callback(w, r)
+	if errors.Is(err, auth.ErrNotDiscovered) {
+		http.Redirect(w, r, auth.UnavailableURL, http.StatusFound)
+		return
+	}
 	if err == nil && claims.Subject == "" {
 		err = errNoSubject
 	}
@@ -101,7 +101,7 @@ func (d Deps) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.Log.InfoContext(ctx, "signed in", "user", claims.Username())
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // TakeNext returns a same-site path (SafeNext) or "/"
 }
 
 type logoutBody struct {

@@ -144,7 +144,7 @@ func TestGateRefusesCrossSiteChanges(t *testing.T) {
 		{"sibling subdomain", "POST", "/api/auth/logout", map[string]string{"Sec-Fetch-Site": "same-site", "Origin": "https://evil.example.com"}, 403},
 		{"other site", "PATCH", "/api/sources/x", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
 		{"Origin is the host", "PUT", "/api/sources/x", map[string]string{"Origin": "http://almanach.internal:8080"}, 200},
-		{"Origin is the redirect's", "POST", "/api/sources", map[string]string{"Origin": "https://Almanach.example.com"}, 200},
+		{"Origin is the redirect's", "POST", "/api/sources", map[string]string{"Origin": "https://almanach.example.com"}, 200},
 		{"Origin elsewhere", "POST", "/api/sources", map[string]string{"Origin": "https://evil.example.com"}, 403},
 		{"Origin null", "POST", "/api/sources", map[string]string{"Origin": "null"}, 403},
 		{"Origin without host", "POST", "/api/sources", map[string]string{"Origin": "almanach"}, 403},

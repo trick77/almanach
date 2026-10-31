@@ -21,8 +21,9 @@ type AuthMode string
 
 const (
 	// AuthNone trusts nobody and names nobody: every reader is anonymous.
-	// Allowed on any host: the dev stack binds 0.0.0.0 in its container,
-	// and the production compose file hard-codes oidc instead.
+	// Allowed on any host: the compose stack binds 0.0.0.0 in its
+	// container. Nothing in the code keeps it off a public network; that
+	// is the deployment's choice of mode.
 	AuthNone AuthMode = "none"
 	// AuthOIDC signs the browser in at an OpenID provider; every /api route
 	// but the login's own two needs kit's signed session cookie.
@@ -311,12 +312,12 @@ func (a *App) Summary() string {
 			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "",
 			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
 	}
-	auth := string(a.AuthMode)
+	mode := string(a.AuthMode)
 	if a.AuthMode == AuthOIDC {
-		auth = fmt.Sprintf("{oidc issuer %s, client %s}", a.OIDC.Issuer, a.OIDC.ClientID)
+		mode = fmt.Sprintf("{oidc issuer %s, client %s}", a.OIDC.Issuer, a.OIDC.ClientID)
 	}
 	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars, diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
-		a.Host, a.Port, auth, a.Model, a.ReasoningEffort,
+		a.Host, a.Port, mode, a.Model, a.ReasoningEffort,
 		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars,
 		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources)
 }

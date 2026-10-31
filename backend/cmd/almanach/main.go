@@ -245,10 +245,11 @@ func serve(log *slog.Logger) error {
 	} else {
 		log.Info("Sources: off (ALMANACH_REPOS_DIR unset)")
 	}
-	// The sign-in. A provider that does not answer discovery is a warning,
-	// like the gateway: the webhook, the ping and the probes do not need
-	// it, and the provider retries in the background. Until it answers the
-	// login routes answer 503 and the wiki stays behind its 401.
+	// The sign-in. Discovery runs in the background from the first attempt
+	// on, so boot never waits for the provider; one that does not answer
+	// is a warning, like the gateway: the webhook, the ping and the probes
+	// do not need it. Until it answers the login lands on a page that
+	// says so and the wiki stays behind its 401.
 	var oidcSvc api.OIDCService
 	var sessions *kitauth.Sessions
 	if app.AuthMode == config.AuthOIDC {
@@ -259,12 +260,7 @@ func serve(log *slog.Logger) error {
 		}
 		sessions = s
 		provider := auth.NewProvider(auth.Config{Issuer: o.Issuer, ClientID: o.ClientID, ClientSecret: o.ClientSecret, RedirectURL: o.RedirectURL}, log)
-		if err := provider.Discover(ctx); err != nil {
-			log.Warn("OIDC: provider discovery failed, sign-in unavailable until it answers", "issuer", o.Issuer, logging.Err(err))
-			go provider.Run(ctx)
-		} else {
-			log.Info("OIDC: OK", "issuer", o.Issuer)
-		}
+		go provider.Run(ctx)
 		oidcSvc = provider
 	}
 	if len(checks) > 0 {

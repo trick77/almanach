@@ -69,8 +69,8 @@ func TestProviderDiscoversLater(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p.Start(rec, httptest.NewRequest(http.MethodGet, LoginPath, nil))
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"error"`) {
-		t.Errorf("Start before discovery = %d %q, want 503 JSON", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != UnavailableURL {
+		t.Errorf("Start before discovery = %d %q, want the halting page", rec.Code, rec.Header().Get("Location"))
 	}
 	if _, err := p.Callback(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, CallbackPath, nil)); !errors.Is(err, ErrNotDiscovered) {
 		t.Errorf("Callback before discovery = %v", err)
@@ -78,7 +78,8 @@ func TestProviderDiscoversLater(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() { p.Run(t.Context()); close(done) }()
-	// A few failed rounds, logged, then the provider comes up.
+	// The first attempt at once, a few failed rounds, logged, then the
+	// provider comes up.
 	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(logs.String(), "attempt=3") && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	kitauth "github.com/trick77/ship/kit/auth"
-	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
 )
 
@@ -21,11 +20,16 @@ var ErrNotDiscovered = errors.New("oidc provider not discovered yet")
 // deadline, and an unreachable provider would otherwise hang it.
 const DiscoverTimeout = 30 * time.Second
 
+// UnavailableURL is where a sign-in lands while the provider has not
+// answered discovery: a full-page navigation gets a page that halts with a
+// button, not a JSON body.
+const UnavailableURL = "/?auth_error=provider_unavailable"
+
 // Provider is kit's OIDC flow once discovery has answered. A provider that
-// is down at startup is a warning, never a fault: the webhook, the ping and
-// the probes must not depend on it. Until it answers, Ready is false, the
-// login routes say so and the gated /api answers 401 as ever; Run retries
-// in the background.
+// is down is a warning, never a fault: the webhook, the ping and the
+// probes must not depend on it, and boot never waits for it. Until it
+// answers, the login lands on UnavailableURL and the gated /api answers
+// 401 as ever; Run keeps trying in the background.
 type Provider struct {
 	cfg      kitauth.OIDCConfig
 	log      *slog.Logger
@@ -38,14 +42,6 @@ type Provider struct {
 // NewProvider is the flow for c, not yet discovered.
 func NewProvider(c Config, log *slog.Logger) *Provider {
 	return &Provider{cfg: OIDCConfig(c), log: log, discover: kitauth.NewOIDC, First: 5 * time.Second, Max: 5 * time.Minute}
-}
-
-// ReadyProvider is a provider around a flow already built; tests pass one
-// made with kit's NewOIDCWithBackend.
-func ReadyProvider(flow *kitauth.OIDC) *Provider {
-	p := &Provider{}
-	p.flow.Store(flow)
-	return p
 }
 
 // Ready reports whether discovery has answered.
@@ -63,31 +59,34 @@ func (p *Provider) Discover(ctx context.Context) error {
 	return nil
 }
 
-// Run retries discovery until it answers or ctx ends, the wait doubling
-// from First up to Max, every failure logged.
+// Run tries discovery at once and again until it answers or ctx ends, the
+// wait doubling from First up to Max, every failure logged. serve starts
+// it in the background: the listener never waits for the provider.
 func (p *Provider) Run(ctx context.Context) {
 	wait := p.First
-	for attempt := 2; !p.Ready(); attempt++ {
+	for attempt := 1; ; attempt++ {
+		err := p.Discover(ctx)
+		if err == nil {
+			p.log.Info("OIDC: OK", "issuer", p.cfg.Issuer, "attempt", attempt)
+			return
+		}
+		p.log.Warn("OIDC: provider discovery failed, sign-in unavailable until it answers", "issuer", p.cfg.Issuer,
+			"attempt", attempt, "retry_in", wait.String(), logging.Err(err))
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
 		}
-		if err := p.Discover(ctx); err != nil {
-			wait = min(wait*2, p.Max)
-			p.log.Warn("OIDC: provider discovery failed, sign-in unavailable", "issuer", p.cfg.Issuer, "attempt", attempt,
-				"retry_in", wait.String(), logging.Err(err))
-			continue
-		}
-		p.log.Info("OIDC: OK", "issuer", p.cfg.Issuer, "attempt", attempt)
+		wait = min(wait*2, p.Max)
 	}
 }
 
-// Start redirects to the provider, or answers 503 before Ready.
+// Start redirects to the provider, or to UnavailableURL before discovery
+// answered.
 func (p *Provider) Start(w http.ResponseWriter, r *http.Request) {
 	flow := p.flow.Load()
 	if flow == nil {
-		httpx.WriteError(w, http.StatusServiceUnavailable, ErrNotDiscovered.Error())
+		http.Redirect(w, r, UnavailableURL, http.StatusFound)
 		return
 	}
 	flow.Start(w, r)
