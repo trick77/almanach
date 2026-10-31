@@ -1,4 +1,5 @@
 import type { Description, Kind, Source, Statement } from "./api";
+import { Diagram } from "./Diagram";
 import { day, shortSHA } from "./format";
 import { notePathFor } from "./routing";
 import { S } from "./strings";
@@ -126,6 +127,9 @@ export function StatementBlock({
         text={s.text}
         className="mt-1 mb-1.5 font-serif text-[15.5px] leading-[1.55] text-ink-dim"
       />
+      {s.diagram && (
+        <Diagram ir={s.diagram} title={S.diagram.titles[s.diagram.kind]} />
+      )}
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-muted">
         {s.files.map((f, i) => (
           <span key={f}>

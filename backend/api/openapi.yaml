@@ -1090,6 +1090,189 @@ components:
         checked:
           type: string
           description: The commit a baseline run last confirmed the statement against; empty when none has.
+        diagram:
+          $ref: "#/components/schemas/Diagram"
+
+    Diagram:
+      description: >-
+        A picture beside a statement's paragraphs, in rongo's intermediate
+        form (ui/src/diagramIR.ts), validated on the way in. Absent when the
+        statement has none.
+      oneOf:
+        - $ref: "#/components/schemas/FlowDiagram"
+        - $ref: "#/components/schemas/SequenceDiagram"
+        - $ref: "#/components/schemas/ERDiagram"
+      discriminator:
+        propertyName: kind
+        mapping:
+          flow: "#/components/schemas/FlowDiagram"
+          sequence: "#/components/schemas/SequenceDiagram"
+          er: "#/components/schemas/ERDiagram"
+
+    FlowDiagram:
+      type: object
+      description: A flow or a state machine.
+      required: [kind, direction, nodes, edges, zones]
+      properties:
+        kind:
+          type: string
+          enum: [flow]
+        direction:
+          type: string
+          enum: [TB, LR]
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, label, shape]
+            properties:
+              id:
+                type: string
+              label:
+                type: string
+                description: Empty on a start or a stop.
+              shape:
+                type: string
+                enum: [pill, step, decision, start, stop]
+              zone:
+                type: string
+                description: The id of the zone it sits in; absent for none.
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to, label, dashed, head]
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              label:
+                type: string
+              dashed:
+                type: boolean
+              head:
+                type: string
+                enum: [end, both, none]
+        zones:
+          type: array
+          items:
+            type: object
+            required: [id, title]
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+
+    SequenceDiagram:
+      type: object
+      description: An exchange between parts, rows top to bottom.
+      required: [kind, actors, rows]
+      properties:
+        kind:
+          type: string
+          enum: [sequence]
+        actors:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id:
+                type: string
+              label:
+                type: string
+        rows:
+          type: array
+          items:
+            type: object
+            description: >-
+              A message (from, to, label, line, head), a note (from, to,
+              side, label), a frame or a divider (keyword, label), or the end
+              of a frame.
+            required: [type]
+            properties:
+              type:
+                type: string
+                enum: [message, note, frame, divider, end]
+              from:
+                type: string
+              to:
+                type: string
+              label:
+                type: string
+              line:
+                type: string
+                enum: [solid, dashed]
+              head:
+                type: string
+                enum: [filled, open, none, cross, both]
+              side:
+                type: string
+                enum: [over, left, right]
+              keyword:
+                type: string
+                enum: [loop, alt, opt, par, critical, break, else, and, option]
+
+    ERDiagram:
+      type: object
+      description: Entities with their fields and the relationships between them.
+      required: [kind, direction, entities, rels]
+      properties:
+        kind:
+          type: string
+          enum: [er]
+        direction:
+          type: string
+          enum: [TB, LR]
+        entities:
+          type: array
+          items:
+            type: object
+            required: [id, label, attrs]
+            properties:
+              id:
+                type: string
+              label:
+                type: string
+              attrs:
+                type: array
+                items:
+                  type: object
+                  required: [type, name, keys, comment]
+                  properties:
+                    type:
+                      type: string
+                    name:
+                      type: string
+                    keys:
+                      type: array
+                      items:
+                        type: string
+                        enum: [PK, FK, UK]
+                    comment:
+                      type: string
+        rels:
+          type: array
+          items:
+            type: object
+            required: [from, to, label, fromCard, toCard, dashed]
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              label:
+                type: string
+              fromCard:
+                type: string
+                enum: [one, zeroOrOne, oneOrMore, zeroOrMore]
+              toCard:
+                type: string
+                enum: [one, zeroOrOne, oneOrMore, zeroOrMore]
+              dashed:
+                type: boolean
 
     Description:
       type: object
@@ -1202,7 +1385,7 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, description, repos, problems, problem_window_days, recent_notes]
+      required: [key, team, description, map, map_expected, map_declined, repos, problems, problem_window_days, recent_notes]
       properties:
         key:
           type: string
@@ -1212,6 +1395,27 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Description"
             - type: "null"
+        map:
+          description: >-
+            The system map of the current project revision: a flow whose
+            zones are clients, repositories, stores and external, a
+            repository node's id its slug. Null for a project too large for
+            one, and before a baseline project
+            step drew one.
+          oneOf:
+            - $ref: "#/components/schemas/FlowDiagram"
+            - type: "null"
+        map_expected:
+          type: boolean
+          description: >-
+            A baseline run will draw a map: the sources are on, the project
+            has a source repository, and not more of them than one map
+            holds.
+        map_declined:
+          type: boolean
+          description: >-
+            A project step asked for the map and none was accepted: map is
+            null, and no run is promised to draw one.
         repos:
           type: array
           items:

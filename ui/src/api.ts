@@ -4,6 +4,8 @@
 // handled rather than silently read as undefined. Fields the Go side marks
 // omitempty are optional here.
 
+import type { DiagramIR, FlowIR } from "./diagramIR";
+
 export interface Project {
   key: string;
   team: string;
@@ -42,6 +44,9 @@ export interface Statement {
   sources: Source[];
   /** The commit a baseline run last confirmed it against, "" when none. */
   checked?: string;
+  /** A picture beside the paragraphs, rongo's IR as the backend validated
+   *  it; absent when the statement has none. */
+  diagram?: DiagramIR;
 }
 
 export interface Description {
@@ -92,6 +97,16 @@ export interface ProjectDetail {
   key: string;
   team: string;
   description: Description | null;
+  /** The system map: zones clients, repositories, stores and external; a
+   *  repository node's id is its slug. null before the first baseline
+   *  project step wrote one. */
+  map: FlowIR | null;
+  /** A baseline run will draw a map: the sources are on, the project has a
+   *  source repository, and not more than one map holds. */
+  map_expected: boolean;
+  /** A project step asked for the map and none was accepted: map is null,
+   *  and no run is promised to draw one. */
+  map_declined: boolean;
   repos: Repo[];
   problems: Problem[];
   problem_window_days: number;

@@ -12,6 +12,7 @@ import (
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/lang"
@@ -435,7 +436,18 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 		// folds when the last run skipped it.
 		w.log.InfoContext(ctx, "baseline: nothing to read again")
 		if r.Mode == store.RunReconcile && !plan.SummaryChanged {
-			return w.finish(ctx, r, plan)
+			page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+			if err != nil {
+				w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
+				return errStop
+			}
+			skip, _, err := w.projectStands(ctx, r, plan, page)
+			if err != nil {
+				return err
+			}
+			if skip {
+				return w.finish(ctx, r, plan)
+			}
 		}
 		r.State = store.RunProject
 		return w.save(ctx, *r)
@@ -564,10 +576,11 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	statements, reason := attach(page.Statements, applied.Statements, runSource(*r, *plan), next)
+	statements, stripped, reason := attach(page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits))
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
+	logStripped(ctx, w.log, "baseline: "+name, stripped)
 	for i := range statements {
 		if applied.Checked[i] {
 			statements[i].Checked = r.Commit
@@ -957,7 +970,16 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return fmt.Errorf("the run's plan: %w", err)
 	}
-	if r.Mode == store.RunReconcile && !plan.SummaryChanged {
+	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
+		return errStop
+	}
+	skip, repos, err := w.projectStands(ctx, r, plan, projectPage)
+	if err != nil {
+		return err
+	}
+	if skip {
 		return w.finish(ctx, r, plan)
 	}
 	if r.Calls >= w.base.Limits.MaxCalls {
@@ -972,17 +994,12 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.InfoContext(ctx, "baseline: no repository description to fold into the project")
 		return w.finish(ctx, r, plan)
 	}
-	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return errStop
+	if repos == nil {
+		if repos, err = w.repoSummaries(ctx, r); err != nil {
+			return err
+		}
 	}
-	repos, err := w.base.Store.RepoSummaries(ctx, r.ProjectKey)
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
-		return errStop
-	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), w.limits))
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), slugs(repos), w.limits))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -990,15 +1007,23 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if !okCall {
 		return w.skipProject(ctx, r, plan, "the call failed: "+res.Outcome.String())
 	}
+	var rev *store.NewRevision
 	if res.Description == nil {
-		return w.finish(ctx, r, plan)
-	}
-	rev, refused, err := w.projectRevision(ctx, r, plan, projectPage, res.Description)
-	if err != nil {
-		return err
-	}
-	if refused != "" {
-		return w.skipProject(ctx, r, plan, "rewrite refused: "+refused)
+		// No change carries the text and the map forward; a project with no
+		// page yet has nothing to carry, and is asked again next time.
+		if projectPage.RevisionID == 0 {
+			return w.skipProject(ctx, r, plan, "no change asked of a project without a page")
+		}
+		rev = w.carriedRevision(ctx, r, projectPage, slugs(repos))
+	} else {
+		var refused string
+		rev, refused, err = w.projectRevision(ctx, r, plan, projectPage, res.Description, slugs(repos))
+		if err != nil {
+			return err
+		}
+		if refused != "" {
+			return w.skipProject(ctx, r, plan, "rewrite refused: "+refused)
+		}
 	}
 	if rev == nil {
 		return w.finish(ctx, r, plan)
@@ -1019,16 +1044,69 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	return nil
 }
 
+// projectStands reports whether a run may end without its project step: a
+// reconcile whose summary stands, of a project that has its map or is too
+// large for one. A project without one yet (described before maps
+// existed) is folded as if the summary had changed, so its map gets drawn.
+// A map is due only while the page's map is NULL (never asked for): the
+// sentinel says a step asked and none was accepted, and only a run that
+// folds the project anyway asks again. page is the project page the caller
+// read; the repositories, when it had to read them, come back for reuse.
+func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page) (bool, []store.RepoSummary, error) {
+	if r.Mode != store.RunReconcile || plan.SummaryChanged {
+		return false, nil, nil
+	}
+	if page.Map != nil {
+		return true, nil, nil
+	}
+	repos, err := w.repoSummaries(ctx, r)
+	if err != nil {
+		return false, nil, err
+	}
+	return !diagram.MapFits(len(repos)), repos, nil
+}
+
+// repoSummaries is the project's source repositories with their summaries.
+func (w *Worker) repoSummaries(ctx context.Context, r *store.BaselineRun) ([]store.RepoSummary, error) {
+	repos, err := w.base.Store.RepoSummaries(ctx, r.ProjectKey)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
+		return nil, errStop
+	}
+	return repos, nil
+}
+
+// carriedRevision is what a "no change" answer still writes: the page's
+// text with its map carried on (departed repositories out, the sentinel
+// where a map was due and there is none); nil when that is the page as it
+// stands.
+func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page store.Page, slugs []string) *store.NewRevision {
+	var m *diagram.Diagram
+	if diagram.MapFits(len(slugs)) {
+		m = w.carriedMap(ctx, page, slugs)
+	}
+	if diagram.Equal(m, page.Map) {
+		return nil
+	}
+	runID := r.ID
+	return &store.NewRevision{
+		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: page.Summary, Statements: page.Statements,
+		Chars: prose(page.Summary, page.Statements), SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID, Map: m,
+	}
+}
+
 // projectRevision is the project description a run's last step returned,
 // held to the same rules as a note's fold of it; nil when it is refused or
-// identical.
-func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description) (*store.NewRevision, string, error) {
+// identical, the map included. The map never sinks the description: see
+// revisionMap. slugs are the project's source repositories.
+func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
-	statements, reason := attach(page.Statements, d.Statements, runSource(*r, plan), next)
+	statements, stripped, reason := attach(page.Statements, d.Statements, runSource(*r, plan), next, limitsOf(w.limits))
+	logStripped(ctx, w.log, "baseline: "+projectName, stripped)
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 	if reason == "" {
@@ -1037,15 +1115,78 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if reason != "" {
 		return nil, reason, nil
 	}
-	if summary == page.Summary && sameStatements(statements, page.Statements) {
+	drawn := w.revisionMap(ctx, page, d.Map, slugs)
+	if summary == page.Summary && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, "", nil
 	}
 	runID := r.ID
 	return &store.NewRevision{
 		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: summary, Statements: statements, Chars: chars,
-		SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID,
+		SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID, Map: drawn,
 	}, "", nil
+}
+
+// revisionMap is the map a project revision carries. A project too large for
+// one gets none. Otherwise the returned map, its departed repositories
+// taken out, is held to the map's rules and the drawing's limits (not the
+// statement diagrams' caps); one that fails, or none returned, keeps the
+// stored map, with the reason logged: the map never costs the description.
+func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *diagram.Diagram, slugs []string) *diagram.Diagram {
+	at := "baseline: " + projectName + " map"
+	if !diagram.MapFits(len(slugs)) {
+		if proposed != nil || page.Map != nil {
+			w.log.InfoContext(ctx, fmt.Sprintf("%s: %d repositories, more than a map holds, none drawn", at, len(slugs)))
+		}
+		return nil
+	}
+	if proposed == nil {
+		w.log.WarnContext(ctx, at+": none returned, the stored one kept")
+		return w.carriedMap(ctx, page, slugs)
+	}
+	drawn, why := baseline.CheckMap(w.withoutDeparted(ctx, proposed, slugs), slugs, baseline.DrawCaps)
+	if why != "" {
+		w.log.WarnContext(ctx, at+" refused ("+why+"), the stored one kept")
+		return w.carriedMap(ctx, page, slugs)
+	}
+	return drawn
+}
+
+// carriedMap is the stored map as a revision carries it on: its departed
+// repositories taken out, so a carried map never names a repository that
+// left. A project that was due a map and has none gets the sentinel: asked
+// for, not drawn, so a quiet reconcile does not run the step again for it
+// (a run that folds the project anyway asks again).
+func (w *Worker) carriedMap(ctx context.Context, page store.Page, slugs []string) *diagram.Diagram {
+	if page.Map == nil || diagram.IsSentinel(page.Map) {
+		return diagram.Sentinel()
+	}
+	// Checked again only for what the trim may break: a map whose last
+	// repository left holds nothing of the project, and an emptied zone goes.
+	carried, why := baseline.CheckMap(w.withoutDeparted(ctx, page.Map, slugs), slugs, baseline.DrawCaps)
+	if why != "" {
+		return diagram.Sentinel()
+	}
+	return carried
+}
+
+// withoutDeparted is DropDeparted with its log line.
+func (w *Worker) withoutDeparted(ctx context.Context, m *diagram.Diagram, slugs []string) *diagram.Diagram {
+	trimmed, gone := baseline.DropDeparted(m, slugs)
+	if len(gone) > 0 {
+		w.log.InfoContext(ctx, "baseline: "+projectName+" map: no longer source repositories, left out: "+strings.Join(gone, ", "))
+	}
+	return trimmed
+}
+
+// slugs is the project's source repositories by slug: what a map's
+// repository node may be named.
+func slugs(repos []store.RepoSummary) []string {
+	out := make([]string, 0, len(repos))
+	for _, r := range repos {
+		out = append(out, r.Slug)
+	}
+	return out
 }
 
 // skipProject ends the run without its project step, counted as a skipped
@@ -1140,17 +1281,41 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
-		"{repo_description}", describeSourced(page, newer), "{files}", files,
+		"{repo_description}", describeSourced(page, newer), "{files}", files, "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 	).Replace(prompts.Describe)
 }
 
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, l config.Limits) string {
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, repoSlugs []string, l config.Limits) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describe(repoPage), "{other_repos}", others,
+		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
+		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),
 	).Replace(prompts.Project)
+}
+
+// mapDue says whether this project's rewrite carries a map: always, unless
+// the project has more repositories than one map holds; only then null.
+func mapDue(repos int) string {
+	if diagram.MapFits(repos) {
+		return "Every rewrite carries `map`, never null"
+	}
+	return fmt.Sprintf("This project has %d repositories, more than one map holds: `map` is null", repos)
+}
+
+// projectMap is the current system map as the JSON the model returns, so
+// keeping it means repeating it. The sentinel is no map.
+func projectMap(p store.Page) string {
+	if p.Map == nil || diagram.IsSentinel(p.Map) {
+		return "_None yet: draw it._"
+	}
+	j, err := json.Marshal(p.Map)
+	if err != nil {
+		return "_None yet: draw it._"
+	}
+	return string(j)
 }
 
 // otherRepos is the summaries of the project's other source repositories,
@@ -1265,6 +1430,7 @@ func sourced(p store.Page, newer map[string]string, keys bool) string {
 		if len(s.Files) > 0 {
 			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
 		}
+		b.WriteString(diagramLine(s.Diagram))
 		var prs []string
 		for _, src := range s.Sources {
 			if !src.IsBaseline() {

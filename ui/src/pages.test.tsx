@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { FaqPage } from "./FaqPage";
@@ -7,6 +7,7 @@ import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
 import type { NoteDetail, ProjectDetail, Projects, RepoDetail } from "./api";
+import type { FlowIR } from "./diagramIR";
 
 /** serve answers each API path from a table, so a page under test fetches
  *  exactly what it would in the browser. */
@@ -85,6 +86,9 @@ const project: ProjectDetail = {
     source_pr_key: "PAY/pay-api#231",
     updated_at: mergedAt,
   },
+  map: null,
+  map_expected: false,
+  map_declined: false,
   repos: [
     {
       slug: "pay-api",
@@ -288,6 +292,165 @@ describe("ProjectPage", () => {
     expect(
       await screen.findByText(/das Projekt konnte nicht geladen werden/),
     ).toBeInTheDocument();
+  });
+
+  const map: FlowIR = {
+    kind: "flow",
+    direction: "LR",
+    zones: [
+      { id: "clients", title: "Clients" },
+      { id: "repositories", title: "Repos" },
+      { id: "stores", title: "Stores" },
+    ],
+    nodes: [
+      { id: "browser", label: "Browser", shape: "pill", zone: "clients" },
+      { id: "pay-api", label: "pay-api", shape: "step", zone: "repositories" },
+      {
+        id: "pay-gone",
+        label: "pay-gone",
+        shape: "step",
+        zone: "repositories",
+      },
+      { id: "pg", label: "PostgreSQL", shape: "step", zone: "stores" },
+    ],
+    edges: [
+      {
+        from: "browser",
+        to: "pay-api",
+        label: "HTTP",
+        dashed: false,
+        head: "end",
+      },
+      { from: "pay-api", to: "pg", label: "DB", dashed: false, head: "end" },
+      {
+        from: "pay-gone",
+        to: "pay-api",
+        label: "event",
+        dashed: true,
+        head: "end",
+      },
+    ],
+  };
+
+  it("draws the system map above the summary, repository nodes linked", async () => {
+    serve({ "projects/PAY": { ...project, map } });
+    render(<ProjectPage projectKey="PAY" />);
+    const drawing = await screen.findByRole("img", { name: "Systemkarte" });
+    expect(drawing.querySelector("svg")).toBeTruthy();
+    // The zones are titled from strings.ts, not by the model.
+    expect(drawing.textContent).toContain("Datenspeicher");
+    expect(drawing.textContent).not.toContain("Stores");
+    const link = screen.getByRole("link", {
+      name: "Repository pay-api öffnen",
+    });
+    expect(link.getAttribute("href")).toBe("/projekte/PAY/repos/pay-api");
+    expect(link.style.left).toMatch(/%$/);
+    // A node outside the repositories zone, or a slug the project no longer
+    // lists, links nowhere.
+    expect(
+      screen.queryByRole("link", { name: /PostgreSQL|Browser/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("link", { name: /pay-gone/ })).toBeNull();
+    // Above the summary.
+    const summary = screen.getByText(
+      "Das Projekt Payments nimmt Zahlungsaufträge an.",
+    );
+    expect(
+      drawing.compareDocumentPosition(summary) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("opens the map whole", async () => {
+    serve({ "projects/PAY": { ...project, map } });
+    render(<ProjectPage projectKey="PAY" />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Systemkarte: Vollansicht" }),
+    );
+    expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe(
+      "Systemkarte",
+    );
+  });
+
+  it("draws a statement's diagram under its paragraphs", async () => {
+    const statements = [
+      {
+        ...project.description!.statements[0],
+        diagram: {
+          kind: "sequence" as const,
+          actors: [
+            { id: "api", label: "pay-api" },
+            { id: "lib", label: "pay-lib" },
+          ],
+          rows: [
+            {
+              type: "message" as const,
+              from: "api",
+              to: "lib",
+              label: "Limit prüfen",
+              line: "solid" as const,
+              head: "filled" as const,
+            },
+          ],
+        },
+      },
+      project.description!.statements[1],
+    ];
+    serve({
+      "projects/PAY": {
+        ...project,
+        map,
+        description: { ...project.description!, statements },
+      },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    const drawing = await screen.findByRole("img", { name: "Sequenzdiagramm" });
+    expect(drawing.textContent).toContain("Limit prüfen");
+    const text = screen.getByText("Der Mandant kommt aus der Kopfzeile.");
+    expect(
+      text.compareDocumentPosition(drawing) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("draws nothing without a diagram, and says the map is still missing", async () => {
+    serve({ "projects/PAY": { ...project, map_expected: true } });
+    render(<ProjectPage projectKey="PAY" />);
+    expect(
+      await screen.findByText(/Noch keine Systemkarte/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.queryByText(/wird gezeichnet/)).toBeNull();
+  });
+
+  it("promises no map again once a run asked and none was accepted", async () => {
+    serve({
+      "projects/PAY": { ...project, map_expected: true, map_declined: true },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    expect(
+      await screen.findByText(
+        "Das Projekt Payments nimmt Zahlungsaufträge an.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Noch keine Systemkarte/)).toBeNull();
+    expect(screen.queryByText("Systemkarte")).toBeNull();
+  });
+
+  it("promises no map where no run will draw one", async () => {
+    serve({ "projects/PAY": { ...project, map_expected: false } });
+    render(<ProjectPage projectKey="PAY" />);
+    expect(
+      await screen.findByText(
+        "Das Projekt Payments nimmt Zahlungsaufträge an.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Noch keine Systemkarte/)).toBeNull();
+    expect(screen.queryByText("Systemkarte")).toBeNull();
+    // The page asks for nothing beyond its project.
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
+      expect.stringContaining("sources"),
+      expect.anything(),
+    );
   });
 });
 

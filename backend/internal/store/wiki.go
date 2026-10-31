@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/trick77/almanach/internal/diagram"
 )
 
 // Scopes of a description.
@@ -65,6 +66,9 @@ type Statement struct {
 	Files   []string `json:"files"`
 	Sources []Source `json:"sources"`
 	Checked string   `json:"checked,omitempty"`
+	// Diagram is a picture beside the text, validated like the text; nil
+	// for none.
+	Diagram *diagram.Diagram `json:"diagram,omitempty"`
 }
 
 // Page is a description as currently published.
@@ -81,6 +85,9 @@ type Page struct {
 	SourcePR     string
 	SourceCommit string
 	UpdatedAt    time.Time
+	// Map is a project page's system map, nil on a repository page and on
+	// a project page no baseline project step has drawn yet.
+	Map *diagram.Diagram
 }
 
 // QueuedNote is the next note the worker folds in.
@@ -159,13 +166,13 @@ func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID
 // there is none yet.
 func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (Page, bool, error) {
 	p := Page{Scope: scope, ProjectKey: project, RepoSlug: repo}
-	var statements []byte
+	var statements, drawn []byte
 	err := s.pool.QueryRow(ctx, `
 		SELECT r.id, r.revision, r.summary, r.statements, r.source_kind, COALESCE(r.source_pr_key, ''),
-		       COALESCE(r.source_commit, ''), p.updated_at
+		       COALESCE(r.source_commit, ''), p.updated_at, r.map
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
 		 WHERE p.scope = $1 AND p.project_key = $2 AND p.repo_slug = $3`, scope, project, repo).Scan(
-		&p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR, &p.SourceCommit, &p.UpdatedAt)
+		&p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR, &p.SourceCommit, &p.UpdatedAt, &drawn)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Page{}, false, nil
 	}
@@ -177,6 +184,12 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	}
 	if p.Statements == nil {
 		p.Statements = []Statement{}
+	}
+	if drawn != nil {
+		p.Map = &diagram.Diagram{}
+		if err := json.Unmarshal(drawn, p.Map); err != nil {
+			return Page{}, false, err
+		}
 	}
 	return p, true, nil
 }
@@ -196,6 +209,9 @@ type NewRevision struct {
 	SourceCommit  string
 	LLMCallID     *int64
 	BaselineRunID *int64
+	// Map is a project revision's system map: the project step's, or the
+	// current page's carried forward; nil on a repository revision.
+	Map *diagram.Diagram
 }
 
 // InsertRevision writes the next revision of a page and repoints the page
@@ -229,18 +245,24 @@ func insertRevision(ctx context.Context, tx pgx.Tx, rev NewRevision) (int, error
 	if err != nil {
 		return 0, err
 	}
+	var drawn []byte
+	if rev.Map != nil {
+		if drawn, err = json.Marshal(rev.Map); err != nil {
+			return 0, err
+		}
+	}
 	var id int64
 	var n int
 	err = tx.QueryRow(ctx, `
 		INSERT INTO revisions (scope, project_key, repo_slug, revision, summary, statements, chars,
-		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id)
+		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id, map)
 		VALUES ($1, $2, $3,
 		    (SELECT COALESCE(MAX(revision), 0) + 1 FROM revisions
 		      WHERE scope = $1 AND project_key = $2 AND COALESCE(repo_slug, '') = $4),
-		    $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, $12)
+		    $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, $12, $13)
 		RETURNING id, revision`,
 		rev.Scope, rev.ProjectKey, repo, rev.RepoSlug, rev.Summary, statements, rev.Chars,
-		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID).Scan(&id, &n)
+		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn).Scan(&id, &n)
 	if err != nil {
 		return 0, err
 	}

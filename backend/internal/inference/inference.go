@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/llmwire"
 )
 
@@ -64,14 +65,18 @@ type Options struct {
 	Logger          *slog.Logger
 	// Lookup is the environment llmwire reads the gateway's variables from.
 	Lookup func(string) (string, bool)
+	// NoDiagrams leaves `diagram` out of every statement schema
+	// (ALMANACH_MAX_DIAGRAMS=0); the project's map is asked for still.
+	NoDiagrams bool
 }
 
 // Client is one model: the merge and baseline model, or the catalogue's.
 type Client struct {
-	wire   *llmwire.Client
-	model  string
-	effort string
-	log    *slog.Logger
+	wire     *llmwire.Client
+	model    string
+	effort   string
+	log      *slog.Logger
+	diagrams bool
 }
 
 // New builds the client from llmwire's environment (LLMWIRE_LITELLM_*).
@@ -89,7 +94,7 @@ func New(opt Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inference: build client for %s: %w", opt.Model, err)
 	}
-	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log}, nil
+	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log, diagrams: !opt.NoDiagrams}, nil
 }
 
 // Startup checks the profile can do what a fold needs (strict JSON-schema
@@ -174,19 +179,23 @@ func (c *Client) reasoning() llmwire.ReasoningRequest {
 	return llmwire.ReasoningEffort(c.effort)
 }
 
-// Statement is one statement as the model returns it: ID nil for a new one.
+// Statement is one statement as the model returns it: ID nil for a new one,
+// Diagram nil for none.
 type Statement struct {
-	ID    *string  `json:"id"`
-	Kind  string   `json:"kind"`
-	Name  string   `json:"name"`
-	Text  string   `json:"text"`
-	Files []string `json:"files"`
+	ID      *string          `json:"id"`
+	Kind    string           `json:"kind"`
+	Name    string           `json:"name"`
+	Text    string           `json:"text"`
+	Files   []string         `json:"files"`
+	Diagram *diagram.Diagram `json:"diagram"`
 }
 
-// Description is one rewritten description.
+// Description is one rewritten description. Map is the project step's
+// system map; the merge never returns one.
 type Description struct {
-	Summary    string      `json:"summary"`
-	Statements []Statement `json:"statements"`
+	Summary    string           `json:"summary"`
+	Statements []Statement      `json:"statements"`
+	Map        *diagram.Diagram `json:"map,omitempty"`
 }
 
 // Merge is the model's answer: nil for a description it leaves alone.
@@ -237,7 +246,7 @@ const SystemMessage = "You maintain the documentation of a software system. Ever
 
 // Merge runs one fold.
 func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
-	content, call := c.call(ctx, req.Prompt, mergeFormat())
+	content, call := c.call(ctx, req.Prompt, mergeFormat(c.diagrams))
 	out := MergeResult{Call: call}
 	if out.Outcome != OutcomeOK {
 		return out
@@ -331,38 +340,47 @@ func deref(p *int64) int64 {
 // MergeSchemaName is the strict schema's name on the wire.
 const MergeSchemaName = "almanach_merge"
 
-func description() map[string]any {
-	return map[string]any{
-		"type":                 []any{"object", "null"},
-		"additionalProperties": false,
-		"required":             []any{"summary", "statements"},
-		"properties": map[string]any{
-			"summary":    map[string]any{"type": "string", "minLength": 1},
-			"statements": statements(),
-		},
-	}
+func description(diagrams bool) map[string]any {
+	return nullable(object(map[string]any{
+		"summary":    map[string]any{"type": "string", "minLength": 1},
+		"statements": statements(diagrams),
+	}))
+}
+
+// nullable lets an object schema be null too: a description left alone.
+func nullable(o map[string]any) map[string]any {
+	o["type"] = []any{"object", "null"}
+	return o
 }
 
 // statements is the array of statements as a description or a patch
-// carries them: id null for a new one.
-func statements() map[string]any {
-	return map[string]any{
-		"type": "array",
-		"items": map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             []any{"id", "kind", "name", "text", "files"},
-			"properties": map[string]any{
-				"id":    map[string]any{"type": []any{"string", "null"}},
-				"kind":  map[string]any{"type": "string", "enum": []any{"component", "rule", "invariant", "entity"}},
-				"name":  map[string]any{"type": "string", "minLength": 1},
-				"text":  map[string]any{"type": "string", "minLength": 1},
-				"files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			},
-		},
+// carries them: id null for a new one, diagram null to keep the one it has
+// (or have none). Without diagrams (ALMANACH_MAX_DIAGRAMS=0) the field is
+// not offered at all.
+func statements(diagrams bool) map[string]any {
+	props := map[string]any{
+		"id":    map[string]any{"type": []any{"string", "null"}},
+		"kind":  enum("component", "rule", "invariant", "entity"),
+		"name":  map[string]any{"type": "string", "minLength": 1},
+		"text":  map[string]any{"type": "string", "minLength": 1},
+		"files": array(str()),
 	}
+	if diagrams {
+		props["diagram"] = statementDiagram()
+	}
+	return array(object(props))
 }
 
-func mergeFormat() llmwire.ResponseFormat {
-	return strict(MergeSchemaName, map[string]any{"repository": description(), "project": description()})
+// projectDescription is the project step's description: the merge's shape
+// plus the system map, null only for a project too large to draw.
+func projectDescription(diagrams bool) map[string]any {
+	return nullable(object(map[string]any{
+		"summary":    map[string]any{"type": "string", "minLength": 1},
+		"statements": statements(diagrams),
+		"map":        nullable(mapSchema()),
+	}))
+}
+
+func mergeFormat(diagrams bool) llmwire.ResponseFormat {
+	return strict(MergeSchemaName, map[string]any{"repository": description(diagrams), "project": description(diagrams)})
 }

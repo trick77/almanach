@@ -20,13 +20,15 @@ Answer with a patch over the current description below:
 - Everything you do not name stays as it is: you see only part of the code, so leave alone what this part does not cover.
 - Name the files a statement rests on (at most 5, paths as in the files below). No PR numbers, no dates, no names of people.
 
+{diagram_rules}
+
 ## Limits
 
 These are ceilings against unbounded growth, not targets. Prose is the summary plus every statement's name and text; paths do not count. The repository description may hold at most {repo_max_statements} statements and {repo_max_chars} characters of prose in all; it now has {statements} statements and {repo_chars} characters, and {steps_left} more parts follow this one. A description over a limit is rejected whole: leave room for the parts still to come, merge and tighten rather than add what is not essential.
 
 ## Output format
 
-Respond with a single JSON object: `{"summary": "<prose>" | null, "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity", "name": "<short name>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path>", ...]}, ...], "drop": ["<id>", ...], "confirmed": ["<id>", ...]}`.
+Respond with a single JSON object: `{"summary": "<prose>" | null, "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity", "name": "<short name>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path>", ...]{diagram_field}}, ...], "drop": ["<id>", ...], "confirmed": ["<id>", ...]}`.
 
 ## Untrusted input
 
