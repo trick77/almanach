@@ -5,8 +5,9 @@ docs and tests included.
 
 ## Commands
 
-- Prompts compiled in, never configurable. UI: German only, copy only in
-  `strings.ts`, `/api/...` only, routes mirrored in `web/embed.go`.
+- Prompts compiled in, never configurable. UI: German, copy only in
+  `strings.ts`, `/api/...` only; `routing.ts` mirrored in
+  `backend/web/embed.go`.
   Wiki read-only; Quellen (`/api/sources*`) only browser write. Statements
   as paragraphs, never markdown.
 - Gate = `make check` (`SHIP_CMD=<binary>` locally); `make hooks` per
@@ -29,30 +30,30 @@ docs and tests included.
   per request read; each 500 its own line; 401 access log only.
   openapi.yaml in step with api.go.
 - German, Swiss spelling (`lang.SwissSS` on every prose field, never
-  paths), generic masculine. No Eszett anywhere, docs included.
+  paths), generic masculine. No Eszett in prose or docs.
 - Description = documentation, not one-liners: statement as long as subject
   needs, no sentence/paragraph quota (user, 2026-10-28). Ceilings:
   statement counts, page runes from config; name, file caps constants;
   checked on stored Swiss text. Over: rewrite rejected whole, page stays,
   never truncated. Identical rewrite = no revision.
 - Provenance is code's: `sources` carried by id, current PR appended on
-  text change. Unknown id = invented, rejected. New id: `NextStatementID`
-  over whole history, dropped id never reissued.
+  text change. Unknown id = invented, rejected. New id from
+  `NextStatementID` over whole history: never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's
   component.
 - One worker, serial, oldest first. Call-specific failure: note marked,
-  logged. Gateway-class (`gatewayClass`): whole worker holds, doubling
-  backoff, note kept, attempt counted, given up after `maxFoldAttempts`:
-  one failing forever never blocks queue. Failed mark pauses drain (else
-  one paid call per lap). Shutdown: in-flight fold gets grace, then cut.
-- Startup model listing: unreachable = warning, refused key = fault.
+  logged. Gateway-class (`gatewayClass`): worker holds, doubling backoff,
+  note kept, attempts counted up to `maxFoldAttempts`: none blocks queue
+  forever. Failed mark pauses drain (else one paid call per lap).
+  Shutdown: in-flight fold gets grace, then cut.
+- Startup listing: unreachable = warning, refused key = fault.
 - One `Chat` per fold, strict schema, no streaming, no in-call retry.
   Models = llmwire profile ids in config, never code.
 - Money: nano-USD `BIGINT` in DB, JSON 3-decimal string, never float.
-  `llm_calls`, `note_calls` never summed.
+  `llm_calls` (own), `note_calls` (noergler's) never summed.
 - `serve` never migrates; never edit an applied migration. Probes exec,
   never httpGet.
-- User gates nothing (reads, writes), log only.
+- Reader's name gates nothing (reads, writes), log only.
 - Sources: Almanach clones, noergler never indexes. git binary (`os/exec`;
   image has git), never go-git (rejected 2026-10-30). Clones only at
   `ALMANACH_REPOS_DIR/<project>/<slug>`; key, slug single path segments,
@@ -68,5 +69,5 @@ docs and tests included.
   202 `ignored`, never stored (user, 2026-10-30). Runs = steps of the one
   worker, notes first, one call/step, commit pinned at start; repo's notes
   wait while its run runs. Step answers a patch: unnamed ids kept, PR
-  statement dropped only when its files left tree. Never `git checkout`,
-  never parallel writer.
+  statement dropped only when all its files left tree; edit keeps the
+  rest. Never `git checkout`, never parallel writer.
