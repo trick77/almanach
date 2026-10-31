@@ -279,8 +279,9 @@ func TestBaselinePromptsFilled(t *testing.T) {
 		if ph := left.FindAllString(out, -1); len(ph) > 0 {
 			t.Errorf("%s prompt: placeholders left: %v", name, ph)
 		}
-		if name == "describe" && !strings.Contains(out, "at most about 4321 characters of prose and 3 new statements") {
-			t.Error("describe prompt lacks the step's budget")
+		if name == "describe" && (!strings.Contains(out, "at most about 4321 characters of prose and add at most 3 new statements") ||
+			!strings.Contains(out, "name, text, files or diagram (one added, replaced, or removed with")) {
+			t.Error("describe prompt lacks the step's budget or the diagram among a statement's changes")
 		}
 		// The shared rules, once, their caps filled in; the field offered.
 		if !strings.Contains(out, "At most 4 nodes") || strings.Count(out, "## Diagrams") != 1 || !strings.Contains(out, `"diagram": <diagram>`) {
@@ -298,6 +299,9 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	} {
 		if ph := left.FindAllString(out, -1); len(ph) > 0 || strings.Contains(out, `"diagram"`) || !strings.Contains(out, "Statements carry no diagram here") {
 			t.Errorf("%s prompt with diagrams off: placeholders %v, or a diagram offered", name, ph)
+		}
+		if name == "describe" && !strings.Contains(out, "change to its kind, name, text or files; one") {
+			t.Error("describe prompt with diagrams off still lists a diagram among a statement's changes")
 		}
 	}
 	if out := renderProject(r, existingRepoPage(), store.Page{}, "_None._", []string{"files"}, off); !strings.Contains(out, "Every rewrite carries `map`, never null") {

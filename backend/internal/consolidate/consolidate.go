@@ -655,13 +655,19 @@ func check(summary string, statements []store.Statement, maxStatements, maxChars
 	return size, ""
 }
 
+// sameStatement compares what a reader sees of a statement: its id, kind,
+// name, text, files and diagram, not its sources or last check.
+func sameStatement(a, b store.Statement) bool {
+	return a.ID == b.ID && a.Kind == b.Kind && a.Name == b.Name && a.Text == b.Text &&
+		slices.Equal(a.Files, b.Files) && diagram.Equal(a.Diagram, b.Diagram)
+}
+
 func sameStatements(a, b []store.Statement) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i].ID != b[i].ID || a[i].Kind != b[i].Kind || a[i].Name != b[i].Name || a[i].Text != b[i].Text ||
-			strings.Join(a[i].Files, "\x00") != strings.Join(b[i].Files, "\x00") || !diagram.Equal(a[i].Diagram, b[i].Diagram) {
+		if !sameStatement(a[i], b[i]) {
 			return false
 		}
 	}
@@ -717,6 +723,15 @@ func diagramField(l config.Limits) string {
 		return ""
 	}
 	return `, "diagram": <diagram> | {"kind": "none"} | null`
+}
+
+// diagramChange ends the describe prompt's list of the changes a statement
+// may be returned for: its files, and its diagram unless diagrams are off.
+func diagramChange(l config.Limits) string {
+	if l.MaxDiagrams == 0 {
+		return " or files"
+	}
+	return ", files or diagram (one added, replaced, or removed with `{\"kind\": \"none\"}`)"
 }
 
 // An empty page as the prompts show it, saying in so many words that every

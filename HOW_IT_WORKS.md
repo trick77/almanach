@@ -448,13 +448,16 @@ resumes after a restart. The run pins the clone's head when it starts.
    null), applied under the rules below and then folded like a note:
    `attach`, the ceilings, identical means no revision. The revision and
    the run's progress land in one transaction. Each overview and subject
-   prompt names a budget for its patch, characters of prose and new
-   statements, computed by code: the ceilings count the whole page, so its
-   room under each is spread over this part and those after it (the
-   overview a double share, never under 2000 characters or, below the
-   statement cap, one statement; at the cap none, deepen or merge instead),
-   which keeps an early part from filling the page and ending the reading,
-   and every answer short; a patch over it is logged, never cut.
+   prompt names a budget, computed by code, for what its patch may add to
+   the page net: characters of prose and new statements, a corrected or
+   deepened statement counting only by what it adds. The ceilings count
+   the whole page and a patch over one ends the run's reading, so the room
+   under each is spread over this part and those after it (the overview a
+   double share; at least 2000 characters and, below the statement cap,
+   one statement, but never past the room left; with no room, none, and
+   the prompt says to correct, deepen or merge instead). It keeps an early
+   part from filling the page and every answer short; the growth after the
+   fold is logged against it, never enforced, a patch never cut.
 4. *Project.* The repository's new description folded into the project
    page, on a full run always, on a reconcile when the summary changed.
    Beside it the step sees the summaries of the project's other source
@@ -476,12 +479,15 @@ it), nothing twice, unique ids, known shapes, labels present, Swiss and
 capped, the nodes and edges per diagram from config, within the drawing's
 own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule,
 or one added past the page's count (`ALMANACH_MAX_DIAGRAMS`), is left out
-and logged with its reason, on the merge and every baseline step alike: its statement is kept, a diagram it had stays, and so do its
-sources and last check when nothing else changed; one bad drawing never
-costs a part's text, and the reading goes on. With the count at 0 no schema offers a diagram. Code carries a
-statement's diagram by id like provenance: `diagram: null` keeps it,
-`{"kind": "none"}` removes it, a new one replaces it; the prompts show it
-as JSON to correct. A changed diagram is a changed statement (reordering is
+and logged with its reason, on the merge and every baseline step alike:
+its statement is kept and a diagram it had stays. On the merge and the
+project step a statement nothing else changed keeps its sources and last
+check; on a describe step a returned statement is checked against the
+commit read, like any it returns. One bad drawing never costs a part's
+text, and the reading goes on. With the count at 0 no schema offers a
+diagram. Code carries a statement's diagram by id like provenance:
+`diagram: null` keeps it, `{"kind": "none"}` removes it, a new one
+replaces it; the prompts show it as JSON to correct. A changed diagram is a changed statement (reordering is
 none), and only a new or changed one meets today's caps, so lowering a cap
 never freezes a page; a page over the count may keep it, not grow. Every
 project with no more source repositories than a map holds (15, room left

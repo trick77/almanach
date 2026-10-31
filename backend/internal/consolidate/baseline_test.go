@@ -421,7 +421,8 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 
 // The budget spreads the page's room under both ceilings over this part and
 // those after it: the overview a double share, the floors on a nearly full
-// page, one share for an overview with nothing after it.
+// page but never past the room left, one share for an overview with nothing
+// after it.
 func TestStepBudget(t *testing.T) {
 	l := config.Limits{RepoMaxChars: 60000, RepoMaxStatements: 40}
 	page := func(chars, statements int) store.Page {
@@ -436,10 +437,13 @@ func TestStepBudget(t *testing.T) {
 		{"fresh page, overview of a 13-step run", 0, 0, 11, true, 10000, 6},
 		{"after it, the first subject", 10000, 6, 10, false, 4545, 3},
 		{"last subject", 50000, 30, 0, false, 10000, 10},
-		{"nearly full page", 59000, 39, 3, false, minStepBudget, 1},
+		{"room under the floor", 59000, 30, 3, false, 1000, 2},
+		{"nearly full page", 59000, 39, 3, false, 1000, 1},
 		{"full on statements", 20000, 40, 3, false, 10000, 0},
-		{"over lowered ceilings", 70000, 45, 3, false, minStepBudget, 0},
-		{"overview on a nearly full page", 59000, 39, 3, true, 2 * minStepBudget, 1},
+		{"full on prose", 60000, 10, 3, false, 0, 0},
+		{"over lowered ceilings", 70000, 45, 3, false, 0, 0},
+		{"overview on a nearly full page", 59000, 39, 3, true, 1000, 1},
+		{"overview, the floor doubled", 50000, 0, 9, true, 2 * minStepBudget, 8},
 		{"overview over the statement cap", 20000, 45, 3, true, 20000, 0},
 		{"overview alone", 20000, 10, 0, true, 40000, 30},
 	} {
@@ -448,16 +452,23 @@ func TestStepBudget(t *testing.T) {
 			t.Errorf("%s: stepBudget = %+v, want %d chars, %d statements", c.name, got, c.wantChars, c.wantStatement)
 		}
 	}
-	// At the cap the prompt asks for none and says what to do instead.
+	// Each case reads as a sentence; with no room the prompt says what to
+	// do instead.
 	r := store.BaselineRun{ProjectKey: "PLAT", Slug: "files", Commit: head}
-	out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, budget{2000, 0}, "a subject", "", "_None._", nil)
-	if !strings.Contains(out, "2000 characters of prose and no new statements: deepen or merge existing ones; its prose is") {
-		t.Errorf("describe prompt at the cap lacks the no-new-statements budget")
+	for b, want := range map[budget]string{
+		{2000, 3}: "This part may grow the description by at most about 2000 characters of prose and add at most 3 new statements. A corrected",
+		{2000, 1}: "and add at most 1 new statement. A corrected",
+		{2000, 0}: "at most about 2000 characters of prose but add no statement: deepen or merge existing ones instead. A corrected",
+		{0, 0}:    "This part may not grow the description or add a statement: correct, tighten or merge existing statements instead. A corrected",
+	} {
+		if out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, b, "a subject", "", "_None._", nil); !strings.Contains(out, want) {
+			t.Errorf("describe prompt with budget %+v lacks %q", b, want)
+		}
 	}
 }
 
-// A step's prompt names its budget; after the call one line logs the
-// patch's prose against it and the statements returned as stored, which
+// A step's prompt names its budget; after the fold one line logs what the
+// page grew by against it and the statements returned as stored, which
 // belonged in confirmed. Over budget nothing is cut.
 func TestRun_StepBudgetLogged(t *testing.T) {
 	x := newWorld(t, 16)
@@ -481,16 +492,18 @@ func TestRun_StepBudgetLogged(t *testing.T) {
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 
-	// 400-rune ceiling, 45 used, two parts: the floor, the overview's twice.
+	// 400-rune ceiling, 45 used: the floor held to the 355 left, then 347.
 	// 4 statements, 2 held: one each, the overview's twice; then both.
-	if !strings.Contains(x.models.prompts[1], "at most about 4000 characters of prose and 2 new statements") ||
-		!strings.Contains(x.models.prompts[2], "at most about 2000 characters of prose and 2 new statements") {
+	if !strings.Contains(x.models.prompts[1], "at most about 355 characters of prose and add at most 2 new statements") ||
+		!strings.Contains(x.models.prompts[2], "at most about 347 characters of prose and add at most 2 new statements") {
 		t.Errorf("prompts lack their budgets:\n%s", x.models.prompts[2])
 	}
+	// Net: the summary 8 runes longer; then s2 11 longer and a new statement
+	// of 26, s1 returned as stored.
 	out := logs.String()
 	for _, want := range []string{
-		"the overview: patch holds 19 chars of prose, budget 4000; 0 new statements, budget 2; 0 statements returned unchanged",
-		"Anmeldung: patch holds 72 chars of prose, budget 2000; 1 new statements, budget 2; 1 statements returned unchanged",
+		"the overview: page grew by 8 chars of prose, budget 355; 0 new statements, budget 2; 0 returned unchanged",
+		"Anmeldung: page grew by 37 chars of prose, budget 347; 1 new statement, budget 2; 1 returned unchanged",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log lacks %q:\n%s", want, out)
@@ -501,28 +514,22 @@ func TestRun_StepBudgetLogged(t *testing.T) {
 	}
 }
 
-// A statement returned as attach would store it counts as unchanged, its
-// spelling and spaces forgiven; a new one, an unknown id, another kind or a
-// removed diagram does not.
-func TestUnchanged(t *testing.T) {
-	d := drawnMap("svc")
-	current := []store.Statement{
+// A statement returned by id counts as unchanged when the fold left it as
+// stored; a changed one, a new one or one the fold dropped does not.
+func TestReturnedUnchanged(t *testing.T) {
+	before := []store.Statement{
 		{ID: "s1", Kind: "rule", Name: "Grösse", Text: "Gilt.", Files: []string{"a.go"}},
-		{ID: "s2", Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: d},
+		{ID: "s2", Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: seq("ruft")},
+		{ID: "s3", Kind: "rule", Name: "Weg", Text: "Gilt."},
 	}
+	after := []store.Statement{before[0], {ID: "s2", Kind: "invariant", Name: "Mit Bild", Text: "Fluss.", Diagram: seq("ruft")},
+		{ID: "s4", Kind: "rule", Name: "Neu", Text: "Gilt."}}
 	p := inference.Patch{Statements: []inference.Statement{
-		stmt(ref("s1"), "rule", " Größe", "Gilt.", "a.go"),
-		{ID: ref("s2"), Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: d},
-		stmt(ref("s9"), "rule", "Unbekannt", "Gilt."),
-		stmt(nil, "rule", "Neu", "Gilt."),
+		stmt(ref("s1"), "rule", " Größe", "Gilt.", "a.go"), stmt(ref("s2"), "invariant", "Mit Bild", "Fluss."),
+		stmt(ref("s3"), "rule", "Weg", "Gilt."), stmt(nil, "rule", "Neu", "Gilt."),
 	}}
-	if got := unchanged(current, p); got != 2 {
-		t.Errorf("unchanged = %d, want 2", got)
-	}
-	p.Statements[0].Kind = "invariant"
-	p.Statements[1].Diagram = &diagram.Diagram{Kind: diagram.KindNone}
-	if got := unchanged(current, p); got != 0 {
-		t.Errorf("unchanged after kind and diagram changes = %d, want 0", got)
+	if got := returnedUnchanged(before, after, p); got != 1 {
+		t.Errorf("returnedUnchanged = %d, want 1", got)
 	}
 }
 
