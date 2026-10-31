@@ -144,8 +144,12 @@ A fold reads the current repository and project descriptions, renders the
 merge prompt (`backend/internal/prompts/almanach_merge.txt`, compiled in)
 and makes one `Chat` call with a strict JSON schema. The model returns, for
 each description, either `null` (no change) or a rewritten summary and
-statements. A statement it keeps or edits carries its `id`; a new one has
-`id: null`.
+statements in two lists: `statements`, every statement it keeps or edits,
+each with its `id` (the schema requires the string), and `added`, the new
+ones, which have no id field at all. A model asked to write `null` for a
+new statement's id numbered it anyway (`s1` on an empty page, `s36` on one
+up to `s35`) and lost the rewrite to the invented-id rule; with no field to
+write, it cannot. The code numbers a new statement.
 
 The answer is then held to rules the model cannot bend:
 
@@ -444,8 +448,8 @@ resumes after a restart. The run pins the clone's head when it starts.
 3. *Subjects.* One step per subject the run reads: its files through one
    `cat-file --batch`, the current page beside them, and for a reconcile
    the ids of the statements resting on changed files. The answer is a
-   patch (new statements, edits by id, drops, confirmations, a summary or
-   null), applied under the rules below and then folded like a note:
+   patch (edits by id, new statements in `added` without one, drops,
+   confirmations, a summary or null), applied under the rules below and then folded like a note:
    `attach`, the ceilings, identical means no revision. The revision and
    the run's progress land in one transaction. Each overview and subject
    prompt names a budget for its patch, characters of prose and new
@@ -757,8 +761,9 @@ so the choice is not undone as a cleanup.
   (which PRs it was learned from) are what make a wiki trustworthy, and a
   model asked to maintain them would invent PR numbers. So the model
   returns statements with their ids and code carries the sources forward,
-  appending the current PR when the text changed. An id the page never
-  had is rejected as invented; a dropped id is never reissued.
+  appending the current PR when the text changed. An edited id the page
+  never had is rejected as invented; new statements come in a list with
+  no id field, numbered by code; a dropped id is never reissued.
 - **Caps are enforced in code, and a rewrite over a cap is rejected whole.**
   The prompt tells the model the numbers, but prose grows unless something
   refuses it. Truncating would produce a description that lies about the
@@ -937,9 +942,10 @@ the reason in the log and the page unchanged:
   `entity`.
 - `name` and `text` are trimmed and Swiss-spelled before anything is
   checked; an empty one rejects the rewrite.
-- A kept `id` must exist on the current page and may appear once. A
-  statement with no id is new and gets the next id past every id any
-  revision of this page ever used: `s1`, `s2`, ... with no gaps reused.
+- A kept `id` must exist on the current page and may appear once; an edit
+  without one rejects the rewrite. A statement in `added` is new (any id
+  an answer slips in there is cleared) and gets the next id past every id
+  any revision of this page ever used: `s1`, `s2`, ... with no gaps reused.
 - Sources: a kept statement whose name and text are unchanged keeps its
   sources exactly; one whose name or text changed gains the current PR
   once (never twice for the same PR); a new statement starts with the
@@ -1042,8 +1048,13 @@ the reason in the log and the page unchanged:
   rules for a PR statement read the whole tree.
 - A statement taught by a PR whose merge commit the run's commit does not
   hold is read-only for that run.
-- A patch: an unnamed id stays; an invented id, an id edited twice, edited
-  and dropped, or confirmed and dropped rejects it; a PR statement is
+- A patch: an unnamed id stays; an edit of an id the page lacks (invented),
+  an edit without an id, an id edited twice, edited and dropped, or
+  confirmed and dropped rejects it. An unknown id to drop or confirm
+  refers to nothing: it is left out with a log line ("unknown ids left
+  out: ...") and the rest applies. Nothing unknown is ever accepted, so the
+  invented-id rule holds; only its blast radius is narrower, one
+  hallucinated hash in `confirmed` no longer costing a part. A PR statement is
   dropped only when its files left the tree, and an edit of it keeps the
   files the tree still has.
 - A run that ends with no revision still records its commit as documented.

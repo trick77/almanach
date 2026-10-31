@@ -230,6 +230,46 @@ func TestNoDiagramsSchemas(t *testing.T) {
 	}
 }
 
+// Every format splits edits from new statements: an edit's id is a
+// required string, never null; a new statement has no id field at all, so
+// a model cannot number one.
+func TestSchemaEditsAndAdded(t *testing.T) {
+	merge := mergeFormat(true).Schema["properties"].(map[string]any)
+	for name, props := range map[string]map[string]any{
+		"patch":         patchFormat(true).Schema["properties"].(map[string]any),
+		"merge repo":    merge["repository"].(map[string]any)["properties"].(map[string]any),
+		"merge project": merge["project"].(map[string]any)["properties"].(map[string]any),
+		"project":       projectDescription(true)["properties"].(map[string]any),
+	} {
+		edit := props["statements"].(map[string]any)["items"].(map[string]any)
+		id, ok := edit["properties"].(map[string]any)["id"].(map[string]any)
+		if !ok || id["type"] != "string" || !slices.Contains(edit["required"].([]any), any("id")) {
+			t.Errorf("%s: edit id = %v, want a required string", name, id)
+		}
+		add := props["added"].(map[string]any)["items"].(map[string]any)
+		if _, has := add["properties"].(map[string]any)["id"]; has || add["additionalProperties"] != false {
+			t.Errorf("%s: a new statement may carry an id: %v", name, add)
+		}
+		if _, has := add["properties"].(map[string]any)["kind"]; !has {
+			t.Errorf("%s: added lacks the statement's fields", name)
+		}
+	}
+	// Both halves parse; Proposed lists the edits, then the new ones with
+	// any id the answer gave cleared.
+	var d Description
+	if !parse(`{"summary": "s", "statements": [{"id": "s2", "kind": "rule", "name": "a", "text": "b", "files": []}],
+		"added": [{"id": "s36", "kind": "rule", "name": "c", "text": "d", "files": []}]}`, &d) {
+		t.Fatal("description did not parse")
+	}
+	got, reason := d.Proposed()
+	if reason != "" || len(got) != 2 || got[0].ID == nil || *got[0].ID != "s2" || got[1].ID != nil || got[1].Name != "c" {
+		t.Errorf("Proposed = %+v, %q", got, reason)
+	}
+	if _, reason := Proposed([]Statement{{Name: "x"}}, nil); reason == "" {
+		t.Error("an edit without an id was taken")
+	}
+}
+
 // Every format offers the new kinds; a project description never offers an
 // extension, a repository's change recipe.
 func TestSchemaKinds(t *testing.T) {

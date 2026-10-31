@@ -14,16 +14,20 @@ import (
 // of its files. An edit of one may correct its text and add files, but
 // keeps every file of it the tree still has: otherwise the next run would
 // find it resting on nothing and drop it after all. Anything else rejects
-// the patch whole, like an id the page does not have.
+// the patch whole, like an edit of an id the page does not have: that is a
+// statement invented. An unknown id to drop or confirm refers to nothing:
+// it is left out, named in Unknown, and the rest of the patch applies.
 
 // Applied is a patch turned into the whole proposal a fold checks: every
 // statement of the page in its order with edits in place and drops gone,
-// then the new ones. Checked says per statement that the step read the code
-// behind it (edited, new or confirmed); Summary nil keeps the summary.
+// then the new ones (ID nil). Checked says per statement that the step read
+// the code behind it (edited, new or confirmed); Summary nil keeps the
+// summary. Unknown is the drop and confirmed ids the page does not have.
 type Applied struct {
 	Statements []inference.Statement
 	Checked    []bool
 	Summary    *string
+	Unknown    []string
 }
 
 // ApplyPatch applies a step's patch to the current statements. exists says
@@ -35,11 +39,10 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		byID[s.ID] = s
 	}
 	edits := map[string]inference.Statement{}
-	var added []inference.Statement
+	var unknown []string
 	for _, st := range p.Statements {
 		if st.ID == nil || *st.ID == "" {
-			added = append(added, st)
-			continue
+			return Applied{}, "an edit without a statement id"
 		}
 		id := *st.ID
 		if _, ok := byID[id]; !ok {
@@ -59,7 +62,8 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 	for _, id := range p.Drop {
 		s, ok := byID[id]
 		if !ok {
-			return Applied{}, "drop of unknown statement id " + id
+			unknown = append(unknown, id)
+			continue
 		}
 		if _, edited := edits[id]; edited {
 			return Applied{}, "statement " + id + " both edited and dropped"
@@ -72,7 +76,8 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 	confirmed := map[string]bool{}
 	for _, id := range p.Confirmed {
 		if _, ok := byID[id]; !ok {
-			return Applied{}, "confirmation of unknown statement id " + id
+			unknown = append(unknown, id)
+			continue
 		}
 		if dropped[id] {
 			return Applied{}, "statement " + id + " both confirmed and dropped"
@@ -80,7 +85,7 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		confirmed[id] = true
 	}
 
-	out := Applied{}
+	out := Applied{Unknown: unknown}
 	if p.Summary != nil && strings.TrimSpace(*p.Summary) != "" {
 		out.Summary = p.Summary
 	}
@@ -97,7 +102,8 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		out.Statements = append(out.Statements, inference.Statement{ID: &id, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Diagram: s.Diagram})
 		out.Checked = append(out.Checked, confirmed[s.ID])
 	}
-	for _, st := range added {
+	for _, st := range p.Added {
+		st.ID = nil
 		out.Statements = append(out.Statements, st)
 		out.Checked = append(out.Checked, true)
 	}

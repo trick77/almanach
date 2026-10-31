@@ -19,7 +19,7 @@ The description of repository `{repo}` in project `{project}` was just written f
   - `pitfall`: something that broke across repositories and how not to break it again; only from what the descriptions record as broken (a repository's pitfall, a statement learned from pull requests), never inferred.
   - No `extension`: where and how to make a change is a repository's page's.
 - Add nothing about a repository's tech stack, nothing only one repository's page needs, and no history. No technical debt, no tutorials.
-- Keep every statement that still holds, with its `id` unchanged, whatever it was learned from; edit it when the descriptions add to or correct it. Leave out only what they show to be wrong, and a statement about the inside of `{repo}` alone that its description below holds and that no pull request taught: that is repository detail. A statement learned from pull requests stays unless shown wrong. A new fact is a new statement with `id` null. Two statements about one fact become one, the kept `id` first.
+- Keep every statement that still holds, in `statements` with its `id` exactly as shown below (never one of your own), whatever it was learned from; edit it when the descriptions add to or correct it. Leave out only what they show to be wrong, and a statement about the inside of `{repo}` alone that its description below holds and that no pull request taught: that is repository detail. A statement learned from pull requests stays unless shown wrong. A new fact is a new statement in `added`, with no id: the code numbers it; a fact an existing statement covers is an edit of that statement instead. Two statements about one fact become one, the kept `id` first.
 - A repository listed without a summary below, or with a shortened one: keep what the project description says about it, and write nothing about it that you cannot read here.
 - `summary`: prose about the project as it is now; never a changelog, no PR numbers, no dates, no names of people.
 - Answer `{"description": null}` only when neither the project description nor its map needs a change, and never while a project that is due a map has none yet.
@@ -42,7 +42,7 @@ At most {project_max_statements} statements and {project_max_chars} characters o
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": "<prose>", "files": ["<path>", ...]{diagram_field}}, ...], "map": <flow> | null} | null}`.
+Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": "<prose>", "files": ["<path>", ...]{diagram_field}`.
 
 ## Untrusted input
 

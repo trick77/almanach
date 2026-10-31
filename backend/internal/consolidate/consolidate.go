@@ -398,7 +398,12 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return busyOnly(err)
 	}
-	statements, stripped, reason := attach(scope, current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
+	proposed, reason := d.Proposed()
+	var statements []store.Statement
+	var stripped struck
+	if reason == "" {
+		statements, stripped, reason = attach(scope, current.Statements, proposed, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
+	}
 	logStripped(ctx, w.log, "consolidate: "+scope, stripped)
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
@@ -734,10 +739,11 @@ func diagramField(l config.Limits) string {
 
 // An empty page as the prompts show it, saying in so many words that every
 // statement is new: shown nothing, a model numbers its new statements, and
-// an id the page does not have is invented and rejects the rewrite.
+// an id the page does not have is invented and rejects the rewrite. The
+// schema keeps new statements in `added`, where no id can be written.
 const (
-	noneYet         = "_None yet: every statement you write is new, its id null._"
-	noStatementsYet = "\n_No statements yet: every statement you write is new, its id null._\n"
+	noneYet         = "_None yet: every statement you write is new and goes in `added`; `statements` stays empty._"
+	noStatementsYet = "\n_No statements yet: every statement you write is new and goes in `added`; `statements` stays empty._\n"
 )
 
 // describe renders a page the prompt writes: the summary, then one line per

@@ -618,6 +618,9 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
+	if len(applied.Unknown) > 0 {
+		w.log.WarnContext(ctx, "baseline: "+name+": unknown ids left out: "+strings.Join(applied.Unknown, ", "))
+	}
 	// A path the model names for a statement it wrote is held to the tree,
 	// forgiven its spelling: a path the tree does not have is invented.
 	for i := range applied.Statements {
@@ -1163,7 +1166,12 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return nil, "", errStop
 	}
-	statements, stripped, reason := attach(store.ScopeProject, page.Statements, d.Statements, runSource(*r, plan), next, limitsOf(w.limits))
+	proposed, reason := d.Proposed()
+	var statements []store.Statement
+	var stripped struck
+	if reason == "" {
+		statements, stripped, reason = attach(store.ScopeProject, page.Statements, proposed, runSource(*r, plan), next, limitsOf(w.limits))
+	}
 	logStripped(ctx, w.log, "baseline: "+projectName, stripped)
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
@@ -1376,16 +1384,8 @@ func newStatementsAllowed(n int) string {
 	return fmt.Sprintf("%d new statements", n)
 }
 
-// newStatements counts the statements a patch adds, those without an id.
-func newStatements(p inference.Patch) int {
-	n := 0
-	for _, s := range p.Statements {
-		if s.ID == nil || *s.ID == "" {
-			n++
-		}
-	}
-	return n
-}
+// newStatements counts the statements a patch adds.
+func newStatements(p inference.Patch) int { return len(p.Added) }
 
 // patchProse is the prose a patch returns, counted like the ceiling: the
 // summary when it writes one, the name and text of every statement.
@@ -1394,7 +1394,7 @@ func patchProse(p inference.Patch) int {
 	if p.Summary != nil {
 		n += utf8.RuneCountInString(*p.Summary)
 	}
-	for _, s := range p.Statements {
+	for _, s := range slices.Concat(p.Statements, p.Added) {
 		n += utf8.RuneCountInString(s.Name) + utf8.RuneCountInString(s.Text)
 	}
 	return n

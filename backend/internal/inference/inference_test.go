@@ -17,7 +17,7 @@ import (
 )
 
 func TestParseMerge(t *testing.T) {
-	valid := `{"repository": {"summary": "Ein Dienst.", "statements": [{"id": null, "kind": "rule", "name": "n", "text": "t", "files": ["a.go"]}]}, "project": null}`
+	valid := `{"repository": {"summary": "Ein Dienst.", "statements": [], "added": [{"kind": "rule", "name": "n", "text": "t", "files": ["a.go"]}]}, "project": null}`
 	cases := []struct {
 		name    string
 		content string
@@ -47,10 +47,10 @@ func TestParseMerge(t *testing.T) {
 			if m.Repository == nil || m.Project != nil {
 				t.Fatalf("Merge = %+v, want repository set and project nil", m)
 			}
-			if m.Repository.Summary != "Ein Dienst." || len(m.Repository.Statements) != 1 {
-				t.Errorf("Repository = %+v", m.Repository)
+			if m.Repository.Summary != "Ein Dienst." || len(m.Repository.Statements) != 0 || len(m.Repository.Added) != 1 {
+				t.Fatalf("Repository = %+v", m.Repository)
 			}
-			s := m.Repository.Statements[0]
+			s := m.Repository.Added[0]
 			if s.ID != nil || s.Kind != "rule" || s.Name != "n" || s.Text != "t" || len(s.Files) != 1 {
 				t.Errorf("Statement = %+v", s)
 			}

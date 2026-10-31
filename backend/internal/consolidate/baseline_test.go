@@ -184,12 +184,17 @@ func (m *fakeModels) Patch(_ context.Context, prompt string) inference.PatchResu
 	m.prompts = append(m.prompts, prompt)
 	res := m.patches[0]
 	m.patches = m.patches[1:]
+	if res.Patch.Added == nil {
+		res.Patch.Statements, res.Patch.Added = split(res.Patch.Statements)
+	}
 	return res
 }
 
 func (m *fakeModels) Describe(_ context.Context, prompt string) inference.DescriptionResult {
 	m.prompts = append(m.prompts, prompt)
-	return m.project
+	res := m.project
+	res.Description = answered(res.Description)
+	return res
 }
 
 var called = inference.Call{Outcome: inference.OutcomeOK, Cost: inference.CallCost{Model: "m", Answered: true}}
@@ -1109,6 +1114,36 @@ func TestProblemsFor(t *testing.T) {
 	out := renderProblems([]store.RepoProblem{{Area: "auth", Bugfixes: 3, TopCause: "logic", PRKeys: []string{"T/svc#9", "T/svc#4"}}, {Area: "", Bugfixes: 1, TopCause: "other", PRKeys: []string{"T/svc#1"}}})
 	if !strings.Contains(out, "- `auth/`: 3 bugfixes, cause seen most `logic`, newest fixes T/svc#9, T/svc#4") || !strings.Contains(out, "the repository root") {
 		t.Errorf("rendered = %q", out)
+	}
+}
+
+// A hallucinated id to confirm or drop refers to nothing: the step leaves
+// it out with a log line and applies the rest; an unknown id on an edit
+// still refuses the patch.
+func TestRun_UnknownIDsLeftOut(t *testing.T) {
+	var buf strings.Builder
+	x := newWorld(t, 16)
+	x.w.log = slog.New(slog.NewTextHandler(&buf, nil))
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}, {Name: "Abrechnung", Purpose: "Rechnungen.", Paths: []string{"billing/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Confirmed: []string{"8b0d8f4a"}, Drop: []string{"s77"},
+			Statements: []inference.Statement{}, Added: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s9"), "rule", "Erfunden", "Gibt es nicht.", "auth/login.go")}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
+	if page.Summary != "Ein Dienst." || len(page.Statements) != 1 || page.Statements[0].ID != "s1" {
+		t.Errorf("page = %+v, want the overview's patch applied", page)
+	}
+	if !strings.Contains(buf.String(), "the overview: unknown ids left out: s77, 8b0d8f4a") {
+		t.Errorf("log lacks the unknown ids:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "Anmeldung skipped: patch refused: unknown statement id s9") {
+		t.Errorf("an invented edit was not refused:\n%s", buf.String())
 	}
 }
 

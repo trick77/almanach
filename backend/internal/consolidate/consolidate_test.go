@@ -142,7 +142,35 @@ type fakeMerger struct {
 
 func (m *fakeMerger) Merge(_ context.Context, req inference.MergeRequest) inference.MergeResult {
 	m.prompts = append(m.prompts, req.Prompt)
-	return m.result
+	res := m.result
+	res.Merge.Repository, res.Merge.Project = answered(res.Merge.Repository), answered(res.Merge.Project)
+	return res
+}
+
+// A fixture writes a new statement as one without an id among the rest;
+// the fakes answer in the model's shape, the new ones split off into Added,
+// where the schema offers no id.
+func split(list []inference.Statement) (edits, added []inference.Statement) {
+	for _, s := range list {
+		if s.ID == nil {
+			added = append(added, s)
+		} else {
+			edits = append(edits, s)
+		}
+	}
+	if edits == nil && list != nil {
+		edits = []inference.Statement{}
+	}
+	return edits, added
+}
+
+func answered(d *inference.Description) *inference.Description {
+	if d == nil || d.Added != nil {
+		return d
+	}
+	c := *d
+	c.Statements, c.Added = split(d.Statements)
+	return &c
 }
 
 func okResult(repo, project *inference.Description) inference.MergeResult {
@@ -262,6 +290,37 @@ func TestFoldAgentKinds(t *testing.T) {
 	want := []string{"repository:decision", "repository:extension", "repository:pitfall", "project:decision", "project:pitfall"}
 	if !slices.Equal(got, want) {
 		t.Errorf("kinds = %v, want %v", got, want)
+	}
+}
+
+// New statements come in `added` and the code numbers them, whatever id an
+// answer slipped in; an edit must name an id, and one the page lacks is
+// invented: the rewrite is rejected, as before the split.
+func TestFoldEditsAndAdded(t *testing.T) {
+	st := newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an.", Files: []string{"internal/files/upload.go"}}},
+		Added:      []inference.Statement{{ID: str("s36"), Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}},
+	}, nil)}
+	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("revisions = %+v", st.revisions)
+	}
+	if got := st.revisions[0].Statements; len(got) != 2 || got[0].ID != "s1" || got[1].ID != "s2" || got[1].Name != "Grenze" {
+		t.Errorf("statements = %+v, want s1 kept and the new one numbered s2", got)
+	}
+
+	for name, d := range map[string]*inference.Description{
+		"edit without an id": {Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t"}}, Added: []inference.Statement{}},
+		"invented id":        {Summary: "s", Statements: []inference.Statement{{ID: str("s9"), Kind: "rule", Name: "n", Text: "t"}}, Added: []inference.Statement{}},
+	} {
+		st := newFakeStore()
+		st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+		newWorker(st, &fakeMerger{result: okResult(d, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+		if len(st.revisions) != 0 {
+			t.Errorf("%s: revision written: %+v", name, st.revisions)
+		}
 	}
 }
 
