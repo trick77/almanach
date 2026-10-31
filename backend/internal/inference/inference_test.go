@@ -229,7 +229,7 @@ func TestStartup(t *testing.T) {
 }
 
 // "off" switches reasoning off where the profile allows it; any other value
-// must be a level the profile lists, and the refusal names off too.
+// must be a level the profile lists.
 func TestEffortOff(t *testing.T) {
 	srv := llmwiretest.NewServer(t)
 	c := testClient(srv.Client())
@@ -241,8 +241,9 @@ func TestEffortOff(t *testing.T) {
 		t.Errorf("reasoning() = %#v, want ReasoningOff", got)
 	}
 	c.effort = "bogus"
-	if _, err := c.Startup(context.Background()); err == nil || !strings.Contains(err.Error(), "high, off)") {
-		t.Errorf("bogus level: err = %v, want a refusal naming %q", err, EffortOff)
+	// The test profile lists "none": that is its way off, named once.
+	if _, err := c.Startup(context.Background()); err == nil || !strings.Contains(err.Error(), "(accepted: none, low, medium, high)") {
+		t.Errorf("bogus level: err = %v, want a refusal naming the levels, none among them, and not off", err)
 	}
 }
 
@@ -264,6 +265,7 @@ func TestCheckEffort(t *testing.T) {
 		{"off on a model that never reasons", EffortOff, never, ""},
 		{"off where it reasons and cannot be switched off", EffortOff, fixed, "cannot be switched off"},
 		{"bogus where off switches something", "bogus", toggle, "(accepted: low, high, off)"},
+		{"bogus where the levels list none", "bogus", llmwire.Reasoning{Supported: true, CanBeDisabled: true, EffortValues: []string{"none", "high"}}, "(accepted: none, high)"},
 		{"bogus where it cannot be switched off", "bogus", fixed, "(accepted: low, high)"},
 		{"bogus on a model that never reasons", "bogus", never, "takes no reasoning level"},
 	} {

@@ -194,8 +194,10 @@ func checkEffort(effort, model string, r llmwire.Reasoning) error {
 	case r.Accepts(effort):
 		return nil
 	}
+	// Off is offered only where it switches something the listed levels do
+	// not already: a profile that lists "none" names its own way off.
 	accepted := slices.Clone(r.EffortValues)
-	if r.Supported && r.CanBeDisabled {
+	if r.Supported && r.CanBeDisabled && !slices.Contains(accepted, "none") {
 		accepted = append(accepted, EffortOff)
 	}
 	if len(accepted) == 0 {

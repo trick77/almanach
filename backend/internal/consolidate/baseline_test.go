@@ -529,13 +529,14 @@ func TestReturnedUnchanged(t *testing.T) {
 		{ID: "s2", Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: seq("ruft")},
 		{ID: "s3", Kind: "rule", Name: "Weg", Text: "Gilt."},
 	}
-	after := []store.Statement{before[0], {ID: "s2", Kind: "invariant", Name: "Mit Bild", Text: "Fluss.", Diagram: seq("ruft")},
-		{ID: "s4", Kind: "rule", Name: "Neu", Text: "Gilt."}}
+	// s1 as stored once attach's cleanup trimmed it; s2 with another kind;
+	// s3 with a path the fold would drop as invented, still an attempt; a
+	// new one and an unknown id are not returned statements.
 	p := inference.Patch{Statements: []inference.Statement{
-		stmt(ref("s1"), "rule", " Größe", "Gilt.", "a.go"), stmt(ref("s2"), "invariant", "Mit Bild", "Fluss."),
-		stmt(ref("s3"), "rule", "Weg", "Gilt."), stmt(nil, "rule", "Neu", "Gilt."),
+		stmt(ref("s1"), "rule", " Grösse ", "Gilt.\n", "a.go "), stmt(ref("s2"), "invariant", "Mit Bild", "Fluss."),
+		stmt(ref("s3"), "rule", "Weg", "Gilt.", "erfunden.go"), stmt(nil, "rule", "Neu", "Gilt."), stmt(ref("s9"), "rule", "Weg", "Gilt."),
 	}}
-	if got := returnedUnchanged(before, after, p); got != 1 {
+	if got := returnedUnchanged(before, p); got != 1 {
 		t.Errorf("returnedUnchanged = %d, want 1", got)
 	}
 	// A statement whose only change was a new diagram the fold left out was
@@ -545,11 +546,11 @@ func TestReturnedUnchanged(t *testing.T) {
 		{ID: ref("s2"), Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: dangling()},
 		{ID: ref("s3"), Kind: "rule", Name: "Weg", Text: "Gilt.", Diagram: &diagram.Diagram{Kind: diagram.KindNone}},
 	}}
-	if got := returnedUnchanged(before, before, p); got != 1 {
+	if got := returnedUnchanged(before, p); got != 1 {
 		t.Errorf("returnedUnchanged with a left-out diagram = %d, want 1 (s3 only)", got)
 	}
 	p.Statements[0].Diagram = seq("ruft")
-	if got := returnedUnchanged(before, before, p); got != 2 {
+	if got := returnedUnchanged(before, p); got != 2 {
 		t.Errorf("returnedUnchanged with the stored diagram echoed = %d, want 2", got)
 	}
 }
@@ -661,6 +662,8 @@ func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
 // only, the page unchanged, and the parts after it are still read.
 func TestRun_SkipsAndCeiling(t *testing.T) {
 	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "A", Purpose: "p", Paths: []string{"auth/"}}, {Name: "B", Purpose: "p", Paths: []string{"billing/"}}, {Name: "C", Purpose: "p", Paths: []string{"README.md"}},
@@ -686,6 +689,37 @@ func TestRun_SkipsAndCeiling(t *testing.T) {
 	}
 	if page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; len(page.Statements) != 1 || page.Statements[0].Name != "Kurz" {
 		t.Errorf("page = %+v, want B's rewrite rejected and C's statement taken", page.Statements)
+	}
+	// The rejected patch logs its rejection only, no growth against a budget.
+	if out := logs.String(); !strings.Contains(out, "B skipped: rewrite rejected") || strings.Contains(out, "B: page grew") {
+		t.Errorf("log for B:\n%s", out)
+	}
+}
+
+// A page already at a ceiling, a lowered one included, makes no call: the
+// reading ends before the first part, every part skipped, the project
+// step still taken.
+func TestRun_PageAtItsCeilingMakesNoCall(t *testing.T) {
+	for name, page := range map[string]store.Page{
+		"statements": {RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{
+			{ID: "s1", Kind: "rule", Name: "A", Text: "T"}, {ID: "s2", Kind: "rule", Name: "B", Text: "T"},
+			{ID: "s3", Kind: "rule", Name: "C", Text: "T"}, {ID: "s4", Kind: "rule", Name: "D", Text: "T"}}},
+		"prose": {RevisionID: 1, Revision: 1, Summary: strings.Repeat("x", 450), Statements: []store.Statement{}},
+	} {
+		x := newWorld(t, 16)
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = page
+		x.queue(store.RunFull, "")
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+			{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
+		x.models.project = inference.DescriptionResult{Call: called}
+		x.w.drain(context.Background())
+		r := x.run()
+		if r.State != store.RunDone || r.Calls != 2 || r.Skipped != 2 || len(x.models.prompts) != 2 {
+			t.Errorf("%s: run = %+v, %d prompts; want the catalogue and the project only", name, r, len(x.models.prompts))
+		}
+		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{overviewName, "A"}) {
+			t.Errorf("%s: skipped = %v", name, p.Skipped)
+		}
 	}
 }
 

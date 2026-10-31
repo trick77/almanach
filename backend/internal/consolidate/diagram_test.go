@@ -84,7 +84,7 @@ func TestFoldStatementDiagram(t *testing.T) {
 	if len(st.revisions) != 1 || st.revisions[0].Statements[0].Diagram != nil || st.revisions[0].Statements[0].Text != "Nimmt Dateien an, neu." {
 		t.Fatalf("changed text: revisions = %+v, want the text taken and the stored diagram dropped", st.revisions)
 	}
-	if !strings.Contains(logs.String(), "the stored one dropped with the changed text") {
+	if !strings.Contains(logs.String(), "diagram breaking a rule left out") || !strings.Contains(logs.String(), "stored diagram dropped with a changed name or text") {
 		t.Errorf("log lacks the dropped stored diagram:\n%s", logs.String())
 	}
 
@@ -200,20 +200,34 @@ func TestFoldDiagramChangeIsARevision(t *testing.T) {
 	}
 }
 
-// null keeps a stored diagram on the merge path while the text changes;
-// the statement's diagram goes only with the statement.
+// On the merge path null keeps a stored diagram only while the name and
+// text stay: with a changed text it goes, logged, a picture of what is no
+// longer said; returned again with the changed text it stays.
 func TestFoldNullKeepsTheDiagram(t *testing.T) {
 	page := existingRepoPage()
 	page.Statements[0].Diagram = seq("schreibt")
-	st := newFakeStore()
-	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
 	s := page.Statements[0]
-	m := &fakeMerger{result: okResult(&inference.Description{Summary: page.Summary, Statements: []inference.Statement{
-		{ID: str(s.ID), Kind: s.Kind, Name: s.Name, Text: "Nimmt Dateien an, neu.", Files: s.Files},
-	}}, nil)}
-	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 1 || !diagram.Equal(st.revisions[0].Statements[0].Diagram, seq("schreibt")) {
-		t.Fatalf("revisions = %+v, want the text changed and the diagram kept", st.revisions)
+	fold := func(d *diagram.Diagram) (*fakeStore, string) {
+		st := newFakeStore()
+		st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+		m := &fakeMerger{result: okResult(&inference.Description{Summary: page.Summary, Statements: []inference.Statement{
+			{ID: str(s.ID), Kind: s.Kind, Name: s.Name, Text: "Nimmt Dateien an, neu.", Files: s.Files, Diagram: d},
+		}}, nil)}
+		w := newWorker(st, m)
+		var logs strings.Builder
+		w.log = slog.New(slog.NewTextHandler(&logs, nil))
+		w.Fold(context.Background(), queued("PLAT/files#42"))
+		return st, logs.String()
+	}
+	st, logs := fold(nil)
+	if len(st.revisions) != 1 || st.revisions[0].Statements[0].Diagram != nil || st.revisions[0].Statements[0].Text != "Nimmt Dateien an, neu." {
+		t.Fatalf("null: revisions = %+v, want the text changed and the stale diagram dropped", st.revisions)
+	}
+	if !strings.Contains(logs, "stored diagram dropped with a changed name or text") {
+		t.Errorf("null: log lacks the dropped diagram:\n%s", logs)
+	}
+	if st, _ := fold(seq("schreibt")); len(st.revisions) != 1 || !diagram.Equal(st.revisions[0].Statements[0].Diagram, seq("schreibt")) {
+		t.Fatalf("returned again: revisions = %+v, want the text changed and the diagram kept", st.revisions)
 	}
 }
 
@@ -371,8 +385,9 @@ func TestRun_QuietReconcileDrawsAMissingMap(t *testing.T) {
 	}
 }
 
-// null keeps a stored diagram on the baseline paths too: a step's edit and
-// the project step's rewrite carry it by id.
+// On the baseline paths a changed text takes a stored diagram with it when
+// the answer says null (the step's edit), and keeps it when the answer
+// returns it again (the project step's rewrite).
 func TestRun_NullKeepsTheDiagram(t *testing.T) {
 	x := newWorld(t, 16)
 	src := []store.Source{{Kind: store.FromBaseline, Commit: older40, Repo: "svc"}}
@@ -385,16 +400,18 @@ func TestRun_NullKeepsTheDiagram(t *testing.T) {
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
 	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst, neu."),
 		Statements: []inference.Statement{stmt(ref("s1"), "component", "Dienst", "Neu.", "README.md")}}}}
+	again := stmt(ref("s1"), "entity", "Werkzeug", "Neu.")
+	again.Diagram = seq("liest")
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
-		Statements: []inference.Statement{stmt(ref("s1"), "entity", "Werkzeug", "Neu.")}, Map: drawnMap("svc")}}
+		Statements: []inference.Statement{again}, Map: drawnMap("svc")}}
 	x.w.drain(context.Background())
 	repo := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")].Statements[0]
-	if repo.Text != "Neu." || !diagram.Equal(repo.Diagram, seq("ruft")) {
-		t.Errorf("repository statement = %+v, want the text changed and the diagram kept", repo)
+	if repo.Text != "Neu." || repo.Diagram != nil {
+		t.Errorf("repository statement = %+v, want the text changed and the stale diagram dropped", repo)
 	}
 	project := x.st.pages[pageKey(store.ScopeProject, "tools", "")].Statements[0]
 	if project.Text != "Neu." || !diagram.Equal(project.Diagram, seq("liest")) {
-		t.Errorf("project statement = %+v, want the text changed and the diagram kept", project)
+		t.Errorf("project statement = %+v, want the text changed and the diagram returned again kept", project)
 	}
 }
 

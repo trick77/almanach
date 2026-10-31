@@ -508,7 +508,8 @@ func (w *Worker) readDocs(ctx context.Context, r *store.BaselineRun, files []bas
 
 // describeStep reads one part, the overview or a subject, and folds its
 // patch into the repository page. A failure of the call or a patch the
-// rules or the ceilings refuse skips the part.
+// rules or the ceilings refuse skips the part; a page already at a ceiling
+// ends the reading before any call.
 func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	plan, err := decodePlan(r.Plan)
 	if err != nil {
@@ -550,6 +551,12 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
 		return errStop
+	}
+	// A page already at a ceiling, a lowered one included, gets no call:
+	// a part could pay for an answer the ceiling then refuses, every part
+	// of every reconcile.
+	if prose(page.Summary, page.Statements) >= w.limits.RepoMaxChars || len(page.Statements) >= w.limits.RepoMaxStatements {
+		return w.endReading(ctx, r, &plan, "the page is at its ceiling")
 	}
 	// Only a step that will make a call asks; a held one has read no file.
 	newer, err := w.newerIDs(ctx, r, page.Statements, plan.CommittedAt)
@@ -620,23 +627,23 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if applied.Summary != nil {
 		summary = lang.SwissSS(strings.TrimSpace(*applied.Summary))
 	}
-	// Measured on the fold's result, never enforced: the ceilings reject a
-	// rewrite whole, and a patch is never cut.
-	grown, added := growth(page, summary, statements)
-	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: page grew by %d chars of prose, budget %d; %s, budget %d; %d returned unchanged",
-		name, grown, b.chars, plural(added, "new statement"), b.statements, returnedUnchanged(page.Statements, statements, patch)))
 	for i := range statements {
 		if applied.Checked[i] {
 			statements[i].Checked = r.Commit
 		}
 	}
-	// Over a ceiling the rewrite is rejected whole and the page stays; only
-	// this part is skipped, so a page that is full still takes the
-	// corrections of the parts after it.
+	// A patch that takes the page over a ceiling from free room is rejected
+	// whole and the page stays; only this part is skipped. A page already
+	// at its ceiling never gets this far: describeStep ends the reading.
 	chars, capReason := check(summary, statements, w.limits.RepoMaxStatements, w.limits.RepoMaxChars)
 	if capReason != "" {
 		return w.skipPart(ctx, r, plan, name, "rewrite rejected, page unchanged: "+capReason)
 	}
+	// Measured on the fold's result, never enforced: the ceilings reject a
+	// rewrite whole, and a patch is never cut.
+	grown, added := growth(page, summary, statements)
+	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: page grew by %d chars of prose, budget %d; %s, budget %d; %d returned unchanged",
+		name, grown, b.chars, plural(added, "new statement"), b.statements, returnedUnchanged(page.Statements, patch)))
 	logLeftOut(ctx, w.log, "baseline: "+name, leftOut)
 	if summary != page.Summary {
 		plan.SummaryChanged = true
@@ -1398,18 +1405,15 @@ func growth(page store.Page, summary string, statements []store.Statement) (char
 	return prose(summary, statements) - prose(page.Summary, page.Statements), added
 }
 
-// returnedUnchanged counts the statements a patch returns by id that the
-// fold left exactly as stored: output paid for that belonged in confirmed.
-// One that came with a new diagram the fold left out was a real attempt at
-// a change and does not count.
-func returnedUnchanged(before, after []store.Statement, p inference.Patch) int {
+// returnedUnchanged counts the statements a patch returns by id exactly as
+// stored, after the cleanup attach applies: output paid for that belonged
+// in confirmed. One with any attempted change counts not, even one the
+// fold then took out (an invented path, a diagram left out): the model
+// tried.
+func returnedUnchanged(before []store.Statement, p inference.Patch) int {
 	was := make(map[string]store.Statement, len(before))
 	for _, s := range before {
 		was[s.ID] = s
-	}
-	is := make(map[string]store.Statement, len(after))
-	for _, s := range after {
-		is[s.ID] = s
 	}
 	n := 0
 	for _, st := range p.Statements {
@@ -1417,8 +1421,20 @@ func returnedUnchanged(before, after []store.Statement, p inference.Patch) int {
 			continue
 		}
 		old, ok := was[*st.ID]
-		attempted := st.Diagram != nil && st.Diagram.Kind != diagram.KindNone && !diagram.Equal(st.Diagram, old.Diagram)
-		if now, kept := is[*st.ID]; ok && kept && !attempted && sameStatement(old, now) {
+		if !ok {
+			continue
+		}
+		c := cleanStatement(st)
+		c.ID, c.Diagram = old.ID, old.Diagram
+		// null, the stored diagram again, or none on a statement without one
+		// change nothing; anything else is an attempt.
+		switch {
+		case st.Diagram == nil, diagram.Equal(st.Diagram, old.Diagram):
+		case st.Diagram.Kind == diagram.KindNone && old.Diagram == nil:
+		default:
+			c.Diagram = st.Diagram
+		}
+		if sameStatement(old, c) {
 			n++
 		}
 	}
