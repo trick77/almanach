@@ -166,12 +166,12 @@ The answer is then held to rules the model cannot bend:
   ever used, so an id dropped in one fold never names another fact later.
   An id the page does not have, or one used twice, rejects the rewrite.
 - Ceilings: statement count per scope and runes per whole description
-  (the summary and every statement's name and text), plus fixed caps on a
-  statement's name and its file list. No statement has a length cap of its
-  own: a description is documentation, each statement as long as its
-  subject needs, and only the whole must not grow without bound. Over a
-  ceiling the rewrite is rejected whole and the page stays as it was. Never
-  truncated: a truncated description lies.
+  (the summary and every statement's name and text). No statement has a
+  length cap of its own: a description is documentation, each statement as
+  long as its subject needs, and only the whole must not grow without
+  bound. Over a ceiling the rewrite is rejected whole and the page stays
+  as it was. Never truncated: a truncated description lies. Fixed caps on
+  a statement's name and its file list cost only that statement.
 - An identical rewrite is no revision.
 
 What passes is written as the next revision of the page and the page
@@ -571,11 +571,12 @@ resumes after a restart. The run pins the clone's head when it starts.
    (an eval's second repository wiped the first one's eleven). No tree
    shows a project statement's files gone, so the step never drops a
    PR-taught one (a note's fold may rewrite it): that drop is left out
-   and logged. New statements that alone take the page over a ceiling are
-   left out and logged, the summary, map, edits and drops kept, so a full
-   project page is never frozen; a first page over one is refused whole,
-   never written without statements. Its revision and the run's end land
-   in one transaction.
+   and logged. When new statements take the page over a ceiling, as many
+   as fit are kept in the order written and the rest left out and logged,
+   the summary, map, edits and drops kept: a full project page is never
+   frozen, and a first page of 25 against 24 keeps its first 24. A first
+   page is never written without statements. Its revision and the run's
+   end land in one transaction.
 
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
@@ -609,7 +610,9 @@ sets the label on a new map, whatever the model wrote, unless the slug is
 longer than a label), an edge labelled
 by how the parts talk (HTTP, event, DB, library, file), held to the
 drawing's limits. A larger project gets none, and the prompt asks for
-null. The map never costs the description: a repository that left the
+null. The map never costs the description: an edge pointing at its own
+node or repeating one before it is taken out (one "almanach → almanach"
+edge refused a whole map once), a repository that left the
 project is taken out of it first, and a map that still breaks a rule, or
 none returned, keeps the stored one (its departed repositories out too)
 with the reason logged. Where a map was due and none is stored, the
@@ -884,11 +887,13 @@ so the choice is not undone as a cleanup.
   appending the current PR when the text changed. An edited id the page
   never had is rejected as invented; new statements come in a list with
   no id field, numbered by code; a dropped id is never reissued.
-- **Caps are enforced in code, and a rewrite over a cap is rejected whole.**
-  The prompt tells the model the numbers, but prose grows unless something
-  refuses it. Truncating would produce a description that lies about the
-  system; rejecting keeps the previous revision, and the next PR that
-  gets it right corrects it.
+- **Caps are enforced in code, and a rewrite over a ceiling is rejected
+  whole.** The prompt tells the model the numbers, but prose grows unless
+  something refuses it. Truncating would produce a description that lies
+  about the system; rejecting keeps the previous revision, and the next PR
+  that gets it right corrects it. A statement over a field cap (name,
+  files) costs only itself, like a diagram breaking a rule; the project
+  step keeps the new statements that fit under its ceiling.
 - **Problem areas group by directory, not by name.** Three spellings of one
   component would be three areas. The shared directory of the bugfix's
   component files is computed once at ingest and does not depend on the
@@ -1076,10 +1081,17 @@ the reason in the log and the page unchanged:
   (`ALMANACH_REPO_MAX_STATEMENTS`, `ALMANACH_PROJECT_MAX_STATEMENTS`); the
   prose of the whole description (summary plus every name and text) is
   within the scope's cap (`ALMANACH_REPO_MAX_CHARS`,
-  `ALMANACH_PROJECT_MAX_CHARS`); each name within 80 runes; at most 5
-  files per statement, each within 200 runes and without whitespace. A
-  statement's text has no cap of its own. Empty file strings are dropped
-  before counting.
+  `ALMANACH_PROJECT_MAX_CHARS`). A statement's text has no cap of its own.
+- Field caps, per statement, checked before the ceilings: each name within
+  80 runes; at most 5 files, each within 200 runes and without
+  whitespace (empty file strings are dropped before counting). A
+  statement over one costs that statement, never the rewrite: a new one
+  is left out, an edit leaves the statement as stored (and a step never
+  marks it checked), both logged. Only a new or changed name or file list
+  meets the caps: one stored so stays, like a diagram stored under higher
+  caps. Caps that leave out every statement proposed reject the rewrite:
+  they never empty a page. As a rejection of the whole, one long name lost
+  seven parts of an eval.
 - A rewrite identical to the current page (same summary, same statements
   in the same order with the same ids, kinds, names, texts and files)
   writes no revision.

@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -215,6 +216,20 @@ func TestCheckMap(t *testing.T) {
 	}
 	if LabelRepos(nil) != nil {
 		t.Error("LabelRepos(nil) is a map")
+	}
+	// A self edge and a repeated edge are taken out, named; the rest stays
+	// and the map handed in is left as it was.
+	broken := mapOf(node("api", ir.ZoneRepositories), node("pg", ir.ZoneStores))
+	broken.Edges = []ir.Edge{edge("api", "api", "HTTP"), edge("api", "pg", "DB: Strasse"), edge("api", "pg", " DB: Straße "), edge("pg", "api", "DB")}
+	fixed, dropped := RepairMap(broken)
+	if len(fixed.Edges) != 2 || !slices.Equal(dropped, []string{"api → api", "api → pg"}) || len(broken.Edges) != 4 {
+		t.Errorf("repaired = %+v, dropped %v, input %d edges", fixed.Edges, dropped, len(broken.Edges))
+	}
+	if _, reason := CheckMap(fixed, slugs, caps); reason != "" {
+		t.Errorf("repaired map refused: %s", reason)
+	}
+	if m, d := RepairMap(nil); m != nil || d != nil {
+		t.Error("RepairMap(nil) is a map")
 	}
 	withEdge := func(d *ir.Diagram, e ir.Edge) *ir.Diagram { d.Edges = append(d.Edges, e); return d }
 	cases := map[string]struct {

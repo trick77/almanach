@@ -229,7 +229,7 @@ func TestFoldRespellingIsNoChange(t *testing.T) {
 }
 
 // Every prompt that asks for statements gives the name's cap check holds
-// them to: a name over it costs the whole rewrite.
+// them to: a name over it costs the statement.
 func TestPromptsStateTheNameCap(t *testing.T) {
 	want := fmt.Sprintf("at most %d characters>", nameMaxChars)
 	for name, p := range map[string]string{"merge": prompts.Merge, "describe": prompts.Describe, "project": prompts.Project} {
@@ -502,13 +502,6 @@ func TestFoldRejections(t *testing.T) {
 		{"description over the cap by a statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: long}}}},
 		{"description over the cap by the summary", &inference.Description{Summary: strings.Repeat("y", limits.RepoMaxChars+1), Statements: nil}},
 		{"empty summary", &inference.Description{Summary: "  ", Statements: nil}},
-		{"name over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}},
-		{"too many files", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
-			Files: []string{"a", "b", "c", "d", "e", "f"}}}}},
-		{"path over cap", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
-			Files: []string{strings.Repeat("p", pathMaxChars+1)}}}}},
-		{"path with whitespace", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t",
-			Files: []string{"internal/a file.go"}}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -523,6 +516,60 @@ func TestFoldRejections(t *testing.T) {
 				t.Errorf("marked = %v, want the note marked anyway", st.marked)
 			}
 		})
+	}
+}
+
+// A statement over a field cap costs that statement, never the rewrite: a
+// new one is left out, an edit leaves the statement as stored, the rest of
+// the answer stands.
+func TestFoldFieldCapsLeaveOneOut(t *testing.T) {
+	keep := inference.Statement{Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}
+	for name, bad := range map[string]inference.Statement{
+		"name over cap":        {Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"},
+		"too many files":       {Kind: "rule", Name: "n", Text: "t", Files: []string{"a", "b", "c", "d", "e", "f"}},
+		"path over cap":        {Kind: "rule", Name: "n", Text: "t", Files: []string{strings.Repeat("p", pathMaxChars+1)}},
+		"path with whitespace": {Kind: "rule", Name: "n", Text: "t", Files: []string{"internal/a file.go"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := newFakeStore()
+			st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+			edit := bad
+			edit.ID = str("s1")
+			newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+				Statements: []inference.Statement{edit}, Added: []inference.Statement{bad, keep}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+			if len(st.revisions) != 1 {
+				t.Fatalf("revisions = %+v, want one", st.revisions)
+			}
+			var got []string
+			for _, s := range st.revisions[0].Statements {
+				got = append(got, s.ID+":"+s.Name)
+			}
+			if want := []string{"s1:Uploader", "s2:Grenze"}; !slices.Equal(got, want) {
+				t.Errorf("statements = %v, want %v: the edit left as stored, the bad new one out", got, want)
+			}
+			if s1 := st.revisions[0].Statements[0]; len(s1.Sources) != 1 {
+				t.Errorf("s1 sources = %+v, want the stored one alone", s1.Sources)
+			}
+		})
+	}
+	// Caps that leave out every statement proposed never empty a page.
+	st := newFakeStore()
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{},
+		Added: []inference.Statement{{Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 0 {
+		t.Errorf("every statement over a cap: revision written %+v", st.revisions)
+	}
+	// A statement stored over a cap and returned with its name and files
+	// as they are stays: only a new or changed field meets the caps.
+	st = newFakeStore()
+	page := existingRepoPage()
+	page.Statements[0].Name = strings.Repeat("n", nameMaxChars+1)
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{ID: str("s1"), Kind: "component", Name: page.Statements[0].Name, Text: "Nimmt Dateien an, neu.", Files: page.Statements[0].Files}},
+		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || st.revisions[0].Statements[0].Text != "Nimmt Dateien an, neu." {
+		t.Errorf("stored over-cap name: revisions %+v, want the text edit taken", st.revisions)
 	}
 }
 

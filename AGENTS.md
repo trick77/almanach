@@ -28,8 +28,10 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   prose, docs.
 - Description = documentation, no one-liners: statement as long as subject needs, no
   sentence/paragraph quota (user, 2026-10-28). Ceilings: statement counts, page runes from config;
-  name, file caps constants; checked on stored Swiss text. Over: rewrite rejected whole, page stays,
-  never truncated. Identical rewrite = no revision.
+  name, file caps constants; checked on stored Swiss text. Statement over a field cap: left out,
+  an edit kept as stored, logged (user, 2026-10-31). Page over a ceiling: rewrite rejected whole,
+  page stays, never truncated; project step keeps the new statements that fit. Identical rewrite =
+  no revision. Map: self/repeated edges dropped before its check.
 - Provenance is code's: `sources` carried by id, current PR appended on text change. Unknown id on
   an edit = invented, rejected (page without statements: edits taken as new); on a step's
   drop/confirmed skipped, logged. New statements in

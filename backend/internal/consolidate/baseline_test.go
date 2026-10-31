@@ -1171,17 +1171,38 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; !slices.Equal(ids(p), []string{"s1:Erfunden:Neu."}) {
 		t.Errorf("empty repository page = %v, want the overview's edit taken as s1", ids(p))
 	}
-	// A first project page over its ceiling of two is refused whole, never
-	// written without its statements.
+	// A first project page over its ceiling of two keeps its first two
+	// statements; one whose first statement alone breaks the ceiling is
+	// refused whole, never written without statements.
+	first := func(statements ...inference.Statement) store.Page {
+		x := newWorld(t, 3)
+		x.queue(store.RunFull, "")
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Zu viel.", Statements: statements}}
+		x.w.drain(context.Background())
+		return x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	}
+	p = first(stmt(ref("s1"), "rule", "Eins", "A.", "x.go"), stmt(ref("s2"), "rule", "Zwei", "B.", "x.go"), stmt(ref("s3"), "rule", "Drei", "C.", "x.go"))
+	if want := []string{"s1:Eins:A.", "s2:Zwei:B."}; p.Summary != "Zu viel." || !slices.Equal(ids(p), want) {
+		t.Errorf("first project page over its ceiling = %q %v, want %v", p.Summary, ids(p), want)
+	}
+	if p := first(stmt(ref("s1"), "rule", "Eins", strings.Repeat("x", 300), "x.go")); p.Summary == "Zu viel." {
+		t.Errorf("first project page with nothing that fits written: %q %v", p.Summary, ids(p))
+	}
+	// A step's edit over a field cap leaves the statement as stored, never
+	// marked as checked against the commit read.
 	x = newWorld(t, 3)
 	x.queue(store.RunFull, "")
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Alt.",
+		Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "Regel", Text: "Alt.", Files: []string{"README.md"}, Checked: "old"}}}
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
-	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Zu viel.", Statements: []inference.Statement{
-		stmt(ref("s1"), "rule", "Eins", "A.", "x.go"), stmt(ref("s2"), "rule", "Zwei", "B.", "x.go"), stmt(ref("s3"), "rule", "Drei", "C.", "x.go")}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."),
+		Statements: []inference.Statement{stmt(ref("s1"), "rule", strings.Repeat("n", nameMaxChars+1), "Neu.", "README.md")}}}}
+	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
-	if p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; p.Summary == "Zu viel." {
-		t.Errorf("first project page over its ceiling written: %q %v", p.Summary, ids(p))
+	if s := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")].Statements[0]; s.Name != "Regel" || s.Text != "Alt." || s.Checked != "old" {
+		t.Errorf("edit over a cap = %+v, want s1 as stored, its check unchanged", s)
 	}
 	// At its ceiling of two: the new one is left out, the edit and the
 	// summary stand.
