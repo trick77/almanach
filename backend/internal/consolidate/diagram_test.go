@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
@@ -24,9 +25,16 @@ func seq(label string) *diagram.Diagram {
 		Rows:   []diagram.Row{{Type: diagram.RowMessage, From: "api", To: "db", Label: label, Line: "solid", Head: "filled"}}}
 }
 
+// dangling is a sequence diagram that breaks a rule: a message to a part
+// never declared.
+func dangling() *diagram.Diagram {
+	d := seq("x")
+	d.Rows[0].To = "queue"
+	return d
+}
+
 // A statement's diagram is stored with it, its labels Swiss; a diagram
-// that breaks a rule rejects the rewrite whole, one too many on the page
-// is left out.
+// that breaks a rule, or one too many on the page, is left out.
 func TestFoldStatementDiagram(t *testing.T) {
 	st := newFakeStore()
 	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
@@ -40,14 +48,27 @@ func TestFoldStatementDiagram(t *testing.T) {
 		t.Errorf("diagram = %+v", d)
 	}
 
-	dangling := seq("x")
-	dangling.Rows[0].To = "queue"
+	// A diagram that breaks a rule costs that diagram, not the rewrite: a
+	// new statement goes without it, a kept one keeps its stored diagram,
+	// its sources and its last check, its text unchanged.
+	page := existingRepoPage()
+	page.Statements[0].Diagram, page.Statements[0].Checked = seq("schreibt"), head
+	s := page.Statements[0]
 	st = newFakeStore()
-	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
-		{Kind: "rule", Name: "R", Text: "T", Diagram: dangling}}}, nil)}
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst, neu.", Statements: []inference.Statement{
+		{ID: str(s.ID), Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Diagram: dangling()},
+		{Kind: "rule", Name: "R", Text: "T", Diagram: dangling()}}}, nil)}
 	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 0 {
-		t.Errorf("dangling end: revisions = %+v, want the rewrite rejected", st.revisions)
+	if len(st.revisions) != 1 {
+		t.Fatalf("dangling end: revisions = %+v, want the rewrite taken", st.revisions)
+	}
+	got := st.revisions[0].Statements
+	if !diagram.Equal(got[0].Diagram, seq("schreibt")) || len(got[0].Sources) != 1 || got[0].Checked != head {
+		t.Errorf("kept statement = %+v, want its diagram, sources and check as stored", got[0])
+	}
+	if got[1].Diagram != nil || got[1].Text != "T" {
+		t.Errorf("new statement = %+v, want it kept without the diagram", got[1])
 	}
 
 	// One diagram past the page's count (1 here) costs that diagram, not the
@@ -194,8 +215,9 @@ func TestFoldLoweredCaps(t *testing.T) {
 	}
 	changed := *big
 	changed.Nodes = append(slices.Clone(big.Nodes[:5]), diagram.Node{ID: "g", Label: "g", Shape: "step"})
-	if st := run([]inference.Statement{echo(s1, &changed), echo(s2, nil)}); len(st.revisions) != 0 {
-		t.Errorf("changed over-cap diagram: revisions = %+v, want rejected", st.revisions)
+	if st := run([]inference.Statement{echo(s1, &changed), echo(s2, nil)}); len(st.revisions) != 1 ||
+		!diagram.Equal(st.revisions[0].Statements[0].Diagram, big) {
+		t.Errorf("changed over-cap diagram: revisions = %+v, want it left out and the stored one kept", st.revisions)
 	}
 	third := inference.Statement{Kind: "rule", Name: "R3", Text: "T", Diagram: seq("y")}
 	st := run([]inference.Statement{echo(s1, nil), echo(s2, nil), third})
@@ -339,6 +361,49 @@ func TestRun_NullKeepsTheDiagram(t *testing.T) {
 	project := x.st.pages[pageKey(store.ScopeProject, "tools", "")].Statements[0]
 	if project.Text != "Neu." || !diagram.Equal(project.Diagram, seq("liest")) {
 		t.Errorf("project statement = %+v, want the text changed and the diagram kept", project)
+	}
+}
+
+// On the baseline paths a diagram that breaks a rule costs that diagram:
+// the step's statements land, the part is not skipped, a stored diagram
+// stays, and on the project step a statement whose text is unchanged keeps
+// its sources and last check.
+func TestRun_InvalidDiagramCostsOnlyItself(t *testing.T) {
+	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	src := []store.Source{{Kind: store.FromBaseline, Commit: older40, Repo: "svc"}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
+		Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Dienst", Text: "Alt.", Files: []string{"README.md"}, Sources: src, Diagram: seq("ruft")}}}
+	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Map: drawnMap("svc"),
+		Statements: []store.Statement{{ID: "s1", Kind: "entity", Name: "Werkzeug", Text: "Alt.", Files: []string{}, Sources: src, Checked: older40, Diagram: seq("liest")}}}
+	x.st.others = []store.RepoSummary{{Slug: "svc"}}
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	edit := stmt(ref("s1"), "component", "Dienst", "Neu.", "README.md")
+	edit.Diagram = dangling()
+	added := stmt(nil, "rule", "Regel", "Gilt.", "README.md")
+	added.Diagram = dangling()
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{edit, added}}}}
+	kept := stmt(ref("s1"), "entity", "Werkzeug", "Alt.")
+	kept.Diagram = dangling()
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge, neu.",
+		Statements: []inference.Statement{kept}, Map: drawnMap("svc")}}
+	x.w.drain(context.Background())
+	if p := x.plan(t); len(p.Skipped) != 0 {
+		t.Fatalf("skipped = %v, want every part applied", p.Skipped)
+	}
+	repo := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")].Statements
+	if len(repo) != 2 || repo[0].Text != "Neu." || !diagram.Equal(repo[0].Diagram, seq("ruft")) || repo[1].Diagram != nil {
+		t.Errorf("repository statements = %+v, want both, the stored diagram kept and none added", repo)
+	}
+	project := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	if s := project.Statements[0]; project.Summary != "Werkzeuge, neu." || !diagram.Equal(s.Diagram, seq("liest")) ||
+		len(s.Sources) != 1 || s.Checked != older40 {
+		t.Errorf("project statement = %+v, want its diagram, sources and check as stored", s)
+	}
+	if n := strings.Count(logs.String(), "diagram breaking a rule left out"); n != 2 {
+		t.Errorf("logged %d struck diagrams, want the step's and the project's:\n%s", n, logs.String())
 	}
 }
 

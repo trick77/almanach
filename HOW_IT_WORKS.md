@@ -472,10 +472,11 @@ rules like a statement: every arrow and message end declared, no self edge
 in a flow or an entity model (a sequence may message itself, rongo draws
 it), nothing twice, unique ids, known shapes, labels present, Swiss and
 capped, the nodes and edges per diagram from config, within the drawing's
-own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule
-rejects the rewrite whole; one added past the page's count
-(`ALMANACH_MAX_DIAGRAMS`) is left out, its statement kept, and the reading
-goes on. With the count at 0 no schema offers a diagram. Code carries a
+own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule,
+or one added past the page's count (`ALMANACH_MAX_DIAGRAMS`), is left out
+and logged with its reason, on the merge and every baseline step alike: its statement is kept, a diagram it had stays, and so do its
+sources and last check when nothing else changed; one bad drawing never
+costs a part's text, and the reading goes on. With the count at 0 no schema offers a diagram. Code carries a
 statement's diagram by id like provenance: `diagram: null` keeps it,
 `{"kind": "none"}` removes it, a new one replaces it; the prompts show it
 as JSON to correct. A changed diagram is a changed statement (reordering is

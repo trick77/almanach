@@ -447,13 +447,14 @@ var kinds = map[string]bool{"component": true, "rule": true, "invariant": true, 
 // past every id the page's history used, so a dropped id is never
 // reissued). An id the current page does not have is the model inventing
 // one: rejected. Spelling is Swiss on every prose field. A diagram is held
-// to baseline.CheckDiagram; one that breaks a rule rejects the whole
-// rewrite, while one past the page's count is stripped (its statement
-// kept) and named in stripped. A changed diagram is a changed statement,
-// like changed text. The commit a statement was last checked against stays
-// while its name, text and diagram do; a change voids it, the caller sets a
-// new one when it read the code.
-func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, stripped []string, reason string) {
+// to baseline.CheckDiagram; one that breaks a rule, or one past the page's
+// count, is struck (its statement kept, a stored diagram staying) and named
+// in struck: one bad diagram costs that diagram, never the statements of a
+// whole part. A changed diagram is a changed statement, like changed text.
+// The commit a statement was last checked against stays while its name,
+// text and diagram do; a change voids it, the caller sets a new one when it
+// read the code.
+func attach(current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, stripped struck, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
@@ -463,33 +464,39 @@ func attach(current []store.Statement, proposed []inference.Statement, src store
 	seen := map[string]bool{}
 	for _, p := range proposed {
 		if !kinds[p.Kind] {
-			return nil, nil, "unknown statement kind " + p.Kind
+			return nil, struck{}, "unknown statement kind " + p.Kind
 		}
 		s := store.Statement{Kind: p.Kind, Name: lang.SwissSS(strings.TrimSpace(p.Name)), Text: lang.SwissSS(strings.TrimSpace(p.Text)), Files: cleanFiles(p.Files)}
 		if s.Name == "" || s.Text == "" {
-			return nil, nil, "empty statement"
+			return nil, struck{}, "empty statement"
 		}
 		var old *store.Statement
 		if p.ID != nil && *p.ID != "" {
 			o, ok := byID[*p.ID]
 			if !ok {
-				return nil, nil, "unknown statement id " + *p.ID
+				return nil, struck{}, "unknown statement id " + *p.ID
 			}
 			if seen[*p.ID] {
-				return nil, nil, "statement id used twice " + *p.ID
+				return nil, struck{}, "statement id used twice " + *p.ID
 			}
 			seen[*p.ID] = true
 			old = &o
 		}
 		d, why := statementDiagram(p.Diagram, old, dl.caps)
 		if why != "" {
-			return nil, nil, fmt.Sprintf("statement %q diagram: %s", s.Name, why)
+			// Struck, the stored one kept: unchanged, it voids no check
+			// and appends no source.
+			stripped.invalid = append(stripped.invalid, fmt.Sprintf("%q (%s)", s.Name, why))
+			d = nil
+			if old != nil {
+				d = old.Diagram
+			}
 		}
 		s.Diagram = d
 		out = append(out, s)
 		olds = append(olds, old)
 	}
-	stripped = stripOverCount(out, olds, max(dl.max, countDiagrams(current)))
+	stripped.overCount = stripOverCount(out, olds, max(dl.max, countDiagrams(current)))
 	for i := range out {
 		s, old := &out[i], olds[i]
 		if old != nil {
@@ -557,10 +564,19 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 	return stripped
 }
 
-// logStripped says which statements lost a diagram to the page's count.
-func logStripped(ctx context.Context, log *slog.Logger, at string, stripped []string) {
-	if len(stripped) > 0 {
-		log.WarnContext(ctx, fmt.Sprintf("%s: diagram over the page's count left out: %s", at, strings.Join(stripped, ", ")))
+// struck is the statements attach took a new diagram from: by name past
+// the page's count, by name and reason for breaking a rule.
+type struck struct {
+	overCount, invalid []string
+}
+
+// logStripped says which statements lost a diagram, and why.
+func logStripped(ctx context.Context, log *slog.Logger, at string, s struck) {
+	if len(s.invalid) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: diagram breaking a rule left out: %s", at, strings.Join(s.invalid, ", ")))
+	}
+	if len(s.overCount) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: diagram over the page's count left out: %s", at, strings.Join(s.overCount, ", ")))
 	}
 }
 
