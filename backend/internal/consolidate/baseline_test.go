@@ -307,19 +307,42 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	}
 }
 
-// The other repositories' summaries: the run's own left out, the shortest
-// taken first under the cap, shown by slug; the rest and those without a
-// summary only named.
+// The other repositories' summaries, by slug: the run's own left out, those
+// without one named; under the cap whole, over it an even share each, a
+// short one whole and the long ones cut and marked, none left out.
 func TestOtherRepos(t *testing.T) {
 	if got := otherRepos([]store.RepoRow{{Slug: "svc", Summary: "x"}}, "svc"); got != "_None._" {
 		t.Errorf("only itself = %q", got)
 	}
-	big := strings.Repeat("a", baseline.ProjectReposMaxBytes-20)
-	got := otherRepos([]store.RepoRow{{Slug: "a", Summary: big}, {Slug: "b", Summary: "kurz"}, {Slug: "c"},
-		{Slug: "d", Summary: "auch kurz"}, {Slug: "svc", Summary: "selbst"}}, "svc")
-	want := "### b\n\nkurz\n\n### d\n\nauch kurz\n\nAlso in the project, without a summary here: a, c.\n"
-	if got != want {
-		t.Errorf("otherRepos = %q\nwant %q", got, want)
+	got := otherRepos([]store.RepoRow{{Slug: "a", Summary: "eins"}, {Slug: "c"}, {Slug: "svc", Summary: "selbst"}}, "svc")
+	if want := "### a\n\neins\n\nAlso in the project, without a summary here: c.\n"; got != want {
+		t.Errorf("under the cap = %q\nwant %q", got, want)
+	}
+	big := strings.Repeat("Ein Satz. ", baseline.ProjectReposMaxBytes/10)
+	got = otherRepos([]store.RepoRow{{Slug: "a", Summary: big}, {Slug: "b", Summary: "kurz"}, {Slug: "c"},
+		{Slug: "d", Summary: big[:len(big)/2]}, {Slug: "svc", Summary: "selbst"}}, "svc")
+	if !strings.HasPrefix(got, "### a\n\nEin Satz.") || !strings.Contains(got, "\n\n### b\n\nkurz\n\n### d\n\nEin Satz.") ||
+		strings.Count(got, "Satz."+shortenedMark) != 2 || strings.Contains(got, "selbst") ||
+		!strings.HasSuffix(got, "without a summary here: c.\n") || len(got) > baseline.ProjectReposMaxBytes+100 {
+		t.Errorf("over the cap: %d bytes, %d cut, …%q", len(got), strings.Count(got, shortenedMark), got[len(got)-120:])
+	}
+}
+
+// A summary is cut at a paragraph, else a sentence, else a rune, and marked.
+func TestShorten(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"kurz", 10, "kurz"},
+		{"Erster Absatz.\n\nZweiter Absatz, lang genug.", 32, "Erster Absatz." + shortenedMark},
+		{"Ein Satz. Noch einer, lang genug.", 30, "Ein Satz." + shortenedMark},
+		{"äääääääääääääääääääää", 22, "äää" + shortenedMark},
+	} {
+		if got := shorten(c.in, c.n); got != c.want || len(got) > max(c.n, len(c.in)) {
+			t.Errorf("shorten(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+		}
 	}
 }
 

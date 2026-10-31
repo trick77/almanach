@@ -1,5 +1,3 @@
-//go:build prompteval
-
 package consolidate
 
 import (
@@ -23,8 +21,8 @@ import (
 
 // The prompt eval: full baseline runs of real repositories through a real
 // model, every repository of one project, then the pages dumped for a
-// reader. Asserts are structural only, never prose. `make prompt-eval`; never in
-// check or CI.
+// reader. Asserts are structural only, never prose. `make prompt-eval`; the
+// gate compiles it and, without its EVAL_* variables, skips it.
 
 const evalProject = "EVAL"
 
@@ -91,6 +89,10 @@ func (c evalCode) ReadFiles(ctx context.Context, key, slug, sha string, files []
 	defer func() { _ = r.Close() }()
 	for _, f := range files {
 		body, err := r.ReadFile(sha, f.Path, baseline.FileMaxBytes)
+		// As clone.Code: a cut step or a broken reader is no file left out.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if errors.Is(err, gitrepo.ErrReaderBroken) || errors.Is(err, gitrepo.ErrBadSHA) {
 			return nil, err
 		}
@@ -209,10 +211,19 @@ func TestPromptEval(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	models := evalModels{llm: evalClient(t, log), dir: filepath.Join(out, "prompts"), n: new(int)}
-	limits := config.Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, RepoMaxChars: 60000, ProjectMaxChars: 40000}
-	w := New(st, &fakeMerger{}, limits, log)
-	w.WithBaseline(Baseline{Store: st, Code: evalCode{git}, Catalogue: models, Describer: models,
-		Limits: config.Baseline{MaxCalls: 16, MaxBytes: 2_000_000}})
+	// The production defaults: config with only what it requires set.
+	app, err := config.Load(func(k string) string {
+		switch k {
+		case "DATABASE_URL", "ALMANACH_TEAM_KEYS_PATH", "ALMANACH_MODEL":
+			return "unused"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := New(st, &fakeMerger{}, app.Limits, log)
+	w.WithBaseline(Baseline{Store: st, Code: evalCode{git}, Catalogue: models, Describer: models, Limits: app.Baseline})
 
 	for _, repo := range st.repos {
 		st.runs = append(st.runs, store.BaselineRun{ID: int64(len(st.runs) + 1), ProjectKey: evalProject, Slug: repo.Slug,

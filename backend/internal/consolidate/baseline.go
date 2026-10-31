@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
@@ -879,11 +880,9 @@ func encodeInto(r *store.BaselineRun, plan runPlan) error {
 	return nil
 }
 
-// overviewPart is the overview step's part: docs are claims, the code's
-// steps check them.
-const overviewPart = "the repository's documentation, manifests and diagram sources, for the overview. " +
-	"What docs and diagrams say are claims, possibly outdated, that the steps reading the code will check: " +
-	"never correct or drop a statement resting on code files from a doc alone"
+// overviewPart is the overview step's part; the prompt's code-wins rule
+// says what the overview may not do with it.
+const overviewPart = "the repository's documentation, manifests and diagram sources, for the overview"
 
 // focus is what a reconcile's step must look at besides its files: the
 // statements resting on paths that changed, the paths that are gone.
@@ -1109,33 +1108,35 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 }
 
 // otherRepos is the summaries of the project's other source repositories,
-// by slug, so the project is written as a whole. The summaries fill
-// ProjectReposMaxBytes shortest first, so a cap costs the fewest of them;
-// the rest, and those without a summary, are named.
+// by slug, so the project is written as a whole. Over ProjectReposMaxBytes
+// each gets an even share, what a short one leaves going to the rest, and a
+// longer one is cut to its share at a paragraph or sentence and says so:
+// no repository is left out for its length. Those without a summary are
+// named. A prompt's input, never stored text.
 func otherRepos(repos []store.RepoRow, self string) string {
 	var others []store.RepoRow
 	for _, r := range repos {
-		if r.Slug != self {
+		if r.Slug != self && r.Summary != "" {
 			others = append(others, r)
 		}
 	}
 	bySize := slices.Clone(others)
 	slices.SortStableFunc(bySize, func(a, b store.RepoRow) int { return len(a.Summary) - len(b.Summary) })
-	shown := map[string]bool{}
-	used := 0
-	for _, r := range bySize {
-		if n := len(repoEntry(r)); r.Summary != "" && used+n <= baseline.ProjectReposMaxBytes {
-			shown[r.Slug] = true
-			used += n
-		}
+	text := map[string]string{}
+	left := baseline.ProjectReposMaxBytes
+	for i, r := range bySize {
+		text[r.Slug] = shorten(r.Summary, left/(len(bySize)-i))
+		left -= len(text[r.Slug])
 	}
 	var b strings.Builder
 	var named []string
-	for _, r := range others {
-		if shown[r.Slug] {
-			b.WriteString(repoEntry(r))
-		} else {
+	for _, r := range repos {
+		switch {
+		case r.Slug == self:
+		case r.Summary == "":
 			named = append(named, r.Slug)
+		default:
+			fmt.Fprintf(&b, "### %s\n\n%s\n\n", r.Slug, text[r.Slug])
 		}
 	}
 	if len(named) > 0 {
@@ -1147,7 +1148,26 @@ func otherRepos(repos []store.RepoRow, self string) string {
 	return b.String()
 }
 
-func repoEntry(r store.RepoRow) string { return fmt.Sprintf("### %s\n\n%s\n\n", r.Slug, r.Summary) }
+// shortenedMark ends a summary cut to its share.
+const shortenedMark = " […shortened]"
+
+// shorten cuts s to at most n bytes at the last paragraph break, else the
+// last sentence end, else a rune boundary, and marks the cut.
+func shorten(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := s[:max(n-len(shortenedMark), 0)]
+	for !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	if i := strings.LastIndex(cut, "\n\n"); i > 0 {
+		cut = cut[:i]
+	} else if i := strings.LastIndex(cut, ". "); i > 0 {
+		cut = cut[:i+1]
+	}
+	return cut + shortenedMark
+}
 
 // describeSourced is describe with each statement's provenance: a step
 // must know which statements a pull request taught.

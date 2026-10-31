@@ -61,11 +61,14 @@ EVAL_OUT ?= $(CURDIR)/.prompt-eval
 EVAL_RUN ?= TestPromptEval
 EVAL_PROMPT ?=
 
-# Paths made absolute: the recipe changes directory and go test runs in the
-# package's, and sh's "." looks a bare name up on PATH only.
+# Paths made absolute, a leading ~/ expanded (an argument's ~ reaches make
+# as is): the recipe changes directory, go test runs in the package's, and
+# sh's "." looks a bare name up on PATH only. No spaces in them.
+evalpath = $(if $(1),$(abspath $(patsubst ~/%,$(HOME)/%,$(1))))
+
 .PHONY: prompt-eval
 prompt-eval:
 	@test -n "$(EVAL_ENV)" || { echo "EVAL_ENV=<file exporting EVAL_API_KEY> required"; exit 1; }
-	. "$(abspath $(EVAL_ENV))" && cd backend && LLMWIRE_MIMO_API_KEY="$$EVAL_API_KEY" EVAL_REPOS="$(EVAL_REPOS)" \
-		EVAL_MODEL="$(EVAL_MODEL)" EVAL_EFFORT="$(EVAL_EFFORT)" EVAL_OUT="$(abspath $(EVAL_OUT))" \
-		EVAL_PROMPT="$(if $(EVAL_PROMPT),$(abspath $(EVAL_PROMPT)))" go test -tags prompteval -run '^$(EVAL_RUN)$$' -count=1 -timeout 3h -v ./internal/consolidate/
+	. "$(call evalpath,$(EVAL_ENV))" && cd backend && LLMWIRE_MIMO_API_KEY="$$EVAL_API_KEY" EVAL_REPOS="$(EVAL_REPOS)" \
+		EVAL_MODEL="$(EVAL_MODEL)" EVAL_EFFORT="$(EVAL_EFFORT)" EVAL_OUT="$(call evalpath,$(EVAL_OUT))" \
+		EVAL_PROMPT="$(call evalpath,$(EVAL_PROMPT))" go test -run '^$(EVAL_RUN)$$' -count=1 -timeout 3h -v ./internal/consolidate/
