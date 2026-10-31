@@ -101,6 +101,9 @@ export interface ProjectDetail {
    *  repository node's id is its slug. null before the first baseline
    *  project step wrote one. */
   map: FlowIR | null;
+  /** A baseline run will draw a map: the sources are on, the project has a
+   *  source repository, and not more than one map holds. */
+  map_expected: boolean;
   repos: Repo[];
   problems: Problem[];
   problem_window_days: number;

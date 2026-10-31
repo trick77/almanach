@@ -385,6 +385,9 @@ func TestProject(t *testing.T) {
 	if !strings.Contains(string(desc["statements"]), `"files":[]`) {
 		t.Errorf("statement files = %s, want an empty array for nil", desc["statements"])
 	}
+	if string(body["map_expected"]) != "false" {
+		t.Errorf("map_expected = %s, want false with the sources off", body["map_expected"])
+	}
 	if string(body["map"]) != "null" || strings.Contains(string(desc["statements"]), `"diagram"`) {
 		t.Errorf("map = %s, statements = %s; want null and no diagram key", body["map"], desc["statements"])
 	}

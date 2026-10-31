@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { Problem, ProjectDetail, Sources } from "./api";
+import type { Problem, ProjectDetail } from "./api";
 import { DescriptionView } from "./Description";
 import { Diagram } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
@@ -62,9 +62,6 @@ export function ProjectPage({ projectKey }: { projectKey: string }) {
 }
 
 function Body({ data }: { data: ProjectDetail }) {
-  // The signal App hides the Quellen entry by.
-  const { data: sources } = useFetch<Sources>("sources");
-  const sourcesOn = sources?.enabled ?? false;
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
   // sort chronologically as text.
@@ -96,9 +93,10 @@ function Body({ data }: { data: ProjectDetail }) {
         {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
 
-      {/* Only a baseline run draws the map: with the sources off none ever
-          will, and a placeholder promising one would be a false hint. */}
-      {(data.map !== null || sourcesOn) && (
+      {/* Only a baseline run draws the map, and only for a project with a
+          source and not too many: where none will come, a placeholder
+          promising one would be a false hint. */}
+      {(data.map !== null || data.map_expected) && (
         <>
           <div className={eyebrow}>{S.project.map}</div>
           {data.map === null ? (

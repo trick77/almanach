@@ -87,6 +87,7 @@ const project: ProjectDetail = {
     updated_at: mergedAt,
   },
   map: null,
+  map_expected: false,
   repos: [
     {
       slug: "pay-api",
@@ -411,10 +412,7 @@ describe("ProjectPage", () => {
   });
 
   it("draws nothing without a diagram, and says the map is still missing", async () => {
-    serve({
-      "projects/PAY": project,
-      sources: { enabled: true, sources: [] },
-    });
+    serve({ "projects/PAY": { ...project, map_expected: true } });
     render(<ProjectPage projectKey="PAY" />);
     expect(
       await screen.findByText(/Noch keine Systemkarte/),
@@ -423,27 +421,21 @@ describe("ProjectPage", () => {
     expect(screen.queryByText(/wird gezeichnet/)).toBeNull();
   });
 
-  it("promises no map with the sources off: no run could draw one", async () => {
-    serve({
-      "projects/PAY": project,
-      sources: { enabled: false, sources: [] },
-    });
+  it("promises no map where no run will draw one", async () => {
+    serve({ "projects/PAY": { ...project, map_expected: false } });
     render(<ProjectPage projectKey="PAY" />);
     expect(
       await screen.findByText(
         "Das Projekt Payments nimmt Zahlungsaufträge an.",
       ),
     ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-        expect.stringContaining("sources"),
-        expect.anything(),
-      ),
-    );
-    // Let the answer land: before it the page shows nothing either.
-    await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText(/Noch keine Systemkarte/)).toBeNull();
     expect(screen.queryByText("Systemkarte")).toBeNull();
+    // The page asks for nothing beyond its project.
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
+      expect.stringContaining("sources"),
+      expect.anything(),
+    );
   });
 });
 

@@ -347,11 +347,14 @@ type projectDetailBody struct {
 	Description *descriptionBody `json:"description"`
 	// Map is the system map of the current project revision, null before
 	// a baseline project step drew one.
-	Map         *diagram.Diagram `json:"map"`
-	Repos       []repoBody       `json:"repos"`
-	Problems    []problemBody    `json:"problems"`
-	ProblemDays int              `json:"problem_window_days"`
-	Notes       []noteBody       `json:"recent_notes"`
+	Map *diagram.Diagram `json:"map"`
+	// MapExpected says a baseline run will draw a map: the sources are on,
+	// the project has a source repository, and not more than one map holds.
+	MapExpected bool          `json:"map_expected"`
+	Repos       []repoBody    `json:"repos"`
+	Problems    []problemBody `json:"problems"`
+	ProblemDays int           `json:"problem_window_days"`
+	Notes       []noteBody    `json:"recent_notes"`
 }
 
 func (d Deps) project(w http.ResponseWriter, r *http.Request) {
@@ -387,7 +390,9 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "notes")
 		return
 	}
-	out := projectDetailBody{Key: key, Team: team, Description: describe(page, found), Map: page.Map, ProblemDays: d.ProblemWindow,
+	// With the sources on, repos is the source repositories alone.
+	mapExpected := d.Sources != nil && len(repos) > 0 && diagram.MapFits(len(repos))
+	out := projectDetailBody{Key: key, Team: team, Description: describe(page, found), Map: page.Map, MapExpected: mapExpected, ProblemDays: d.ProblemWindow,
 		Repos: make([]repoBody, 0, len(repos)), Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	for _, rp := range repos {
 		out.Repos = append(out.Repos, repoBody{Slug: rp.Slug, Revision: rp.Revision, Summary: firstSentence(rp.Summary), Notes: rp.Notes, LastMerge: rp.LastMerge})

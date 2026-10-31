@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
@@ -374,5 +376,31 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	}
 	if strings.Join(checkouts.removed, ",") != "tools/cli,tools" {
 		t.Fatalf("checkouts removed = %v", checkouts.removed)
+	}
+}
+
+// A map is expected with the sources on, for a project with a source
+// repository and no more of them than one map holds.
+func TestProject_MapExpected(t *testing.T) {
+	st := newFakeStore()
+	st.teams["PLAT"] = ""
+	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	expected := func() string {
+		_, body := do(t, h, http.MethodGet, "/api/projects/PLAT", "", "", nil)
+		return string(body["map_expected"])
+	}
+	if got := expected(); got != "false" {
+		t.Errorf("no source repository: map_expected = %s", got)
+	}
+	st.repos["PLAT"] = []store.RepoRow{{Slug: "files"}}
+	if got := expected(); got != "true" {
+		t.Errorf("one source repository: map_expected = %s", got)
+	}
+	st.repos["PLAT"] = nil
+	for i := range diagram.DrawMaxNodes {
+		st.repos["PLAT"] = append(st.repos["PLAT"], store.RepoRow{Slug: fmt.Sprintf("r%02d", i)})
+	}
+	if got := expected(); got != "false" {
+		t.Errorf("%d source repositories: map_expected = %s, want false, too many for a map", diagram.DrawMaxNodes, got)
 	}
 }
