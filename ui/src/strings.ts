@@ -385,6 +385,9 @@ export const S = {
       "Die Sitzung konnte nicht geprüft werden: die Antwort des Servers war unlesbar.",
     offline:
       "Die Sitzung konnte nicht geprüft werden: der Server ist nicht erreichbar.",
+    misconfigured:
+      "Die Anmeldung ist falsch eingerichtet: der Identitätsanbieter passt nicht zur Konfiguration. Der Grund steht im Server-Log; nach der Korrektur und einem Neustart erneut versuchen.",
+    signOutFailed: "Abmelden fehlgeschlagen, bitte erneut versuchen.",
     unavailable:
       "Die Anmeldung ist im Moment nicht möglich: der Identitätsanbieter antwortet nicht. Almanach versucht es laufend weiter; bitte später erneut versuchen.",
     loop: "Die Anmeldung hat gerade eben keine Sitzung ergeben. Bitte erneut anmelden; geschieht das wieder, steht der Grund im Server-Log.",

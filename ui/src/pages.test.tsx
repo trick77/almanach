@@ -834,7 +834,10 @@ describe("session gate", () => {
     expect(loc.href).toBe("/");
   });
 
-  it("reloads when the sign-out request fails", async () => {
+  it.each([
+    ["the network fails", null],
+    ["the server refuses", 403],
+  ])("stays signed in and says so when %s on sign-out", async (_, status) => {
     answer({ status: 200, body: { mode: "oidc", user: "sub-1" } });
     render(<App />);
     await screen.findByText("sub-1");
@@ -842,10 +845,42 @@ describe("session gate", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
-        throw new TypeError("offline");
+        if (status === null) throw new TypeError("offline");
+        return {
+          ok: false,
+          status,
+          json: async () => ({ error: "cross-site request refused" }),
+        };
       }),
     );
     fireEvent.click(screen.getByText("Abmelden"));
-    await waitFor(() => expect(loc.reload).toHaveBeenCalled());
+    expect(
+      await screen.findByText(
+        "Abmelden fehlgeschlagen, bitte erneut versuchen.",
+      ),
+    ).toBeInTheDocument();
+    expect(loc.href).toBe("/");
+    expect(loc.reload).not.toHaveBeenCalled();
+    expect(screen.getByText("sub-1")).toBeInTheDocument();
+  });
+
+  it("passes the page along on the halted page's sign-in link", async () => {
+    stubLocation("?x=1&auth_error=oidc_callback_failed", "/quellen/werkzeuge");
+    answer({ status: 401 });
+    render(<App />);
+    const link = await screen.findByText("Anmelden");
+    expect(link.closest("a")).toHaveAttribute(
+      "href",
+      "/api/auth/login?next=" + encodeURIComponent("/quellen/werkzeuge?x=1"),
+    );
+  });
+
+  it("halts on a misconfigured provider", async () => {
+    stubLocation("?auth_error=provider_misconfigured");
+    answer({ status: 401 });
+    render(<App />);
+    expect(
+      await screen.findByText(/Die Anmeldung ist falsch eingerichtet/),
+    ).toBeInTheDocument();
   });
 });

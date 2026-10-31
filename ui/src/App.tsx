@@ -9,6 +9,7 @@ import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import { routeFromPath, sourcesPath, type Route } from "./routing";
 import { logout, useSession } from "./session";
+import { loginHref } from "./signin";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import { btn, btnPrimary, Link } from "./ui";
@@ -26,7 +27,7 @@ export default function App() {
         {session.state === "halted" && session.message}
       </p>
       {session.state === "halted" && session.action !== "retry" && (
-        <a href="/api/auth/login" className={btnPrimary + " mt-4"}>
+        <a href={loginHref()} className={btnPrimary + " mt-4"}>
           {session.action === "again" ? S.auth.retry : S.auth.signIn}
         </a>
       )}
@@ -51,6 +52,7 @@ function Shell({ me }: { me: Me }) {
   const [route, setRoute] = useState<Route>(() =>
     routeFromPath(window.location.pathname),
   );
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   useEffect(() => {
     const onPop = () => setRoute(routeFromPath(window.location.pathname));
@@ -106,11 +108,18 @@ function Shell({ me }: { me: Me }) {
         >
           {me.mode === "oidc" && (
             <>
+              {signOutFailed && (
+                <span role="alert" className="text-danger-ink">
+                  {S.auth.signOutFailed}
+                </span>
+              )}
               <span className="hidden truncate sm:inline">{me.user}</span>
               <button
                 type="button"
                 className={btn}
-                onClick={() => void logout()}
+                onClick={() =>
+                  void logout().then((ok) => setSignOutFailed(!ok))
+                }
               >
                 {S.auth.signOut}
               </button>

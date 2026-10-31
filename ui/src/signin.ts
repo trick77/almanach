@@ -39,13 +39,20 @@ export function signIn(): boolean {
   if (now - last < loopWindow) return false;
   window.sessionStorage.setItem(stampKey, String(now));
   armed = false;
+  window.location.href = loginHref();
+  return true;
+}
+
+/** loginHref is the login with the current page as ?next=, the markers
+ *  dropped; bare when the page is the start page. */
+export function loginHref(): string {
+  const params = new URLSearchParams(window.location.search);
+  for (const m of authMarkers) params.delete(m);
   const q = params.toString();
   const next = window.location.pathname + (q ? `?${q}` : "");
-  window.location.href =
-    next === "/"
-      ? "/api/auth/login"
-      : `/api/auth/login?next=${encodeURIComponent(next)}`;
-  return true;
+  return next === "/"
+    ? "/api/auth/login"
+    : `/api/auth/login?next=${encodeURIComponent(next)}`;
 }
 
 /** signedIn forgets the last automatic sign-in: it worked. */

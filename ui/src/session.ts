@@ -3,7 +3,7 @@ import type { Me } from "./api";
 import { armSignIn, authMarkers, signedIn, signIn } from "./signin";
 import { S } from "./strings";
 
-/** The session gate, like ../rongo's. /api/me is the one request made
+/** The session gate. /api/me is the one request made
  *  before anything renders, so an expired cookie sends the browser to the
  *  provider instead of letting every page fail with its own 401.
  *
@@ -40,6 +40,8 @@ export function haltReason(
     return { message: S.auth.signedOut, action: "signIn" };
   if (params.get("auth_error") === "provider_unavailable")
     return { message: S.auth.unavailable, action: "again" };
+  if (params.get("auth_error") === "provider_misconfigured")
+    return { message: S.auth.misconfigured, action: "again" };
   if (params.has("auth_error"))
     return { message: S.auth.failed, action: "signIn" };
   return null;
@@ -128,14 +130,17 @@ export function useSession(): Session {
 }
 
 /** logout clears the cookie and goes where the server says: a page that
- *  halts, since the provider's session lives on. */
-export async function logout(): Promise<void> {
+ *  halts, since the provider's session lives on. false when the server
+ *  did not confirm it: the reader stays on the page, still signed in, and
+ *  the shell says the sign-out failed. */
+export async function logout(): Promise<boolean> {
   try {
     const res = await fetch("/api/auth/logout", { method: "POST" });
+    if (!res.ok) return false;
     const body = (await res.json()) as { redirect_url?: string };
     window.location.href = body.redirect_url ?? "/?signed_out=1";
+    return true;
   } catch {
-    // The cookie may or may not be gone; the gate decides on reload.
-    window.location.reload();
+    return false;
   }
 }
