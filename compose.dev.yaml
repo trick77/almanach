@@ -1,0 +1,38 @@
+# Local work, on top of compose.yaml:
+#
+#   make dev        (make dev-down stops it and keeps the volumes)
+#
+# which runs
+#
+#   docker compose --env-file .env --env-file compose.dev.env \
+#     -f compose.yaml -f compose.dev.yaml up --build
+#
+# Almanach on http://localhost:8081 (loopback only), no sign-in, no
+# Traefik. .env needs the gateway and the model, nothing else.
+# compose.yaml checks PUBLIC_FQDN and the OIDC block while it is read,
+# before any override applies; compose.dev.env, the later --env-file and so
+# the winner, gives those checks stand-ins, and this file blanks the OIDC
+# variables in the container again. A shell export still beats both files.
+# The read API, the UI and the source writes are open: the port stays on
+# 127.0.0.1.
+services:
+  almanach:
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      ALMANACH_AUTH_MODE: none
+      # Blank, so neither the stand-ins nor an .env filled in for oidc reach
+      # serve, which refuses every oidc variable under none (blank counts
+      # as unset). Over env_file too: environment wins.
+      ALMANACH_OIDC_ISSUER: ""
+      ALMANACH_OIDC_CLIENT_ID: ""
+      ALMANACH_OIDC_CLIENT_SECRET: ""
+      ALMANACH_OIDC_REDIRECT_URL: ""
+      ALMANACH_SESSION_SECRET: ""
+    # No router, no traefik network: the dev stack needs no Traefik running.
+    labels: !reset {}
+    networks: !override
+      - default
+
+networks:
+  traefik: !reset {}

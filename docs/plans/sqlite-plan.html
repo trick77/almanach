@@ -190,7 +190,7 @@
 <h2 id="compose">7. Compose (PR C)</h2>
 <p>C is written after D, so it never has a database container. In rongo's shape:</p>
 <ul>
-  <li><code>almanach</code>: <code>ALMANACH_DB_PATH=/data/almanach.db</code>, the <b>data volume at <code>/data</code></b> and the repos volume at <code>/repos</code>, two volumes, never one.</li>
+  <li><code>almanach</code>: <code>ALMANACH_DB_PATH=/data/almanach.db</code>, the <b>data volume at <code>/data</code></b> and the repos volume at <code>/app/repos</code>, two volumes, never one.</li>
   <li><code>migrate</code>: the same image and data volume, <code>almanach migrate</code>, and <code>almanach</code> starts after it completes (<code>depends_on: service_completed_successfully</code>).</li>
   <li>No <code>POSTGRES_PASSWORD</code>, no DSN in <code>.env</code>. The dev override keeps the same volumes.</li>
 </ul>
@@ -199,8 +199,8 @@
 <p>The deployment lives in its own repository, which has no remote: edited on its checked-out branch, no PR. Today it runs one replica with an external PostgreSQL, no volume at all, the sources off and proxy mode. In rongo's deployment's shape:</p>
 <ul>
   <li><b>Two PVCs</b>, <code>ReadWriteOnce</code> on the block storage class rongo's deployment claims: <code>almanach-data</code> (1 Gi, the database) and <code>almanach-repos</code> (20 Gi, the clones). Block, not a shared filesystem: SQLite in WAL needs POSIX locks on one node.</li>
-  <li><b>The deployment</b> keeps <code>replicas: 1</code> and <code>Recreate</code> (two pods on one RWO volume would not start, and must not). The data PVC at <code>/data</code>, the repos PVC at <code>/repos</code>; the migrate init container mounts the data PVC too.</li>
-  <li><b>Configuration:</b> <code>ALMANACH_DB_PATH=/data/almanach.db</code>; <code>DATABASE_URL</code> leaves the sealed secret; the sources on (<code>ALMANACH_REPOS_DIR=/repos</code>, <code>ALMANACH_SECRET_KEY</code> sealed) (D5).</li>
+  <li><b>The deployment</b> keeps <code>replicas: 1</code> and <code>Recreate</code> (two pods on one RWO volume would not start, and must not). The data PVC at <code>/data</code>, the repos PVC at <code>/app/repos</code>; the migrate init container mounts the data PVC too.</li>
+  <li><b>Configuration:</b> <code>ALMANACH_DB_PATH=/data/almanach.db</code>; <code>DATABASE_URL</code> leaves the sealed secret; the sources on (<code>ALMANACH_REPOS_DIR=/app/repos</code>, <code>ALMANACH_SECRET_KEY</code> sealed) (D5).</li>
   <li><b>Its README</b> (German) loses the database order and gains the PVCs.</li>
   <li><b>Auth:</b> B removes proxy mode, which this deployment runs with an OAuth sidecar. Its switch to oidc is the same kind of change (D6).</li>
 </ul>

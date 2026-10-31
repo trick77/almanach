@@ -48,6 +48,20 @@ build: fe-build
 test:
 	cd backend && go test -race ./...
 
+# The local stack: compose.yaml with compose.dev.yaml on top, on
+# 127.0.0.1:8081, no sign-in. compose.dev.env comes after .env, so its
+# stand-ins satisfy compose.yaml's checks; .env holds the gateway and the
+# model. dev-down keeps the volumes.
+DEV_COMPOSE = docker compose --env-file .env --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml
+
+.PHONY: dev dev-down
+dev:
+	@test -f .env || { echo "no .env: cp .env.example .env, then fill in the gateway and the model"; exit 1; }
+	$(DEV_COMPOSE) up --build
+
+dev-down:
+	$(DEV_COMPOSE) down
+
 # The prompt eval: full baseline runs of EVAL_REPOS (slug=url, one project)
 # through a real model, the pages written to EVAL_OUT. Paid calls, never in
 # check or CI. EVAL_ENV is a file exporting EVAL_API_KEY, outside the

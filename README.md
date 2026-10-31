@@ -57,10 +57,6 @@ ceiling is refused, never truncated. A JSON API serves all of it
 compiled into the binary, shows it. The wiki is read-only; the sources
 are the one thing the UI configures.
 
-In the works: a system map on every project page and diagrams where a
-picture says more than a paragraph, a login of its own (OIDC), and a
-compose stack behind Traefik.
-
 ## How it is built
 
 One Go process and one SQLite database file on its own volume. The
@@ -78,14 +74,25 @@ reasons: [HOW_IT_WORKS.md](HOW_IT_WORKS.md). Every knob:
 ## Running it
 
 Almanach needs an OpenAI-compatible gateway (a LiteLLM proxy) for the
-model; its database is a file it keeps itself.
+model; its database is a file it keeps itself. `compose.yaml` is the
+production stack; for local work `compose.dev.yaml` goes on top: port
+8081 on loopback, no sign-in, no Traefik.
 
 ```sh
 cp .env.example .env            # fill in the gateway and the model; for private
                                 # repositories ALMANACH_SECRET_KEY (openssl rand -base64 32)
-cp team-keys.example.json team-keys.json
-docker compose up --build       # migrate, then almanach on :8081
+cp conf/team-keys.example.json conf/team-keys.json
+make dev                        # migrate, then almanach on 127.0.0.1:8081; make dev-down stops it
 ```
+
+`make dev` runs `docker compose --env-file .env --env-file
+compose.dev.env -f compose.yaml -f compose.dev.yaml up --build`.
+`compose.yaml` checks `PUBLIC_FQDN` and the OIDC block while it is read,
+before any override applies; `compose.dev.env`, the later env file and
+so the winner, gives those checks stand-ins, and the override blanks the
+OIDC variables in the container and runs `ALMANACH_AUTH_MODE=none`. The
+dev `.env` needs the gateway and the model, nothing else. A variable
+exported in your shell beats both files.
 
 The database lives on the `data` volume (`/data/almanach.db`), the clones
 on the `repos` volume: two volumes, the database alone on its own. A
@@ -102,7 +109,7 @@ curl http://localhost:8081/api/projects
 curl http://localhost:8081/api/projects/<KEY>/repos/<slug>
 ```
 
-For noergler's notes: one token per team in `team-keys.json`, the same
+For noergler's notes: one token per team in `conf/team-keys.json`, the same
 token in that team's `almanach:` block in noergler's `teams.yaml`.
 noergler checks it at startup:
 
@@ -111,12 +118,25 @@ curl -H "Authorization: Bearer <token>" http://localhost:8081/auth/ping
 # {"status":"ok","team":"platform"}
 ```
 
-The read API, the UI and the source writes are open as this compose runs
-them (`ALMANACH_AUTH_MODE=none`): keep it off any network others reach.
-In production Almanach signs readers in itself over OIDC
-(`ALMANACH_AUTH_MODE=oidc`) at your identity provider, behind a
-TLS-terminating reverse proxy; the webhook and the ping stay bearer only.
-See `ALMANACH_AUTH_MODE` in [CONFIGURATION.md](CONFIGURATION.md).
+The read API, the UI and the source writes are open as the dev override
+runs them (`ALMANACH_AUTH_MODE=none`): keep it off any network others
+reach.
+
+In production, `docker compose up -d` with `compose.yaml` alone: it
+builds the checkout (`pull_policy: build`, never a surprise pull), with
+no host port; the only way in is a Traefik router on the external
+`traefik` network (entrypoint `websecure`, TLS) for `PUBLIC_FQDN`.
+Almanach signs readers in itself over OIDC at your identity provider;
+`ALMANACH_AUTH_MODE=oidc` is fixed in the file, so `.env` cannot turn it
+off. `.env` carries `PUBLIC_FQDN`, the OIDC block (issuer, client id and
+secret, redirect URL `https://<PUBLIC_FQDN>/api/auth/callback`) and
+`ALMANACH_SESSION_SECRET`; the example leaves all six blank, and `up`
+stops naming each one still blank. The webhook and the ping stay bearer
+only. The first-run steps, running a published release instead, and
+the caveats (a shell export beats `.env`; `docker compose config` prints
+the secrets) are at the top of `compose.yaml`; see `ALMANACH_AUTH_MODE`
+in [CONFIGURATION.md](CONFIGURATION.md). Needs Docker Compose 2.24.4 or
+later.
 
 ## Development
 

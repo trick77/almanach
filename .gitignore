@@ -1,6 +1,9 @@
-# Secrets / per-deployment config
+# Secrets / per-deployment config. conf/ is compose's mount: only the
+# example is tracked, so the folder exists in a fresh clone.
 .env
 team-keys.json
+/conf/*
+!/conf/team-keys.example.json
 
 # Build. Anchored: a bare name matches any path component at any depth.
 /backend/almanach

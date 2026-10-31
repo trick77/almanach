@@ -21,9 +21,10 @@ type AuthMode string
 
 const (
 	// AuthNone trusts nobody and names nobody: every reader is anonymous.
-	// Allowed on any host: the compose stack binds 0.0.0.0 in its
-	// container. Nothing in the code keeps it off a public network; that
-	// is the deployment's choice of mode.
+	// Allowed on any host: the dev override (compose.dev.yaml) runs it on
+	// 0.0.0.0 in its container behind a host port; the production stack
+	// has no host port and fixes oidc. Nothing in the code keeps it off a
+	// public network; that is the deployment's choice of mode.
 	AuthNone AuthMode = "none"
 	// AuthOIDC signs the browser in at an OpenID provider; every /api route
 	// but the login's own two needs kit's signed session cookie.
