@@ -2,6 +2,7 @@ package diagram
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -49,5 +50,60 @@ func TestEqual(t *testing.T) {
 	b.Nodes[0].Label = "B"
 	if Equal(a, b) {
 		t.Error("Equal of a changed label")
+	}
+}
+
+// The order of nodes, zones, edges, tables and relationships says nothing;
+// the order of a table's fields and of a sequence's rows does.
+func TestEqualIgnoresOrderThatSaysNothing(t *testing.T) {
+	flow := func(rev bool) *Diagram {
+		d := &Diagram{Kind: KindFlow, Direction: "LR",
+			Nodes: []Node{{ID: "a", Label: "A", Shape: "step", Zone: "z"}, {ID: "b", Label: "B", Shape: "step", Zone: "y"}},
+			Zones: []Zone{{ID: "z", Title: "Z"}, {ID: "y", Title: "Y"}},
+			Edges: []Edge{{From: "a", To: "b", Label: "x", Head: "end"}, {From: "a", To: "b", Label: "w", Head: "end"}}}
+		if rev {
+			slices.Reverse(d.Nodes)
+			slices.Reverse(d.Zones)
+			slices.Reverse(d.Edges)
+		}
+		return d
+	}
+	if !Equal(flow(false), flow(true)) {
+		t.Error("a reordered flow counts as changed")
+	}
+	er := func(rev bool) *Diagram {
+		d := &Diagram{Kind: KindER, Direction: "TB",
+			Entities: []Entity{{ID: "o", Label: "O", Attrs: []Attr{{Name: "id"}, {Name: "x"}}}, {ID: "l", Label: "L"}},
+			Rels:     []Rel{{From: "o", To: "l", Label: "hat", FromCard: "one", ToCard: "one"}, {From: "l", To: "o", Label: "in", FromCard: "one", ToCard: "one"}}}
+		if rev {
+			slices.Reverse(d.Entities)
+			slices.Reverse(d.Rels)
+		}
+		return d
+	}
+	if !Equal(er(false), er(true)) {
+		t.Error("a reordered entity model counts as changed")
+	}
+	fields := er(false)
+	slices.Reverse(fields.Entities[0].Attrs)
+	if Equal(er(false), fields) {
+		t.Error("reordered fields count as the same")
+	}
+	seq := func(rev bool) *Diagram {
+		d := &Diagram{Kind: KindSequence, Actors: []Actor{{ID: "a", Label: "A"}},
+			Rows: []Row{{Type: RowMessage, From: "a", To: "a", Label: "1"}, {Type: RowMessage, From: "a", To: "a", Label: "2"}}}
+		if rev {
+			slices.Reverse(d.Rows)
+		}
+		return d
+	}
+	if Equal(seq(false), seq(true)) {
+		t.Error("reordered rows count as the same")
+	}
+	// The caller's lists keep their order.
+	d := flow(true)
+	Equal(d, flow(false))
+	if d.Nodes[0].ID != "b" {
+		t.Error("Equal sorted the caller's nodes")
 	}
 }

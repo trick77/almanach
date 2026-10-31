@@ -30,6 +30,11 @@ type DiagramCaps struct {
 	MaxEdges int
 }
 
+// DrawCaps is the most rongo's drawing lays out (diagramIR.ts fits), the
+// bound config's caps may not pass: what an unchanged stored diagram is
+// held to.
+var DrawCaps = DiagramCaps{MaxNodes: 16, MaxEdges: 24}
+
 // The ceilings of rongo's drawing per kind (diagramIR.ts fits) where they
 // are below a flow's: a sequence and an entity model are wider per item.
 const (
@@ -216,6 +221,11 @@ func checkSequence(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 			return nil, reason
 		}
 		out.Actors = append(out.Actors, ir.Actor{ID: a.ID, Label: text})
+	}
+	// Every row takes a line of the drawing, a frame's opening, divider and
+	// end as much as a message: all of them count against rongo's rows.
+	if len(d.Rows) > drawMaxRows {
+		return nil, fmt.Sprintf("%d rows, over the cap of %d", len(d.Rows), drawMaxRows)
 	}
 	maxRows := min(caps.MaxEdges, drawMaxRows)
 	depth, drawn, messages := 0, 0, 0

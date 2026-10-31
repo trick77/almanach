@@ -163,6 +163,19 @@ func TestCheckDiagramDrawingCeilings(t *testing.T) {
 	if _, reason := CheckDiagram(s, wide); !strings.Contains(reason, "11 participants, not 1 to 8") {
 		t.Errorf("reason = %q", reason)
 	}
+	// Frames, dividers and ends take a row of the drawing too: 21 rows are
+	// one too many though only five are messages.
+	rows := []ir.Row{msg("a", "b")}
+	for range 4 {
+		rows = append(rows, ir.Row{Type: ir.RowFrame, Keyword: "alt"}, msg("a", "b"), ir.Row{Type: ir.RowDivider, Keyword: "else"},
+			ir.Row{Type: ir.RowDivider, Keyword: "else"}, ir.Row{Type: ir.RowEnd})
+	}
+	if _, reason := CheckDiagram(seqOf(rows...), wide); !strings.Contains(reason, "21 rows, over the cap of 20") {
+		t.Errorf("21 rows: reason = %q", reason)
+	}
+	if _, reason := CheckDiagram(seqOf(rows[:20]...), wide); reason != "a frame left open" {
+		t.Errorf("20 rows: reason = %q, want only the open frame", reason)
+	}
 }
 
 func mapOf(nodes ...ir.Node) *ir.Diagram {

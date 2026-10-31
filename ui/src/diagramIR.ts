@@ -1,6 +1,8 @@
 // Copied from rongo (ui/src/diagramIR.ts), kept in step by hand.
 // The IR types and fits only: rongo reads them out of the mermaid parse,
 // Almanach gets them as JSON the backend validated (baseline/diagram.go).
+// Almanach: a sequence's rows count whole, frames included, as the
+// backend counts them.
 
 /** start and stop are a state diagram's `[*]`: a dot where it begins, a
  * ringed dot where it ends. They carry no text. */
@@ -98,12 +100,8 @@ const maxActors = 8;
 const maxRows = 20;
 
 export function fits(ir: DiagramIR): boolean {
-  if (ir.kind === "sequence") {
-    const rows = ir.rows.filter(
-      (r) => r.type === "message" || r.type === "note",
-    );
-    return ir.actors.length <= maxActors && rows.length <= maxRows;
-  }
+  if (ir.kind === "sequence")
+    return ir.actors.length <= maxActors && ir.rows.length <= maxRows;
   if (ir.kind === "er")
     return (
       ir.entities.length <= maxEntities &&

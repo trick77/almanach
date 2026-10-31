@@ -18,7 +18,7 @@ describe("fits", () => {
     expect(fits(flow(17))).toBe(false);
   });
 
-  it("counts a sequence's messages and notes, not its frames", () => {
+  it("counts every row of a sequence, its frames included", () => {
     const seq: SequenceIR = {
       kind: "sequence",
       actors: [
@@ -27,7 +27,7 @@ describe("fits", () => {
       ],
       rows: [
         { type: "frame", keyword: "loop", label: "" },
-        ...Array.from({ length: 20 }, () => ({
+        ...Array.from({ length: 18 }, () => ({
           type: "message" as const,
           from: "a",
           to: "b",
@@ -39,13 +39,7 @@ describe("fits", () => {
       ],
     };
     expect(fits(seq)).toBe(true);
-    seq.rows.push({
-      type: "note",
-      from: "a",
-      to: "a",
-      side: "over",
-      label: "",
-    });
+    seq.rows.push({ type: "frame", keyword: "opt", label: "" });
     expect(fits(seq)).toBe(false);
   });
 

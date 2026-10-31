@@ -8,6 +8,8 @@ package diagram
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
+	"strings"
 )
 
 // The kinds.
@@ -203,12 +205,33 @@ func orEmpty[T any](s []T) []T {
 }
 
 // Equal reports whether two diagrams say the same, nil included: a
-// rewrite whose only change is its diagram is a change.
+// rewrite whose only change is its diagram is a change, one that only
+// lists the same nodes or arrows in another order is none.
 func Equal(a, b *Diagram) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	ja, errA := json.Marshal(a)
-	jb, errB := json.Marshal(b)
+	ja, errA := json.Marshal(canonical(*a))
+	jb, errB := json.Marshal(canonical(*b))
 	return errA == nil && errB == nil && bytes.Equal(ja, jb)
+}
+
+// canonical is a diagram with every list whose order says nothing sorted:
+// a flow's nodes and zones by id, its edges by their ends and label, an
+// entity model's tables by id and relationships likewise. A table's
+// fields and a sequence's rows keep their order: it is what they say.
+func canonical(d Diagram) Diagram {
+	d.Nodes = sorted(d.Nodes, func(n Node) string { return n.ID })
+	d.Zones = sorted(d.Zones, func(z Zone) string { return z.ID })
+	d.Edges = sorted(d.Edges, func(e Edge) string { return e.From + "\x00" + e.To + "\x00" + e.Label })
+	d.Entities = sorted(d.Entities, func(e Entity) string { return e.ID })
+	d.Rels = sorted(d.Rels, func(r Rel) string { return r.From + "\x00" + r.To + "\x00" + r.Label })
+	return d
+}
+
+// sorted is a sorted copy, the caller's slice left as it is.
+func sorted[T any](s []T, key func(T) string) []T {
+	out := slices.Clone(s)
+	slices.SortStableFunc(out, func(a, b T) int { return strings.Compare(key(a), key(b)) })
+	return out
 }
