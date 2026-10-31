@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
 	"slices"
 	"strings"
@@ -574,20 +575,24 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		return readErr(err)
 	}
 	// The evidence a pitfall needs: the problem areas the subject's files
-	// sit in, from fixes merged by the pinned commit's time. The overview
-	// reads docs and gets none.
+	// sit in, from fixes merged by the pinned commit's time (newerSlack
+	// after it: the head's own PR is recorded a moment later). Read once a
+	// run. The overview reads docs and gets none.
 	var problems []store.RepoProblem
 	if subject {
-		all, err := w.base.Store.RepoProblems(ctx, r.ProjectKey, r.Slug, plan.CommittedAt)
-		if err != nil {
-			w.log.WarnContext(ctx, "baseline: problem areas read failed, drain paused", logging.Err(err))
-			return errStop
+		if w.problemsRun != r.ID || w.problems == nil {
+			all, err := w.base.Store.RepoProblems(ctx, r.ProjectKey, r.Slug, plan.CommittedAt.Add(newerSlack))
+			if err != nil {
+				w.log.WarnContext(ctx, "baseline: problem areas read failed, drain paused", logging.Err(err))
+				return errStop
+			}
+			w.problemsRun, w.problems = r.ID, append([]store.RepoProblem{}, all...)
 		}
-		problems = problemsFor(all, read)
+		problems = problemsFor(w.problems, read)
 	}
 	focus := w.focus(plan, page, newer)
 	left := plan.steps() - i - 1
-	b := stepBudget(w.limits, page, left, name == overviewName)
+	b := stepBudget(w.limits, page, left, !subject)
 	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, left, b, part, focus, renderFiles(read, bodies), renderProblems(problems), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
@@ -623,7 +628,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
 	if len(applied.Unknown) > 0 {
-		w.log.WarnContext(ctx, "baseline: "+name+": unknown ids left out: "+strings.Join(applied.Unknown, ", "))
+		w.log.WarnContext(ctx, "baseline: "+name+": unknown ids left out", slog.Any("ids", applied.Unknown))
 	}
 	// A path the model names for a statement it wrote is held to the tree,
 	// forgiven its spelling: a path the tree does not have is invented.

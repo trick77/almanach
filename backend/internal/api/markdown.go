@@ -156,17 +156,25 @@ func writeJSONBlock(b *strings.Builder, d *diagram.Diagram) {
 	b.WriteString(fence + "json\n" + string(j) + "\n" + fence + "\n\n")
 }
 
-// prose is model-written text as text, never as the export's structure: a
-// line that would open a heading, a quote or a fence, or underline the line
-// above into a heading, gets a backslash before it.
+// prose is model-written text as text, never as the export's structure.
+// Each line loses its indent (no code block), and one whose first character
+// could open a block (a heading, quote, fence, list, rule, underline or
+// HTML) gets a backslash before it, as does the dot or parenthesis after a
+// leading number (no ordered list): a backslashed ASCII punctuation mark
+// reads as itself.
 func prose(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i, l := range lines {
 		t := strings.TrimLeft(l, " \t")
-		if strings.HasPrefix(t, "#") || strings.HasPrefix(t, ">") || strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") ||
-			(t != "" && strings.Trim(t, "=- \t") == "") {
-			lines[i] = l[:len(l)-len(t)] + `\` + t
+		switch {
+		case t != "" && strings.ContainsRune("#>`~-+*_=<|", rune(t[0])):
+			t = `\` + t
+		default:
+			if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n < len(t) && (t[n] == '.' || t[n] == ')') {
+				t = t[:n] + `\` + t[n:]
+			}
 		}
+		lines[i] = t
 	}
 	return strings.Join(lines, "\n")
 }

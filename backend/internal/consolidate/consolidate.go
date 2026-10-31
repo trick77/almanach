@@ -79,6 +79,11 @@ type Worker struct {
 	// placeSince is when each merge commit whose read failed first failed
 	// in the run.
 	placeSince map[string]time.Time
+	// problems is run problemsRun's repository problem areas, read at its
+	// first subject step: the cutoff is the pinned commit's, so they hold
+	// for the whole run. nil until read.
+	problemsRun int64
+	problems    []store.RepoProblem
 	// busyRun and busyWrites count the step writes of one run a busy
 	// database refused in a row; a written step resets them. In memory:
 	// the row's attempts are the gateway's, reset by every answered call,

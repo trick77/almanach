@@ -44,12 +44,15 @@ type runStore struct {
 	// problems is the repository's problem areas; problemsErr fails the read.
 	problems    []store.RepoProblem
 	problemsErr error
-	// problemsUntil is the cutoff the last problem read asked for.
+	// problemsUntil is the cutoff the last problem read asked for;
+	// problemReads counts the reads.
 	problemsUntil time.Time
+	problemReads  int
 }
 
 func (s *runStore) RepoProblems(_ context.Context, _, _ string, until time.Time) ([]store.RepoProblem, error) {
 	s.problemsUntil = until
+	s.problemReads++
 	return s.problems, s.problemsErr
 }
 
@@ -1208,7 +1211,7 @@ func TestRun_UnknownIDsLeftOut(t *testing.T) {
 	if page.Summary != "Ein Dienst." || len(page.Statements) != 1 || page.Statements[0].ID != "s1" {
 		t.Errorf("page = %+v, want the overview's patch applied", page)
 	}
-	if !strings.Contains(buf.String(), "the overview: unknown ids left out: s77, 8b0d8f4a") {
+	if !strings.Contains(buf.String(), `the overview: unknown ids left out" ids="[s77 8b0d8f4a]"`) {
 		t.Errorf("log lacks the unknown ids:\n%s", buf.String())
 	}
 	if !strings.Contains(buf.String(), "Anmeldung skipped: patch refused: unknown statement id s9") {
@@ -1248,22 +1251,29 @@ func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
 	x.st.problems = []store.RepoProblem{{Area: "auth", Bugfixes: 2, TopCause: "logic", PRKeys: []string{"tools/svc#7"}},
 		{Area: "billing", Bugfixes: 1, TopCause: "config", PRKeys: []string{"tools/svc#3"}}}
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
-		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}, {Name: "Abrechnung", Purpose: "Rechnungen.", Paths: []string{"billing/"}}}}}}
 	x.models.patches = []inference.PatchResult{
 		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "pitfall", "Sperre vergessen", "Brach.", "auth/login.go")}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 	overview, auth := x.models.prompts[1], x.models.prompts[2]
+	if billing := x.models.prompts[3]; !strings.Contains(billing, "`billing/`") {
+		t.Errorf("second subject prompt lacks its area:\n%s", billing)
+	}
 	if !strings.Contains(overview, "directories bugfixes keep touching)\n\n_None._") {
 		t.Errorf("overview prompt is told of problem areas:\n%s", overview)
 	}
 	if !strings.Contains(auth, "- `auth/`: 2 bugfixes, cause seen most `logic`, newest fixes tools/svc#7") || strings.Contains(auth, "`billing/`") {
 		t.Errorf("subject prompt's problem areas:\n%s", auth)
 	}
-	if !x.st.problemsUntil.Equal(mergedAt) {
-		t.Errorf("problem areas read until %v, want the pinned commit's time %v", x.st.problemsUntil, mergedAt)
+	if want := mergedAt.Add(newerSlack); !x.st.problemsUntil.Equal(want) {
+		t.Errorf("problem areas read until %v, want the pinned commit's time and the slack, %v", x.st.problemsUntil, want)
+	}
+	if x.st.problemReads != 1 {
+		t.Errorf("problem areas read %d times in one run, want once", x.st.problemReads)
 	}
 	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
 	if len(page.Statements) != 1 || page.Statements[0].Kind != "pitfall" {

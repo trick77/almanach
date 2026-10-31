@@ -285,8 +285,9 @@ grouped by kind in the order invariants, rules, decisions, pitfalls,
 extensions, components, entities (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame only; a statement's text goes in as
-its paragraphs, a line that would read as structure (a heading, a quote,
-a fence, an underline) escaped with a backslash, and a fence or code span
+its paragraphs, each line's indent dropped and a line that would read as
+structure (a heading, quote, fence, list, rule, underline, HTML) escaped
+with a backslash, and a fence or code span
 longer than any backtick run inside it. An unknown project or repository
 is a 404, as on the JSON routes; a page without a revision yet is its
 title and a line saying so. The mux takes no wildcard inside a segment, so
@@ -521,9 +522,11 @@ resumes after a restart. The run pins the clone's head when it starts.
    `cat-file --batch`, the current page beside them, and for a reconcile
    the ids of the statements resting on changed files. Beside the files,
    as untrusted data, the repository's problem areas the subject's files
-   sit in (`RepoProblems`, the whole history up to the pinned commit's
-   time, not the dashboard's window: what broke does not expire, and a
-   fix merged later is no evidence about the code read): an area whose
+   sit in (`RepoProblems`, read once a run: the whole history up to the
+   pinned commit's time plus `newerSlack`, the head's own PR being
+   recorded a moment later; not the dashboard's window: what broke does
+   not expire, and a fix merged later is no evidence about the code
+   read): an area whose
    `bugfix_area` is one of the files' directories, holds one or lies
    inside one, with its bugfix count, the cause seen most and the newest
    three fixes' PR keys; `_None._` when there is none, and always for the

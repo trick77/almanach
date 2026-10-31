@@ -169,6 +169,7 @@ func TestGateOpensTheExportToABearer(t *testing.T) {
 	for p, want := range map[string]bool{
 		"/api/projects/PAY.md": true, "/api/projects/PAY/repos/svc.md": true, "/api/projects/PAY/repos/.md": false,
 		"/api/projects//repos/svc.md": false, "/api/projects/PAY/other/svc.md": false, "/api/x/PAY.md": false, "/api/projects/PAY%2Emd": false,
+		"/api/projects/%2E%2E/repos/x.md": false, "/api/projects/a%2Fb/repos/x.md": false,
 	} {
 		if ExportPath(p) != want {
 			t.Errorf("ExportPath(%q) = %v", p, !want)

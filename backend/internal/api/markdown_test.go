@@ -17,6 +17,7 @@ import (
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
+	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/store"
 	kitauth "github.com/trick77/ship/kit/auth"
 )
@@ -174,9 +175,10 @@ func TestMarkdownBearerInOIDC(t *testing.T) {
 func TestMarkdownEscapesModelText(t *testing.T) {
 	label := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "x ```` y", Shape: "step"}}}
 	md := renderMarkdown("T", store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel",
-		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen", Text: "Satz.\n## Regeln\n```\n> zitiert\n---",
+		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen", Text: "Satz.\n## Regeln\n```\n> zitiert\n---\n\n    eingerückt\n***\n1. Punkt\n<div>\n- Liste\n2026 kam",
 			Files: []string{"a`b.go"}, Diagram: label}}}, true)
-	for _, want := range []string{"\\# Kein Titel\n", "### Zwei Zeilen\n", "Satz.\n\\## Regeln\n\\```\n\\> zitiert\n\\---\n", "Dateien: `` a`b.go ``\n", "`````json\n"} {
+	for _, want := range []string{"\\# Kein Titel\n", "### Zwei Zeilen\n", "Satz.\n\\## Regeln\n\\```\n\\> zitiert\n\\---\n\neingerückt\n\\***\n1\\. Punkt\n\\<div>\n\\- Liste\n2026 kam\n",
+		"Dateien: `` a`b.go ``\n", "`````json\n"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("export lacks %q:\n%s", want, md)
 		}
@@ -214,6 +216,9 @@ func TestMarkdownKindsMatchTheUI(t *testing.T) {
 	}
 	if !slices.Equal(got, ui) {
 		t.Errorf("export order %v, UI order %v", got, ui)
+	}
+	if a, b := slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(inference.RepoKinds)); !slices.Equal(a, b) {
+		t.Errorf("export kinds %v, schema kinds %v", a, b)
 	}
 }
 

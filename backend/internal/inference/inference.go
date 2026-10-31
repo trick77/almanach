@@ -408,7 +408,7 @@ const MergeSchemaName = "almanach_merge"
 // all but extension, a change recipe inside one repository.
 var (
 	RepoKinds    = []string{"component", "rule", "invariant", "entity", "decision", "extension", "pitfall"}
-	ProjectKinds = []string{"component", "rule", "invariant", "entity", "decision", "pitfall"}
+	ProjectKinds = slices.DeleteFunc(slices.Clone(RepoKinds), func(k string) bool { return k == "extension" })
 )
 
 func description(diagrams bool, kinds []string) map[string]any {

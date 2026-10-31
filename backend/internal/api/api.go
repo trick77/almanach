@@ -110,15 +110,14 @@ func (d Deps) team(w http.ResponseWriter, r *http.Request) string {
 	return team
 }
 
-// wholeName reports whether a key or slug ending in .md names a listed
-// project or repository with its suffix (exists asks), which then gets its
-// JSON rather than the export of the name without it. A request the gate
-// let in on a bearer gets the export always: the export is all it opens.
-func (d Deps) wholeName(ctx context.Context, exists func() (bool, error)) (bool, error) {
-	if auth.ExportOnly(ctx) {
-		return false, nil
-	}
-	return exists()
+// exportOf is name without its .md suffix, and whether the request is the
+// Markdown export for certain: a request the gate let in on a bearer, the
+// export being all it opens. Otherwise a name with the suffix is the export
+// only when no listed project or repository carries it whole: the handler
+// asks the store once, and a miss with the suffix cut off is the export.
+func exportOf(r *http.Request, name string) (string, bool) {
+	base, md := strings.CutSuffix(name, ".md")
+	return base, md && auth.ExportOnly(r.Context())
 }
 
 // teamBearer reports whether the request carries a team's bearer, by the
@@ -405,24 +404,19 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	d.reader(r)
 	key := r.PathValue("key")
 	// GET /api/projects/{key}.md: the mux takes no wildcard inside a
-	// segment, so the export arrives here with its suffix.
-	if k, md := strings.CutSuffix(key, ".md"); md {
-		whole, err := d.wholeName(ctx, func() (bool, error) {
-			_, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
-			return ok, err
-		})
-		if err != nil {
-			httpx.ServerError(w, r, err, "project")
-			return
-		}
-		if !whole {
-			d.projectMarkdown(w, r, k)
-			return
-		}
+	// segment, so the export arrives here with its suffix (see exportOf).
+	k, md := exportOf(r, key)
+	if md {
+		d.projectMarkdown(w, r, k)
+		return
 	}
 	team, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project")
+		return
+	}
+	if !ok && k != key {
+		d.projectMarkdown(w, r, k)
 		return
 	}
 	if !ok {
@@ -524,20 +518,18 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key, slug := r.PathValue("key"), r.PathValue("slug")
-	if s, md := strings.CutSuffix(slug, ".md"); md {
-		whole, err := d.wholeName(ctx, func() (bool, error) { return d.Store.RepoExists(ctx, key, slug, d.Sources != nil) })
-		if err != nil {
-			httpx.ServerError(w, r, err, "repo")
-			return
-		}
-		if !whole {
-			d.repoMarkdown(w, r, key, s)
-			return
-		}
+	s, md := exportOf(r, slug)
+	if md {
+		d.repoMarkdown(w, r, key, s)
+		return
 	}
 	ok, err := d.Store.RepoExists(ctx, key, slug, d.Sources != nil)
 	if err != nil {
 		httpx.ServerError(w, r, err, "repo")
+		return
+	}
+	if !ok && s != slug {
+		d.repoMarkdown(w, r, key, s)
 		return
 	}
 	if !ok {

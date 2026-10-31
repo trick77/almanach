@@ -122,7 +122,7 @@ func ExportPath(p string) bool {
 	case 1:
 		return markdownSegment(segs[0])
 	case 3:
-		return segs[0] != "" && segs[1] == "repos" && markdownSegment(segs[2])
+		return segs[0] != "" && !strings.Contains(segs[0], "%") && segs[1] == "repos" && markdownSegment(segs[2])
 	}
 	return false
 }
