@@ -311,18 +311,27 @@ func TestInvalidEnum(t *testing.T) {
 	}
 }
 
-func TestSummaryHidesDSN(t *testing.T) {
-	app, err := Load(lookup(minimal()))
+// The startup line names no secret: not the sources' token key, not the
+// OIDC client secret, not the session secret.
+func TestSummaryHidesSecrets(t *testing.T) {
+	env := oidcEnv()
+	env["ALMANACH_REPOS_DIR"] = "/repos"
+	const tokenKey = "c2VjcmV0LWtleS1zZWNyZXQta2V5LXNlY3JldC1rZXk="
+	env["ALMANACH_SECRET_KEY"] = tokenKey
+	app, err := Load(lookup(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	s := app.Summary()
-	for _, secret := range []string{"/run/secrets"} {
+	for _, secret := range []string{tokenKey, "client-secret-xyz", sessionSecret} {
 		if strings.Contains(s, secret) {
 			t.Errorf("Summary leaks %q: %s", secret, s)
 		}
 	}
-	for _, want := range []string{"addr=0.0.0.0:8080", "auth=none", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars, diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
+	if !strings.Contains(s, "token_key true") {
+		t.Errorf("Summary lacks whether a token key is set: %s", s)
+	}
+	for _, want := range []string{"addr=0.0.0.0:8080", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars, diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Summary lacks %q: %s", want, s)
 		}
