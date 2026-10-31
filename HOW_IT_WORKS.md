@@ -382,8 +382,14 @@ resumes after a restart. The run pins the clone's head when it starts.
    changed, a documented commit no longer in the history, or no plan: a
    full run instead.
 2. *Overview.* The docs and manifests, chosen by code (README, agent
-   notes, architecture docs, manifests, `docs/`), write the summary and
+   notes, architecture docs, manifests, `docs/`, then diagram sources
+   such as `.puml` and `.mmd` at the root or under `docs/`, last so a
+   large generated one never crowds out prose), write the summary and
    what spans the repository. A reconcile reads them only when one changed.
+   Docs are claims: to the overview a statement resting on code alone, no
+   doc among its files, is read-only (struck from its patch, the rest
+   applied), and a subject step whose code contradicts a statement
+   corrects it from the code, whatever it was learned from.
 3. *Subjects.* One step per subject the run reads: its files through one
    `cat-file --batch`, the current page beside them, and for a reconcile
    the ids of the statements resting on changed files. The answer is a
@@ -393,7 +399,15 @@ resumes after a restart. The run pins the clone's head when it starts.
    the run's progress land in one transaction.
 4. *Project.* The repository's new description folded into the project
    page, on a full run always, on a reconcile when the summary changed.
-   Its revision and the run's end land in one transaction.
+   Beside it the step sees the summaries of the project's other source
+   repositories (80 kB with their headings; past that an even share each,
+   a long summary cut at a paragraph or sentence and marked; those without
+   a summary, or past hundreds of repositories without room for one, by
+   slug only after them, and the page keeps what it says of them and of a
+   cut one), so the page is written as one system: purpose and boundary,
+   each repository's role, the flows across them and the runtime in the
+   summary; interfaces, shared entities and cross-repository rules as
+   statements. Its revision and the run's end land in one transaction.
 
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none

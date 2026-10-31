@@ -12,7 +12,8 @@ import (
 
 // docRank orders what the overview reads: the README before the agent
 // notes before the architecture docs before other docs at the root, then
-// the manifests, then everything under docs/. -1 is no doc.
+// the manifests, then everything under docs/, then diagram sources last, so
+// a large generated one never crowds out prose. -1 is no doc.
 func docRank(p string) int {
 	base := strings.ToLower(path.Base(p))
 	depth := strings.Count(p, "/")
@@ -34,8 +35,28 @@ func docRank(p string) int {
 		return 4
 	case docsDir(p) && docText(base):
 		return 5
+	case (depth == 0 || docsDir(p)) && diagram(base):
+		return 6
 	}
 	return -1
+}
+
+// IsDoc reports whether the overview would read a path, as a statement
+// names it ("./" and "/" forgiven): a doc, a manifest, a diagram source, or
+// a docs directory.
+func IsDoc(p string) bool {
+	p = normPath(p)
+	return p == "docs" || p == "doc" || docRank(p) >= 0
+}
+
+// diagram reports whether a file is a diagram's text source. A .drawio is
+// not: its XML is layout, not content.
+func diagram(base string) bool {
+	switch path.Ext(base) {
+	case ".puml", ".plantuml", ".iuml", ".pu", ".mmd", ".mermaid":
+		return true
+	}
+	return false
 }
 
 // manifest reports whether a file name says what a repository builds, runs

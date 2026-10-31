@@ -95,6 +95,23 @@ func TestDocs_OrderAndLimit(t *testing.T) {
 	}
 }
 
+// Diagram sources at the root or under docs/ come after every prose doc;
+// elsewhere, or as .drawio, they are not docs.
+func TestDocs_DiagramSourcesLast(t *testing.T) {
+	files := []File{
+		{"docs/flow.puml", 3}, {"architecture.mmd", 4}, {"docs/zz.md", 5}, {"README.md", 6},
+		{"src/seq.puml", 2}, {"docs/map.drawio", 2}, {"docs/c4.plantuml", 1},
+	}
+	var paths []string
+	for _, f := range Docs(files, 1000) {
+		paths = append(paths, f.Path)
+	}
+	want := []string{"README.md", "docs/zz.md", "architecture.mmd", "docs/c4.plantuml", "docs/flow.puml"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("Docs = %v\nwant %v", paths, want)
+	}
+}
+
 // A README is the README whatever its markup.
 func TestDocs_ReadmeInAnyMarkup(t *testing.T) {
 	for _, name := range []string{"README", "README.markdown", "readme.org", "README.asciidoc", "README.textile", "README.rst"} {

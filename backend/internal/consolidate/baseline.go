@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
@@ -33,6 +34,7 @@ type RunStore interface {
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
+	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -480,7 +482,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	var part, purpose string
 	var read []baseline.File
 	if name == overviewName {
-		part, purpose, read = "the repository's documentation and manifests, for the overview", store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
+		part, purpose, read = overviewPart, store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
 	} else {
 		s, ok := subjectNamed(plan.Plan, name)
 		if !ok {
@@ -508,11 +510,14 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return readErr(err)
 	}
+	if name == overviewName {
+		newer = codeBacked(page.Statements, newer)
+	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
 		return readErr(err)
 	}
-	focus := w.focus(plan, page)
+	focus := w.focus(plan, page, newer)
 	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
@@ -529,6 +534,13 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 // foldPatch applies a step's patch to the page under the rules of a fold
 // and writes the revision with the run's progress in one transaction.
 func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string) error {
+	// A code-backed statement the overview names is struck from its patch,
+	// not the patch refused: nearly every statement rests on code, and a
+	// refusal would throw away the summary over a confirmation.
+	patch, struck := strikeCode(patch, newer)
+	if len(struck) > 0 {
+		w.log.InfoContext(ctx, "baseline: "+name+": left alone, resting on code: "+strings.Join(struck, ", "))
+	}
 	if id := touchesNewer(newer, patch); id != "" {
 		why := " was taught by a pull request newer than the commit read"
 		if newer[id] == byUnplaced {
@@ -614,12 +626,47 @@ const notHeldMargin = 24 * time.Hour
 // webhook wakes cannot use it up.
 const placeWait = 2 * time.Minute
 
-// Why newerIDs leaves a statement alone: a newer PR taught it, or git could
-// not place the merge commit of the PR that did.
+// Why a step leaves a statement alone: a newer PR taught it, git could not
+// place the merge commit of the PR that did, or it rests on code the
+// overview does not read.
 const (
 	byNewerPR  = "newer"
 	byUnplaced = "unplaced"
+	byCode     = "code"
 )
+
+// codeBacked adds to newer the statements resting on code alone, none of
+// their files a doc: the overview reads docs alone, and code wins over
+// them. One that names a doc beside code is the overview's to keep up.
+func codeBacked(statements []store.Statement, newer map[string]string) map[string]string {
+	for _, s := range statements {
+		if newer[s.ID] != "" || len(s.Files) == 0 || slices.ContainsFunc(s.Files, baseline.IsDoc) {
+			continue
+		}
+		if newer == nil {
+			newer = map[string]string{}
+		}
+		newer[s.ID] = byCode
+	}
+	return newer
+}
+
+// strikeCode takes the code-backed ids out of a patch, edits, drops and
+// confirmations alike, and names them.
+func strikeCode(p inference.Patch, newer map[string]string) (inference.Patch, []string) {
+	var struck []string
+	held := func(id string) bool {
+		if newer[id] == byCode {
+			struck = append(struck, id)
+			return true
+		}
+		return false
+	}
+	p.Statements = slices.DeleteFunc(slices.Clone(p.Statements), func(s inference.Statement) bool { return s.ID != nil && held(*s.ID) })
+	p.Drop = slices.DeleteFunc(slices.Clone(p.Drop), held)
+	p.Confirmed = slices.DeleteFunc(slices.Clone(p.Confirmed), held)
+	return p, struck
+}
 
 // errPlaceAgain is a merge commit git could not place: the step is taken
 // again at the next drain, before its files are read or a call made.
@@ -878,9 +925,13 @@ func encodeInto(r *store.BaselineRun, plan runPlan) error {
 	return nil
 }
 
+// overviewPart is the overview step's part; the prompt's code-wins rule
+// says what the overview may not do with it.
+const overviewPart = "the repository's documentation, manifests and diagram sources, for the overview"
+
 // focus is what a reconcile's step must look at besides its files: the
 // statements resting on paths that changed, the paths that are gone.
-func (w *Worker) focus(plan runPlan, page store.Page) string {
+func (w *Worker) focus(plan runPlan, page store.Page, newer map[string]string) string {
 	if len(plan.Changed) == 0 {
 		return "This is a fresh reading: document what this part's code shows."
 	}
@@ -888,7 +939,8 @@ func (w *Worker) focus(plan runPlan, page store.Page) string {
 	for _, p := range plan.Changed {
 		changed[p] = true
 	}
-	ids := baseline.Resting(page.Statements, changed)
+	// A statement the step must leave alone is no statement to check.
+	ids := slices.DeleteFunc(baseline.Resting(page.Statements, changed), func(id string) bool { return newer[id] != "" })
 	var b strings.Builder
 	b.WriteString("This reading follows earlier ones: the code changed since the last. Check what the description says against the files below.")
 	if len(ids) > 0 {
@@ -925,7 +977,12 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, w.limits))
+	repos, err := w.base.Store.RepoSummaries(ctx, r.ProjectKey)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
+		return errStop
+	}
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), w.limits))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -1087,18 +1144,116 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 	).Replace(prompts.Describe)
 }
 
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, l config.Limits) string {
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, l config.Limits) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
-		"{project_description}", describe(projectPage), "{repo_description}", describe(repoPage),
+		"{project_description}", describeTaught(projectPage), "{repo_description}", describe(repoPage), "{other_repos}", others,
 	).Replace(prompts.Project)
 }
 
+// otherRepos is the summaries of the project's other source repositories,
+// by slug, so the project is written as a whole. Over ProjectReposMaxBytes
+// each gets an even share, what a short one leaves going to the rest, and a
+// longer one is cut to its share at a paragraph or sentence and says so:
+// no repository is left out for its length. Those without a summary, or
+// with a share too small to hold one (hundreds of repositories), are
+// named. A prompt's input, never stored text.
+func otherRepos(repos []store.RepoSummary, self string) string {
+	var others []store.RepoSummary
+	for _, r := range repos {
+		if r.Slug != self && r.Summary != "" {
+			others = append(others, r)
+		}
+	}
+	bySize := slices.Clone(others)
+	slices.SortStableFunc(bySize, func(a, b store.RepoSummary) int { return len(a.Summary) - len(b.Summary) })
+	text := map[string]string{}
+	left := baseline.ProjectReposMaxBytes
+	for i, r := range bySize {
+		// The heading counts against the share; the names after are not.
+		frame := len(repoEntry(r.Slug, ""))
+		if s := shorten(r.Summary, left/(len(bySize)-i)-frame); s != "" {
+			text[r.Slug] = s
+			left -= frame + len(s)
+		}
+	}
+	var b strings.Builder
+	var named []string
+	for _, r := range repos {
+		switch {
+		case r.Slug == self:
+		case text[r.Slug] == "":
+			named = append(named, r.Slug)
+		default:
+			b.WriteString(repoEntry(r.Slug, text[r.Slug]))
+		}
+	}
+	if len(named) > 0 {
+		fmt.Fprintf(&b, "Also in the project, without a summary here: %s.\n", strings.Join(named, ", "))
+	}
+	if b.Len() == 0 {
+		return "_None._"
+	}
+	return b.String()
+}
+
+// shortenedMark ends a summary cut to its share.
+const shortenedMark = " […shortened]"
+
+// shorten cuts s to at most n bytes at the last paragraph break, else the
+// last sentence end, else a rune boundary, and marks the cut; a break only
+// in the second half, so an early one does not waste the share. "" when n
+// does not hold the mark.
+func shorten(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n <= len(shortenedMark) {
+		return ""
+	}
+	cut := s[:n-len(shortenedMark)]
+	for !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	if i := strings.LastIndex(cut, "\n\n"); i > len(cut)/2 {
+		cut = cut[:i]
+	} else if i := sentenceEnd(cut); i > len(cut)/2 {
+		cut = cut[:i+1]
+	}
+	return cut + shortenedMark
+}
+
+// abbreviations end in a period without ending a sentence ("z. B." and
+// its kin are single letters, caught apart).
+var abbreviations = map[string]bool{"bzw": true, "usw": true, "etc": true, "inkl": true, "ggf": true, "evtl": true,
+	"vgl": true, "sog": true, "bspw": true, "max": true, "min": true, "ca": true, "Nr": true, "resp": true}
+
+// sentenceEnd is the index of the last ". " in s that ends a sentence, not
+// an abbreviation; -1 when none does.
+func sentenceEnd(s string) int {
+	for i := strings.LastIndex(s, ". "); i > 0; i = strings.LastIndex(s[:i], ". ") {
+		word := s[strings.LastIndexAny(s[:i], " \n(")+1 : i]
+		if utf8.RuneCountInString(word) > 1 && !abbreviations[word] {
+			return i
+		}
+	}
+	return -1
+}
+
+func repoEntry(slug, summary string) string { return "### " + slug + "\n\n" + summary + "\n\n" }
+
 // describeSourced is describe with each statement's provenance: a step
 // must know which statements a pull request taught.
-func describeSourced(p store.Page, newer map[string]string) string {
+func describeSourced(p store.Page, newer map[string]string) string { return sourced(p, newer, true) }
+
+// describeTaught is describe saying which statements pull requests taught,
+// without their keys: the project step needs the fact, and keys shown are
+// keys copied into the prose.
+func describeTaught(p store.Page) string { return sourced(p, nil, false) }
+
+func sourced(p store.Page, newer map[string]string, keys bool) string {
 	if p.RevisionID == 0 {
 		return "_None yet._"
 	}
@@ -1116,14 +1271,19 @@ func describeSourced(p store.Page, newer map[string]string) string {
 				prs = append(prs, src.PRKey)
 			}
 		}
-		if len(prs) > 0 {
+		switch {
+		case len(prs) > 0 && keys:
 			fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
+		case len(prs) > 0:
+			b.WriteString("\nLearned from pull requests.\n")
 		}
 		switch newer[s.ID] {
 		case byNewerPR:
 			b.WriteString("\nA pull request newer than the code shown taught this: leave it as it is, do not edit, drop or confirm it.\n")
 		case byUnplaced:
 			b.WriteString("\nWhether the code shown holds the pull request that taught this is unknown: leave it as it is, do not edit, drop or confirm it.\n")
+		case byCode:
+			b.WriteString("\nThis rests on code, which the overview does not read: leave it as it is, do not edit, drop or confirm it.\n")
 		}
 	}
 	return b.String()

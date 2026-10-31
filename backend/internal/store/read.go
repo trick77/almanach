@@ -75,8 +75,39 @@ type RepoRow struct {
 	LastMerge *time.Time
 }
 
-// Repos lists a project's repositories with the first line of their current
-// description.
+// RepoSummary is a source repository and its current summary, whole.
+type RepoSummary struct {
+	Slug    string
+	Summary string
+}
+
+// RepoSummaries lists a project's source repositories by slug with the
+// summary of their current description, "" before the first: what the
+// project step reads of the others, without the note counts of Repos.
+func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummary, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.slug, COALESCE(rv.summary, '')
+		  FROM source_repos r
+		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_key = r.project_key AND pg.repo_slug = r.slug
+		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
+		 WHERE r.project_key = $1 ORDER BY r.slug`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RepoSummary{}
+	for rows.Next() {
+		var r RepoSummary
+		if err := rows.Scan(&r.Slug, &r.Summary); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Repos lists a project's repositories with the summary of their current
+// description, whole.
 func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]RepoRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT r.slug,

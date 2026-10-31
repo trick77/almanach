@@ -47,3 +47,29 @@ build: fe-build
 
 test:
 	cd backend && go test -race ./...
+
+# The prompt eval: full baseline runs of EVAL_REPOS (slug=url, one project)
+# through a real model, the pages written to EVAL_OUT. Paid calls, never in
+# check or CI. EVAL_ENV is a file exporting EVAL_API_KEY, outside the
+# repository; it goes to EVAL_KEY_VAR, the key variable of EVAL_MODEL's
+# llmwire provider. Every prompt is kept under EVAL_OUT/prompts;
+# EVAL_RUN=TestPromptReplay EVAL_PROMPT=<file> sends one again.
+EVAL_REPOS ?= almanach=https://github.com/trick77/almanach,rongo=https://github.com/trick77/rongo
+EVAL_MODEL ?= mimo-v2.6-pro
+EVAL_KEY_VAR ?= LLMWIRE_MIMO_API_KEY
+EVAL_EFFORT ?=
+EVAL_OUT ?= $(CURDIR)/.prompt-eval
+EVAL_RUN ?= TestPromptEval
+EVAL_PROMPT ?=
+
+# Paths made absolute, a leading ~/ expanded (an argument's ~ reaches make
+# as is): the recipe changes directory, go test runs in the package's, and
+# sh's "." looks a bare name up on PATH only. No spaces in them.
+evalpath = $(if $(1),$(abspath $(patsubst ~/%,$(HOME)/%,$(1))))
+
+.PHONY: prompt-eval
+prompt-eval:
+	@test -n "$(EVAL_ENV)" || { echo "EVAL_ENV=<file exporting EVAL_API_KEY> required"; exit 1; }
+	. "$(call evalpath,$(EVAL_ENV))" && cd backend && $(EVAL_KEY_VAR)="$$EVAL_API_KEY" EVAL_REPOS="$(EVAL_REPOS)" \
+		EVAL_MODEL="$(EVAL_MODEL)" EVAL_EFFORT="$(EVAL_EFFORT)" EVAL_OUT="$(call evalpath,$(EVAL_OUT))" \
+		EVAL_PROMPT="$(call evalpath,$(EVAL_PROMPT))" go test -run '^$(EVAL_RUN)$$' -count=1 -timeout 3h -v ./internal/consolidate/

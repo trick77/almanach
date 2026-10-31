@@ -6,6 +6,9 @@ team-keys.json
 /backend/almanach
 /bin/
 
+# The prompt eval's pages
+/.prompt-eval/
+
 # IDEs
 .vscode/
 .idea/
