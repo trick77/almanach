@@ -241,8 +241,39 @@ func TestEffortOff(t *testing.T) {
 		t.Errorf("reasoning() = %#v, want ReasoningOff", got)
 	}
 	c.effort = "bogus"
-	if _, err := c.Startup(context.Background()); err == nil || !strings.Contains(err.Error(), EffortOff) {
+	if _, err := c.Startup(context.Background()); err == nil || !strings.Contains(err.Error(), "high, off)") {
 		t.Errorf("bogus level: err = %v, want a refusal naming %q", err, EffortOff)
+	}
+}
+
+// Off is refused only where the model reasons and cannot be switched off;
+// on a model that never reasons it is a no-op. A refused level offers off
+// only where off switches something.
+func TestCheckEffort(t *testing.T) {
+	toggle := llmwire.Reasoning{Supported: true, CanBeDisabled: true, EffortValues: []string{"low", "high"}}
+	fixed := llmwire.Reasoning{Supported: true, EffortValues: []string{"low", "high"}}
+	never := llmwire.Reasoning{}
+	for _, c := range []struct {
+		name, effort string
+		r            llmwire.Reasoning
+		want         string // "" for no error, else a part of it
+	}{
+		{"unset", "", fixed, ""},
+		{"a listed level", "high", fixed, ""},
+		{"off where it can be switched off", EffortOff, toggle, ""},
+		{"off on a model that never reasons", EffortOff, never, ""},
+		{"off where it reasons and cannot be switched off", EffortOff, fixed, "cannot be switched off"},
+		{"bogus where off switches something", "bogus", toggle, "(accepted: low, high, off)"},
+		{"bogus where it cannot be switched off", "bogus", fixed, "(accepted: low, high)"},
+		{"bogus on a model that never reasons", "bogus", never, "takes no reasoning level"},
+	} {
+		err := checkEffort(c.effort, "m", c.r)
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: err = %v, want none", c.name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: err = %v, want one with %q", c.name, err, c.want)
+		}
 	}
 }
 
