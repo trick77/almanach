@@ -48,24 +48,30 @@ prompt tells the model the numbers.
 
 With `ALMANACH_AUTH_MODE=oidc` every variable below is required, and each
 is a startup fault under `none`, where it would look active and change
-nothing. The provider's discovery document is fetched at startup with a
-30 s timeout; a provider that does not answer aborts startup.
+nothing. The provider's discovery document is fetched at startup, each
+attempt bounded to 30 s. A provider that does not answer is a warning,
+not a fault: the webhook, the ping and the wiki's 401 keep working, the
+login routes answer 503, and discovery is retried in the background
+(5 s, doubling up to 5 min), each failure logged, until it answers.
 
 | Variable | Meaning |
 | --- | --- |
-| `ALMANACH_OIDC_ISSUER` | The provider's bare origin, `https://auth.example.com`: no path; a trailing slash is trimmed. |
+| `ALMANACH_OIDC_ISSUER` | The provider's issuer exactly as the provider states it, path and trailing slash included (`https://auth.example.com`, `https://idp.example.com/realms/wiki`, `https://tenant.example.com/`): discovery compares it byte for byte. https; plain http only on a loopback host, for a local provider. No user info, query or fragment. |
 | `ALMANACH_OIDC_CLIENT_ID` | The client registered for Almanach at the provider. Scopes asked: `openid profile email`. |
 | `ALMANACH_OIDC_CLIENT_SECRET` | Its secret. |
-| `ALMANACH_OIDC_REDIRECT_URL` | The callback as the browser reaches it, `https://<host>/api/auth/callback`; must be https. The session and login cookies are always Secure, derived from this URL, since behind a TLS-terminating proxy the process sees plain HTTP. |
+| `ALMANACH_OIDC_REDIRECT_URL` | The callback as the browser reaches it: exactly `https://<host>/api/auth/callback`, nothing after the path. The session and login cookies are always Secure: behind a TLS-terminating proxy the process sees plain HTTP. |
 | `ALMANACH_SESSION_SECRET` | Signs the session cookie `almanach_session`, at least 32 bytes (`openssl rand -base64 48`). There is no session table: rotating it signs everyone out. |
 
 A session lasts 30 days and is not renewed. Every route under `/api/` but
 `/api/auth/login` and `/api/auth/callback` needs it, the sources' write
 routes included: whoever the provider lets in may configure the clones,
-and the reader (email, else subject) is on the log line of every read and
-write. Who may sign in at all is the provider's policy. `/webhooks/noergler`,
-`/auth/ping`, `/healthz`, `/readyz` and the UI shell are outside the
-sign-in.
+and the reader (preferred username, else email, else subject) is on the
+log line of every read and write. A change (POST, PUT, PATCH, DELETE)
+must come from Almanach's own pages: `Sec-Fetch-Site` same-origin or
+none, or, without it, an `Origin` naming the request's host or the
+redirect URL's origin; anything else is a 403. Who may sign in at all is
+the provider's policy. `/webhooks/noergler`, `/auth/ping`, `/healthz`,
+`/readyz` and the UI shell are outside the sign-in.
 
 ## Commands
 

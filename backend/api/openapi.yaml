@@ -20,7 +20,10 @@ info:
       needs the session cookie the OIDC sign-in sets, and answers 401 without
       one; with `none` it is open to whoever reaches it. The reader gates
       nothing; the name goes to the access log. Nothing is written through it
-      but the sources.
+      but the sources. In oidc mode a POST, PUT, PATCH or DELETE under it
+      must carry `Sec-Fetch-Site: same-origin` (or `none`), or, without that
+      header, an `Origin` naming the request's host or the redirect URL's
+      origin; anything else is `403 {"error": "cross-site request refused"}`.
 
     ## Delivery dedup
 
@@ -529,6 +532,8 @@ paths:
                 $ref: "#/components/schemas/Logout"
         "401":
           $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "503":
           $ref: "#/components/responses/SignInOff"
 
@@ -595,8 +600,16 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    CrossSite:
+      description: oidc mode, a change that did not come from Almanach's own pages.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     SignInOff:
-      description: none mode has no sign-in.
+      description: >-
+        No sign-in to offer: none mode, or in oidc mode a provider that has
+        not answered discovery yet (retried in the background).
       content:
         application/json:
           schema:
@@ -619,7 +632,7 @@ components:
           enum: [none, oidc]
         user:
           type: string
-          description: The reader (email, else subject); empty in none mode.
+          description: The reader (preferred username, else email, else subject); empty in none mode.
 
     Logout:
       type: object

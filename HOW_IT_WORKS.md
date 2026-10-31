@@ -236,8 +236,8 @@ suggestion counts from the reviews, and the last fix.
 
 The read API gates nothing on who reads. In oidc mode the sign-in decides
 who reaches it at all, and the identity provider's policy decides who may
-sign in; the reader (email, else subject) goes to the access log and
-nowhere else. Nothing is written through the read API; the wiki is
+sign in; the reader (preferred username, else email, else subject) goes
+to the access log and nowhere else. Nothing is written through the read API; the wiki is
 read-only by design.
 
 ### Signing in
@@ -253,13 +253,26 @@ cookie `almanach_session` (HMAC over the claims, 30 days, Secure, HttpOnly,
 SameSite Lax). Nothing is stored server-side: `POST /api/auth/logout`
 clears the cookie, and rotating `ALMANACH_SESSION_SECRET` signs everyone
 out. A failed callback lands on `/?auth_error=…` and a sign-out on
-`/?signed_out=1`; on both the UI halts with a button instead of
-redirecting, because a live provider session would answer the next login
-unseen and loop. The gate covers every path under `/api` but the login and
-its callback, so a route added later is covered without anyone
-remembering; the SPA shell, the webhook, the ping and the probes are
-outside it. Discovery runs at startup with a 30 s timeout; a provider that
-does not answer is a startup fault. In none mode there is no sign-in:
+`/?signed_out=1`; when `/api/me` then answers 401 the UI halts with a
+button instead of redirecting, because a live provider session would
+answer the next login unseen and loop. With a session, or in none mode,
+the markers mean nothing and are stripped from the address. A 401 from
+any later API call in oidc mode navigates to the login the same way; an
+automatic sign-in within 30 s of the last one halts instead, so a
+session the browser keeps dropping cannot loop either. The gate covers
+every path under `/api` but the login and its callback, so a route added
+later is covered without anyone remembering; the SPA shell, the webhook,
+the ping and the probes are outside it. A change through the gate (POST,
+PUT, PATCH, DELETE) must come from Almanach's own pages: `Sec-Fetch-Site`
+same-origin or none, or, from a browser without it, an `Origin` naming
+the request's host or the redirect URL's origin; else 403. SameSite Lax
+alone would let a sibling subdomain post.
+
+Discovery runs at startup, each attempt bounded to 30 s. A provider that
+does not answer is a warning, like an unreachable gateway: noergler's
+webhook and ping do not depend on it. The login routes answer 503 and the
+wiki stays behind its 401 until a background retry (5 s, doubling up to
+5 min, each failure logged) reaches it. In none mode there is no sign-in:
 `/api/me` answers `{"mode": "none", "user": ""}` and the login routes 503.
 
 ## 4a. The sources
@@ -867,7 +880,8 @@ the reason in the log and the page unchanged:
   string rounded half up, or omitted when the gateway did not price the
   call. Never a float, never summed across `note_calls` and `llm_calls`.
 - `files` and every array are `[]` on the wire, never `null`.
-- In oidc mode the reader (email, else subject) is written to the access
+- In oidc mode the reader (kit's username: preferred username, else
+  email, else subject) is written to the access
   log of every read route and nowhere else; it gates nothing, and the
   webhook and the ping never pass the sign-in.
 
@@ -940,9 +954,12 @@ the reason in the log and the page unchanged:
   binary refuses to start.
 - `/healthz` and `/readyz` answer a loopback caller without forwarding
   headers only; through a router they are 404 by design.
-- In oidc mode the issuer, client id and secret, an https redirect URL and
-  a session secret of at least 32 bytes are required, and each is a
-  startup fault under none; the provider's discovery must answer within
-  30 s. `none` is allowed on any `SERVER_HOST`.
+- In oidc mode the issuer (as written: https, http only on loopback), client
+  id and secret, the redirect URL `https://<host>/api/auth/callback` and a
+  session secret of at least 32 bytes are required, a missing or malformed
+  one is a startup fault, and each is a fault under none. A provider that
+  does not answer discovery (30 s an attempt) is a warning, retried in the
+  background; the login answers 503 meanwhile. `none` is allowed on any
+  `SERVER_HOST`.
 - Caps and the problem window must be positive integers; a zero or
   negative value is a startup fault, not a disabled cap.
