@@ -41,7 +41,7 @@ The description of repository `{repo}` in project `{project}` was just written f
 
 ## Limits
 
-At most {project_max_statements} statements and {project_max_chars} characters of prose (the summary plus every statement's name and text) in all; the current description has {project_chars}. A description over a limit is rejected whole and nothing changes.
+At most {project_max_statements} statements and {project_max_chars} characters of prose (the summary plus every statement's name and text) in all; the current description has {project_chars}. New statements that take the description over a limit are left out; anything else over one is rejected whole and nothing changes. Near the statement limit, merge rather than add: edit the kept statement, drop the other.
 
 ## Output format
 

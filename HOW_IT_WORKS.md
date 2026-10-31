@@ -566,8 +566,12 @@ resumes after a restart. The run pins the clone's head when it starts.
    like a subject step's (edits by id, `added`, `drop`), a statement not
    named kept: as a full rewrite, one answer naming none emptied a page
    (an eval's second repository wiped the first one's eleven). No tree
-   pins a project statement, so a PR-taught one may be dropped. Its
-   revision and the run's end land in one transaction.
+   shows a project statement's files gone, so the step never drops a
+   PR-taught one (a note's fold may rewrite it): that drop is left out
+   and logged. New statements that alone take the page over a ceiling are
+   left out and logged, the summary, map, edits and drops kept, so a full
+   project page is never frozen. Its revision and the run's end land in
+   one transaction.
 
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
@@ -597,7 +601,8 @@ Every project with no more source repositories than a map holds (15,
 room left for one more node) carries a system map, the project step's alone
 (`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
 a repository node named and labelled by a source repository's slug (code
-sets the label, whatever the model wrote), an edge labelled
+sets the label on a new map, whatever the model wrote, unless the slug is
+longer than a label), an edge labelled
 by how the parts talk (HTTP, event, DB, library, file), held to the
 drawing's limits. A larger project gets none, and the prompt asks for
 null. The map never costs the description: a repository that left the

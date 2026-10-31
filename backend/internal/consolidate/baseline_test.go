@@ -1123,31 +1123,43 @@ func TestRun_ProjectSkippedWhenRefused(t *testing.T) {
 }
 
 // The project step answers a patch: a statement it does not name stays, a
-// dropped one goes (a PR-taught one too: no tree pins a project statement),
-// an unknown drop is left out, a new one is numbered. An answer naming no
-// statement empties nothing.
+// dropped one goes but a PR-taught one (no tree pins a project statement,
+// so no file shows it gone), an unknown drop is left out, a new one is
+// numbered. An answer naming no statement empties nothing. New statements
+// that alone take the page over its ceiling are left out, the rest stands.
 func TestRun_ProjectAnswersAPatch(t *testing.T) {
-	x := newWorld(t, 3)
-	x.queue(store.RunFull, "")
-	pr := []store.Source{{PRKey: "tools/svc#4", MergedAt: mergedAt.Add(-time.Hour)}}
-	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Das Projekt.",
-		Statements: []store.Statement{
-			{ID: "s1", Kind: "component", Name: "Schnittstelle", Text: "Bleibt.", Files: []string{"api.go"}, Sources: pr},
-			{ID: "s2", Kind: "rule", Name: "Alt", Text: "Geht.", Files: []string{"old.go"}, Sources: pr},
-		}}
-	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
-	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Das Projekt, neu.",
-		Statements: []inference.Statement{}, Drop: []string{"s2", "s99"},
-		Added: []inference.Statement{stmt(nil, "decision", "Ein Worker", "Weil.", "w.go")}}}
-	x.w.drain(context.Background())
-	page := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
-	var got []string
-	for _, s := range page.Statements {
-		got = append(got, s.ID+":"+s.Name)
+	project := func(d *inference.Description) store.Page {
+		x := newWorld(t, 3)
+		x.queue(store.RunFull, "")
+		pr := []store.Source{{PRKey: "tools/svc#4", MergedAt: mergedAt.Add(-time.Hour)}}
+		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Das Projekt.",
+			Statements: []store.Statement{
+				{ID: "s1", Kind: "component", Name: "Schnittstelle", Text: "Bleibt.", Sources: pr},
+				{ID: "s2", Kind: "rule", Name: "Alt", Text: "Geht.", Files: []string{"old.go"}, Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}},
+			}}
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.project = inference.DescriptionResult{Call: called, Description: d}
+		x.w.drain(context.Background())
+		return x.st.pages[pageKey(store.ScopeProject, "tools", "")]
 	}
-	if page.Summary != "Das Projekt, neu." || !slices.Equal(got, []string{"s1:Schnittstelle", "s3:Ein Worker"}) {
-		t.Errorf("project page = %q %v, want s1 kept, s2 dropped, s3 added", page.Summary, got)
+	ids := func(p store.Page) []string {
+		var out []string
+		for _, s := range p.Statements {
+			out = append(out, s.ID+":"+s.Name+":"+s.Text)
+		}
+		return out
+	}
+	added := []inference.Statement{stmt(nil, "decision", "Ein Worker", "Weil.", "w.go")}
+	p := project(&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}, Drop: []string{"s1", "s2", "s99"}, Added: added})
+	if want := []string{"s1:Schnittstelle:Bleibt.", "s3:Ein Worker:Weil."}; p.Summary != "Das Projekt, neu." || !slices.Equal(ids(p), want) {
+		t.Errorf("project page = %q %v, want %v", p.Summary, ids(p), want)
+	}
+	// At its ceiling of two: the new one is left out, the edit and the
+	// summary stand.
+	p = project(&inference.Description{Summary: "Voll.", Statements: []inference.Statement{stmt(ref("s1"), "component", "Schnittstelle", "Geschärft.", "api.go")}, Added: added})
+	if want := []string{"s1:Schnittstelle:Geschärft.", "s2:Alt:Geht."}; p.Summary != "Voll." || !slices.Equal(ids(p), want) {
+		t.Errorf("full project page = %q %v, want %v", p.Summary, ids(p), want)
 	}
 }
 

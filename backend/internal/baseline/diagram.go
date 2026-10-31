@@ -82,9 +82,7 @@ func CheckDiagram(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 // CheckMap holds the project's system map to the rules of a flow and to its
 // own: the four zones only, every node in one, a node in the repositories
 // zone named by a source repository's slug, and a slug nowhere else. A map
-// without a repository is no map of the project. A repository node's label
-// is its slug, whatever the model wrote ("rongos Zwischenform" once): the
-// reader finds the repository by it. A copy; d is left as it is.
+// without a repository is no map of the project.
 func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, string) {
 	if d == nil {
 		return nil, "no map"
@@ -97,14 +95,8 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 			return nil, fmt.Sprintf("zone %q is none of %s", z.ID, strings.Join(ir.MapZones, ", "))
 		}
 	}
-	labelled := *d
-	labelled.Nodes = slices.Clone(d.Nodes)
-	d = &labelled
 	repos := 0
-	for i, n := range d.Nodes {
-		if n.Zone == ir.ZoneRepositories {
-			d.Nodes[i].Label = n.ID
-		}
+	for _, n := range d.Nodes {
 		isSlug := slices.Contains(slugs, n.ID)
 		switch {
 		case n.Zone == "":
@@ -121,6 +113,25 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 		return nil, "the map holds no repository"
 	}
 	return checkFlow(d, caps)
+}
+
+// LabelRepos labels each repository node of a proposed map by its id, the
+// slug, whatever the model wrote ("rongos Zwischenform" once): the reader
+// finds the repository by it. A slug longer than a label may be keeps the
+// model's label. A copy; nil stays nil. Only a new map: a stored one is
+// carried as drawn, so no revision is written for a label alone.
+func LabelRepos(d *ir.Diagram) *ir.Diagram {
+	if d == nil {
+		return nil
+	}
+	out := *d
+	out.Nodes = slices.Clone(d.Nodes)
+	for i, n := range out.Nodes {
+		if n.Zone == ir.ZoneRepositories && utf8.RuneCountInString(n.ID) <= labelMaxChars {
+			out.Nodes[i].Label = n.ID
+		}
+	}
+	return &out
 }
 
 // DropDeparted takes out of a map the repository nodes whose slug is no
