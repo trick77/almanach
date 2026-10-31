@@ -33,6 +33,7 @@ type fakeStore struct {
 	documented store.BaselineRun
 	runErr     error
 	failed     int
+	docAsked   int
 }
 
 func newFakeStore() *fakeStore {
@@ -82,14 +83,14 @@ func (f *fakeStore) EnqueueRun(_ context.Context, key, slug, mode, trigger, base
 	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, mode, trigger, base, commit}, " "))
 	return int64(len(f.enqueued)), nil
 }
-func (f *fakeStore) LastRun(context.Context, string, string) (store.BaselineRun, bool, error) {
-	return f.last, f.last.ID != 0, f.runErr
+func (f *fakeStore) LastRun(context.Context, string, string) (store.BaselineRun, int, bool, error) {
+	return f.last, f.failed, f.last.ID != 0, f.runErr
 }
 func (f *fakeStore) DocumentedRun(context.Context, string, string) (store.BaselineRun, bool, error) {
+	f.mu.Lock()
+	f.docAsked++
+	f.mu.Unlock()
 	return f.documented, f.documented.ID != 0, f.runErr
-}
-func (f *fakeStore) FailedRuns(context.Context, string, string) (int, error) {
-	return f.failed, f.runErr
 }
 
 // state reads a repo's state under the lock, for a test that polls while

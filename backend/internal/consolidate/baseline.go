@@ -133,10 +133,21 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	if errors.Is(err, errStop) {
 		return false
 	}
+	// The worker is stopping and cut the step: no failure of the run. Not
+	// only a context error: a git child killed by the cancel answers
+	// "signal: killed".
+	if ctx.Err() != nil {
+		return false
+	}
 	// The poller holds the clone (a long clone or fetch): the step is
 	// taken again at the next wake or poll, the notes meanwhile go on.
 	if errors.Is(err, ErrCloneBusy) {
 		w.log.DebugContext(ctx, "baseline: clone busy, step deferred")
+		return false
+	}
+	// Git could not place a merge commit: the same step again later, no
+	// call spent, within placeWait (newerIDs).
+	if errors.Is(err, errPlaceAgain) {
 		return false
 	}
 	if err != nil {
@@ -417,9 +428,13 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 	}
 	r.Plan, r.Step, r.Steps = raw, 0, plan.steps()+1
 	if plan.steps() == 0 {
-		// Nothing to read again; the project step still runs, and folds
-		// when the last run skipped it.
+		// Nothing to read again. A reconcile whose summary stands ends
+		// here, in one write; otherwise the project step still runs, and
+		// folds when the last run skipped it.
 		w.log.InfoContext(ctx, "baseline: nothing to read again")
+		if r.Mode == store.RunReconcile && !plan.SummaryChanged {
+			return w.finish(ctx, r, plan)
+		}
 		r.State = store.RunProject
 		return w.save(ctx, *r)
 	}
@@ -483,17 +498,22 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if r.Bytes+size > int64(w.base.Limits.MaxBytes) {
 		return w.skipPart(ctx, r, &plan, name, "over the run's byte budget")
 	}
-	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
-	if err != nil {
-		return readErr(err)
-	}
 	page, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
 		return errStop
 	}
+	// Only a step that will make a call asks; a held one has read no file.
+	newer, err := w.newerIDs(ctx, r, page.Statements, plan.CommittedAt)
+	if err != nil {
+		return readErr(err)
+	}
+	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
+	if err != nil {
+		return readErr(err)
+	}
 	focus := w.focus(plan, page)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), plan.CommittedAt)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, plan.steps()-i-1, part, focus, renderFiles(read, bodies), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -503,14 +523,18 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if !ok {
 		return w.skipPart(ctx, r, &plan, name, "the call failed: "+res.Outcome.String())
 	}
-	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree))
+	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer)
 }
 
 // foldPatch applies a step's patch to the page under the rules of a fold
 // and writes the revision with the run's progress in one transaction.
-func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool) error {
-	if id := touchesNewer(page.Statements, patch, plan.CommittedAt); id != "" {
-		return w.skipPart(ctx, r, plan, name, "patch refused: "+id+" was taught by a pull request newer than the commit read")
+func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string) error {
+	if id := touchesNewer(newer, patch); id != "" {
+		why := " was taught by a pull request newer than the commit read"
+		if newer[id] == byUnplaced {
+			why = " rests on a merge commit git could not place"
+		}
+		return w.skipPart(ctx, r, plan, name, "patch refused: "+id+why)
 	}
 	applied, reason := baseline.ApplyPatch(page.Statements, patch, exists)
 	if reason != "" {
@@ -572,47 +596,174 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	return nil
 }
 
-// newerSlack is how much later than the read commit a pull request may
-// have been merged and still count as in it: the PR whose merge commit is
-// the head is recorded as merged a moment after the commit is made.
+// newerSlack is how much later than the read commit a pull request git
+// cannot place may have been merged and still count as in it: the PR whose
+// merge commit is the head is recorded as merged a moment after the commit
+// is made.
 const newerSlack = 2 * time.Minute
 
-// newerThan reports whether a pull request among a statement's sources was
-// merged after the commit a run reads: the run pins the clone's last
-// synced head, and a note merged since may have been folded before the run
-// started. Such a statement describes code the run cannot see.
-func newerThan(s store.Statement, at time.Time) bool {
-	if at.IsZero() {
-		return false
+// notHeldMargin is how long before the read commit a merge commit git does
+// not find in it must have been merged to count as off the branch rather
+// than newer: wide enough for a committer clock a day off, short enough
+// that a merge commit that never reaches the branch soon stops counting.
+const notHeldMargin = 24 * time.Hour
+
+// placeWait is how long a run holds its step over a merge commit whose git
+// read fails, counted from that commit's first failure in the run, before
+// its statements go read-only: by the clock, not by drains, so a burst of
+// webhook wakes cannot use it up.
+const placeWait = 2 * time.Minute
+
+// Why newerIDs leaves a statement alone: a newer PR taught it, or git could
+// not place the merge commit of the PR that did.
+const (
+	byNewerPR  = "newer"
+	byUnplaced = "unplaced"
+)
+
+// errPlaceAgain is a merge commit git could not place: the step is taken
+// again at the next drain, before its files are read or a call made.
+var errPlaceAgain = errors.New("merge commit not placed yet")
+
+// ancestry is what git said of a PR's merge commit against a run's commit.
+type ancestry int8
+
+const (
+	// unplaced: no full commit name; the merge time decides.
+	unplaced ancestry = iota
+	held
+	notHeld
+	// unknown: the read failed; asked once a step, never kept for the run.
+	unknown
+)
+
+// newerIDs is the statements a pull request taught that the commit a run
+// reads does not hold: the run pins the clone's last synced head, and a
+// note merged since may have been folded before the run started. Such a
+// statement describes code the run cannot see.
+//
+// A merge commit the read commit holds is in it, whatever the clocks say (a
+// rebase merge's head is older than the PR's merge time). One it does not
+// hold is newer unless merged well before the read commit (notHeldMargin):
+// one that never reaches the branch (a release branch, a rewritten history)
+// soon stops counting. A source without a merge commit goes by the clock,
+// with newerSlack. Git's answers are kept for the run.
+//
+// A statement that only a failed read leaves open holds the step for up to
+// placeWait from its commit's first failure; past that it is read-only for
+// the step, and git is asked again in the next. One another source already
+// marks newer holds nothing. The answer is each id left alone, and why.
+func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements []store.Statement, at time.Time) (map[string]string, error) {
+	if w.ancestryRun != r.ID || w.ancestry == nil {
+		w.ancestryRun, w.ancestry, w.placeSince = r.ID, map[string]ancestry{}, map[string]time.Time{}
 	}
-	for _, src := range s.Sources {
-		if !src.IsBaseline() && src.MergedAt.After(at.Add(newerSlack)) {
-			return true
+	now := w.now()
+	newer := map[string]string{}
+	failed := map[string]bool{}
+	hold, unsure := false, 0
+	for _, s := range statements {
+		var open []string
+		for _, src := range s.Sources {
+			if src.IsBaseline() {
+				continue
+			}
+			a, err := w.place(ctx, r, src.Commit, failed)
+			if err != nil {
+				return nil, err
+			}
+			if a == unknown {
+				open = append(open, src.Commit)
+			} else if newerSource(src, a, at) {
+				newer[s.ID] = byNewerPR
+				break
+			}
+		}
+		if len(open) == 0 || newer[s.ID] != "" {
+			continue
+		}
+		newer[s.ID] = byUnplaced
+		unsure++
+		for _, c := range open {
+			if now.Sub(w.placeSince[c]) < placeWait {
+				hold = true
+			}
 		}
 	}
-	return false
+	if hold {
+		return nil, errPlaceAgain
+	}
+	if unsure > 0 {
+		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %d statements read-only this step, git could not place their merge commits", unsure))
+	}
+	return newer, nil
+}
+
+// place asks git whether the run's commit holds a merge commit: once per
+// run for an answer, once per step (failed) for a read that fails, whose
+// first failure in the run it keeps. A busy clone is the step's to wait
+// out.
+func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string, failed map[string]bool) (ancestry, error) {
+	if commit == "" {
+		return unplaced, nil
+	}
+	if a, ok := w.ancestry[commit]; ok {
+		return a, nil
+	}
+	if failed[commit] {
+		return unknown, nil
+	}
+	in, err := w.base.Code.Contains(ctx, r.ProjectKey, r.Slug, commit, r.Commit)
+	a := notHeld
+	switch {
+	case ctx.Err() != nil:
+		return unknown, ctx.Err()
+	case err == nil && in:
+		a = held
+	case err == nil:
+	case errors.Is(err, ErrCloneBusy):
+		return unknown, err
+	case errors.Is(err, gitrepo.ErrBadSHA):
+		// Not a commit name (noergler's to send): the clock decides.
+		a = unplaced
+	default:
+		failed[commit] = true
+		if _, seen := w.placeSince[commit]; !seen {
+			w.placeSince[commit] = w.now()
+			w.log.WarnContext(ctx, "baseline: merge commit not placed, step held",
+				"commit", gitrepo.ShortSHA(commit), logging.Err(err))
+		}
+		return unknown, nil
+	}
+	w.ancestry[commit] = a
+	return a, nil
+}
+
+func newerSource(src store.Source, a ancestry, at time.Time) bool {
+	switch a {
+	case held:
+		return false
+	case notHeld:
+		// A read commit with no time (a plan from before it was kept):
+		// git's answer stands alone.
+		return at.IsZero() || !src.MergedAt.Before(at.Add(-notHeldMargin))
+	}
+	return !at.IsZero() && src.MergedAt.After(at.Add(newerSlack))
 }
 
 // touchesNewer is the first id a patch edits, drops or confirms that a
 // newer pull request taught; "" when it touches none.
-func touchesNewer(current []store.Statement, p inference.Patch, at time.Time) string {
-	newer := map[string]bool{}
-	for _, s := range current {
-		if newerThan(s, at) {
-			newer[s.ID] = true
-		}
-	}
+func touchesNewer(newer map[string]string, p inference.Patch) string {
 	if len(newer) == 0 {
 		return ""
 	}
 	for _, st := range p.Statements {
-		if st.ID != nil && newer[*st.ID] {
+		if st.ID != nil && newer[*st.ID] != "" {
 			return *st.ID
 		}
 	}
 	for _, ids := range [][]string{p.Drop, p.Confirmed} {
 		for _, id := range ids {
-			if newer[id] {
+			if newer[id] != "" {
 				return id
 			}
 		}
@@ -926,13 +1077,13 @@ func renderCatalogue(r store.BaselineRun, listing, docs, placing string, maxSubj
 	).Replace(prompts.Catalogue)
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, part, focus, files string, at time.Time) string {
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, part, focus, files string, newer map[string]string) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left), "{part}", part, "{focus}", focus,
 		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
 		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
-		"{repo_description}", describeSourced(page, at), "{files}", files,
+		"{repo_description}", describeSourced(page, newer), "{files}", files,
 	).Replace(prompts.Describe)
 }
 
@@ -947,7 +1098,7 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, l conf
 
 // describeSourced is describe with each statement's provenance: a step
 // must know which statements a pull request taught.
-func describeSourced(p store.Page, at time.Time) string {
+func describeSourced(p store.Page, newer map[string]string) string {
 	if p.RevisionID == 0 {
 		return "_None yet._"
 	}
@@ -968,8 +1119,11 @@ func describeSourced(p store.Page, at time.Time) string {
 		if len(prs) > 0 {
 			fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
 		}
-		if newerThan(s, at) {
+		switch newer[s.ID] {
+		case byNewerPR:
 			b.WriteString("\nA pull request newer than the code shown taught this: leave it as it is, do not edit, drop or confirm it.\n")
+		case byUnplaced:
+			b.WriteString("\nWhether the code shown holds the pull request that taught this is unknown: leave it as it is, do not edit, drop or confirm it.\n")
 		}
 	}
 	return b.String()

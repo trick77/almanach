@@ -231,7 +231,7 @@ export interface Baseline {
   run_id: number;
   state: RunState;
   mode: "full" | "reconcile";
-  trigger: "manual" | "first_ready" | "monthly";
+  trigger: "manual" | "first_ready" | "monthly" | "retry";
   commit: string;
   step: number;
   steps: number;

@@ -67,6 +67,14 @@ type Worker struct {
 	// rather than pay for the same step again.
 	base       *Baseline
 	saveFailed error
+	// ancestry is what git said of PR merge commits against the commit of
+	// run ancestryRun: the commit is pinned, so the answers hold for the
+	// whole run.
+	ancestryRun int64
+	ancestry    map[string]ancestry
+	// placeSince is when each merge commit whose read failed first failed
+	// in the run.
+	placeSince map[string]time.Time
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the
@@ -345,7 +353,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
 		return
 	}
-	statements, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt}, next)
+	statements, reason := attach(current.Statements, d.Statements, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next)
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	chars, capReason := check(summary, statements, maxStatements, maxChars)

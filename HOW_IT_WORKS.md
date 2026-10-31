@@ -196,7 +196,20 @@ nothing, so a long queue of runs never holds the notes for hours. The run
 pins the clone's last synced head, so a note merged after that fetch may
 have been folded before the run started: a statement such a pull request
 taught is marked read-only in the run's prompts and a patch touching it is
-refused, since the code the run reads cannot show it. Runs among
+refused, since the code the run reads cannot show it. Git decides first: a
+merge commit the run's commit holds is in it, whatever the clocks say (a
+rebase merge's head can be older than the PR's merge time); one it does
+not hold counts as newer unless merged more than a day before the commit,
+so a committer clock a day off does not fool it and a merge commit that
+never reaches the branch (a release branch, a rewritten history) soon
+stops counting. A PR source from before the merge commit was kept goes by
+its merge time with two minutes of slack. A git read that fails holds the
+step like a busy clone, before its files are read or a call made, for up to
+two minutes from that commit's first failure in the run; past that a
+statement whose merge commit git cannot place is read-only for the step
+(a patch touching it is refused, and the log says why) and asked again in
+the next. A statement another PR already marks newer holds nothing. Git's
+answers are kept for the run. Runs among
 themselves go oldest first, one to its end before the next begins.
 
 ## 4. The read side
@@ -336,9 +349,14 @@ of the project would be ignored. With the sources off, nothing changes:
 every note is taken and the wiki lists noergler's projects.
 
 **Triggers.** The poller queues a full run on a clone's first `ready` (its
-row had no head before), retries a failed first run a day on, and queues a
-reconcile when the head left the documented commit and the last run ended
-more than `ALMANACH_BASELINE_RECONCILE` ago; all only with the source's
+row had no head before), and queues a reconcile when the head left the
+documented commit and the last run ended more than
+`ALMANACH_BASELINE_RECONCILE` ago. A failed run, first, reconcile or a
+button's, is queued again in its own mode (trigger `retry`) a day after it
+ended, or after the interval when that is shorter, three times in a row,
+whatever the head and even with reconciles off; past that the repository
+is back on the interval, so a failure that is permanent costs a call a
+month, not a day. All only with the source's
 `auto_describe` on. The buttons on the source page queue a reconcile
 (Aktualisieren, a full run before the first) or a full run with a fresh
 catalogue (Neu beschreiben). Repositories cloned before the baseline
@@ -857,8 +875,8 @@ the reason in the log and the page unchanged:
   a catalogue path the tree does not have is dropped, a statement a step
   writes or edits keeps only the files the tree has, and the drop and edit
   rules for a PR statement read the whole tree.
-- A statement a PR merged after the run's commit taught is read-only for
-  that run.
+- A statement taught by a PR whose merge commit the run's commit does not
+  hold is read-only for that run.
 - A patch: an unnamed id stays; an invented id, an id edited twice, edited
   and dropped, or confirmed and dropped rejects it; a PR statement is
   dropped only when its files left the tree, and an edit of it keeps the
