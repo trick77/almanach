@@ -205,9 +205,10 @@ never reaches the branch (a release branch, a rewritten history) soon
 stops counting. A PR source from before the merge commit was kept goes by
 its merge time with two minutes of slack. A git read that fails holds the
 step like a busy clone, before its files are read or a call made, for up to
-two minutes from the first failure; past that a statement whose merge
-commit git cannot place is read-only for the step and asked again in the
-next. A statement another PR already marks newer holds nothing. Git's
+two minutes from that commit's first failure in the run; past that a
+statement whose merge commit git cannot place is read-only for the step
+(a patch touching it is refused, and the log says why) and asked again in
+the next. A statement another PR already marks newer holds nothing. Git's
 answers are kept for the run. Runs among
 themselves go oldest first, one to its end before the next begins.
 

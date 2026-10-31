@@ -106,8 +106,9 @@ type fakeCode struct {
 }
 
 func (c *fakeCode) Tree(ctx context.Context, _, _, _ string) ([]gitrepo.Entry, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if ctx.Err() != nil {
+		// What a git child killed by the cancel answers: no context error.
+		return nil, errors.New("git ls-tree: signal: killed")
 	}
 	return c.tree, c.readErr
 }
@@ -503,11 +504,11 @@ func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
 // unless merged more than a day before the read commit (a committer clock a
 // day off, and one that never reaches the branch soon stops counting). A
 // source without a full commit name goes by the merge time with two minutes
-// of slack. Failed reads hold the step for placeWait by the clock, each
-// asked once a step; past that a statement git cannot place is read-only
-// for the step and asked again in the next, so git's answer wins once it
-// comes, and a step with nothing open ends the episode. Answers are kept for
-// the run; a busy clone holds the step, unkept.
+// of slack. A failed read holds the step for placeWait from that commit's
+// first failure, by the clock, each asked once a step; past that a
+// statement git cannot place is read-only for the step and asked again in
+// the next, so git's answer wins once it comes. Answers are kept for the
+// run; a busy clone holds the step, unkept.
 func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 	x := newWorld(t, 16)
 	now := mergedAt
@@ -541,9 +542,9 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 		}
 	}
 	now = mergedAt.Add(placeWait)
-	want := map[string]bool{"not held, merged a minute later": true, "not held, an hour before (a clock ahead)": true,
-		"no commit, past the slack": true, "short commit, past the slack": true, "broken read": true, "another broken read": true,
-		"broken twice in one step": true}
+	want := map[string]string{"not held, merged a minute later": byNewerPR, "not held, an hour before (a clock ahead)": byNewerPR,
+		"no commit, past the slack": byNewerPR, "short commit, past the slack": byNewerPR, "broken read": byUnplaced,
+		"another broken read": byUnplaced, "broken twice in one step": byUnplaced}
 	got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt)
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("past placeWait: newer = %v, err %v; want %v", got, err, want)
@@ -556,27 +557,25 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 	if id := touchesNewer(want, inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}); id != "no commit, past the slack" {
 		t.Errorf("touchesNewer = %q", id)
 	}
-	// git recovers: its answer wins at the next step; with nothing left
-	// open the episode ends, and a new failure holds again.
+	// A commit that first fails later in the run gets its own wait.
+	late := strings.Repeat("f", 40)
+	x.code.containsErr[late] = errors.New("bad object")
+	withLate := append(slices.Clone(statements), pr("fails later", store.Source{Commit: late}))
+	if _, err := x.w.newerIDs(context.Background(), run, withLate, mergedAt); !errors.Is(err, errPlaceAgain) {
+		t.Fatalf("a commit failing later in the run: err = %v, want errPlaceAgain", err)
+	}
+	// git recovers: its answer wins at the next step.
 	x.code.containsErr = nil
 	x.code.held[broken], x.code.held[broken2] = true, true
-	if got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt); err != nil || got["broken read"] || got["another broken read"] {
+	if got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt); err != nil || got["broken read"] != "" || got["another broken read"] != "" {
 		t.Fatalf("after git recovered: newer = %v, err %v", got, err)
-	}
-	if !x.w.placeFailed.IsZero() {
-		t.Errorf("episode still open after a step with nothing open: %v", x.w.placeFailed)
 	}
 	// A statement another source already marks newer holds nothing.
 	both := []store.Statement{{ID: "s", Sources: []store.Source{
 		{PRKey: "tools/svc#1", Commit: out, MergedAt: mergedAt.Add(time.Minute)}, {PRKey: "tools/svc#2", Commit: strings.Repeat("e", 40)}}}}
 	x.code.containsErr = map[string]error{strings.Repeat("e", 40): errors.New("bad object")}
-	if got, err := x.w.newerIDs(context.Background(), run, both, mergedAt); err != nil || !got["s"] {
+	if got, err := x.w.newerIDs(context.Background(), run, both, mergedAt); err != nil || got["s"] != byNewerPR {
 		t.Fatalf("a statement already newer: newer = %v, err %v", got, err)
-	}
-	x.code.containsErr = map[string]error{broken: errors.New("bad object")}
-	delete(x.code.held, broken)
-	if _, err := x.w.newerIDs(context.Background(), &store.BaselineRun{ID: 9, ProjectKey: "tools", Slug: "svc", Commit: head}, statements, mergedAt); !errors.Is(err, errPlaceAgain) {
-		t.Fatalf("a new failure: err = %v, want errPlaceAgain", err)
 	}
 	// A new run asks again; a busy clone is the step's to wait out, and
 	// the next step asks again.
@@ -586,7 +585,6 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 		t.Fatalf("busy clone: err = %v, want ErrCloneBusy", err)
 	}
 	x.code.containsErr, x.code.asked = nil, 0
-	x.code.held[broken] = true
 	if _, err := x.w.newerIDs(context.Background(), next, statements, mergedAt); err != nil || x.code.asked != 4 {
 		t.Fatalf("after the busy step: err %v, git asked %d times, want in, out, broken and broken2 again (4)", err, x.code.asked)
 	}
@@ -626,7 +624,7 @@ func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 	now = now.Add(placeWait)
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 1 || !strings.Contains(x.models.prompts[1], "newer than the code shown") {
+	if r.State != store.RunDone || r.Skipped != 1 || !strings.Contains(x.models.prompts[1], "taught this is unknown") {
 		t.Fatalf("after placeWait: run = %+v; want done, the drop of s1 refused", r)
 	}
 }
