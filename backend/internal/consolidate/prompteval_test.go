@@ -2,6 +2,7 @@ package consolidate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -325,4 +326,97 @@ func dump(t *testing.T, dir, name string, p store.Page) {
 	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The page as stored, for TestEvalLoad.
+	j, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".json"), j, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEvalLoad loads the pages an eval wrote (EVAL_OUT/*.json) into EVAL_DB,
+// a new SQLite file the app serves as ALMANACH_DB_PATH with
+// ALMANACH_REPOS_DIR set: project EVAL as a static source, each repository
+// on it ready, each page one baseline revision. The pages and their
+// diagrams are then read in the UI, as a reader sees them. No model call:
+// `make prompt-eval-db`.
+func TestEvalLoad(t *testing.T) {
+	out, path := os.Getenv("EVAL_OUT"), os.Getenv("EVAL_DB")
+	if out == "" || path == "" {
+		t.Skip("EVAL_OUT and EVAL_DB unset: make prompt-eval-db")
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("%s exists: EVAL_DB names a new file", path)
+	}
+	files, err := filepath.Glob(filepath.Join(out, "*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no pages in %s (%v): run make prompt-eval first", out, err)
+	}
+	urls := map[string]string{}
+	for _, pair := range strings.Split(os.Getenv("EVAL_REPOS"), ",") {
+		if slug, url, ok := strings.Cut(pair, "="); ok {
+			urls[slug] = url
+		}
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, path, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSource(ctx, store.ProjectSource{ProjectKey: evalProject, Kind: store.SourceStatic, TokenAuth: store.TokenBasic}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p store.Page
+		if err := json.Unmarshal(b, &p); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		rev := store.NewRevision{Scope: store.ScopeRepository, ProjectKey: evalProject, Summary: p.Summary, Statements: p.Statements,
+			Chars: prose(p.Summary, p.Statements), SourceKind: store.FromBaseline, SourceCommit: evalCommit(p)}
+		if slug := strings.TrimSuffix(filepath.Base(f), ".json"); slug == "_project" {
+			rev.Scope, rev.Map = store.ScopeProject, p.Map
+		} else {
+			url := urls[slug]
+			if url == "" {
+				url = "https://example.invalid/" + slug + ".git"
+			}
+			if err := st.AddSourceRepo(ctx, store.SourceRepo{ProjectKey: evalProject, Slug: slug, CloneURL: url, Origin: store.OriginManual}); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.MarkRepoReady(ctx, evalProject, slug, "", rev.SourceCommit); err != nil {
+				t.Fatal(err)
+			}
+			rev.RepoSlug = slug
+		}
+		if _, err := st.InsertRevision(ctx, rev); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		t.Logf("%s: %d statements", filepath.Base(f), len(p.Statements))
+	}
+}
+
+// evalCommit is the commit a dumped page was read at, from its statements'
+// baseline sources; "eval" when none names one.
+func evalCommit(p store.Page) string {
+	if p.SourceCommit != "" {
+		return p.SourceCommit
+	}
+	for _, s := range p.Statements {
+		for _, src := range s.Sources {
+			if src.IsBaseline() && src.Commit != "" {
+				return src.Commit
+			}
+		}
+	}
+	return "eval"
 }
