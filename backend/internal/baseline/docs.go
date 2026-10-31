@@ -41,6 +41,10 @@ func docRank(p string) int {
 	return -1
 }
 
+// IsDoc reports whether the overview would read a path: a doc, a manifest
+// or a diagram source.
+func IsDoc(p string) bool { return docRank(p) >= 0 }
+
 // diagram reports whether a file is a diagram's text source. A .drawio is
 // not: its XML is layout, not content.
 func diagram(base string) bool {

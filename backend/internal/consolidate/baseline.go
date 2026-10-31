@@ -34,7 +34,7 @@ type RunStore interface {
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
-	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
+	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -510,6 +510,9 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return readErr(err)
 	}
+	if name == overviewName {
+		newer = codeBacked(page.Statements, newer)
+	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
 		return readErr(err)
@@ -533,8 +536,11 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string) error {
 	if id := touchesNewer(newer, patch); id != "" {
 		why := " was taught by a pull request newer than the commit read"
-		if newer[id] == byUnplaced {
+		switch newer[id] {
+		case byUnplaced:
 			why = " rests on a merge commit git could not place"
+		case byCode:
+			why = " rests on code, which the overview does not read"
 		}
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+id+why)
 	}
@@ -616,12 +622,34 @@ const notHeldMargin = 24 * time.Hour
 // webhook wakes cannot use it up.
 const placeWait = 2 * time.Minute
 
-// Why newerIDs leaves a statement alone: a newer PR taught it, or git could
-// not place the merge commit of the PR that did.
+// Why a step leaves a statement alone: a newer PR taught it, git could not
+// place the merge commit of the PR that did, or it rests on code the
+// overview does not read.
 const (
 	byNewerPR  = "newer"
 	byUnplaced = "unplaced"
+	byCode     = "code"
 )
+
+// codeBacked adds to newer the statements resting on a file that is no doc:
+// the overview reads docs alone, and code wins over them.
+func codeBacked(statements []store.Statement, newer map[string]string) map[string]string {
+	for _, s := range statements {
+		if newer[s.ID] != "" {
+			continue
+		}
+		for _, f := range s.Files {
+			if !baseline.IsDoc(strings.TrimPrefix(f, "./")) {
+				if newer == nil {
+					newer = map[string]string{}
+				}
+				newer[s.ID] = byCode
+				break
+			}
+		}
+	}
+	return newer
+}
 
 // errPlaceAgain is a merge commit git could not place: the step is taken
 // again at the next drain, before its files are read or a call made.
@@ -931,7 +959,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	repos, err := w.base.Store.Repos(ctx, r.ProjectKey, true)
+	repos, err := w.base.Store.RepoSummaries(ctx, r.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
 		return errStop
@@ -1103,7 +1131,7 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
 		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
-		"{project_description}", describe(projectPage), "{repo_description}", describe(repoPage), "{other_repos}", others,
+		"{project_description}", describeSourced(projectPage, nil), "{repo_description}", describe(repoPage), "{other_repos}", others,
 	).Replace(prompts.Project)
 }
 
@@ -1111,17 +1139,18 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 // by slug, so the project is written as a whole. Over ProjectReposMaxBytes
 // each gets an even share, what a short one leaves going to the rest, and a
 // longer one is cut to its share at a paragraph or sentence and says so:
-// no repository is left out for its length. Those without a summary are
+// no repository is left out for its length. Those without a summary, or
+// with a share too small to hold one (hundreds of repositories), are
 // named. A prompt's input, never stored text.
-func otherRepos(repos []store.RepoRow, self string) string {
-	var others []store.RepoRow
+func otherRepos(repos []store.RepoSummary, self string) string {
+	var others []store.RepoSummary
 	for _, r := range repos {
 		if r.Slug != self && r.Summary != "" {
 			others = append(others, r)
 		}
 	}
 	bySize := slices.Clone(others)
-	slices.SortStableFunc(bySize, func(a, b store.RepoRow) int { return len(a.Summary) - len(b.Summary) })
+	slices.SortStableFunc(bySize, func(a, b store.RepoSummary) int { return len(a.Summary) - len(b.Summary) })
 	text := map[string]string{}
 	left := baseline.ProjectReposMaxBytes
 	for i, r := range bySize {
@@ -1133,7 +1162,7 @@ func otherRepos(repos []store.RepoRow, self string) string {
 	for _, r := range repos {
 		switch {
 		case r.Slug == self:
-		case r.Summary == "":
+		case text[r.Slug] == "":
 			named = append(named, r.Slug)
 		default:
 			fmt.Fprintf(&b, "### %s\n\n%s\n\n", r.Slug, text[r.Slug])
@@ -1152,18 +1181,23 @@ func otherRepos(repos []store.RepoRow, self string) string {
 const shortenedMark = " […shortened]"
 
 // shorten cuts s to at most n bytes at the last paragraph break, else the
-// last sentence end, else a rune boundary, and marks the cut.
+// last sentence end, else a rune boundary, and marks the cut; a break only
+// in the second half, so an early one does not waste the share. "" when n
+// does not hold the mark.
 func shorten(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	cut := s[:max(n-len(shortenedMark), 0)]
+	if n <= len(shortenedMark) {
+		return ""
+	}
+	cut := s[:n-len(shortenedMark)]
 	for !utf8.ValidString(cut) {
 		cut = cut[:len(cut)-1]
 	}
-	if i := strings.LastIndex(cut, "\n\n"); i > 0 {
+	if i := strings.LastIndex(cut, "\n\n"); i > len(cut)/2 {
 		cut = cut[:i]
-	} else if i := strings.LastIndex(cut, ". "); i > 0 {
+	} else if i := strings.LastIndex(cut, ". "); i > len(cut)/2 {
 		cut = cut[:i+1]
 	}
 	return cut + shortenedMark
@@ -1197,6 +1231,8 @@ func describeSourced(p store.Page, newer map[string]string) string {
 			b.WriteString("\nA pull request newer than the code shown taught this: leave it as it is, do not edit, drop or confirm it.\n")
 		case byUnplaced:
 			b.WriteString("\nWhether the code shown holds the pull request that taught this is unknown: leave it as it is, do not edit, drop or confirm it.\n")
+		case byCode:
+			b.WriteString("\nThis rests on code, which the overview does not read: leave it as it is, do not edit, drop or confirm it.\n")
 		}
 	}
 	return b.String()

@@ -30,10 +30,10 @@ const evalProject = "EVAL"
 // the runs wrote, so each project step sees the ones before it.
 type evalStore struct{ *runStore }
 
-func (s evalStore) Repos(_ context.Context, project string, _ bool) ([]store.RepoRow, error) {
-	var out []store.RepoRow
+func (s evalStore) RepoSummaries(_ context.Context, project string) ([]store.RepoSummary, error) {
+	var out []store.RepoSummary
 	for _, r := range s.repos {
-		out = append(out, store.RepoRow{Slug: r.Slug, Summary: s.pages[pageKey(store.ScopeRepository, project, r.Slug)].Summary})
+		out = append(out, store.RepoSummary{Slug: r.Slug, Summary: s.pages[pageKey(store.ScopeRepository, project, r.Slug)].Summary})
 	}
 	return out, nil
 }
@@ -229,12 +229,18 @@ func TestPromptEval(t *testing.T) {
 		st.runs = append(st.runs, store.BaselineRun{ID: int64(len(st.runs) + 1), ProjectKey: evalProject, Slug: repo.Slug,
 			Mode: store.RunFull, Trigger: store.TriggerManual, Commit: repo.HeadCommit, State: store.RunQueued})
 		run := func() store.BaselineRun { return st.runs[len(st.runs)-1] }
-		// A gateway hold ends a drain; the next one resumes after it.
+		// A gateway hold ends a drain; the next one resumes after it. Any
+		// other pause (a store refusal, say) is the eval's fault: stop, never
+		// drain again into paid steps.
 		for lap := 0; run().Open() && lap < 40; lap++ {
 			w.drain(ctx)
-			if run().Open() && w.holding() {
-				time.Sleep(time.Until(w.retryAt))
+			if !run().Open() {
+				break
 			}
+			if !w.holding() {
+				t.Fatalf("%s: drain paused without a hold, run at %s step %d: %s", repo.Slug, run().State, run().Step, run().Error)
+			}
+			time.Sleep(time.Until(w.retryAt))
 		}
 		r := run()
 		if r.State != store.RunDone {

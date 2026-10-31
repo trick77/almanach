@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -103,6 +104,13 @@ func TestSourcedLists(t *testing.T) {
 	rs, err := s.Repos(ctx, "PRJ", true)
 	if err != nil || len(rs) != 2 || rs[0].Slug != "svc" || rs[0].Notes != 1 || rs[1].Slug != "web" {
 		t.Fatalf("Repos = %+v %v", rs, err)
+	}
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "web", Summary: "Absatz eins.\n\nAbsatz zwei.", SourcePR: "PRJ/web#1"}); err != nil {
+		t.Fatal(err)
+	}
+	sums, err := s.RepoSummaries(ctx, "PRJ")
+	if want := []RepoSummary{{"svc", ""}, {"web", "Absatz eins.\n\nAbsatz zwei."}}; err != nil || !reflect.DeepEqual(sums, want) {
+		t.Errorf("RepoSummaries = %+v %v, want %+v", sums, err, want)
 	}
 	if team, ok, err := s.ProjectExists(ctx, "tools", true); err != nil || !ok || team != "" {
 		t.Errorf("ProjectExists(tools) = %q %v %v", team, ok, err)

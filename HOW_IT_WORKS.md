@@ -386,9 +386,10 @@ resumes after a restart. The run pins the clone's head when it starts.
    such as `.puml` and `.mmd` at the root or under `docs/`, last so a
    large generated one never crowds out prose), write the summary and
    what spans the repository. A reconcile reads them only when one changed.
-   Docs are claims: the overview never corrects a statement resting on
-   code from a doc alone, and a subject step whose code contradicts a
-   statement corrects it from the code, whatever it was learned from.
+   Docs are claims: to the overview a statement resting on any file that
+   is no doc is read-only, as a newer PR's is (an overview patch touching
+   it is refused), and a subject step whose code contradicts a statement
+   corrects it from the code, whatever it was learned from.
 3. *Subjects.* One step per subject the run reads: its files through one
    `cat-file --batch`, the current page beside them, and for a reconcile
    the ids of the statements resting on changed files. The answer is a

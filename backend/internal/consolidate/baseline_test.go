@@ -34,7 +34,7 @@ type runStore struct {
 	documented *store.BaselineRun
 	sources    map[string]bool
 	// others is the project's source repositories with their summaries.
-	others    []store.RepoRow
+	others    []store.RepoSummary
 	othersErr error
 	// saved is every state a run was saved in, in order.
 	saved []string
@@ -93,7 +93,7 @@ func (s *runStore) IsSourceRepo(_ context.Context, key, slug string) (bool, erro
 	return s.sources[key+"/"+slug], nil
 }
 
-func (s *runStore) Repos(context.Context, string, bool) ([]store.RepoRow, error) {
+func (s *runStore) RepoSummaries(context.Context, string) ([]store.RepoSummary, error) {
 	return s.others, s.othersErr
 }
 
@@ -246,7 +246,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s2"), "rule", "Login", "Zweistufig, mit Sperre.", "auth/login.go")}, Confirmed: []string{"s1"}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.", Statements: []inference.Statement{}}}
-	x.st.others = []store.RepoRow{{Slug: "portal", Summary: "Das Portal ruft svc auf."}, {Slug: "svc", Summary: "Alte Fassung."}}
+	x.st.others = []store.RepoSummary{{Slug: "portal", Summary: "Das Portal ruft svc auf."}, {Slug: "svc", Summary: "Alte Fassung."}}
 	x.w.drain(context.Background())
 
 	r := x.run()
@@ -311,20 +311,70 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 // without one named; under the cap whole, over it an even share each, a
 // short one whole and the long ones cut and marked, none left out.
 func TestOtherRepos(t *testing.T) {
-	if got := otherRepos([]store.RepoRow{{Slug: "svc", Summary: "x"}}, "svc"); got != "_None._" {
+	if got := otherRepos([]store.RepoSummary{{Slug: "svc", Summary: "x"}}, "svc"); got != "_None._" {
 		t.Errorf("only itself = %q", got)
 	}
-	got := otherRepos([]store.RepoRow{{Slug: "a", Summary: "eins"}, {Slug: "c"}, {Slug: "svc", Summary: "selbst"}}, "svc")
+	got := otherRepos([]store.RepoSummary{{Slug: "a", Summary: "eins"}, {Slug: "c"}, {Slug: "svc", Summary: "selbst"}}, "svc")
 	if want := "### a\n\neins\n\nAlso in the project, without a summary here: c.\n"; got != want {
 		t.Errorf("under the cap = %q\nwant %q", got, want)
 	}
 	big := strings.Repeat("Ein Satz. ", baseline.ProjectReposMaxBytes/10)
-	got = otherRepos([]store.RepoRow{{Slug: "a", Summary: big}, {Slug: "b", Summary: "kurz"}, {Slug: "c"},
+	got = otherRepos([]store.RepoSummary{{Slug: "a", Summary: big}, {Slug: "b", Summary: "kurz"}, {Slug: "c"},
 		{Slug: "d", Summary: big[:len(big)/2]}, {Slug: "svc", Summary: "selbst"}}, "svc")
 	if !strings.HasPrefix(got, "### a\n\nEin Satz.") || !strings.Contains(got, "\n\n### b\n\nkurz\n\n### d\n\nEin Satz.") ||
 		strings.Count(got, "Satz."+shortenedMark) != 2 || strings.Contains(got, "selbst") ||
 		!strings.HasSuffix(got, "without a summary here: c.\n") || len(got) > baseline.ProjectReposMaxBytes+100 {
 		t.Errorf("over the cap: %d bytes, %d cut, …%q", len(got), strings.Count(got, shortenedMark), got[len(got)-120:])
+	}
+}
+
+// In the overview a statement resting on a file that is no doc is read-only
+// and says so; one on docs alone, or already held for a newer PR, is not
+// marked again.
+func TestCodeBacked(t *testing.T) {
+	statements := []store.Statement{
+		{ID: "s1", Files: []string{"README.md", "./docs/flow.puml"}},
+		{ID: "s2", Files: []string{"README.md", "auth/login.go"}},
+		{ID: "s3", Files: []string{"billing/run.go"}},
+		{ID: "s4"},
+	}
+	got := codeBacked(statements, map[string]string{"s3": byNewerPR})
+	if want := map[string]string{"s2": byCode, "s3": byNewerPR}; !reflect.DeepEqual(got, want) {
+		t.Errorf("codeBacked = %v, want %v", got, want)
+	}
+	if got := codeBacked(statements[:1], nil); got != nil {
+		t.Errorf("docs only = %v, want nil", got)
+	}
+	page := store.Page{RevisionID: 1, Statements: statements[1:2]}
+	if s := describeSourced(page, codeBacked(page.Statements, nil)); !strings.Contains(s, "rests on code, which the overview does not read") {
+		t.Errorf("describeSourced:\n%s", s)
+	}
+}
+
+// An overview patch that edits a statement resting on code is refused: the
+// part is skipped, the statement stays as the code's step wrote it.
+func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
+	x := newWorld(t, 16)
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	login := store.Statement{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}}
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{login}}
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s1"), "rule", "Login", "Laut README einstufig.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	if !strings.Contains(x.models.prompts[1], "rests on code, which the overview does not read") {
+		t.Errorf("overview prompt does not mark s1:\n%s", x.models.prompts[1])
+	}
+	if p := x.plan(t); !slices.Contains(p.Skipped, overviewName) {
+		t.Errorf("skipped = %v, want the overview", p.Skipped)
+	}
+	if got := x.st.pages[key].Statements[0]; got.Text != "Zweistufig." {
+		t.Errorf("s1 = %+v, want it as the code's step wrote it", got)
 	}
 }
 
@@ -339,6 +389,9 @@ func TestShorten(t *testing.T) {
 		{"Erster Absatz.\n\nZweiter Absatz, lang genug.", 32, "Erster Absatz." + shortenedMark},
 		{"Ein Satz. Noch einer, lang genug.", 30, "Ein Satz." + shortenedMark},
 		{"äääääääääääääääääääää", 22, "äää" + shortenedMark},
+		// An early break would waste the share: cut late instead.
+		{"Kurz.\n\n" + strings.Repeat("x", 60), 45, "Kurz.\n\n" + strings.Repeat("x", 23) + shortenedMark},
+		{"zu lang für den Anteil", 10, ""},
 	} {
 		if got := shorten(c.in, c.n); got != c.want || len(got) > max(c.n, len(c.in)) {
 			t.Errorf("shorten(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
