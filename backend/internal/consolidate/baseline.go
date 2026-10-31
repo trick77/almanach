@@ -587,14 +587,22 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 // is made.
 const newerSlack = 2 * time.Minute
 
+// notHeldMargin is how long before the read commit a merge commit git does
+// not find in it must have been merged to count as off the branch rather
+// than newer: wide enough for any committer clock, short enough that a
+// merge commit that never reaches the branch soon stops counting.
+const notHeldMargin = 24 * time.Hour
+
 // ancestry is what git said of a PR's merge commit against a run's commit.
 type ancestry int8
 
 const (
-	// unplaced: git cannot say (no commit name, or a read that failed).
+	// unplaced: no full commit name to ask git about.
 	unplaced ancestry = iota
 	held
 	notHeld
+	// unknown: the read failed this step; not kept, asked again next step.
+	unknown
 )
 
 // newerIDs is the statements a pull request taught that the commit a run
@@ -604,23 +612,31 @@ const (
 //
 // A merge commit the read commit holds is in it, whatever the clocks say (a
 // rebase merge's head is older than the PR's merge time). One it does not
-// hold is newer when merged after the read commit: one that never reaches
-// the branch (a release branch, a rewritten history) stops counting once a
-// later commit is read. A source git cannot place goes by the clock alone,
-// with newerSlack. Git is asked once per merge commit and run.
+// hold is newer unless merged well before the read commit (notHeldMargin):
+// one that never reaches the branch (a release branch, a rewritten history)
+// soon stops counting. A source without a merge commit goes by the clock,
+// with newerSlack. A read that fails leaves the statement read-only for the
+// step and git is not asked again in it. Answers are kept for the run.
 func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements []store.Statement, at time.Time) (map[string]bool, error) {
 	if w.ancestryRun != r.ID || w.ancestry == nil {
 		w.ancestryRun, w.ancestry = r.ID, map[string]ancestry{}
 	}
 	newer := map[string]bool{}
+	failed := false
 	for _, s := range statements {
 		for _, src := range s.Sources {
 			if src.IsBaseline() {
 				continue
 			}
-			a, err := w.place(ctx, r, src.Commit)
-			if err != nil {
-				return nil, err
+			a := unknown
+			if !failed {
+				var err error
+				if a, err = w.place(ctx, r, src.Commit); err != nil {
+					return nil, err
+				}
+				failed = a == unknown
+			} else if src.Commit == "" {
+				a = unplaced
 			}
 			if newerSource(src, a, at) {
 				newer[s.ID] = true
@@ -632,8 +648,8 @@ func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements 
 }
 
 // place asks git whether the run's commit holds a merge commit, once per
-// run. Only a busy clone or the step's end is an error: a read that fails
-// for one old commit leaves it to the clock, it does not fail the step.
+// run. Only a busy clone or the step's end is an error; any other failed
+// read is unknown, not kept.
 func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string) (ancestry, error) {
 	if commit == "" {
 		return unplaced, nil
@@ -648,13 +664,14 @@ func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string)
 		a = held
 	case err == nil:
 	case errors.Is(err, ErrCloneBusy) || ctx.Err() != nil:
-		return unplaced, err
-	default:
-		if !errors.Is(err, gitrepo.ErrBadSHA) {
-			w.log.WarnContext(ctx, "baseline: merge commit not placed, its merge time decides",
-				"commit", gitrepo.ShortSHA(commit), logging.Err(err))
-		}
+		return unknown, err
+	case errors.Is(err, gitrepo.ErrBadSHA):
+		// Not a commit name (noergler's to send): the clock decides.
 		a = unplaced
+	default:
+		w.log.WarnContext(ctx, "baseline: merge commit not placed, statements read-only this step",
+			"commit", gitrepo.ShortSHA(commit), logging.Err(err))
+		return unknown, nil
 	}
 	w.ancestry[commit] = a
 	return a, nil
@@ -662,10 +679,14 @@ func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string)
 
 func newerSource(src store.Source, a ancestry, at time.Time) bool {
 	switch {
-	case a == held || at.IsZero():
+	case a == held:
 		return false
+	case a == unknown:
+		return true
 	case a == notHeld:
-		return src.MergedAt.After(at)
+		return at.IsZero() || !src.MergedAt.Before(at.Add(-notHeldMargin))
+	case at.IsZero():
+		return false
 	}
 	return src.MergedAt.After(at.Add(newerSlack))
 }

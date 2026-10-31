@@ -199,12 +199,13 @@ taught is marked read-only in the run's prompts and a patch touching it is
 refused, since the code the run reads cannot show it. Git decides first: a
 merge commit the run's commit holds is in it, whatever the clocks say (a
 rebase merge's head can be older than the PR's merge time); one it does
-not hold counts as newer only when merged after the commit, so a merge
-commit that never reaches the branch (a release branch, a rewritten
-history) stops counting once a later commit is read. A PR source git
-cannot place (from before the merge commit was kept, or a read that
-failed) goes by its merge time with two minutes of slack. Git is asked
-once per merge commit and run. Runs among
+not hold counts as newer unless merged more than a day before the commit,
+so no committer clock fools it and a merge commit that never reaches the
+branch (a release branch, a rewritten history) soon stops counting. A PR
+source from before the merge commit was kept goes by its merge time with
+two minutes of slack. A git read that fails leaves the statement
+read-only for that step and is asked again in the next. Git is asked once
+per merge commit and run. Runs among
 themselves go oldest first, one to its end before the next begins.
 
 ## 4. The read side

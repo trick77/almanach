@@ -497,11 +497,12 @@ func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
 // Whether a PR's statement is newer than the read commit. A merge commit
 // the read commit holds is in it whatever the clocks say (a rebase merge's
 // head is older than the PR's merge time); one it does not hold is newer
-// only when merged after the read commit, so one that never reaches the
-// branch stops counting once a later commit is read. A source git cannot
-// place (no commit, a name git refuses, a failed read) goes by the merge
-// time with two minutes of slack. Git is asked once per commit and run; a
-// busy clone holds the step.
+// unless merged more than a day before the read commit (any committer
+// clock, and one that never reaches the branch soon stops counting). A
+// source without a full commit name goes by the merge time with two minutes
+// of slack. A failed read makes its statement, and every later one git would
+// have to place, read-only for the step, and is asked again next step.
+// Answers are kept for the run; a busy clone holds the step, unkept.
 func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 	x := newWorld(t, 16)
 	in, out, broken := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
@@ -515,15 +516,19 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 		pr("held, merged an hour later", store.Source{Commit: in, MergedAt: mergedAt.Add(time.Hour)}),
 		pr("held again", store.Source{Commit: in}),
 		pr("not held, merged a minute later", store.Source{Commit: out, MergedAt: mergedAt.Add(time.Minute)}),
-		pr("not held, merged before", store.Source{Commit: out, MergedAt: mergedAt.Add(-time.Hour)}),
+		pr("not held, an hour before (a clock ahead)", store.Source{Commit: out, MergedAt: mergedAt.Add(-time.Hour)}),
+		pr("not held, two days before", store.Source{Commit: out, MergedAt: mergedAt.Add(-48 * time.Hour)}),
 		pr("no commit, within the slack", store.Source{MergedAt: mergedAt.Add(newerSlack)}),
 		pr("no commit, past the slack", store.Source{MergedAt: mergedAt.Add(newerSlack + time.Second)}),
 		pr("short commit, past the slack", store.Source{Commit: "short", MergedAt: mergedAt.Add(time.Hour)}),
-		pr("broken read, within the slack", store.Source{Commit: broken, MergedAt: mergedAt.Add(time.Minute)}),
+		pr("broken read", store.Source{Commit: broken, MergedAt: mergedAt.Add(-48 * time.Hour)}),
+		pr("held, after the failure", store.Source{Commit: in}),
+		pr("no commit, after the failure", store.Source{MergedAt: mergedAt}),
 		{ID: "baseline only", Sources: []store.Source{{Kind: store.FromBaseline, Commit: head}}},
 	}
 	run := &store.BaselineRun{ID: 7, ProjectKey: "tools", Slug: "svc", Commit: head}
-	want := map[string]bool{"not held, merged a minute later": true, "no commit, past the slack": true, "short commit, past the slack": true}
+	want := map[string]bool{"not held, merged a minute later": true, "not held, an hour before (a clock ahead)": true,
+		"no commit, past the slack": true, "short commit, past the slack": true, "broken read": true, "held, after the failure": true}
 	for step := range 2 {
 		got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt)
 		if err != nil {
@@ -533,16 +538,23 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 			t.Fatalf("step %d: newer = %v, want %v", step, got, want)
 		}
 	}
-	if x.code.asked != 3 {
-		t.Errorf("git asked %d times over two steps, want once per merge commit and run (3)", x.code.asked)
+	// in and out once for the run, the failed read once per step.
+	if x.code.asked != 4 {
+		t.Errorf("git asked %d times over two steps, want 4", x.code.asked)
 	}
 	if id := touchesNewer(want, inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}); id != "no commit, past the slack" {
 		t.Errorf("touchesNewer = %q", id)
 	}
-	// A new run asks again; a busy clone is the step's to wait out.
+	// A new run asks again; a busy clone is the step's to wait out, and
+	// the next step asks again.
+	next := &store.BaselineRun{ID: 8, ProjectKey: "tools", Slug: "svc", Commit: head}
 	x.code.containsErr = map[string]error{in: ErrCloneBusy}
-	if _, err := x.w.newerIDs(context.Background(), &store.BaselineRun{ID: 8, ProjectKey: "tools", Slug: "svc", Commit: head}, statements, mergedAt); !errors.Is(err, ErrCloneBusy) {
+	if _, err := x.w.newerIDs(context.Background(), next, statements, mergedAt); !errors.Is(err, ErrCloneBusy) {
 		t.Fatalf("busy clone: err = %v, want ErrCloneBusy", err)
+	}
+	x.code.containsErr, x.code.asked = nil, 0
+	if _, err := x.w.newerIDs(context.Background(), next, statements, mergedAt); err != nil || x.code.asked != 2 {
+		t.Fatalf("after the busy step: err %v, git asked %d times, want in and out again (2)", err, x.code.asked)
 	}
 }
 
