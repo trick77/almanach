@@ -105,7 +105,10 @@ type fakeCode struct {
 	read        [][]string
 }
 
-func (c *fakeCode) Tree(context.Context, string, string, string) ([]gitrepo.Entry, error) {
+func (c *fakeCode) Tree(ctx context.Context, _, _, _ string) ([]gitrepo.Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return c.tree, c.readErr
 }
 func (c *fakeCode) Diff(context.Context, string, string, string, string) ([]gitrepo.Entry, error) {
@@ -500,12 +503,15 @@ func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
 // unless merged more than a day before the read commit (a committer clock a
 // day off, and one that never reaches the branch soon stops counting). A
 // source without a full commit name goes by the merge time with two minutes
-// of slack. Failed reads hold the step twice a run, whichever commits fail;
-// past that a statement git cannot place is read-only for the step and
-// asked again in the next, so git's answer wins once it comes. Answers are
-// kept for the run; a busy clone holds the step, unkept.
+// of slack. Failed reads hold the step for placeWait by the clock, each
+// asked once a step; past that a statement git cannot place is read-only
+// for the step and asked again in the next, so git's answer wins once it
+// comes, and a step with nothing open ends the episode. Answers are kept for
+// the run; a busy clone holds the step, unkept.
 func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 	x := newWorld(t, 16)
+	now := mergedAt
+	x.w.now = func() time.Time { return now }
 	in, out, broken, broken2 := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
 	x.code.held = map[string]bool{in: true, out: false}
 	x.code.containsErr = map[string]error{broken: errors.New("bad object"), broken2: errors.New("bad object")}
@@ -524,39 +530,53 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 		pr("short commit, past the slack", store.Source{Commit: "short", MergedAt: mergedAt.Add(time.Hour)}),
 		pr("broken read", store.Source{Commit: broken, MergedAt: mergedAt.Add(-48 * time.Hour)}),
 		pr("another broken read", store.Source{Commit: broken2, MergedAt: mergedAt.Add(-48 * time.Hour)}),
+		pr("broken twice in one step", store.Source{Commit: broken2, MergedAt: mergedAt.Add(-48 * time.Hour)}),
 		{ID: "baseline only", Sources: []store.Source{{Kind: store.FromBaseline, Commit: head}}},
 	}
 	run := &store.BaselineRun{ID: 7, ProjectKey: "tools", Slug: "svc", Commit: head}
-	for hold := range placeHolds {
+	for _, after := range []time.Duration{0, time.Minute, placeWait - time.Second} {
+		now = mergedAt.Add(after)
 		if _, err := x.w.newerIDs(context.Background(), run, statements, mergedAt); !errors.Is(err, errPlaceAgain) {
-			t.Fatalf("failed read, hold %d: err = %v, want errPlaceAgain", hold, err)
+			t.Fatalf("failed reads %v in: err = %v, want errPlaceAgain", after, err)
 		}
 	}
+	now = mergedAt.Add(placeWait)
 	want := map[string]bool{"not held, merged a minute later": true, "not held, an hour before (a clock ahead)": true,
-		"no commit, past the slack": true, "short commit, past the slack": true, "broken read": true, "another broken read": true}
-	for step := range 2 {
-		got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("step %d: newer = %v, want %v", step, got, want)
-		}
+		"no commit, past the slack": true, "short commit, past the slack": true, "broken read": true, "another broken read": true,
+		"broken twice in one step": true}
+	got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("past placeWait: newer = %v, err %v; want %v", got, err, want)
 	}
-	// in and out once for the run; broken on both holds and both steps,
-	// broken2 on both steps.
-	if x.code.asked != 2+4+2 {
-		t.Errorf("git asked %d times, want 8", x.code.asked)
+	// in and out once for the run; each failing commit once a step, four
+	// steps.
+	if x.code.asked != 2+2*4 {
+		t.Errorf("git asked %d times, want 10", x.code.asked)
 	}
 	if id := touchesNewer(want, inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}); id != "no commit, past the slack" {
 		t.Errorf("touchesNewer = %q", id)
 	}
-	// git recovers: its answer wins at the next step.
-	delete(x.code.containsErr, broken)
-	x.code.held[broken] = true
-	got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt)
-	if err != nil || got["broken read"] || !got["another broken read"] {
-		t.Fatalf("after git recovered for one commit: newer = %v, err %v", got, err)
+	// git recovers: its answer wins at the next step; with nothing left
+	// open the episode ends, and a new failure holds again.
+	x.code.containsErr = nil
+	x.code.held[broken], x.code.held[broken2] = true, true
+	if got, err := x.w.newerIDs(context.Background(), run, statements, mergedAt); err != nil || got["broken read"] || got["another broken read"] {
+		t.Fatalf("after git recovered: newer = %v, err %v", got, err)
+	}
+	if !x.w.placeFailed.IsZero() {
+		t.Errorf("episode still open after a step with nothing open: %v", x.w.placeFailed)
+	}
+	// A statement another source already marks newer holds nothing.
+	both := []store.Statement{{ID: "s", Sources: []store.Source{
+		{PRKey: "tools/svc#1", Commit: out, MergedAt: mergedAt.Add(time.Minute)}, {PRKey: "tools/svc#2", Commit: strings.Repeat("e", 40)}}}}
+	x.code.containsErr = map[string]error{strings.Repeat("e", 40): errors.New("bad object")}
+	if got, err := x.w.newerIDs(context.Background(), run, both, mergedAt); err != nil || !got["s"] {
+		t.Fatalf("a statement already newer: newer = %v, err %v", got, err)
+	}
+	x.code.containsErr = map[string]error{broken: errors.New("bad object")}
+	delete(x.code.held, broken)
+	if _, err := x.w.newerIDs(context.Background(), &store.BaselineRun{ID: 9, ProjectKey: "tools", Slug: "svc", Commit: head}, statements, mergedAt); !errors.Is(err, errPlaceAgain) {
+		t.Fatalf("a new failure: err = %v, want errPlaceAgain", err)
 	}
 	// A new run asks again; a busy clone is the step's to wait out, and
 	// the next step asks again.
@@ -566,16 +586,20 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 		t.Fatalf("busy clone: err = %v, want ErrCloneBusy", err)
 	}
 	x.code.containsErr, x.code.asked = nil, 0
-	if _, err := x.w.newerIDs(context.Background(), next, statements, mergedAt); err != nil || x.code.asked != 3 {
-		t.Fatalf("after the busy step: err %v, git asked %d times, want in, out and broken again (3)", err, x.code.asked)
+	x.code.held[broken] = true
+	if _, err := x.w.newerIDs(context.Background(), next, statements, mergedAt); err != nil || x.code.asked != 4 {
+		t.Fatalf("after the busy step: err %v, git asked %d times, want in, out, broken and broken2 again (4)", err, x.code.asked)
 	}
 }
 
 // A merge commit git cannot place holds the step: the run stays open, no
-// file is read and no call made, twice; then the run goes on with the
-// statement read-only, and a patch touching it is refused.
+// file is read and no call made, for placeWait; then the run goes on with
+// the statement read-only, and a patch touching it is refused. A step the
+// worker's shutdown cuts is no failure of the run.
 func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 	x := newWorld(t, 16)
+	now := mergedAt
+	x.w.now = func() time.Time { return now }
 	x.queue(store.RunFull, "")
 	broken := strings.Repeat("c", 40)
 	x.code.containsErr = map[string]error{broken: errors.New("bad object")}
@@ -585,28 +609,25 @@ func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
 	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Drop: []string{"s1"}}}, {Call: called}}
 	x.models.project = inference.DescriptionResult{Call: called}
-	for lap := range placeHolds {
+	for lap := range 3 {
 		x.w.drain(context.Background())
 		if r := x.run(); r.State != store.RunDescribing || r.Step != 0 || len(x.models.prompts) != 1 || len(x.code.read) != 1 {
 			t.Fatalf("lap %d: run %+v, %d prompts, %d reads; want the first describe step held", lap, r, len(x.models.prompts), len(x.code.read))
 		}
+		now = now.Add(placeWait / 3)
 	}
+	// Shutdown cuts the held step: the run stays as it was.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := x.run()
+	if x.w.stepRun(ctx, before) || x.run().State != before.State || x.run().Error != "" {
+		t.Fatalf("a cut step: run = %+v, want it as it was", x.run())
+	}
+	now = now.Add(placeWait)
 	x.w.drain(context.Background())
 	r := x.run()
 	if r.State != store.RunDone || r.Skipped != 1 || !strings.Contains(x.models.prompts[1], "newer than the code shown") {
-		t.Fatalf("after the holds: run = %+v; want done, the drop of s1 refused", r)
-	}
-}
-
-// A step cut off by the worker's shutdown is the step's, not the run's
-// failure: the run stays open.
-func TestRun_ShutdownIsNoRunFailure(t *testing.T) {
-	x := newWorld(t, 16)
-	x.queue(store.RunFull, "")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if x.w.stepRun(ctx, x.run()) || !x.run().Open() {
-		t.Fatalf("a cancelled step: run = %+v, want it open", x.run())
+		t.Fatalf("after placeWait: run = %+v; want done, the drop of s1 refused", r)
 	}
 }
 

@@ -130,8 +130,11 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	default:
 		err = fmt.Errorf("a run in state %q is not open", r.State)
 	}
-	// The worker is stopping: the step is cut, not the run's failure.
-	if errors.Is(err, errStop) || ctx.Err() != nil {
+	if errors.Is(err, errStop) {
+		return false
+	}
+	// The worker is stopping and cut the step: no failure of the run.
+	if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return false
 	}
 	// The poller holds the clone (a long clone or fetch): the step is
@@ -140,8 +143,8 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 		w.log.DebugContext(ctx, "baseline: clone busy, step deferred")
 		return false
 	}
-	// A merge commit git could not place: the same step again later, no
-	// call spent, until place gives up on it.
+	// Git could not place a merge commit: the same step again later, no
+	// call spent, within placeWait (newerIDs).
 	if errors.Is(err, errPlaceAgain) {
 		return false
 	}
@@ -466,16 +469,6 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		r.State = store.RunProject
 		return w.save(ctx, *r)
 	}
-	page, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
-		return errStop
-	}
-	// First of the clone's reads: a step held here costs no other.
-	newer, err := w.newerIDs(ctx, r, page.Statements, plan.CommittedAt)
-	if err != nil {
-		return readErr(err)
-	}
 	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, r.Commit)
 	if err != nil {
 		return readErr(err)
@@ -502,6 +495,16 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	if r.Bytes+size > int64(w.base.Limits.MaxBytes) {
 		return w.skipPart(ctx, r, &plan, name, "over the run's byte budget")
+	}
+	page, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
+		return errStop
+	}
+	// Only a step that will make a call asks; a held one has read no file.
+	newer, err := w.newerIDs(ctx, r, page.Statements, plan.CommittedAt)
+	if err != nil {
+		return readErr(err)
 	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
@@ -599,12 +602,14 @@ const newerSlack = 2 * time.Minute
 // that a merge commit that never reaches the branch soon stops counting.
 const notHeldMargin = 24 * time.Hour
 
-// placeHolds is how many times a run holds a step over a git read that
-// failed, whichever merge commits failed.
-const placeHolds = 2
+// placeWait is how long a run holds its step over failing git reads,
+// counted from the first failure of an episode, before the statements git
+// cannot place go read-only: by the clock, not by drains, so a burst of
+// webhook wakes cannot use it up.
+const placeWait = 2 * time.Minute
 
 // errPlaceAgain is a merge commit git could not place: the step is taken
-// again at the next drain, before any other read of the clone or a call.
+// again at the next drain, before its files are read or a call made.
 var errPlaceAgain = errors.New("merge commit not placed yet")
 
 // ancestry is what git said of a PR's merge commit against a run's commit.
@@ -615,7 +620,7 @@ const (
 	unplaced ancestry = iota
 	held
 	notHeld
-	// unknown: the read failed; never kept, asked again next step.
+	// unknown: the read failed; asked once a step, never kept for the run.
 	unknown
 )
 
@@ -629,47 +634,65 @@ const (
 // hold is newer unless merged well before the read commit (notHeldMargin):
 // one that never reaches the branch (a release branch, a rewritten history)
 // soon stops counting. A source without a merge commit goes by the clock,
-// with newerSlack. Answers are kept for the run.
+// with newerSlack. Git's answers are kept for the run.
 //
-// A failed read holds the step, placeHolds times a run; past that a
-// statement whose merge commit git cannot place is read-only for the step,
-// and git is asked again in the next.
+// A statement that only a failed read leaves open holds the step for up to
+// placeWait; past that it is read-only for the step, and git is asked again
+// in the next. One another source already marks newer holds nothing.
 func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements []store.Statement, at time.Time) (map[string]bool, error) {
 	if w.ancestryRun != r.ID || w.ancestry == nil {
-		w.ancestryRun, w.ancestry, w.placeHeld = r.ID, map[string]ancestry{}, 0
+		w.ancestryRun, w.ancestry, w.placeWarned, w.placeFailed = r.ID, map[string]ancestry{}, map[string]bool{}, time.Time{}
 	}
 	newer := map[string]bool{}
+	failed := map[string]bool{}
+	open := false
 	for _, s := range statements {
+		unsure := false
 		for _, src := range s.Sources {
 			if src.IsBaseline() {
 				continue
 			}
-			a, err := w.place(ctx, r, src.Commit)
+			a, err := w.place(ctx, r, src.Commit, failed)
 			if err != nil {
 				return nil, err
 			}
-			if a == unknown && w.placeHeld < placeHolds {
-				w.placeHeld++
-				return nil, errPlaceAgain
-			}
-			if newerSource(src, a, at) {
+			if a == unknown {
+				unsure = true
+			} else if newerSource(src, a, at) {
 				newer[s.ID] = true
 				break
 			}
 		}
+		if unsure && !newer[s.ID] {
+			open, newer[s.ID] = true, true
+		}
+	}
+	if !open {
+		w.placeFailed = time.Time{}
+		return newer, nil
+	}
+	now := w.now()
+	if w.placeFailed.IsZero() {
+		w.placeFailed = now
+	}
+	if now.Sub(w.placeFailed) < placeWait {
+		return nil, errPlaceAgain
 	}
 	return newer, nil
 }
 
-// place asks git whether the run's commit holds a merge commit, once per
-// run. A busy clone is the step's to wait out; any other failed read is
-// unknown, not kept.
-func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string) (ancestry, error) {
+// place asks git whether the run's commit holds a merge commit: once per
+// run for an answer, once per step (failed) for a read that fails. A busy
+// clone is the step's to wait out.
+func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string, failed map[string]bool) (ancestry, error) {
 	if commit == "" {
 		return unplaced, nil
 	}
 	if a, ok := w.ancestry[commit]; ok {
 		return a, nil
+	}
+	if failed[commit] {
+		return unknown, nil
 	}
 	in, err := w.base.Code.Contains(ctx, r.ProjectKey, r.Slug, commit, r.Commit)
 	a := notHeld
@@ -683,8 +706,12 @@ func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string)
 		// Not a commit name (noergler's to send): the clock decides.
 		a = unplaced
 	default:
-		w.log.WarnContext(ctx, "baseline: merge commit not placed",
-			"commit", gitrepo.ShortSHA(commit), logging.Err(err))
+		failed[commit] = true
+		if !w.placeWarned[commit] {
+			w.placeWarned[commit] = true
+			w.log.WarnContext(ctx, "baseline: merge commit not placed",
+				"commit", gitrepo.ShortSHA(commit), logging.Err(err))
+		}
 		return unknown, nil
 	}
 	w.ancestry[commit] = a
@@ -695,10 +722,9 @@ func newerSource(src store.Source, a ancestry, at time.Time) bool {
 	switch a {
 	case held:
 		return false
-	case unknown:
-		return true
 	case notHeld:
-		// A read commit with no time: git's answer stands alone.
+		// A read commit with no time (a plan from before it was kept):
+		// git's answer stands alone.
 		return at.IsZero() || !src.MergedAt.Before(at.Add(-notHeldMargin))
 	}
 	return !at.IsZero() && src.MergedAt.After(at.Add(newerSlack))

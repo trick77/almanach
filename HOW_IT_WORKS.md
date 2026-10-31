@@ -204,9 +204,10 @@ so a committer clock a day off does not fool it and a merge commit that
 never reaches the branch (a release branch, a rewritten history) soon
 stops counting. A PR source from before the merge commit was kept goes by
 its merge time with two minutes of slack. A git read that fails holds the
-step like a busy clone, before any other read or call, twice a run
-whichever commits fail; past that a statement whose merge commit git
-cannot place is read-only for the step and asked again in the next. Git's
+step like a busy clone, before its files are read or a call made, for up to
+two minutes from the first failure; past that a statement whose merge
+commit git cannot place is read-only for the step and asked again in the
+next. A statement another PR already marks newer holds nothing. Git's
 answers are kept for the run. Runs among
 themselves go oldest first, one to its end before the next begins.
 

@@ -72,7 +72,10 @@ type Worker struct {
 	// whole run.
 	ancestryRun int64
 	ancestry    map[string]ancestry
-	placeHeld   int
+	// placeFailed is when the run's current episode of failing git reads
+	// began (zero: none); placeWarned the merge commits logged once.
+	placeFailed time.Time
+	placeWarned map[string]bool
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the
