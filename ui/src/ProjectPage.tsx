@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import type { Problem, ProjectDetail } from "./api";
 import { DescriptionView } from "./Description";
+import { Diagram } from "./Diagram";
+import type { FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { causeLabel, day, problemTone, shortDay } from "./format";
 import { notePathFor, repoPath } from "./routing";
@@ -91,6 +93,21 @@ function Body({ data }: { data: ProjectDetail }) {
         {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
 
+      {(data.map !== null || data.description !== null) && (
+        <>
+          <div className={eyebrow}>{S.project.map}</div>
+          {data.map === null ? (
+            <Empty>{S.project.noMap}</Empty>
+          ) : (
+            <SystemMap
+              map={data.map}
+              projectKey={data.key}
+              slugs={data.repos.map((r) => r.slug)}
+            />
+          )}
+        </>
+      )}
+
       <DescriptionView
         description={data.description}
         emptyHint={S.project.noDescriptionHint}
@@ -152,6 +169,39 @@ function Body({ data }: { data: ProjectDetail }) {
       <div className={eyebrow}>{S.project.recentNotes}</div>
       <NotesTable projectKey={data.key} notes={data.recent_notes} />
     </>
+  );
+}
+
+/** SystemMap is the project's overview: its zones titled from strings.ts by
+ *  id, and every repository node a link to its page, when the project lists
+ *  that repository. */
+function SystemMap({
+  map,
+  projectKey,
+  slugs,
+}: {
+  map: FlowIR;
+  projectKey: string;
+  slugs: string[];
+}) {
+  const ir: FlowIR = {
+    ...map,
+    zones: map.zones.map((z) => ({
+      ...z,
+      title: S.diagram.zones[z.id] ?? z.title,
+    })),
+  };
+  const repoZone = new Map(map.nodes.map((n) => [n.id, n.zone]));
+  return (
+    <Diagram
+      ir={ir}
+      title={S.diagram.titles.map}
+      links={(id) =>
+        repoZone.get(id) === "repositories" && slugs.includes(id)
+          ? repoPath(projectKey, id)
+          : null
+      }
+    />
   );
 }
 

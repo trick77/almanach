@@ -1,7 +1,7 @@
 // The small shared vocabulary, after ../noergler's ui.tsx: class strings
 // hoisted to named consts where a component would add nothing, components
 // where there is behaviour or a shape worth a name.
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { paragraphs, type Tone } from "./format";
 import { S } from "./strings";
 import { onNav } from "./routing";
@@ -34,15 +34,23 @@ export function Link({
   to,
   className = "",
   title,
+  style,
   children,
 }: {
   to: string;
   className?: string;
   title?: string;
+  style?: CSSProperties;
   children: ReactNode;
 }) {
   return (
-    <a href={to} onClick={onNav(to)} className={className} title={title}>
+    <a
+      href={to}
+      onClick={onNav(to)}
+      className={className}
+      title={title}
+      style={style}
+    >
       {children}
     </a>
   );
