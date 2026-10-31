@@ -25,9 +25,9 @@ export default function App() {
         {session.state === "out" && S.auth.redirecting}
         {session.state === "halted" && session.message}
       </p>
-      {session.state === "halted" && session.action === "signIn" && (
+      {session.state === "halted" && session.action !== "retry" && (
         <a href="/api/auth/login" className={btnPrimary + " mt-4"}>
-          {S.auth.signIn}
+          {session.action === "again" ? S.auth.retry : S.auth.signIn}
         </a>
       )}
       {session.state === "halted" && session.action === "retry" && (

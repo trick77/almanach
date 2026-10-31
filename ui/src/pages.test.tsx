@@ -669,8 +669,8 @@ function answer(
 
 /** stubLocation swaps window.location for a plain object, so a test can
  *  see where the gate sends the browser; jsdom does not navigate. */
-function stubLocation(search = "") {
-  const loc = { href: "/", pathname: "/", search, reload: vi.fn() };
+function stubLocation(search = "", pathname = "/") {
+  const loc = { href: "/", pathname, search, reload: vi.fn() };
   vi.stubGlobal("location", loc);
   return loc;
 }
@@ -795,10 +795,43 @@ describe("session gate", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the wiki when the check fails on the network", async () => {
+  it("halts with a retry when the check fails on the network", async () => {
     answer(new TypeError("offline"));
     render(<App />);
-    expect(await screen.findByText("PAY")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/der Server ist nicht erreichbar/),
+    ).toBeInTheDocument();
+    // No mode assumed: the wiki stays unrendered.
+    expect(screen.queryByText("PAY")).not.toBeInTheDocument();
+    const loc = stubLocation();
+    fireEvent.click(screen.getByText("Erneut versuchen"));
+    expect(loc.reload).toHaveBeenCalled();
+  });
+
+  it("takes the deep link along to the login", async () => {
+    const loc = stubLocation("?x=1&signed_in=no", "/projekte/PAY");
+    answer({ status: 401 });
+    render(<App />);
+    await waitFor(() =>
+      expect(loc.href).toBe(
+        "/api/auth/login?next=" +
+          encodeURIComponent("/projekte/PAY?x=1&signed_in=no"),
+      ),
+    );
+  });
+
+  it("halts while the provider is unavailable, with a way to try again", async () => {
+    const loc = stubLocation("?auth_error=provider_unavailable");
+    answer({ status: 401 });
+    render(<App />);
+    expect(
+      await screen.findByText(/der Identitätsanbieter antwortet nicht/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Erneut versuchen").closest("a")).toHaveAttribute(
+      "href",
+      "/api/auth/login",
+    );
+    expect(loc.href).toBe("/");
   });
 
   it("reloads when the sign-out request fails", async () => {

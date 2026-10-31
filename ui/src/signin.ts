@@ -29,7 +29,8 @@ export function onUnauthorized(status: number): void {
 }
 
 /** signIn navigates to the login, unless the page carries a marker or the
- *  last automatic sign-in was a moment ago; false when it did not go. */
+ *  last automatic sign-in was a moment ago; false when it did not go. The
+ *  page it leaves goes along as ?next=, so the reader lands back on it. */
 export function signIn(): boolean {
   const params = new URLSearchParams(window.location.search);
   if (authMarkers.some((m) => params.has(m))) return false;
@@ -38,7 +39,12 @@ export function signIn(): boolean {
   if (now - last < loopWindow) return false;
   window.sessionStorage.setItem(stampKey, String(now));
   armed = false;
-  window.location.href = "/api/auth/login";
+  const q = params.toString();
+  const next = window.location.pathname + (q ? `?${q}` : "");
+  window.location.href =
+    next === "/"
+      ? "/api/auth/login"
+      : `/api/auth/login?next=${encodeURIComponent(next)}`;
   return true;
 }
 

@@ -18,18 +18,30 @@ export type Session =
   | { state: "checking" }
   | { state: "in"; me: Me }
   | { state: "out" }
-  | { state: "halted"; message: string; action: "signIn" | "retry" };
+  | { state: "halted"; message: string; action: HaltAction };
+
+/** HaltAction is the halted page's button: signIn and again both go to the
+ *  login ("Anmelden", "Erneut versuchen"), retry reloads the page. */
+export type HaltAction = "signIn" | "again" | "retry";
 
 /** haltReason is why the gate must not redirect on its own, asked only in
  *  oidc mode without a session:
  *  - after a failed callback the provider still has a live session, answers
  *    the next login without a prompt, and the callback fails the same way;
  *  - after sign-out the provider's session is untouched and hands out a new
- *    token unseen: the button would appear to do nothing. */
-export function haltReason(search: string): string | null {
+ *    token unseen: the button would appear to do nothing;
+ *  - while the provider has not answered discovery, the login would only
+ *    come back here. */
+export function haltReason(
+  search: string,
+): { message: string; action: HaltAction } | null {
   const params = new URLSearchParams(search);
-  if (params.has("signed_out")) return S.auth.signedOut;
-  if (params.has("auth_error")) return S.auth.failed;
+  if (params.has("signed_out"))
+    return { message: S.auth.signedOut, action: "signIn" };
+  if (params.get("auth_error") === "provider_unavailable")
+    return { message: S.auth.unavailable, action: "again" };
+  if (params.has("auth_error"))
+    return { message: S.auth.failed, action: "signIn" };
   return null;
 }
 
@@ -47,9 +59,6 @@ function stripMarkers() {
   );
 }
 
-/** anonymous is the reader when the check itself could not be made. */
-const anonymous: Me = { mode: "none", user: "" };
-
 export function useSession(): Session {
   const [session, setSession] = useState<Session>({ state: "checking" });
 
@@ -65,17 +74,18 @@ export function useSession(): Session {
       try {
         res = await fetch("/api/me");
       } catch {
-        // A network error is not a signed-out session: redirecting would
-        // bounce the reader to the provider whenever the connection drops.
-        // The wiki renders and its pages report their own failures.
-        settle({ state: "in", me: anonymous });
+        // A network error says nothing about the session or the mode:
+        // redirecting would bounce the reader to the provider whenever the
+        // connection drops, and rendering would assume none mode. Halt
+        // with a button that tries again.
+        settle({ state: "halted", message: S.auth.offline, action: "retry" });
         return;
       }
       if (cancelled) return;
       if (res.status === 401) {
         const halt = haltReason(window.location.search);
         if (halt !== null) {
-          settle({ state: "halted", message: halt, action: "signIn" });
+          settle({ state: "halted", ...halt });
           return;
         }
         // A full navigation, not a fetch: the provider answers with a login

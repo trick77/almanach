@@ -383,6 +383,10 @@ export const S = {
       `Die Sitzung konnte nicht geprüft werden (HTTP ${status}).`,
     unreadable:
       "Die Sitzung konnte nicht geprüft werden: die Antwort des Servers war unlesbar.",
+    offline:
+      "Die Sitzung konnte nicht geprüft werden: der Server ist nicht erreichbar.",
+    unavailable:
+      "Die Anmeldung ist im Moment nicht möglich: der Identitätsanbieter antwortet nicht. Almanach versucht es laufend weiter; bitte später erneut versuchen.",
     loop: "Die Anmeldung hat gerade eben keine Sitzung ergeben. Bitte erneut anmelden; geschieht das wieder, steht der Grund im Server-Log.",
     signIn: "Anmelden",
     signOut: "Abmelden",
