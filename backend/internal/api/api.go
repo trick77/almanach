@@ -350,7 +350,10 @@ type projectDetailBody struct {
 	Map *diagram.Diagram `json:"map"`
 	// MapExpected says a baseline run will draw a map: the sources are on,
 	// the project has a source repository, and not more than one map holds.
-	MapExpected bool          `json:"map_expected"`
+	MapExpected bool `json:"map_expected"`
+	// MapDeclined says a project step asked for the map and none was
+	// accepted: no map, and none promised for the next run either.
+	MapDeclined bool          `json:"map_declined"`
 	Repos       []repoBody    `json:"repos"`
 	Problems    []problemBody `json:"problems"`
 	ProblemDays int           `json:"problem_window_days"`
@@ -392,7 +395,13 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	}
 	// With the sources on, repos is the source repositories alone.
 	mapExpected := d.Sources != nil && len(repos) > 0 && diagram.MapFits(len(repos))
-	out := projectDetailBody{Key: key, Team: team, Description: describe(page, found), Map: page.Map, MapExpected: mapExpected, ProblemDays: d.ProblemWindow,
+	// The sentinel is no map: asked for, not drawn.
+	drawn, declined := page.Map, diagram.IsSentinel(page.Map)
+	if declined {
+		drawn = nil
+	}
+	out := projectDetailBody{Key: key, Team: team, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
+		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Repos: make([]repoBody, 0, len(repos)), Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	for _, rp := range repos {
 		out.Repos = append(out.Repos, repoBody{Slug: rp.Slug, Revision: rp.Revision, Summary: firstSentence(rp.Summary), Notes: rp.Notes, LastMerge: rp.LastMerge})

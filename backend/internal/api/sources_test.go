@@ -396,6 +396,18 @@ func TestProject_MapExpected(t *testing.T) {
 	if got := expected(); got != "true" {
 		t.Errorf("one source repository: map_expected = %s", got)
 	}
+	// The sentinel: asked for, none accepted. No map, declined, still
+	// expected.
+	st.pages[store.ScopeProject+"|PLAT|"] = store.Page{RevisionID: 1, Revision: 1, Summary: "P.", Map: diagram.Sentinel()}
+	_, body := do(t, h, http.MethodGet, "/api/projects/PLAT", "", "", nil)
+	if string(body["map"]) != "null" || string(body["map_declined"]) != "true" || string(body["map_expected"]) != "true" {
+		t.Errorf("sentinel: map %s, declined %s, expected %s", body["map"], body["map_declined"], body["map_expected"])
+	}
+	delete(st.pages, store.ScopeProject+"|PLAT|")
+	_, body = do(t, h, http.MethodGet, "/api/projects/PLAT", "", "", nil)
+	if string(body["map_declined"]) != "false" {
+		t.Errorf("no page: map_declined = %s", body["map_declined"])
+	}
 	st.repos["PLAT"] = nil
 	for i := range diagram.DrawMaxNodes {
 		st.repos["PLAT"] = append(st.repos["PLAT"], store.RepoRow{Slug: fmt.Sprintf("r%02d", i)})

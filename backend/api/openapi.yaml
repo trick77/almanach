@@ -1385,7 +1385,7 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, description, map, map_expected, repos, problems, problem_window_days, recent_notes]
+      required: [key, team, description, map, map_expected, map_declined, repos, problems, problem_window_days, recent_notes]
       properties:
         key:
           type: string
@@ -1411,6 +1411,11 @@ components:
             A baseline run will draw a map: the sources are on, the project
             has a source repository, and not more of them than one map
             holds.
+        map_declined:
+          type: boolean
+          description: >-
+            A project step asked for the map and none was accepted: map is
+            null, and no run is promised to draw one.
         repos:
           type: array
           items:

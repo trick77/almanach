@@ -94,9 +94,10 @@ function Body({ data }: { data: ProjectDetail }) {
       </p>
 
       {/* Only a baseline run draws the map, and only for a project with a
-          source and not too many: where none will come, a placeholder
-          promising one would be a false hint. */}
-      {(data.map !== null || data.map_expected) && (
+          source and not too many: where none will come, or a run asked and
+          none was accepted, a placeholder promising one would be a false
+          hint. */}
+      {(data.map !== null || (data.map_expected && !data.map_declined)) && (
         <>
           <div className={eyebrow}>{S.project.map}</div>
           {data.map === null ? (

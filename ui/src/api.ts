@@ -104,6 +104,9 @@ export interface ProjectDetail {
   /** A baseline run will draw a map: the sources are on, the project has a
    *  source repository, and not more than one map holds. */
   map_expected: boolean;
+  /** A project step asked for the map and none was accepted: map is null,
+   *  and no run is promised to draw one. */
+  map_declined: boolean;
   repos: Repo[];
   problems: Problem[];
   problem_window_days: number;

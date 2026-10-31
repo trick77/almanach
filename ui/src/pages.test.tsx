@@ -88,6 +88,7 @@ const project: ProjectDetail = {
   },
   map: null,
   map_expected: false,
+  map_declined: false,
   repos: [
     {
       slug: "pay-api",
@@ -419,6 +420,20 @@ describe("ProjectPage", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.queryByText(/wird gezeichnet/)).toBeNull();
+  });
+
+  it("promises no map again once a run asked and none was accepted", async () => {
+    serve({
+      "projects/PAY": { ...project, map_expected: true, map_declined: true },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    expect(
+      await screen.findByText(
+        "Das Projekt Payments nimmt Zahlungsaufträge an.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Noch keine Systemkarte/)).toBeNull();
+    expect(screen.queryByText("Systemkarte")).toBeNull();
   });
 
   it("promises no map where no run will draw one", async () => {
