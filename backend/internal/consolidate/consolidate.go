@@ -72,6 +72,7 @@ type Worker struct {
 	// whole run.
 	ancestryRun int64
 	ancestry    map[string]ancestry
+	placeFails  map[string]int
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the

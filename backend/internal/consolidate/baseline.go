@@ -139,6 +139,11 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 		w.log.DebugContext(ctx, "baseline: clone busy, step deferred")
 		return false
 	}
+	// A merge commit git could not place: the same step again later, no
+	// call spent, until place gives up on it.
+	if errors.Is(err, errPlaceAgain) {
+		return false
+	}
 	if err != nil {
 		w.failRun(ctx, r, err.Error())
 	}
@@ -589,20 +594,27 @@ const newerSlack = 2 * time.Minute
 
 // notHeldMargin is how long before the read commit a merge commit git does
 // not find in it must have been merged to count as off the branch rather
-// than newer: wide enough for any committer clock, short enough that a
-// merge commit that never reaches the branch soon stops counting.
+// than newer: wide enough for a committer clock a day off, short enough
+// that a merge commit that never reaches the branch soon stops counting.
 const notHeldMargin = 24 * time.Hour
+
+// placeTries is how many times a run asks git about a merge commit whose
+// read fails before the merge time decides for it.
+const placeTries = 3
+
+// errPlaceAgain is a merge commit git could not place: the step is taken
+// again at the next drain, before any file is read or call made.
+var errPlaceAgain = errors.New("merge commit not placed yet")
 
 // ancestry is what git said of a PR's merge commit against a run's commit.
 type ancestry int8
 
 const (
-	// unplaced: no full commit name to ask git about.
+	// unplaced: no full commit name, or reads that kept failing; the
+	// merge time decides.
 	unplaced ancestry = iota
 	held
 	notHeld
-	// unknown: the read failed this step; not kept, asked again next step.
-	unknown
 )
 
 // newerIDs is the statements a pull request taught that the commit a run
@@ -615,28 +627,20 @@ const (
 // hold is newer unless merged well before the read commit (notHeldMargin):
 // one that never reaches the branch (a release branch, a rewritten history)
 // soon stops counting. A source without a merge commit goes by the clock,
-// with newerSlack. A read that fails leaves the statement read-only for the
-// step and git is not asked again in it. Answers are kept for the run.
+// with newerSlack. Answers are kept for the run.
 func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements []store.Statement, at time.Time) (map[string]bool, error) {
 	if w.ancestryRun != r.ID || w.ancestry == nil {
-		w.ancestryRun, w.ancestry = r.ID, map[string]ancestry{}
+		w.ancestryRun, w.ancestry, w.placeFails = r.ID, map[string]ancestry{}, map[string]int{}
 	}
 	newer := map[string]bool{}
-	failed := false
 	for _, s := range statements {
 		for _, src := range s.Sources {
 			if src.IsBaseline() {
 				continue
 			}
-			a := unknown
-			if !failed {
-				var err error
-				if a, err = w.place(ctx, r, src.Commit); err != nil {
-					return nil, err
-				}
-				failed = a == unknown
-			} else if src.Commit == "" {
-				a = unplaced
+			a, err := w.place(ctx, r, src.Commit)
+			if err != nil {
+				return nil, err
 			}
 			if newerSource(src, a, at) {
 				newer[s.ID] = true
@@ -648,8 +652,8 @@ func (w *Worker) newerIDs(ctx context.Context, r *store.BaselineRun, statements 
 }
 
 // place asks git whether the run's commit holds a merge commit, once per
-// run. Only a busy clone or the step's end is an error; any other failed
-// read is unknown, not kept.
+// run. A busy clone holds the step; so does a failed read, placeTries
+// times, before the merge time decides.
 func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string) (ancestry, error) {
 	if commit == "" {
 		return unplaced, nil
@@ -664,14 +668,20 @@ func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string)
 		a = held
 	case err == nil:
 	case errors.Is(err, ErrCloneBusy) || ctx.Err() != nil:
-		return unknown, err
+		return unplaced, err
 	case errors.Is(err, gitrepo.ErrBadSHA):
 		// Not a commit name (noergler's to send): the clock decides.
 		a = unplaced
 	default:
-		w.log.WarnContext(ctx, "baseline: merge commit not placed, statements read-only this step",
+		w.placeFails[commit]++
+		if w.placeFails[commit] < placeTries {
+			w.log.WarnContext(ctx, "baseline: merge commit not placed, step deferred",
+				"commit", gitrepo.ShortSHA(commit), logging.Err(err))
+			return unplaced, errPlaceAgain
+		}
+		w.log.WarnContext(ctx, "baseline: merge commit not placed, its merge time decides",
 			"commit", gitrepo.ShortSHA(commit), logging.Err(err))
-		return unknown, nil
+		a = unplaced
 	}
 	w.ancestry[commit] = a
 	return a, nil
@@ -679,14 +689,10 @@ func (w *Worker) place(ctx context.Context, r *store.BaselineRun, commit string)
 
 func newerSource(src store.Source, a ancestry, at time.Time) bool {
 	switch {
-	case a == held:
+	case a == held || at.IsZero():
 		return false
-	case a == unknown:
-		return true
 	case a == notHeld:
-		return at.IsZero() || !src.MergedAt.Before(at.Add(-notHeldMargin))
-	case at.IsZero():
-		return false
+		return !src.MergedAt.Before(at.Add(-notHeldMargin))
 	}
 	return src.MergedAt.After(at.Add(newerSlack))
 }
