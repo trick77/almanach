@@ -270,16 +270,24 @@ PUT, PATCH, DELETE) must come from Almanach's own pages: Go's
 CrossOriginProtection decides (`Sec-Fetch-Site` same-origin or none, else
 an `Origin` naming the request's host; the redirect URL's origin is
 trusted too), and a write carrying neither header is refused as well;
-else 403. SameSite Lax alone would let a sibling subdomain post.
+else 403. SameSite Lax alone would let a sibling subdomain post. The
+origin check runs in none mode too, without the neither-header rule, so
+a script with curl still writes there and a page on another site cannot.
 
 Discovery runs in the background from startup on, each attempt bounded to
-30 s; boot never waits for it. A provider that does not answer is a
-warning, like an unreachable gateway: noergler's webhook and ping do not
-depend on it. The login and the callback land on
-`/?auth_error=provider_unavailable`, where the UI halts with a button to
-try again, and the wiki stays behind its 401 until a retry (5 s, doubling
-up to 5 min, each failure logged) reaches the provider. In none mode there is no sign-in:
-`/api/me` answers `{"mode": "none", "user": ""}` and the login routes 503.
+30 s; boot never waits for it. A provider that cannot be reached (no
+connection, a timeout, a 5xx) is a warning, like an unreachable gateway:
+noergler's webhook and ping do not depend on it. The login and the
+callback land on `/?auth_error=provider_unavailable`, where the UI halts
+with a button to try again, and the wiki stays behind its 401 until a
+retry (5 s, doubling up to 5 min, each failure logged) reaches the
+provider. An answer that is configuration, not reachability (an issuer
+that does not match, a 4xx, a 200 that is no discovery document; the
+discovery's transport records the status, since the discovery reports
+every failure as text), is a fault: logged at error level once, never retried, the login
+landing on `/?auth_error=provider_misconfigured` until a restart. In
+none mode there is no sign-in: `/api/me` answers
+`{"mode": "none", "user": ""}` and the login routes 503.
 
 ## 4a. The sources
 

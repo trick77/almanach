@@ -20,10 +20,12 @@ info:
       needs the session cookie the OIDC sign-in sets, and answers 401 without
       one; with `none` it is open to whoever reaches it. The reader gates
       nothing; the name goes to the access log. Nothing is written through it
-      but the sources. In oidc mode a POST, PUT, PATCH or DELETE under it
-      must carry `Sec-Fetch-Site: same-origin` (or `none`), or, without that
-      header, an `Origin` naming the request's host or the redirect URL's
-      origin; anything else is `403 {"error": "cross-site request refused"}`.
+      but the sources. In every mode a POST, PUT, PATCH or DELETE under it
+      that carries `Sec-Fetch-Site` must say `same-origin` (or `none`), and
+      one that carries only `Origin` must name the request's host (in oidc
+      mode also the redirect URL's origin); anything else is
+      `403 {"error": "cross-site request refused"}`. In oidc mode a write
+      carrying neither header is refused too; in none mode it passes.
 
     ## Delivery dedup
 
@@ -533,7 +535,11 @@ paths:
         Redirects to the provider, state, nonce and a PKCE verifier in
         short-lived cookies, `next` in the `almanach_next` cookie (10 minutes).
         A browser navigates here; a fetch cannot follow. While the provider
-        has not answered discovery, to `/?auth_error=provider_unavailable`.
+        has not answered discovery, to `/?auth_error=provider_unavailable`;
+        once it answered in disagreement with the configuration (an issuer
+        mismatch, a 4xx, no discovery document), to
+        `/?auth_error=provider_misconfigured` until a restart. The callback
+        lands on the same two.
       operationId: login
       security: []
       parameters:
@@ -547,7 +553,7 @@ paths:
             type: string
       responses:
         "302":
-          description: To the provider, or to `/?auth_error=provider_unavailable`.
+          description: To the provider, or to `/?auth_error=provider_unavailable` or `provider_misconfigured`.
         "503":
           $ref: "#/components/responses/SignInOff"
 
@@ -659,8 +665,9 @@ components:
             $ref: "#/components/schemas/Error"
     CrossSite:
       description: >-
-        oidc mode only: a change that did not come from Almanach's own pages
-        (Sec-Fetch-Site, else Origin; a write with neither is refused too).
+        A change that did not come from Almanach's own pages (Sec-Fetch-Site,
+        else Origin), in every mode; in oidc mode also a write carrying
+        neither header.
       content:
         application/json:
           schema:

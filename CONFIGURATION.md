@@ -57,11 +57,16 @@ With `ALMANACH_AUTH_MODE=oidc` every variable below is required, and each
 is a startup fault under `none`, where it would look active and change
 nothing. The provider's discovery document is fetched in the background
 from startup on, each attempt bounded to 30 s; the listener never waits
-for it. A provider that does not answer is a warning, not a fault: the
-webhook, the ping and the wiki's 401 keep working, the login lands on a
-page that says so (`/?auth_error=provider_unavailable`), and discovery is
-retried (5 s, doubling up to 5 min), each failure logged, until it
-answers. A deep link survives the sign-in: the login carries the page in
+for it. A provider that cannot be reached (no connection, a timeout, a
+5xx) is a warning, not a fault: the webhook, the ping and the wiki's 401
+keep working, the login lands on a page that says so
+(`/?auth_error=provider_unavailable`), and discovery is retried (5 s,
+doubling up to 5 min), each failure logged, until it answers. A provider
+that answers but disagrees with the configuration (an issuer that does
+not match, a 4xx, a page that is no discovery document) is a fault:
+logged at error level once, never retried, the login landing on
+`/?auth_error=provider_misconfigured` until the configuration is fixed
+and the service restarted. A deep link survives the sign-in: the login carries the page in
 `?next=` (a path on this site only) and the callback returns there.
 
 | Variable | Meaning |
@@ -77,9 +82,11 @@ A session lasts 30 days and is not renewed. Every route under `/api/` but
 routes included: whoever the provider lets in may configure the clones,
 and the reader (preferred username, else email, else subject) is on the
 log line of every read and write. A change (POST, PUT, PATCH, DELETE)
-must come from Almanach's own pages: `Sec-Fetch-Site` same-origin or
-none, or, without it, an `Origin` naming the request's host or the
-redirect URL's origin; anything else is a 403. Who may sign in at all is
+must come from Almanach's own pages, in every mode: `Sec-Fetch-Site`
+same-origin or none, or, without it, an `Origin` naming the request's
+host (or, in oidc mode, the redirect URL's origin); anything else is a
+403. In oidc mode a change carrying neither header is refused too; in
+none mode a client like curl still writes. Who may sign in at all is
 the provider's policy. `/webhooks/noergler`, `/auth/ping`, `/healthz`,
 `/readyz` and the UI shell are outside the sign-in.
 
