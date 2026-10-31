@@ -17,8 +17,8 @@ token, and nothing else.
   noergler ──POST /webhooks/noergler (bearer)──▶ ┌──────────────────────┐
   noergler ──GET  /auth/ping          (bearer)──▶ │  HTTP (net/http)     │
                                                   │  api: webhook, ping, │
-  browser  ──GET  /api/... (via oauth sidecar)──▶ │  read routes,        │
-  browser  ──GET  /, /projekte/... (sidecar)   ──▶ │  embedded UI (web)   │
+  browser  ──GET  /api/...    (session cookie)──▶ │  read routes,        │
+  browser  ──GET  /, /projekte/... (open)     ──▶ │  embedded UI (web)   │
                                                   └──────────┬───────────┘
                                                              │ Ingest, reads
                                                              ▼
@@ -59,11 +59,12 @@ Three parts, three responsibilities:
 
 The two surfaces have different trust models. Machine traffic (noergler)
 authenticates with a bearer token that *is* the team: the token names the
-team, nothing in a body does, and the webhook never reads a user header.
-Human traffic reaches the read routes only through an OAuth sidecar in
-production (`ALMANACH_AUTH_MODE=proxy`), which sets a user header that the
-access log records and nothing else acts on; the wiki is read-only and
-serves the same to everyone who can log in.
+team, nothing in a body does, and the webhook knows no session: bearer
+only. Human traffic in production signs in over OIDC
+(`ALMANACH_AUTH_MODE=oidc`): every `/api` route but the login's own two
+needs Almanach's signed session cookie, whose reader the access log
+records and nothing else acts on; the wiki is read-only and serves the
+same to everyone who can sign in.
 
 What flows between the parts is small and typed: `ingest.Parsed` from the
 webhook into the store, `store.QueuedNote` and `store.Page` into the
@@ -99,8 +100,8 @@ so the premise is measured, not assumed.
 
 `POST /webhooks/noergler` with a bearer token. The token is looked up in the
 team-keys file in constant time across every entry; the team it names is
-the note's team. Nothing in the body names a team, and the handler never
-reads the sidecar's user header: machine traffic is bearer-only.
+the note's team. Nothing in the body names a team, and the route sits
+outside the sign-in: machine traffic is bearer-only.
 
 The body is decoded strictly: a body that is not JSON, an unknown field, a
 missing required one, a malformed timestamp or a short commit hash is a 422
@@ -233,11 +234,60 @@ spellings of one component would otherwise be three areas. Each area
 reports the bugfix count, the most common cause class, the summed issue and
 suggestion counts from the reviews, and the last fix.
 
-The read API gates nothing. In proxy mode an OAuth sidecar in front decides
-who reaches it and sets the user header, which only the access log reads;
-`serve` then refuses to listen anywhere but loopback so the header can come
-from nowhere else. Nothing is written through the read API; the wiki is
+The read API gates nothing on who reads. In oidc mode the sign-in decides
+who reaches it at all, and the identity provider's policy decides who may
+sign in; the reader (preferred username, else email, else subject) goes
+to the access log and nowhere else. Nothing is written through the read API; the wiki is
 read-only by design.
+
+### Signing in
+
+`ALMANACH_AUTH_MODE=oidc` is kit's authorization code flow
+(`ship/kit/auth`), without a users table. The UI asks
+`GET /api/me` before it renders anything; a 401 sends the browser by full
+navigation to `GET /api/auth/login?next=<the page>`, which redirects to the
+provider with state, nonce and a PKCE verifier in short-lived
+`almanach_oidc_*` cookies, the page in `almanach_next` (a path on this site
+only, else `/`). The provider returns to `GET /api/auth/callback`; kit
+checks state, PKCE, the ID token and its nonce, the claims become the
+signed session cookie `almanach_session` (HMAC over the claims, 30 days,
+Secure, HttpOnly, SameSite Lax), and the browser goes back to the page.
+A `/api/me` that cannot be reached or read halts with a retry button: the
+UI never assumes a mode the server did not state. Nothing is stored server-side: `POST /api/auth/logout`
+clears the cookie, and rotating `ALMANACH_SESSION_SECRET` signs everyone
+out. A failed callback lands on `/?auth_error=…` and a sign-out on
+`/?signed_out=1`; when `/api/me` then answers 401 the UI halts with a
+button instead of redirecting, because a live provider session would
+answer the next login unseen and loop. With a session, or in none mode,
+the markers mean nothing and are stripped from the address. A 401 from
+any later API call in oidc mode navigates to the login the same way; an
+automatic sign-in within 30 s of the last one halts instead, so a
+session the browser keeps dropping cannot loop either. The gate covers
+every path under `/api` but the login and its callback, so a route added
+later is covered without anyone remembering; the SPA shell, the webhook,
+the ping and the probes are outside it. A change through the gate (POST,
+PUT, PATCH, DELETE) must come from Almanach's own pages: Go's
+CrossOriginProtection decides (`Sec-Fetch-Site` same-origin or none, else
+an `Origin` naming the request's host; the redirect URL's origin is
+trusted too), and a write carrying neither header is refused as well;
+else 403. SameSite Lax alone would let a sibling subdomain post. The
+origin check runs in none mode too, without the neither-header rule, so
+a script with curl still writes there and a page on another site cannot.
+
+Discovery runs in the background from startup on, each attempt bounded to
+30 s; boot never waits for it. A provider that cannot be reached (no
+connection, a timeout, a 5xx) is a warning, like an unreachable gateway:
+noergler's webhook and ping do not depend on it. The login and the
+callback land on `/?auth_error=provider_unavailable`, where the UI halts
+with a button to try again, and the wiki stays behind its 401 until a
+retry (5 s, doubling up to 5 min, each failure logged) reaches the
+provider. An answer that is configuration, not reachability (an issuer
+that does not match, a 4xx, a 200 that is no discovery document; the
+discovery's transport records the status, since the discovery reports
+every failure as text), is a fault: logged at error level once, never retried, the login
+landing on `/?auth_error=provider_misconfigured` until a restart. In
+none mode there is no sign-in: `/api/me` answers
+`{"mode": "none", "user": ""}` and the login routes 503.
 
 ## 4a. The sources
 
@@ -317,9 +367,9 @@ line saying so. The token is never returned by any route (`has_token` is
 all a body carries), never logged, never in `.git/config`.
 
 The routes under `/api/sources` are the first writes beside the webhook.
-They are gated exactly like the read routes: by the sidecar's login in
-proxy mode, by nobody in none; the forwarded user is logged on every write
-and decides nothing. A write needs `Content-Type: application/json`, which
+They are gated exactly like the read routes: by the session in oidc mode,
+by nobody in none; the reader is logged on every write and decides
+nothing. A write needs `Content-Type: application/json`, which
 a cross-site form cannot send without a preflight. With
 `ALMANACH_REPOS_DIR` unset the feature is off: no poller, the list route
 answers `enabled: false`, every other route 404, and the UI hides the
@@ -668,11 +718,12 @@ so the choice is not undone as a cleanup.
   prose field because the model drifts to the sharp s. File paths are never
   touched.
 - **The UI is in the binary, and reads the wiki, writes only the sources.**
-  It ships with the process so a deployment is one image and one sidecar,
+  It ships with the process so a deployment is one image,
   and it talks to `/api/...` alone (`backend/api/openapi.yaml`); nothing in
   it knows a team or a bearer, and nothing in the backend knows the UI
-  beyond the route allowlist. It is German only, with no settings and no
-  login of its own: the sidecar authenticates, the UI shows. The wiki
+  beyond the route allowlist. It is German only, with no settings; its
+  login is the backend's OIDC flow, the UI only gates on `/api/me`, names
+  the reader and offers Abmelden in oidc mode. The wiki
   pages are read-only; the Quellen section configures the clones, and is
   the only place a browser writes. Statement text is rendered as
   paragraphs split on blank lines, never as markdown, so a model that
@@ -881,9 +932,10 @@ the reason in the log and the page unchanged:
   string rounded half up, or omitted when the gateway did not price the
   call. Never a float, never summed across `note_calls` and `llm_calls`.
 - `files` and every array are `[]` on the wire, never `null`.
-- In proxy mode the user header is written to the access log of every read
-  route and nowhere else; it gates nothing, and the webhook and the ping
-  never read it.
+- In oidc mode the reader (kit's username: preferred username, else
+  email, else subject) is written to the access
+  log of every read route and nowhere else; it gates nothing, and the
+  webhook and the ping never pass the sign-in.
 
 ### The sources
 
@@ -953,8 +1005,13 @@ the reason in the log and the page unchanged:
 - `serve` never migrates; `migrate` needs only the DSN. A schema behind the
   binary refuses to start.
 - `/healthz` and `/readyz` answer a loopback caller without forwarding
-  headers only; through a router or the sidecar they are 404 by design.
-- In proxy mode the listener must be loopback (`127.0.0.1` or
-  `localhost`); any other `SERVER_HOST` is a startup fault.
+  headers only; through a router they are 404 by design.
+- In oidc mode the issuer (as written: https, http only on loopback), client
+  id and secret, the redirect URL `https://<host>/api/auth/callback` and a
+  session secret of at least 32 bytes are required, a missing or malformed
+  one is a startup fault, and each is a fault under none. A provider that
+  does not answer discovery (30 s an attempt) is a warning, retried in the
+  background, never awaited; the login lands on a halting page meanwhile. `none` is allowed on any
+  `SERVER_HOST`.
 - Caps and the problem window must be positive integers; a zero or
   negative value is a startup fault, not a disabled cap.

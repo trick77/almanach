@@ -14,6 +14,9 @@ import (
 type Server struct {
 	log *slog.Logger
 	mux *http.ServeMux
+	// inner wraps the mux inside the access log: the sign-in gate, whose
+	// 401 must reach the log line and whose reader the handlers name there.
+	inner []func(http.Handler) http.Handler
 }
 
 // New builds the mux with the probes registered: /healthz is liveness,
@@ -30,8 +33,14 @@ func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, 
 // HandleFunc registers a handler function on the mux.
 func (s *Server) HandleFunc(pattern string, h http.HandlerFunc) { s.mux.HandleFunc(pattern, h) }
 
+// Use adds a middleware between the chain below and the mux, outermost
+// first.
+func (s *Server) Use(mw func(http.Handler) http.Handler) { s.inner = append(s.inner, mw) }
+
 // Handler is the mux wrapped in the middleware chain: access log outermost,
-// so a panic's log line and its 500 carry the request id.
+// so a panic's log line and its 500 carry the request id; then what Use
+// added.
 func (s *Server) Handler() http.Handler {
-	return httpx.Chain(s.mux, httpx.AccessLog(s.log, httpx.AccessLogOptions{}), httpx.Recover(s.log))
+	mws := append([]func(http.Handler) http.Handler{httpx.AccessLog(s.log, httpx.AccessLogOptions{}), httpx.Recover(s.log)}, s.inner...)
+	return httpx.Chain(s.mux, mws...)
 }

@@ -372,6 +372,29 @@ export const S = {
     clonesText:
       "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Almanach liest jeden Klon und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
   },
+  auth: {
+    checking: "Sitzung wird geprüft …",
+    redirecting: "Weiterleitung zur Anmeldung …",
+    signedOut:
+      "Abgemeldet. Die Sitzung beim Identitätsanbieter läuft weiter; wer sie beenden will, meldet sich auch dort ab.",
+    failed:
+      "Die Anmeldung konnte nicht abgeschlossen werden. Bitte erneut versuchen; schlägt sie wieder fehl, steht der Grund im Server-Log.",
+    unchecked: (status: number) =>
+      `Die Sitzung konnte nicht geprüft werden (HTTP ${status}).`,
+    unreadable:
+      "Die Sitzung konnte nicht geprüft werden: die Antwort des Servers war unlesbar.",
+    offline:
+      "Die Sitzung konnte nicht geprüft werden: der Server ist nicht erreichbar.",
+    misconfigured:
+      "Die Anmeldung ist falsch eingerichtet: der Identitätsanbieter passt nicht zur Konfiguration. Der Grund steht im Server-Log; nach der Korrektur und einem Neustart erneut versuchen.",
+    signOutFailed: "Abmelden fehlgeschlagen, bitte erneut versuchen.",
+    unavailable:
+      "Die Anmeldung ist im Moment nicht möglich: der Identitätsanbieter antwortet nicht. Almanach versucht es laufend weiter; bitte später erneut versuchen.",
+    loop: "Die Anmeldung hat gerade eben keine Sitzung ergeben. Bitte erneut anmelden; geschieht das wieder, steht der Grund im Server-Log.",
+    signIn: "Anmelden",
+    signOut: "Abmelden",
+    retry: "Erneut versuchen",
+  },
 } as const;
 
 /** fmtInt renders a count the Swiss way: a thin space every three digits.

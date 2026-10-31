@@ -383,6 +383,17 @@
   <li><code>go get github.com/trick77/ship/kit/auth@latest</code>: a ship-family module, never pinned by hand.</li>
 </ul>
 
+<div class="decision decided"><span class="tag">Changed by review · 2026-10-31</span>
+<p>The review of the PR changed four points above; the code follows these, not the lists.</p>
+<ul>
+  <li><b>An unreachable provider is a warning, a misconfigured one a fault.</b> No connection, a timeout or a 5xx: retried as below. An issuer mismatch, a 4xx or a 200 that is no discovery document: logged at error level once, never retried, the login landing on <code>/?auth_error=provider_misconfigured</code> until a restart. Discovery runs in the background from startup on (30 s an attempt, retried after 5 s, doubling up to 5 min, each failure logged); boot never waits for it. Until the provider answers, the webhook, the ping and the probes work, the wiki stays behind its 401, and the login and callback land on <code>/?auth_error=provider_unavailable</code>, where the UI halts with a button to try again.</li>
+  <li><b>The issuer is taken as written</b>, not as a bare origin: discovery compares it byte for byte, so a path and a trailing slash stay. https, plain http only on a loopback host for a local provider; no user info, query or fragment.</li>
+  <li><b>The redirect URL is parsed</b>: https, a host, and the path exactly <code>/api/auth/callback</code>. The cookies are always Secure.</li>
+  <li><b>CSRF</b>: in oidc mode a POST, PUT, PATCH or DELETE under <code>/api</code> passes Go's CrossOriginProtection (<code>Sec-Fetch-Site</code>, else <code>Origin</code> against the host; the redirect URL's origin trusted), and a write carrying neither header is refused; else 403. SameSite Lax alone lets a sibling subdomain post. In none mode the origin check runs too, without the neither-header rule.</li>
+</ul>
+<p>Also from the review: a deep link survives the sign-in (<code>?next=</code>, a same-site path only, kept in the <code>almanach_next</code> cookie for 10 minutes); the reader's name is kit's <code>Username()</code> (preferred username, else email, else subject); any 401 in oidc mode signs in again, guarded against loops.</p>
+</div>
+
 <figure class="fig"><div class="scroll">
 <svg viewBox="0 0 960 564" width="960" style="min-width:960px" role="img" aria-labelledby="seq-title seq-desc" xmlns="http://www.w3.org/2000/svg">
   <title id="seq-title">Signing in over OIDC</title>

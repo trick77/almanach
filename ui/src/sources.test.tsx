@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
-import type { SourceDetail, Sources } from "./api";
+import type { Me, SourceDetail, Sources } from "./api";
 
 /** serve answers GET paths from a table and records every write. */
 function serve(table: Record<string, unknown>) {
@@ -389,15 +389,18 @@ describe("SourcePage", () => {
   });
 });
 
+const me: Me = { mode: "none", user: "" };
+
 describe("App with sources", () => {
   it("shows the Quellen entry only when the instance has the feature", async () => {
-    serve({ sources, projects: { projects: [] } });
+    serve({ me, sources, projects: { projects: [] } });
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
     expect(await screen.findByText("Quellen")).toBeInTheDocument();
     unmount();
     vi.unstubAllGlobals();
     serve({
+      me,
       sources: { enabled: false, sources: [] },
       projects: { projects: [] },
     });
