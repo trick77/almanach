@@ -58,7 +58,7 @@ func TestParseMerge(t *testing.T) {
 }
 
 func TestMergeFormat(t *testing.T) {
-	f := mergeFormat()
+	f := mergeFormat(true)
 	if f.Kind != llmwire.FormatJSONSchema {
 		t.Errorf("Kind = %q", f.Kind)
 	}
@@ -88,7 +88,7 @@ func TestOutcomeString(t *testing.T) {
 }
 
 func testClient(wire *llmwire.Client) *Client {
-	return &Client{wire: wire, model: llmwiretest.ChatModel, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	return &Client{wire: wire, model: llmwiretest.ChatModel, log: slog.New(slog.NewTextHandler(io.Discard, nil)), diagrams: true}
 }
 
 func TestMergeSendsMessagesAndSchema(t *testing.T) {

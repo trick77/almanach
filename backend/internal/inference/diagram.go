@@ -111,8 +111,9 @@ func erSchema() map[string]any {
 	})
 }
 
-// statementDiagram is a statement's picture: one of the three kinds, or
-// null for none.
+// statementDiagram is a statement's picture: one of the three kinds to add
+// or replace it, {"kind": "none"} to remove it, null to keep what it has.
 func statementDiagram() map[string]any {
-	return map[string]any{"anyOf": []any{flowSchema(), sequenceSchema(), erSchema(), map[string]any{"type": "null"}}}
+	return map[string]any{"anyOf": []any{flowSchema(), sequenceSchema(), erSchema(),
+		object(map[string]any{"kind": enum("none")}), map[string]any{"type": "null"}}}
 }

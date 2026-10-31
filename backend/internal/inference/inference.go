@@ -65,14 +65,18 @@ type Options struct {
 	Logger          *slog.Logger
 	// Lookup is the environment llmwire reads the gateway's variables from.
 	Lookup func(string) (string, bool)
+	// NoDiagrams leaves `diagram` out of every statement schema
+	// (ALMANACH_MAX_DIAGRAMS=0); the project's map is asked for still.
+	NoDiagrams bool
 }
 
 // Client is one model: the merge and baseline model, or the catalogue's.
 type Client struct {
-	wire   *llmwire.Client
-	model  string
-	effort string
-	log    *slog.Logger
+	wire     *llmwire.Client
+	model    string
+	effort   string
+	log      *slog.Logger
+	diagrams bool
 }
 
 // New builds the client from llmwire's environment (LLMWIRE_LITELLM_*).
@@ -90,7 +94,7 @@ func New(opt Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inference: build client for %s: %w", opt.Model, err)
 	}
-	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log}, nil
+	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log, diagrams: !opt.NoDiagrams}, nil
 }
 
 // Startup checks the profile can do what a fold needs (strict JSON-schema
@@ -242,7 +246,7 @@ const SystemMessage = "You maintain the documentation of a software system. Ever
 
 // Merge runs one fold.
 func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
-	content, call := c.call(ctx, req.Prompt, mergeFormat())
+	content, call := c.call(ctx, req.Prompt, mergeFormat(c.diagrams))
 	out := MergeResult{Call: call}
 	if out.Outcome != OutcomeOK {
 		return out
@@ -336,10 +340,10 @@ func deref(p *int64) int64 {
 // MergeSchemaName is the strict schema's name on the wire.
 const MergeSchemaName = "almanach_merge"
 
-func description() map[string]any {
+func description(diagrams bool) map[string]any {
 	return nullable(object(map[string]any{
 		"summary":    map[string]any{"type": "string", "minLength": 1},
-		"statements": statements(),
+		"statements": statements(diagrams),
 	}))
 }
 
@@ -351,28 +355,32 @@ func nullable(o map[string]any) map[string]any {
 
 // statements is the array of statements as a description or a patch
 // carries them: id null for a new one, diagram null to keep the one it has
-// (or have none).
-func statements() map[string]any {
-	return array(object(map[string]any{
-		"id":      map[string]any{"type": []any{"string", "null"}},
-		"kind":    enum("component", "rule", "invariant", "entity"),
-		"name":    map[string]any{"type": "string", "minLength": 1},
-		"text":    map[string]any{"type": "string", "minLength": 1},
-		"files":   array(str()),
-		"diagram": statementDiagram(),
-	}))
+// (or have none). Without diagrams (ALMANACH_MAX_DIAGRAMS=0) the field is
+// not offered at all.
+func statements(diagrams bool) map[string]any {
+	props := map[string]any{
+		"id":    map[string]any{"type": []any{"string", "null"}},
+		"kind":  enum("component", "rule", "invariant", "entity"),
+		"name":  map[string]any{"type": "string", "minLength": 1},
+		"text":  map[string]any{"type": "string", "minLength": 1},
+		"files": array(str()),
+	}
+	if diagrams {
+		props["diagram"] = statementDiagram()
+	}
+	return array(object(props))
 }
 
 // projectDescription is the project step's description: the merge's shape
-// plus the system map, which it must carry.
-func projectDescription() map[string]any {
+// plus the system map, null only for a project too large to draw.
+func projectDescription(diagrams bool) map[string]any {
 	return nullable(object(map[string]any{
 		"summary":    map[string]any{"type": "string", "minLength": 1},
-		"statements": statements(),
-		"map":        mapSchema(),
+		"statements": statements(diagrams),
+		"map":        nullable(mapSchema()),
 	}))
 }
 
-func mergeFormat() llmwire.ResponseFormat {
-	return strict(MergeSchemaName, map[string]any{"repository": description(), "project": description()})
+func mergeFormat(diagrams bool) llmwire.ResponseFormat {
+	return strict(MergeSchemaName, map[string]any{"repository": description(diagrams), "project": description(diagrams)})
 }
