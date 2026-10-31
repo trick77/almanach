@@ -258,8 +258,9 @@ func TestPromptEval(t *testing.T) {
 	if project.Summary == "" {
 		t.Error("project: no summary")
 	}
+	// A slug opening a German sentence is capitalised ("Almanach liest").
 	for _, repo := range st.repos {
-		if !strings.Contains(project.Summary, repo.Slug) {
+		if !strings.Contains(strings.ToLower(project.Summary), strings.ToLower(repo.Slug)) {
 			t.Errorf("project summary never names %s", repo.Slug)
 		}
 	}
