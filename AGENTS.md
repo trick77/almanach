@@ -4,9 +4,9 @@ Public repo: no company names, hosts, team names, project keys anywhere.
 
 ## Commands
 
-- Prompts compiled in, never configurable. UI: German only, read-only,
-  `/api/...` only, routes mirrored in `web/embed.go`, statements as
-  paragraphs, never markdown.
+- Prompts compiled in, never configurable. UI: German only, `/api/...`
+  only, routes mirrored in `web/embed.go`, statements as paragraphs, never
+  markdown.
 - Gate = `make check`; `make hooks` per clone. GitHub never first to find a
   failure. Store tests need docker.
 - Commit subjects + PR titles: Go style `area: what`, gated by ship.
