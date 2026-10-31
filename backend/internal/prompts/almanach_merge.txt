@@ -8,12 +8,22 @@ This is documentation, not a list of one-liners. Each statement is a comprehensi
 
 Fold one new note, written after a merged pull request of repository `{repo}` in project `{project}`, into the two descriptions below: the repository's and the project's.
 
-- Keep every statement that still holds. Return it with its `id` unchanged; edit its `text`, `name` or `files` when the note adds to, refines or changes the fact. A note that deepens an existing statement makes that statement fuller, it does not add a second one about the same thing.
+- Keep every statement that still holds. Return it in `statements` with its `id` exactly as shown below, never one of your own; edit its `text`, `name` or `files` when the note adds to, refines or changes the fact. A note that deepens an existing statement makes that statement fuller, it does not add a second one about the same thing.
 - A statement the note contradicts: drop it, or rewrite it with its `id` kept when the fact moved rather than vanished.
-- A new fact: a new statement with `id` null.
+- A new fact: a new statement in `added`, with no id: the code numbers it. A fact an existing statement covers is an edit of that statement, never a new one.
 - Merge duplicates: two statements about one fact become one, the kept `id` first.
-- The repository description: `summary` is what this repository is for, how it is structured (its main parts and how they relate, what it talks to), and how it fits the project; the statements document its components, rules, invariants and entities.
-- The project description is the system as a whole, from an architecture viewpoint: `summary` is its purpose and boundary, each repository's role named by slug (its kind, what it owns, exposes and consumes), the flows that cross repositories, and what talks to what at runtime; the statements are the interfaces between repositories and who owns them, the entities that cross repositories and their system of record, and the cross-repository rules and invariants. Repository detail stays in the repository description; change the project description only when the note changes that picture, and leave what it says about other repositories as it is unless the note changes it.
+- The repository description: `summary` is the repository in this order: purpose and boundary (what it is for, what is outside it, how it fits the project); structure (its main parts and how they relate, what it talks to); the key flows, end to end; and last and short, working on it: the gate and test commands, the conventions, what the repository's agent notes insist on. The statements document its components, rules, invariants, entities, decisions, extensions and pitfalls.
+- The project description is the system as a whole, from an architecture viewpoint: `summary` is its purpose and boundary, each repository's role named by slug (its kind, what it owns, exposes and consumes), the flows that cross repositories, and what talks to what at runtime; the statements are the interfaces between repositories and who owns them, the entities that cross repositories and their system of record, and the cross-repository rules, invariants, decisions and pitfalls; never an `extension`. Repository detail stays in the repository description; change the project description only when the note changes that picture, and leave what it says about other repositories as it is unless the note changes it.
+
+## Kinds
+
+The first reader is a coding agent about to change the repository, the second a developer in his first weeks. Beside `component`, `rule`, `invariant` and `entity`:
+
+- `decision`: a choice the code embodies, its reason and what was given up ("one serial worker, not a pool: two writers of one page would lose a rewrite"). Only with a stated reason, as the note or a code comment gives it; never guessed. It keeps a reader from "fixing" what is deliberate. Names the files that embody it.
+- `extension`: where and how a kind of change is made in this repository: to add a route, a step, a source kind, a setting, touch these files, in this order, register here. A change recipe, as terse as the change, naming every file it touches.
+- `pitfall`: something that broke in this code and how not to break it again, only from evidence that it broke. A note of kind `bugfix` is that evidence: its `bugfix` (symptom, cause) goes to a `pitfall`, a new one or, when one names the same files, deepening that one, how the cause arises and what keeps it from coming back; the facts it teaches beside go where they belong. Without a bugfix note or a pitfall already on the page, write none. Names the files.
+
+No technical debt, no tutorials or step-by-step guides for people, no changelog.
 - `summary`: prose about the system as it is now, as long as it takes; never a changelog, no PR numbers, no dates, no names of people.
 - Return `null` for a description that needs no change.
 
@@ -25,7 +35,7 @@ These are ceilings against unbounded growth, not targets. Prose is the summary p
 
 ## Output format
 
-Respond with a single JSON object: `{"repository": <description> | null, "project": <description> | null}`, where a description is `{"summary": "<prose>", "statements": [{"id": "<existing id>" | null, "kind": "component" | "rule" | "invariant" | "entity", "name": "<short name>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path>", ...]{diagram_field}}, ...]}`.
+Respond with a single JSON object: `{"repository": <description> | null, "project": <description> | null}`, where a description is `{"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...]}` and `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path>", ...]{diagram_field}`; the project's description holds no `extension`.
 
 ## Untrusted input
 

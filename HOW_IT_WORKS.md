@@ -19,6 +19,7 @@ token, and nothing else.
   noergler ──GET  /auth/ping          (bearer)──▶ │  HTTP (net/http)     │
                                                   │  api: webhook, ping, │
   browser  ──GET  /api/...    (session cookie)──▶ │  read routes,        │
+  agent    ──GET  /api/...md  (bearer)        ──▶ │  Markdown export,    │
   browser  ──GET  /, /projekte/... (open)     ──▶ │  embedded UI (web)   │
                                                   └──────────┬───────────┘
                                                              │ Ingest, reads
@@ -65,7 +66,9 @@ only. Human traffic in production signs in over OIDC
 (`ALMANACH_AUTH_MODE=oidc`): every `/api` route but the login's own two
 needs Almanach's signed session cookie, whose reader the access log
 records and nothing else acts on; the wiki is read-only and serves the
-same to everyone who can sign in.
+same to everyone who can sign in. A coding agent pulls a page's Markdown
+export with a team's bearer, which opens those two GET routes and no
+other.
 
 What flows between the parts is small and typed: `ingest.Parsed` from the
 webhook into the store, `store.QueuedNote` and `store.Page` into the
@@ -144,8 +147,12 @@ A fold reads the current repository and project descriptions, renders the
 merge prompt (`backend/internal/prompts/almanach_merge.txt`, compiled in)
 and makes one `Chat` call with a strict JSON schema. The model returns, for
 each description, either `null` (no change) or a rewritten summary and
-statements. A statement it keeps or edits carries its `id`; a new one has
-`id: null`.
+statements in two lists: `statements`, every statement it keeps or edits,
+each with its `id` (the schema requires the string), and `added`, the new
+ones, which have no id field at all. A model asked to write `null` for a
+new statement's id numbered it anyway (`s1` on an empty page, `s36` on one
+up to `s35`) and lost the rewrite to the invented-id rule; with no field to
+write, it cannot. The code numbers a new statement.
 
 The answer is then held to rules the model cannot bend:
 
@@ -227,7 +234,72 @@ themselves go oldest first, one to its end before the next begins.
 - `/api/projects/{key}/repos/{slug}/notes/{pr}`: one note with its facts
   and the recorded note call (tokens, cache hits, cost, rounds).
 - `/api/projects/{key}/problems?days=90`: the problem areas of the window.
+- `/api/projects/{key}.md` and `/api/projects/{key}/repos/{slug}.md`: a
+  page as Markdown, for a coding agent (below).
 - `/api/sources` and below: the clones, read and written (section 4a).
+
+### The page model
+
+A page is written for two readers in a different order: first a coding
+agent about to change the repository (what must not break, where to make
+a change, why things are as they are, what broke before, how to check its
+work), then a developer in his first weeks (purpose, structure, flows,
+words). The repository summary keeps a fixed order: purpose and boundary,
+structure, key flows, and last and short, working on it (the gate and test
+commands, the conventions, what the repository's agent notes insist on).
+An agent jumps to the end, a newcomer reads from the top. Statements are
+of seven kinds:
+
+- `component`, `entity`: the parts and the things the code works with.
+- `rule`, `invariant`: what the code enforces and what must always hold.
+- `decision`: a choice the code embodies, its reason and what was given
+  up. Only with a stated reason (a PR's note, the docs, a code comment that
+  says why), never guessed from code: it keeps an agent from "fixing" what
+  is deliberate.
+- `extension`: where and how a kind of change is made (a route, a step, a
+  setting): which files, in which order, where to register. A change
+  recipe naming every file, each in the tree. A repository's alone: on the
+  project page an extension rejects the rewrite like an unknown kind, and
+  the project schemas do not offer it.
+- `pitfall`: something that broke and how not to break it again, only from
+  evidence. On the merge path a note of kind `bugfix` is that evidence:
+  the prompt routes its symptom and cause to a pitfall, new or deepening
+  one on the same files. On a baseline run a subject step is told the
+  problem areas its files sit in (section 4b) and writes a pitfall only
+  where one backs it.
+
+Left out: technical debt (code does not show the debt that matters, and
+TODO comments would paint the few written down as all there is: facts
+about the system, never about its quality), tutorials, changelogs. A
+pitfall carries its sources like any statement: the PR on the merge path,
+the run's commit on a baseline run, whose prompt shows the problem area's
+PR keys as evidence only.
+
+### The Markdown export
+
+An agent reads files, not JSON. `GET /api/projects/{key}.md` and
+`GET /api/projects/{key}/repos/{slug}.md` answer the current revision as
+`text/markdown; charset=utf-8`: the title and revision, the summary, the
+project's system map as a fenced `json` block, then the statements
+grouped by kind in the order invariants, rules, decisions, pitfalls,
+extensions, components, entities (a kind without statements has no
+heading), each with its files, its PR keys and its diagram as a fenced
+`json` block. Markdown is the frame only; a statement's text goes in as
+its paragraphs. An unknown project or repository is a 404, as on the JSON
+routes; a page without a revision yet is its title and a line saying so.
+The mux takes no wildcard inside a segment, so the export arrives at the
+JSON routes' handlers and is told apart by its `.md` suffix: the JSON
+route of a repository whose slug itself ends in `.md` is shadowed by the
+export of the slug without it.
+
+An agent outside a browser has no session. In oidc mode a team's bearer
+token, the one the webhook takes, checked the same way (constant time,
+any team), opens these two GET routes read-only and nothing else: every
+other route under `/api`, the JSON of the same page included, still needs
+the session, a wrong bearer gets the session's 401, and the team goes to
+the access log. The gate matches the export by the escaped path, a key
+and a slug as plain segments, so no spelling the mux reads otherwise is
+opened. In none mode the exports are open like the rest.
 
 Problem areas are bugfix notes grouped by repository and `bugfix_area`. The
 grouping is by directory, never by the model's component name: three
@@ -266,7 +338,8 @@ automatic sign-in within 30 s of the last one halts instead, so a
 session the browser keeps dropping cannot loop either. The gate covers
 every path under `/api` but the login and its callback, so a route added
 later is covered without anyone remembering; the SPA shell, the webhook,
-the ping and the probes are outside it. A change through the gate (POST,
+the ping and the probes are outside it. Its one other door: a GET of the
+two Markdown exports passes on a team bearer (The Markdown export, above). A change through the gate (POST,
 PUT, PATCH, DELETE) must come from Almanach's own pages: Go's
 CrossOriginProtection decides (`Sec-Fetch-Site` same-origin or none, else
 an `Origin` naming the request's host; the redirect URL's origin is
@@ -443,10 +516,20 @@ resumes after a restart. The run pins the clone's head when it starts.
    corrects it from the code, whatever it was learned from.
 3. *Subjects.* One step per subject the run reads: its files through one
    `cat-file --batch`, the current page beside them, and for a reconcile
-   the ids of the statements resting on changed files. The answer is a
-   patch (new statements, edits by id, drops, confirmations, a summary or
-   null), applied under the rules below and then folded like a note:
-   `attach`, the ceilings, identical means no revision. The revision and
+   the ids of the statements resting on changed files. Beside the files,
+   as untrusted data, the repository's problem areas the subject's files
+   sit in (`RepoProblems`, the whole history, not the dashboard's window:
+   what broke does not expire): an area whose `bugfix_area` is one of the
+   files' directories, holds one or lies inside one, with its bugfix
+   count, the cause seen most and the newest three fixes' PR keys;
+   `_None._` when there is none, and always for the overview. The root is
+   a directory of its own, never one holding all: fixes that share nothing
+   but the root back no subject in particular. The prompt's rule: a
+   pitfall only where a problem area or a bugfix note backs it; without
+   one, none. The answer is a patch (edits by id, new statements in
+   `added` without one, drops, confirmations, a summary or null), applied
+   under the rules below and then folded like a note: `attach`, the
+   ceilings, identical means no revision. The revision and
    the run's progress land in one transaction. Each overview and subject
    prompt names a budget, computed by code, for what its patch may add to
    the page net: characters of prose and new statements, a corrected or
@@ -774,8 +857,9 @@ so the choice is not undone as a cleanup.
   (which PRs it was learned from) are what make a wiki trustworthy, and a
   model asked to maintain them would invent PR numbers. So the model
   returns statements with their ids and code carries the sources forward,
-  appending the current PR when the text changed. An id the page never
-  had is rejected as invented; a dropped id is never reissued.
+  appending the current PR when the text changed. An edited id the page
+  never had is rejected as invented; new statements come in a list with
+  no id field, numbered by code; a dropped id is never reissued.
 - **Caps are enforced in code, and a rewrite over a cap is rejected whole.**
   The prompt tells the model the numbers, but prose grows unless something
   refuses it. Truncating would produce a description that lies about the
@@ -951,12 +1035,14 @@ A rewrite the model returns passes all of these or is rejected whole, with
 the reason in the log and the page unchanged:
 
 - A statement's `kind` is one of `component`, `rule`, `invariant`,
-  `entity`.
+  `entity`, `decision`, `extension`, `pitfall`; on the project page not
+  `extension`. Any other kind rejects the rewrite.
 - `name` and `text` are trimmed and Swiss-spelled before anything is
   checked; an empty one rejects the rewrite.
-- A kept `id` must exist on the current page and may appear once. A
-  statement with no id is new and gets the next id past every id any
-  revision of this page ever used: `s1`, `s2`, ... with no gaps reused.
+- A kept `id` must exist on the current page and may appear once; an edit
+  without one rejects the rewrite. A statement in `added` is new (any id
+  an answer slips in there is cleared) and gets the next id past every id
+  any revision of this page ever used: `s1`, `s2`, ... with no gaps reused.
 - Sources: a kept statement whose name and text are unchanged keeps its
   sources exactly; one whose name or text changed gains the current PR
   once (never twice for the same PR); a new statement starts with the
@@ -1014,6 +1100,9 @@ the reason in the log and the page unchanged:
   email, else subject) is written to the access
   log of every read route and nowhere else; it gates nothing, and the
   webhook and the ping never pass the sign-in.
+- The Markdown exports take a team bearer in oidc mode, GET only; a
+  bearer opens no other route. A statement's text is never rewritten into
+  Markdown; the export's order is the kinds' order above.
 
 ### The sources
 
@@ -1059,10 +1148,15 @@ the reason in the log and the page unchanged:
   rules for a PR statement read the whole tree.
 - A statement taught by a PR whose merge commit the run's commit does not
   hold is read-only for that run.
-- A patch: an unnamed id stays; an invented id, an id edited twice, edited
-  and dropped, or confirmed and dropped rejects it; a PR statement is
-  dropped only when its files left the tree, and an edit of it keeps the
-  files the tree still has.
+- A patch: an unnamed id stays; an edit of an id the page lacks (invented),
+  an edit without an id, an id edited twice, edited and dropped, or
+  confirmed and dropped rejects it. An unknown id to drop or confirm
+  refers to nothing: it is left out with a log line ("unknown ids left
+  out: ...") and the rest applies. Nothing unknown is ever accepted, so the
+  invented-id rule holds; only its blast radius is narrower, one
+  hallucinated hash in `confirmed` no longer costing a part. A PR
+  statement is dropped only when its files left the tree, and an edit of
+  it keeps the files the tree still has.
 - A run that ends with no revision still records its commit as documented.
 - A failed or refused part is named on the plan and read by the next
   reconcile; files a reconcile could not place are too.

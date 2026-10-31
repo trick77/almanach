@@ -34,10 +34,13 @@ Nothing flows back into reviews.
 
 ## What you get
 
-- **Repository page**: the repository's purpose and structure, then its
-  components, rules, invariants and entities, each as long as its subject
-  needs, each naming the files it rests on and the pull requests it was
-  learned from.
+- **Repository page**: the repository's purpose, structure, key flows and
+  how to work on it, then its invariants, rules, decisions, pitfalls (only
+  where a bugfix shows something broke), extensions (where to make a kind
+  of change), components and entities, each as long as its subject needs,
+  each naming the files it rests on and the pull requests it was learned
+  from. A coding agent pulls a repository's page as Markdown
+  (`/api/projects/{key}/repos/{slug}.md`) with a team token.
 - **Project page**: the system as a whole: purpose and boundary, each
   repository's role, the flows across them, what runs where; then the
   interfaces between repositories and who owns them, the entities that

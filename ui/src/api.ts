@@ -33,7 +33,16 @@ export interface Source {
   repo?: string;
 }
 
-export type Kind = "component" | "rule" | "invariant" | "entity";
+/** decision, extension and pitfall are for the agent changing the code;
+ *  extension is a repository's alone, never on a project page. */
+export type Kind =
+  | "component"
+  | "rule"
+  | "invariant"
+  | "entity"
+  | "decision"
+  | "extension"
+  | "pitfall";
 
 export interface Statement {
   id: string;

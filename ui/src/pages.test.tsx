@@ -266,6 +266,10 @@ describe("ProjectPage", () => {
     );
     expect(screen.getByText("Komponenten")).toBeInTheDocument();
     expect(screen.getByText("Invarianten")).toBeInTheDocument();
+    expect(screen.getByText("Entscheidungen")).toBeInTheDocument();
+    expect(screen.getByText("Fallstricke")).toBeInTheDocument();
+    // An extension is a repository's: the project page has no such section.
+    expect(screen.queryByText("Erweiterungen")).toBeNull();
     expect(screen.getByText("Clearing-Adapter")).toBeInTheDocument();
     expect(screen.getByText("Logik")).toBeInTheDocument();
     expect(
@@ -479,6 +483,44 @@ describe("RepoPage", () => {
         .closest("a")
         ?.getAttribute("href"),
     ).toBe("/projekte/PAY/repos/pay-clearing/notizen/51");
+  });
+
+  it("names the kinds for agents in German, in the export's order", async () => {
+    const st = (id: string, kind: "decision" | "extension" | "pitfall") => ({
+      id,
+      kind,
+      name: `Aussage ${id}`,
+      text: "Text.",
+      files: ["a.go"],
+      sources: [],
+    });
+    serve({
+      "projects/PAY/repos/pay-clearing": {
+        ...repo,
+        description: {
+          ...project.description!,
+          statements: [
+            st("s1", "extension"),
+            st("s2", "pitfall"),
+            st("s3", "decision"),
+          ],
+        },
+      },
+    });
+    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    const decisions = await screen.findByText("Entscheidungen");
+    const pitfalls = screen.getByText("Fallstricke");
+    const extensions = screen.getByText("Erweiterungen");
+    // Decisions, then pitfalls, then extensions.
+    expect(
+      decisions.compareDocumentPosition(pitfalls) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      pitfalls.compareDocumentPosition(extensions) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByText("Aussage s1")).toBeInTheDocument();
   });
 
   it("shows a baseline as a commit, a quiet chip that links nowhere", async () => {
