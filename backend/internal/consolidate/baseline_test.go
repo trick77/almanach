@@ -419,10 +419,10 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	}
 }
 
-// The budget spreads the page's room under both ceilings over this part and
-// those after it: the overview a double share, the floors on a nearly full
-// page but never past the room left, one share for an overview with nothing
-// after it.
+// The budget is this part's weighted share of the page's room under both
+// ceilings: the overview weighs two while parts follow it, one alone; the
+// floors hold on a nearly full page but never past the room left; no
+// statement without room for one.
 func TestStepBudget(t *testing.T) {
 	l := config.Limits{RepoMaxChars: 60000, RepoMaxStatements: 40}
 	page := func(chars, statements int) store.Page {
@@ -434,17 +434,19 @@ func TestStepBudget(t *testing.T) {
 		overview                 bool
 		wantChars, wantStatement int
 	}{
-		{"fresh page, overview of a 13-step run", 0, 0, 11, true, 10000, 6},
+		{"fresh page, overview of a 13-step run", 0, 0, 11, true, 9230, 6},
+		{"overview with one part after it: two thirds", 0, 0, 1, true, 40000, 26},
 		{"after it, the first subject", 10000, 6, 10, false, 4545, 3},
 		{"last subject", 50000, 30, 0, false, 10000, 10},
 		{"room under the floor", 59000, 30, 3, false, 1000, 2},
 		{"nearly full page", 59000, 39, 3, false, 1000, 1},
 		{"full on statements", 20000, 40, 3, false, 10000, 0},
 		{"full on prose", 60000, 10, 3, false, 0, 0},
+		{"prose room under a statement's size", 59800, 10, 0, false, 200, 0},
 		{"over lowered ceilings", 70000, 45, 3, false, 0, 0},
 		{"overview on a nearly full page", 59000, 39, 3, true, 1000, 1},
-		{"overview, the floor doubled", 50000, 0, 9, true, 2 * minStepBudget, 8},
-		{"overview over the statement cap", 20000, 45, 3, true, 20000, 0},
+		{"overview at the floor", 50000, 0, 9, true, minStepBudget, 7},
+		{"overview over the statement cap", 20000, 45, 3, true, 16000, 0},
 		{"overview alone", 20000, 10, 0, true, 40000, 30},
 	} {
 		got := stepBudget(l, page(c.chars, c.statements), c.left, c.overview)
@@ -456,13 +458,18 @@ func TestStepBudget(t *testing.T) {
 	// do instead.
 	r := store.BaselineRun{ProjectKey: "PLAT", Slug: "files", Commit: head}
 	for b, want := range map[budget]string{
-		{2000, 3}: "This part may grow the description by at most about 2000 characters of prose and add at most 3 new statements. A corrected",
+		{2000, 3}: "This part's share of the room left: it may grow the description by at most about 2000 characters of prose and add at most 3 new statements. A corrected",
 		{2000, 1}: "and add at most 1 new statement. A corrected",
 		{2000, 0}: "at most about 2000 characters of prose but add no statement: deepen or merge existing ones instead. A corrected",
-		{0, 0}:    "This part may not grow the description or add a statement: correct, tighten or merge existing statements instead. A corrected",
+		{0, 0}:    "This part's share of the room left: it may not grow the description or add a statement: correct, tighten or merge existing statements instead. A corrected",
 	} {
-		if out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, b, "a subject", "", "_None._", nil); !strings.Contains(out, want) {
+		out := renderDescribe(r, existingRepoPage(), limits, 2, 3, 1, b, "a subject", "", "_None._", nil)
+		if !strings.Contains(out, want) {
 			t.Errorf("describe prompt with budget %+v lacks %q", b, want)
+		}
+		// A share of the page's room, never a length quota on a statement.
+		if strings.Contains(out, "rather than many") || !strings.Contains(out, "a statement keeps the length its subject needs") {
+			t.Errorf("describe prompt with budget %+v reads as a length quota", b)
 		}
 	}
 }
@@ -493,8 +500,8 @@ func TestRun_StepBudgetLogged(t *testing.T) {
 	x.w.drain(context.Background())
 
 	// 400-rune ceiling, 45 used: the floor held to the 355 left, then 347.
-	// 4 statements, 2 held: one each, the overview's twice; then both.
-	if !strings.Contains(x.models.prompts[1], "at most about 355 characters of prose and add at most 2 new statements") ||
+	// 4 statements, 2 held: the overview two thirds of them, then both.
+	if !strings.Contains(x.models.prompts[1], "at most about 355 characters of prose and add at most 1 new statement.") ||
 		!strings.Contains(x.models.prompts[2], "at most about 347 characters of prose and add at most 2 new statements") {
 		t.Errorf("prompts lack their budgets:\n%s", x.models.prompts[2])
 	}
@@ -502,7 +509,7 @@ func TestRun_StepBudgetLogged(t *testing.T) {
 	// of 26, s1 returned as stored.
 	out := logs.String()
 	for _, want := range []string{
-		"the overview: page grew by 8 chars of prose, budget 355; 0 new statements, budget 2; 0 returned unchanged",
+		"the overview: page grew by 8 chars of prose, budget 355; 0 new statements, budget 1; 0 returned unchanged",
 		"Anmeldung: page grew by 37 chars of prose, budget 347; 1 new statement, budget 2; 1 returned unchanged",
 	} {
 		if !strings.Contains(out, want) {
@@ -530,6 +537,20 @@ func TestReturnedUnchanged(t *testing.T) {
 	}}
 	if got := returnedUnchanged(before, after, p); got != 1 {
 		t.Errorf("returnedUnchanged = %d, want 1", got)
+	}
+	// A statement whose only change was a new diagram the fold left out was
+	// a real attempt; one returned with its stored diagram or {"kind":
+	// "none"} on none was not.
+	p = inference.Patch{Statements: []inference.Statement{
+		{ID: ref("s2"), Kind: "rule", Name: "Mit Bild", Text: "Fluss.", Diagram: dangling()},
+		{ID: ref("s3"), Kind: "rule", Name: "Weg", Text: "Gilt.", Diagram: &diagram.Diagram{Kind: diagram.KindNone}},
+	}}
+	if got := returnedUnchanged(before, before, p); got != 1 {
+		t.Errorf("returnedUnchanged with a left-out diagram = %d, want 1 (s3 only)", got)
+	}
+	p.Statements[0].Diagram = seq("ruft")
+	if got := returnedUnchanged(before, before, p); got != 2 {
+		t.Errorf("returnedUnchanged with the stored diagram echoed = %d, want 2", got)
 	}
 }
 
@@ -636,7 +657,8 @@ func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
 }
 
 // A part the model fails or the rules refuse is skipped and named in the
-// plan for the next reconcile; a page at its ceiling ends the reading.
+// plan for the next reconcile; a patch over a ceiling costs its own part
+// only, the page unchanged, and the parts after it are still read.
 func TestRun_SkipsAndCeiling(t *testing.T) {
 	x := newWorld(t, 16)
 	x.queue(store.RunFull, "")
@@ -651,15 +673,19 @@ func TestRun_SkipsAndCeiling(t *testing.T) {
 		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
 		{Call: inference.Call{Outcome: inference.OutcomeUnparseable}},
 		{Call: called, Patch: inference.Patch{Statements: many}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Kurz", "Gilt.", "README.md")}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 3 || r.Calls != 5 {
+	if r.State != store.RunDone || r.Skipped != 2 || r.Calls != 6 {
 		t.Fatalf("run = %+v", r)
 	}
-	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A", "B", "C"}) {
-		t.Errorf("skipped = %v, want A (failed), B (ceiling) and C (not read)", p.Skipped)
+	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A", "B"}) {
+		t.Errorf("skipped = %v, want A (failed) and B (ceiling)", p.Skipped)
+	}
+	if page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; len(page.Statements) != 1 || page.Statements[0].Name != "Kurz" {
+		t.Errorf("page = %+v, want B's rewrite rejected and C's statement taken", page.Statements)
 	}
 }
 

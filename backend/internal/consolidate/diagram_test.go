@@ -71,6 +71,36 @@ func TestFoldStatementDiagram(t *testing.T) {
 		t.Errorf("new statement = %+v, want it kept without the diagram", got[1])
 	}
 
+	// With its text changed in the same rewrite the stored picture goes
+	// too, logged: it would show what the statement no longer says.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: page.Summary, Statements: []inference.Statement{
+		{ID: str(s.ID), Kind: s.Kind, Name: s.Name, Text: "Nimmt Dateien an, neu.", Files: s.Files, Diagram: dangling()}}}, nil)}
+	w := newWorker(st, m)
+	var logs strings.Builder
+	w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	w.Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || st.revisions[0].Statements[0].Diagram != nil || st.revisions[0].Statements[0].Text != "Nimmt Dateien an, neu." {
+		t.Fatalf("changed text: revisions = %+v, want the text taken and the stored diagram dropped", st.revisions)
+	}
+	if !strings.Contains(logs.String(), "the stored one dropped with the changed text") {
+		t.Errorf("log lacks the dropped stored diagram:\n%s", logs.String())
+	}
+
+	// A rewrite the ceilings reject logs its rejection, not the diagram it
+	// would have left out.
+	st = newFakeStore()
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: strings.Repeat("x", 500), Statements: []inference.Statement{
+		{Kind: "rule", Name: "R", Text: "T", Diagram: dangling()}}}, nil)}
+	w = newWorker(st, m)
+	logs.Reset()
+	w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	w.Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 0 || !strings.Contains(logs.String(), "rewrite rejected") || strings.Contains(logs.String(), "left out") {
+		t.Errorf("rejected rewrite: revisions %+v, log:\n%s", st.revisions, logs.String())
+	}
+
 	// One diagram past the page's count (1 here) costs that diagram, not the
 	// rewrite: the later one is left out, its statement kept.
 	st = newFakeStore()
@@ -369,9 +399,10 @@ func TestRun_NullKeepsTheDiagram(t *testing.T) {
 }
 
 // On the baseline paths a diagram that breaks a rule costs that diagram:
-// the step's statements land, the part is not skipped, a stored diagram
-// stays, and on the project step a statement whose text is unchanged keeps
-// its sources and last check.
+// the step's statements land and the part is not skipped. A stored diagram
+// goes with a changed text (the subject step's edit) and stays beside an
+// unchanged one, where on the project step the statement also keeps its
+// sources and last check.
 func TestRun_InvalidDiagramCostsOnlyItself(t *testing.T) {
 	x := newWorld(t, 16)
 	var logs strings.Builder
@@ -398,8 +429,8 @@ func TestRun_InvalidDiagramCostsOnlyItself(t *testing.T) {
 		t.Fatalf("skipped = %v, want every part applied", p.Skipped)
 	}
 	repo := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")].Statements
-	if len(repo) != 2 || repo[0].Text != "Neu." || !diagram.Equal(repo[0].Diagram, seq("ruft")) || repo[1].Diagram != nil {
-		t.Errorf("repository statements = %+v, want both, the stored diagram kept and none added", repo)
+	if len(repo) != 2 || repo[0].Text != "Neu." || repo[0].Diagram != nil || repo[1].Diagram != nil {
+		t.Errorf("repository statements = %+v, want both, the stale stored diagram dropped and none added", repo)
 	}
 	project := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
 	if s := project.Statements[0]; project.Summary != "Werkzeuge, neu." || !diagram.Equal(s.Diagram, seq("liest")) ||
