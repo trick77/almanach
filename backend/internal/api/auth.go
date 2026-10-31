@@ -16,8 +16,8 @@ import (
 var errNoSubject = errors.New("oidc claims carry no subject")
 
 // OIDCService is the login half of the sign-in as the routes need it.
-// auth.Provider satisfies it, and answers a provider not discovered yet
-// itself; kit's *auth.OIDC does too, for a test.
+// auth.Provider satisfies it, and answers a provider not discovered yet or
+// misconfigured itself; kit's *auth.OIDC does too, for a test.
 type OIDCService interface {
 	Start(w http.ResponseWriter, r *http.Request)
 	Callback(w http.ResponseWriter, r *http.Request) (auth.Claims, error)
@@ -83,8 +83,12 @@ func (d Deps) callback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	next := auth.TakeNext(w, r)
 	claims, err := d.OIDC.Callback(w, r)
-	if errors.Is(err, auth.ErrNotDiscovered) {
+	switch {
+	case errors.Is(err, auth.ErrNotDiscovered):
 		http.Redirect(w, r, auth.UnavailableURL, http.StatusFound)
+		return
+	case errors.Is(err, auth.ErrMisconfigured):
+		http.Redirect(w, r, auth.MisconfiguredURL, http.StatusFound)
 		return
 	}
 	if err == nil && claims.Subject == "" {
@@ -113,8 +117,7 @@ type logoutBody struct {
 // so instead of signing straight back in.
 func (d Deps) logout(w http.ResponseWriter, r *http.Request) {
 	// The provider is not asked: logout works while it is down.
-	if d.Sessions == nil {
-		d.signInOff(w)
+	if d.signInOff(w) {
 		return
 	}
 	d.reader(r)

@@ -274,6 +274,26 @@ func TestCrossSiteChangesRefused(t *testing.T) {
 	}
 }
 
+// The callback says why there is no flow: not yet, or never.
+func TestCallbackWithoutAFlow(t *testing.T) {
+	for want, err := range map[string]error{auth.UnavailableURL: auth.ErrNotDiscovered, auth.MisconfiguredURL: auth.ErrMisconfigured} {
+		var buf bytes.Buffer
+		rec := get(oidcHandler(t, &fakeOIDC{err: err}, testSessions(t), &buf), http.MethodGet, "/api/auth/callback?code=x&state=y")
+		if got := rec.Header().Get("Location"); got != want {
+			t.Errorf("%v: Location = %q, want %q", err, got, want)
+		}
+	}
+}
+
+// None mode signs nobody in, but a write from another site is refused.
+func TestNoneModeRefusesCrossSiteWrites(t *testing.T) {
+	h := handler(t, newFakeStore(), &fakeWaker{}, config.AuthNone)
+	code, _ := do(t, h, "POST", "/api/auth/logout", "", "", map[string]string{"Sec-Fetch-Site": "cross-site"})
+	if code != http.StatusForbidden {
+		t.Errorf("cross-site write in none mode = %d, want 403", code)
+	}
+}
+
 // A provider down at startup takes down the sign-in only: the webhook and
 // the ping work, the login lands on a page that halts with a button, the
 // wiki stays behind its 401.

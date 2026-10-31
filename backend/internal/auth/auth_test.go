@@ -128,6 +128,63 @@ func TestGateOffInNoneMode(t *testing.T) {
 	}
 }
 
+// None mode has no session, but its writes are still checked for their
+// origin; a client sending neither header (curl) still writes.
+func TestGateChecksOriginInNoneMode(t *testing.T) {
+	h := Gate(nil, "")(echo)
+	for _, tc := range []struct {
+		name string
+		hdr  map[string]string
+		want int
+	}{
+		{"same-origin fetch", map[string]string{"Sec-Fetch-Site": "same-origin"}, 200},
+		{"other site", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+		{"Origin elsewhere", map[string]string{"Origin": "https://evil.example.com"}, 403},
+		{"Origin is the host", map[string]string{"Origin": "http://almanach.internal:8080"}, 200},
+		{"curl, neither header", nil, 200},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/sources", nil)
+		req.Host = "almanach.internal:8080"
+		for k, v := range tc.hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: %d, want %d", tc.name, rec.Code, tc.want)
+		}
+	}
+}
+
+// The trusted origin is written as a browser writes Origin.
+func TestOriginDropsTheDefaultPort(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://Almanach.example.com:443/api/auth/callback": "https://almanach.example.com",
+		"https://almanach.example.com:8443/x":                "https://almanach.example.com:8443",
+		"http://localhost:80/x":                              "http://localhost",
+		"http://localhost:443/x":                             "http://localhost:443",
+		"https://[::1]:443/x":                                "https://[::1]",
+		"https://almanach.example.com/x":                     "https://almanach.example.com",
+		"no-scheme":                                          "",
+	} {
+		if got := origin(in); got != want {
+			t.Errorf("origin(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// A browser on the default port sends no port: it is trusted.
+	s := sessions(t)
+	h := Gate(s, "https://almanach.example.com:443/api/auth/callback")(echo)
+	req := httptest.NewRequest(http.MethodPost, "/api/sources", nil)
+	req.Host = "almanach.internal:8080"
+	req.Header.Set("Origin", "https://almanach.example.com")
+	req.AddCookie(sessionCookie(t, s, Claims{Subject: "sub-1"}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("default-port origin = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 // A change must come from this site, by Sec-Fetch-Site or, failing that,
 // Origin; a read and everything outside /api are not asked.
 func TestGateRefusesCrossSiteChanges(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 
 	kitenv "github.com/trick77/ship/kit/env"
 
-	"github.com/trick77/almanach/internal/auth"
+	"github.com/trick77/almanach/internal/authroute"
 	"github.com/trick77/almanach/internal/diagram"
 )
 
@@ -265,9 +265,9 @@ func redirectFault(s string) string {
 	u, err := url.Parse(s)
 	switch {
 	case err != nil || u.Scheme != "https" || u.Host == "":
-		return "want https://<host>" + auth.CallbackPath + ", the session cookie is always Secure"
-	case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Path != auth.CallbackPath:
-		return "want the path " + auth.CallbackPath + " and nothing else after the host"
+		return "want https://<host>" + authroute.Callback + ", the session cookie is always Secure"
+	case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Path != authroute.Callback:
+		return "want the path " + authroute.Callback + " and nothing else after the host"
 	}
 	return ""
 }
