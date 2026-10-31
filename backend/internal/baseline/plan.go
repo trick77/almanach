@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/lang"
 )
 
 // Subject is one piece of a repository a step reads: a flow or a part, what
@@ -42,11 +43,12 @@ func (p Plan) Bytes() int64 {
 	return n
 }
 
-// find is the index of the subject with this name, ignoring case; -1 when
-// none.
+// find is the index of the subject with this name, ignoring case and
+// umlauts written out ("Datenueberpruefung" is "Datenüberprüfung"); -1
+// when none.
 func (p Plan) find(name string) int {
 	for i, s := range p.Subjects {
-		if strings.EqualFold(s.Name, name) {
+		if lang.SameButSpelling(strings.ToLower(s.Name), strings.ToLower(name)) {
 			return i
 		}
 	}

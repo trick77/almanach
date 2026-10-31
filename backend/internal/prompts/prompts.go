@@ -37,3 +37,7 @@ var Diagrams string
 //
 //go:embed almanach_diagrams_off.txt
 var DiagramsOff string
+
+// Spelling is the spelling rule every prompt that asks for German states,
+// word for word: one rule, never five wordings drifting apart.
+const Spelling = `"ss", never "ß"; umlauts stay ä, ö, ü, Ä, Ö, Ü, never spelled out as ae, oe, ue`

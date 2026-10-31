@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -258,9 +259,11 @@ func TestPromptEval(t *testing.T) {
 	if project.Summary == "" {
 		t.Error("project: no summary")
 	}
-	// A slug opening a German sentence is capitalised ("Almanach liest").
+	// A slug opening a German sentence is capitalised ("Almanach liest"):
+	// matched as a whole word in any case, so "web" is not found in
+	// "Webhook".
 	for _, repo := range st.repos {
-		if !strings.Contains(strings.ToLower(project.Summary), strings.ToLower(repo.Slug)) {
+		if !regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(repo.Slug) + `\b`).MatchString(project.Summary) {
 			t.Errorf("project summary never names %s", repo.Slug)
 		}
 	}
@@ -320,8 +323,15 @@ func checkPage(t *testing.T, slug string, p store.Page, exists func(string) bool
 				t.Errorf("%s %s: file %s not in the tree", slug, s.ID, f)
 			}
 		}
+		if w := spelledOut.FindString(s.Name + "\n" + s.Text); w != "" {
+			t.Errorf("%s %s %q: umlaut spelled out (%s)", slug, s.ID, s.Name, w)
+		}
 	}
 }
+
+// spelledOut finds the common German words whose umlauts a model writes
+// out ("ergaenzen", "fuer"), the slip the prompts' spelling rule forbids.
+var spelledOut = regexp.MustCompile(`(?i)\b(fuer|ueber\w*|\w*aender\w*|\w*pruef\w*|\w*fueg\w*|\w*ergaenz\w*|moeglich\w*|\w*groess\w*|waehr\w*|koenn\w*|muess\w*|naechst\w*|spaet\w*)\b`)
 
 func dump(t *testing.T, dir, name string, p store.Page) {
 	t.Helper()

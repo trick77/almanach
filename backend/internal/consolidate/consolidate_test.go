@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
@@ -203,6 +204,27 @@ func existingRepoPage() store.Page {
 			Sources: []store.Source{{PRKey: "PLAT/files#1", MergedAt: older}},
 		}},
 		SourcePR: "PLAT/files#1", UpdatedAt: older,
+	}
+}
+
+// A statement whose umlauts are only written in, where it had ae, oe, ue,
+// is stored so but keeps its sources, its last check and its diagram: the
+// fold taught nothing about it.
+func TestFoldRespellingIsNoChange(t *testing.T) {
+	st := newFakeStore()
+	page := existingRepoPage()
+	flow := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}}}
+	page.Statements[0].Name, page.Statements[0].Text, page.Statements[0].Checked, page.Statements[0].Diagram = "Gebuehren", "Fuer jede Datei.", "c0ffee", flow
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Gebühren", Text: "Für jede Datei.", Files: []string{"internal/files/upload.go"}}},
+		Added:      []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("revisions = %+v", st.revisions)
+	}
+	s := st.revisions[0].Statements[0]
+	if s.Name != "Gebühren" || len(s.Sources) != 1 || s.Checked != "c0ffee" || s.Diagram == nil {
+		t.Errorf("respelled statement = %+v, want the umlauts stored, one source, the check and the diagram kept", s)
 	}
 }
 
