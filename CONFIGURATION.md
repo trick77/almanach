@@ -55,11 +55,14 @@ fails is not drawn and the stored one stays.
 
 With `ALMANACH_AUTH_MODE=oidc` every variable below is required, and each
 is a startup fault under `none`, where it would look active and change
-nothing. The provider's discovery document is fetched at startup, each
-attempt bounded to 30 s. A provider that does not answer is a warning,
-not a fault: the webhook, the ping and the wiki's 401 keep working, the
-login routes answer 503, and discovery is retried in the background
-(5 s, doubling up to 5 min), each failure logged, until it answers.
+nothing. The provider's discovery document is fetched in the background
+from startup on, each attempt bounded to 30 s; the listener never waits
+for it. A provider that does not answer is a warning, not a fault: the
+webhook, the ping and the wiki's 401 keep working, the login lands on a
+page that says so (`/?auth_error=provider_unavailable`), and discovery is
+retried (5 s, doubling up to 5 min), each failure logged, until it
+answers. A deep link survives the sign-in: the login carries the page in
+`?next=` (a path on this site only) and the callback returns there.
 
 | Variable | Meaning |
 | --- | --- |

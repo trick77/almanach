@@ -245,12 +245,15 @@ read-only by design.
 `ALMANACH_AUTH_MODE=oidc` is kit's authorization code flow
 (`ship/kit/auth`), without a users table. The UI asks
 `GET /api/me` before it renders anything; a 401 sends the browser by full
-navigation to `GET /api/auth/login`, which redirects to the provider with
-state, nonce and a PKCE verifier in short-lived `almanach_oidc_*` cookies.
-The provider returns to `GET /api/auth/callback`; kit checks state, PKCE,
-the ID token and its nonce, and the claims become the signed session
-cookie `almanach_session` (HMAC over the claims, 30 days, Secure, HttpOnly,
-SameSite Lax). Nothing is stored server-side: `POST /api/auth/logout`
+navigation to `GET /api/auth/login?next=<the page>`, which redirects to the
+provider with state, nonce and a PKCE verifier in short-lived
+`almanach_oidc_*` cookies, the page in `almanach_next` (a path on this site
+only, else `/`). The provider returns to `GET /api/auth/callback`; kit
+checks state, PKCE, the ID token and its nonce, the claims become the
+signed session cookie `almanach_session` (HMAC over the claims, 30 days,
+Secure, HttpOnly, SameSite Lax), and the browser goes back to the page.
+A `/api/me` that cannot be reached or read halts with a retry button: the
+UI never assumes a mode the server did not state. Nothing is stored server-side: `POST /api/auth/logout`
 clears the cookie, and rotating `ALMANACH_SESSION_SECRET` signs everyone
 out. A failed callback lands on `/?auth_error=…` and a sign-out on
 `/?signed_out=1`; when `/api/me` then answers 401 the UI halts with a
@@ -263,16 +266,19 @@ session the browser keeps dropping cannot loop either. The gate covers
 every path under `/api` but the login and its callback, so a route added
 later is covered without anyone remembering; the SPA shell, the webhook,
 the ping and the probes are outside it. A change through the gate (POST,
-PUT, PATCH, DELETE) must come from Almanach's own pages: `Sec-Fetch-Site`
-same-origin or none, or, from a browser without it, an `Origin` naming
-the request's host or the redirect URL's origin; else 403. SameSite Lax
-alone would let a sibling subdomain post.
+PUT, PATCH, DELETE) must come from Almanach's own pages: Go's
+CrossOriginProtection decides (`Sec-Fetch-Site` same-origin or none, else
+an `Origin` naming the request's host; the redirect URL's origin is
+trusted too), and a write carrying neither header is refused as well;
+else 403. SameSite Lax alone would let a sibling subdomain post.
 
-Discovery runs at startup, each attempt bounded to 30 s. A provider that
-does not answer is a warning, like an unreachable gateway: noergler's
-webhook and ping do not depend on it. The login routes answer 503 and the
-wiki stays behind its 401 until a background retry (5 s, doubling up to
-5 min, each failure logged) reaches it. In none mode there is no sign-in:
+Discovery runs in the background from startup on, each attempt bounded to
+30 s; boot never waits for it. A provider that does not answer is a
+warning, like an unreachable gateway: noergler's webhook and ping do not
+depend on it. The login and the callback land on
+`/?auth_error=provider_unavailable`, where the UI halts with a button to
+try again, and the wiki stays behind its 401 until a retry (5 s, doubling
+up to 5 min, each failure logged) reaches the provider. In none mode there is no sign-in:
 `/api/me` answers `{"mode": "none", "user": ""}` and the login routes 503.
 
 ## 4a. The sources
@@ -997,7 +1003,7 @@ the reason in the log and the page unchanged:
   session secret of at least 32 bytes are required, a missing or malformed
   one is a startup fault, and each is a fault under none. A provider that
   does not answer discovery (30 s an attempt) is a warning, retried in the
-  background; the login answers 503 meanwhile. `none` is allowed on any
+  background, never awaited; the login lands on a halting page meanwhile. `none` is allowed on any
   `SERVER_HOST`.
 - Caps and the problem window must be positive integers; a zero or
   negative value is a startup fault, not a disabled cap.

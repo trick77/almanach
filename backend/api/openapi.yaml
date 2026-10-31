@@ -135,6 +135,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Projects"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
 
   /api/projects/{key}:
     get:
@@ -151,6 +153,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProjectDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -185,6 +189,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -204,6 +210,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepoDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -229,6 +237,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NoteDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -245,6 +255,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Sources"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
     post:
       tags: [sources]
       summary: Create a source
@@ -267,6 +279,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SourceDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/SourcesOff"
         "409":
@@ -295,6 +311,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SourceDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
@@ -317,6 +335,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SourceDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
         "415":
@@ -333,6 +355,10 @@ paths:
       responses:
         "204":
           description: Gone, clones included.
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -351,6 +377,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Queued"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -375,6 +405,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SourceDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -400,6 +434,10 @@ paths:
       responses:
         "204":
           description: Gone, clone included.
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -419,6 +457,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Queued"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -448,6 +490,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Described"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -485,12 +531,23 @@ paths:
       summary: Start the OIDC sign-in
       description: >-
         Redirects to the provider, state, nonce and a PKCE verifier in
-        short-lived cookies. A browser navigates here; a fetch cannot follow.
+        short-lived cookies, `next` in the `almanach_next` cookie (10 minutes).
+        A browser navigates here; a fetch cannot follow. While the provider
+        has not answered discovery, to `/?auth_error=provider_unavailable`.
       operationId: login
       security: []
+      parameters:
+        - name: next
+          in: query
+          description: >-
+            The page to return to after the sign-in: a path on this site
+            (one leading slash, no scheme, host, backslash or control
+            character); anything else is `/`.
+          schema:
+            type: string
       responses:
         "302":
-          description: To the provider.
+          description: To the provider, or to `/?auth_error=provider_unavailable`.
         "503":
           $ref: "#/components/responses/SignInOff"
 
@@ -501,8 +558,8 @@ paths:
       description: >-
         Where the provider returns. State, PKCE, the ID token and its nonce are
         checked; the claims become the signed session cookie and the browser
-        goes to `/`. On any failure to `/?auth_error=…`, the reason in the
-        server log only.
+        goes to the page `next` named at the login, else `/`. On any failure
+        to `/?auth_error=…`, the reason in the server log only.
       operationId: callback
       security: []
       parameters:
@@ -510,7 +567,7 @@ paths:
         - { name: state, in: query, schema: { type: string } }
       responses:
         "302":
-          description: To `/` signed in, or to `/?auth_error=…`.
+          description: To the `next` page signed in, or to `/?auth_error=…`.
         "503":
           $ref: "#/components/responses/SignInOff"
 
@@ -595,21 +652,21 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     SignInRequired:
-      description: oidc mode without a valid session; the UI navigates to the login.
+      description: oidc mode only, without a valid session; the UI navigates to the login.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     CrossSite:
-      description: oidc mode, a change that did not come from Almanach's own pages.
+      description: >-
+        oidc mode only: a change that did not come from Almanach's own pages
+        (Sec-Fetch-Site, else Origin; a write with neither is refused too).
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     SignInOff:
-      description: >-
-        No sign-in to offer: none mode, or in oidc mode a provider that has
-        not answered discovery yet (retried in the background).
+      description: none mode has no sign-in.
       content:
         application/json:
           schema:
