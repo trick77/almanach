@@ -210,24 +210,24 @@
 <div class="decision decided"><span class="tag">D1 · decided (user)</span>
 <p><b>SQLite only, PostgreSQL removed.</b> The database on its own volume, apart from the clones; a PVC for it in the deployment, as rongo's.</p></div>
 
-<div class="decision"><span class="tag">D2 · the data that exists</span>
+<div class="decision decided"><span class="tag">D2 · decided: fresh start</span>
 <p><b>Recommend a fresh start.</b> The repository and project pages rebuild from the code by baseline runs; the sources are added again in Quellen. What is lost: the notes noergler delivered before the switch and the revision history.</p>
 <p><b>Alternative: a one-off <code>almanach import-postgres &lt;dsn&gt;</code></b> that copies every table into the new file. About 250 lines and tests, and pgx stays a dependency until it is deleted a release later.</p>
 <p>The deployment is a dev stage; if its notes matter, take the import.</p></div>
 
-<div class="decision"><span class="tag">D3 · timestamps</span>
+<div class="decision decided"><span class="tag">D3 · decided: text</span>
 <p><b>Recommend <code>TEXT</code>, UTC, fixed-width RFC 3339 with nanoseconds</b>, written and parsed by the store: readable in the <code>sqlite3</code> shell, sorts as text, keeps sub-second order (merges, run steps).</p>
 <p>Alternative: <code>INTEGER</code> Unix nanoseconds: compact and exact, unreadable by hand. rongo's <code>datetime('now')</code> (seconds) loses the order of two merges in one second.</p></div>
 
-<div class="decision"><span class="tag">D4 · order of the PRs</span>
+<div class="decision decided"><span class="tag">D4 · decided: G, B, D, C</span>
 <p><b>Recommend G → B → D → C.</b> G's migration 0006 lands in PostgreSQL and is folded into D's schema; B does not touch the store; C is written once, without a database container.</p>
 <p>Alternative: D first, G on SQLite: G (being built now) would rebase onto a new store, a larger conflict than folding one migration.</p></div>
 
-<div class="decision"><span class="tag">D5 · sources on in the deployment</span>
+<div class="decision decided"><span class="tag">D5 · decided: on</span>
 <p><b>Recommend on</b>, with the repos PVC: the code is Almanach's starting point now, and without the sources the deployment only folds notes.</p>
 <p>Alternative: data PVC only, the sources stay off until later; one PVC and one secret fewer.</p></div>
 
-<div class="decision"><span class="tag">D6 · the deployment's auth</span>
+<div class="decision decided"><span class="tag">D6 · decided: oidc with the PVCs</span>
 <p><b>Recommend: switch it to oidc in the same round as D's PVCs</b>, after B and D are released: one change to the deployment, the OAuth sidecar removed. Needs the identity provider's client, which is yours to order.</p>
 <p>Alternative: the deployment stays on the last release with proxy mode until the client exists.</p></div>
 
