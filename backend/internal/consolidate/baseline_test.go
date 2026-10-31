@@ -307,17 +307,19 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	}
 }
 
-// The other repositories' summaries: the run's own left out, past the cap
-// and without a summary only names.
+// The other repositories' summaries: the run's own left out, the shortest
+// taken first under the cap, shown by slug; the rest and those without a
+// summary only named.
 func TestOtherRepos(t *testing.T) {
 	if got := otherRepos([]store.RepoRow{{Slug: "svc", Summary: "x"}}, "svc"); got != "_None._" {
 		t.Errorf("only itself = %q", got)
 	}
 	big := strings.Repeat("a", baseline.ProjectReposMaxBytes-20)
-	got := otherRepos([]store.RepoRow{{Slug: "a", Summary: big}, {Slug: "b", Summary: "zu viel"}, {Slug: "c"}, {Slug: "svc", Summary: "selbst"}}, "svc")
-	if !strings.HasPrefix(got, "### a\n\n"+big) || strings.Contains(got, "zu viel") || strings.Contains(got, "selbst") ||
-		!strings.HasSuffix(got, "Also in the project, without a summary here: b, c.\n") {
-		t.Errorf("otherRepos = …%q", got[len(got)-80:])
+	got := otherRepos([]store.RepoRow{{Slug: "a", Summary: big}, {Slug: "b", Summary: "kurz"}, {Slug: "c"},
+		{Slug: "d", Summary: "auch kurz"}, {Slug: "svc", Summary: "selbst"}}, "svc")
+	want := "### b\n\nkurz\n\n### d\n\nauch kurz\n\nAlso in the project, without a summary here: a, c.\n"
+	if got != want {
+		t.Errorf("otherRepos = %q\nwant %q", got, want)
 	}
 }
 

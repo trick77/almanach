@@ -141,8 +141,8 @@ func evalClient(t *testing.T, log *slog.Logger) *inference.Client {
 	return llm
 }
 
-// TestPromptReplay sends the patch prompt in EVAL_PROMPT once and logs what
-// came back: a stalled step, alone.
+// TestPromptReplay sends the kept prompt in EVAL_PROMPT once, under the
+// schema its name says, and logs what came back: a stalled step, alone.
 func TestPromptReplay(t *testing.T) {
 	file := os.Getenv("EVAL_PROMPT")
 	if file == "" || os.Getenv("EVAL_MODEL") == "" {
@@ -152,11 +152,24 @@ func TestPromptReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	start := time.Now()
-	res := evalClient(t, log).Patch(context.Background(), string(prompt))
-	t.Logf("%s after %s: %d statements, summary %v, err %v", res.Outcome, time.Since(start).Round(time.Second),
-		len(res.Patch.Statements), res.Patch.Summary != nil, res.Err)
+	llm := evalClient(t, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	ctx, start := context.Background(), time.Now()
+	var call inference.Call
+	var got string
+	switch {
+	case strings.HasSuffix(file, "-catalogue.txt"):
+		res := llm.Catalogue(ctx, string(prompt))
+		call, got = res.Call, fmt.Sprintf("%d subjects", len(res.Catalogue.Subjects))
+	case strings.HasSuffix(file, "-patch.txt"):
+		res := llm.Patch(ctx, string(prompt))
+		call, got = res.Call, fmt.Sprintf("%d statements, summary %v", len(res.Patch.Statements), res.Patch.Summary != nil)
+	case strings.HasSuffix(file, "-project.txt"):
+		res := llm.Describe(ctx, string(prompt))
+		call, got = res.Call, fmt.Sprintf("description %v", res.Description != nil)
+	default:
+		t.Fatalf("EVAL_PROMPT %s: want a kept prompt, NN-catalogue|patch|project.txt", file)
+	}
+	t.Logf("%s after %s: %s, err %v", call.Outcome, time.Since(start).Round(time.Second), got, call.Err)
 }
 
 // TestPromptEval runs EVAL_REPOS (slug=url pairs) through EVAL_MODEL and writes

@@ -80,10 +80,11 @@ func New(opt Options) (*Client, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	// No call streams: the answer's body arrives whole, after the model has
-	// written all of it, so llmwire's idle bound (90s) would cut every answer
-	// that takes longer to write. A baseline overview took 4m48s
-	// (2026-10-31); the call cap is the only bound.
+	// No call streams. llmwire arms its idle bound (90s) at the response
+	// headers, and a host may send those at once and the body only when the
+	// whole answer is written: mimo's did, and a baseline overview took 4m48s
+	// to write (2026-10-31), cut at every bound short of that. For a client
+	// that never streams the call cap is bound enough, the merger included.
 	wire, err := llmwire.FromEnv(opt.Model, llmwire.Config{CallTimeout: CallTimeout, IdleTimeout: CallTimeout, Logger: opt.Logger, Lookup: opt.Lookup})
 	if err != nil {
 		return nil, fmt.Errorf("inference: build client for %s: %w", opt.Model, err)

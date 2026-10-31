@@ -1109,21 +1109,34 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 }
 
 // otherRepos is the summaries of the project's other source repositories,
-// by slug, so the project is written as a whole: within
-// ProjectReposMaxBytes, past it and without a summary only the names.
+// by slug, so the project is written as a whole. The summaries fill
+// ProjectReposMaxBytes shortest first, so a cap costs the fewest of them;
+// the rest, and those without a summary, are named.
 func otherRepos(repos []store.RepoRow, self string) string {
+	var others []store.RepoRow
+	for _, r := range repos {
+		if r.Slug != self {
+			others = append(others, r)
+		}
+	}
+	bySize := slices.Clone(others)
+	slices.SortStableFunc(bySize, func(a, b store.RepoRow) int { return len(a.Summary) - len(b.Summary) })
+	shown := map[string]bool{}
+	used := 0
+	for _, r := range bySize {
+		if n := len(repoEntry(r)); r.Summary != "" && used+n <= baseline.ProjectReposMaxBytes {
+			shown[r.Slug] = true
+			used += n
+		}
+	}
 	var b strings.Builder
 	var named []string
-	for _, r := range repos {
-		if r.Slug == self {
-			continue
-		}
-		entry := fmt.Sprintf("### %s\n\n%s\n\n", r.Slug, r.Summary)
-		if r.Summary == "" || b.Len()+len(entry) > baseline.ProjectReposMaxBytes {
+	for _, r := range others {
+		if shown[r.Slug] {
+			b.WriteString(repoEntry(r))
+		} else {
 			named = append(named, r.Slug)
-			continue
 		}
-		b.WriteString(entry)
 	}
 	if len(named) > 0 {
 		fmt.Fprintf(&b, "Also in the project, without a summary here: %s.\n", strings.Join(named, ", "))
@@ -1133,6 +1146,8 @@ func otherRepos(repos []store.RepoRow, self string) string {
 	}
 	return b.String()
 }
+
+func repoEntry(r store.RepoRow) string { return fmt.Sprintf("### %s\n\n%s\n\n", r.Slug, r.Summary) }
 
 // describeSourced is describe with each statement's provenance: a step
 // must know which statements a pull request taught.

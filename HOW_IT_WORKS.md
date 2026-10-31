@@ -399,8 +399,9 @@ resumes after a restart. The run pins the clone's head when it starts.
 4. *Project.* The repository's new description folded into the project
    page, on a full run always, on a reconcile when the summary changed.
    Beside it the step sees the summaries of the project's other source
-   repositories (80 kB; past that, and without a summary, only their
-   slugs), so the page is written as one system: purpose and boundary,
+   repositories (summaries up to 80 kB, the shortest first; the rest,
+   and those without a summary, by slug only, and the page keeps what it
+   says of them), so the page is written as one system: purpose and boundary,
    each repository's role, the flows across them and the runtime in the
    summary; interfaces, shared entities and cross-repository rules as
    statements. Its revision and the run's end land in one transaction.
