@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -95,6 +97,33 @@ type Page struct {
 	// step hashed it; "" with no map. A basis that no longer matches the
 	// page's text is a map due again.
 	RepoMapBasis string
+}
+
+// MapStands reports whether a repository page's map was drawn from its
+// description as it stands: then a run has nothing new to draw from.
+func (p Page) MapStands() bool {
+	return p.RepoMap != nil && p.RepoMapBasis == p.MapBasis()
+}
+
+// MapBasis is the description a repository map is drawn from, as a hash:
+// the summary and each statement's kind, name, text and files, never its
+// sources or last check, which change without the text. The shape hashed
+// is what every stored basis was: change it and every map is due again.
+func (p Page) MapBasis() string {
+	type part struct {
+		Kind, Name, Text string
+		Files            []string
+	}
+	parts := make([]part, 0, len(p.Statements))
+	for _, s := range p.Statements {
+		parts = append(parts, part{s.Kind, s.Name, s.Text, s.Files})
+	}
+	raw, _ := json.Marshal(struct {
+		Summary    string
+		Statements []part
+	}{p.Summary, parts})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // QueuedNote is the next note the worker folds in.

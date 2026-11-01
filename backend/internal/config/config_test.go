@@ -41,8 +41,7 @@ func TestLoadDefaults(t *testing.T) {
 	if app.Addr != "0.0.0.0:8080" || app.AuthMode != AuthNone || app.ReasoningEffort != "" {
 		t.Errorf("server defaults = %+v", app)
 	}
-	want := Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, RepoMaxChars: 60000, ProjectMaxChars: 40000,
-		DiagramMaxNodes: 12, DiagramMaxEdges: 20, MaxDiagrams: 6}
+	want := Limits{DiagramMaxNodes: 12, DiagramMaxEdges: 20, MaxDiagrams: 6}
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
@@ -55,10 +54,6 @@ func TestLoadOverrides(t *testing.T) {
 	env := minimal()
 	env["BACKEND_ADDR"] = "127.0.0.1:9090"
 	env["BACKEND_MODEL_REASONING_EFFORT"] = "high"
-	env["BACKEND_REPO_MAX_STATEMENTS"] = "10"
-	env["BACKEND_PROJECT_MAX_STATEMENTS"] = "5"
-	env["BACKEND_REPO_MAX_CHARS"] = "800"
-	env["BACKEND_PROJECT_MAX_CHARS"] = "120"
 	env["BACKEND_PROBLEM_WINDOW_DAYS"] = "30"
 	env["BACKEND_DIAGRAM_MAX_NODES"] = "16"
 	env["BACKEND_DIAGRAM_MAX_EDGES"] = "8"
@@ -71,8 +66,7 @@ func TestLoadOverrides(t *testing.T) {
 	if app.Addr != "127.0.0.1:9090" || app.AuthMode != AuthNone || app.ReasoningEffort != "high" {
 		t.Errorf("server values = %+v", app)
 	}
-	want := Limits{RepoMaxStatements: 10, ProjectMaxStatements: 5, RepoMaxChars: 800, ProjectMaxChars: 120,
-		DiagramMaxNodes: 16, DiagramMaxEdges: 8, MaxDiagrams: 0}
+	want := Limits{DiagramMaxNodes: 16, DiagramMaxEdges: 8, MaxDiagrams: 0}
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
@@ -234,8 +228,7 @@ func TestProxyModeIsGone(t *testing.T) {
 }
 
 func TestNonPositiveCap(t *testing.T) {
-	for _, name := range []string{"BACKEND_REPO_MAX_STATEMENTS", "BACKEND_PROJECT_MAX_STATEMENTS", "BACKEND_REPO_MAX_CHARS",
-		"BACKEND_PROJECT_MAX_CHARS", "BACKEND_PROBLEM_WINDOW_DAYS"} {
+	for _, name := range []string{"BACKEND_DIAGRAM_MAX_NODES", "BACKEND_PROBLEM_WINDOW_DAYS"} {
 		for _, v := range []string{"0", "-3"} {
 			env := minimal()
 			env[name] = v
@@ -250,8 +243,8 @@ func TestNonPositiveCap(t *testing.T) {
 		}
 	}
 	env := minimal()
-	env["BACKEND_REPO_MAX_CHARS"] = "lots"
-	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `BACKEND_REPO_MAX_CHARS: "lots" is not an integer`) {
+	env["BACKEND_PROBLEM_WINDOW_DAYS"] = "lots"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `BACKEND_PROBLEM_WINDOW_DAYS: "lots" is not an integer`) {
 		t.Errorf("non-integer cap: error = %v", err)
 	}
 }
@@ -352,6 +345,18 @@ func TestRenamedVariablesRefused(t *testing.T) {
 	}
 }
 
+// A page ceiling an earlier release read is a fault, never ignored: a
+// description has none.
+func TestRetiredCeilingsRefused(t *testing.T) {
+	for _, old := range []string{"BACKEND_REPO_MAX_STATEMENTS", "BACKEND_PROJECT_MAX_CHARS", "ALMANACH_REPO_MAX_CHARS"} {
+		env := minimal()
+		env[old] = "100000"
+		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), old+" is no longer read") {
+			t.Errorf("%s set: error = %v", old, err)
+		}
+	}
+}
+
 func TestBadAddr(t *testing.T) {
 	for addr, want := range map[string]string{
 		"8080":         "want host:port",
@@ -395,7 +400,7 @@ func TestSummaryHidesSecrets(t *testing.T) {
 	if !strings.Contains(s, "token_key true") {
 		t.Errorf("Summary lacks whether a token key is set: %s", s)
 	}
-	for _, want := range []string{"addr=0.0.0.0:8080", "model=gpt-x", "limits={repo 40 statements / 60000 chars, project 24 statements / 40000 chars, diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
+	for _, want := range []string{"addr=0.0.0.0:8080", "model=gpt-x", "limits={diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Summary lacks %q: %s", want, s)
 		}

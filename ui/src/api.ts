@@ -260,7 +260,10 @@ export interface SourceRepo {
 export type RunState =
   "queued" | "cataloguing" | "describing" | "project" | "done" | "failed";
 
-/** Why a run left a part out; "" for a run from before it was kept. */
+/** Why a run left a part out; "" for a run from before it was kept.
+ *  "ceiling" and "over_ceiling" only on runs from before pages lost their
+ *  ceiling. TRANSITIONAL(ceilings): Remove both when no stored run plan
+ *  carries them. */
 export type SkipReason =
   | ""
   | "gone"

@@ -29,11 +29,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
   read (rows verbatim), `lang.Prose`. Shapes need a value's mark, prose stays. New shape → test.
 - Description = documentation, no one-liners: statement as long as subject needs, no
-  sentence/paragraph quota (user, 2026-10-28). Ceilings: statement counts, page runes from config;
-  name, file caps constants; checked on stored Swiss text. Statement over a field cap: left out,
-  an edit kept as stored, logged (user, 2026-10-31). Page over a ceiling: rewrite rejected whole,
-  page stays, never truncated; project step keeps the new statements that fit. Identical rewrite =
-  no revision. Flow (map, statement): self/repeated edges dropped before its check.
+  sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size: no page ceiling, step
+  budget, name/file-count cap (user, 2026-11-01: "we cannot just randomly drop stuff"); bad path
+  leaves file list only. Identical rewrite = no revision. Flow: self/repeated edges dropped first.
 - Provenance is code's: `sources` carried by id, current PR appended on text change. Edit of an
   unknown id (invented) or one already edited: merge (whole page) rejected; step's patch leaves
   that edit out, logged, first edit counts (user, 2026-11-01). Page without statements: edits
@@ -70,3 +68,4 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
+  Skipped part / missing map: poller retries a done run once, any head; UI names errors, retry.

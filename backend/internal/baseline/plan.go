@@ -29,8 +29,8 @@ func (s Subject) Bytes() int64 {
 }
 
 // Plan is a run's catalogue: the subjects in the order the steps read them.
-// Skipped names the subjects the run could not fold (a ceiling, a failed
-// call), so the next reconcile reads them again; Why is each one's Skip
+// Skipped names the subjects the run could not fold (a failed call, a
+// refused answer), so the next reconcile reads them again; Why is each one's Skip
 // code, the first that hit it. A run from before Why has names alone.
 // Steps is the overview and the project step when the run skipped them,
 // by Part, never by a name: a subject's name is the model's, any string.
@@ -100,13 +100,17 @@ const (
 	SkipCalls Skip = "calls"
 	// SkipBytes is when the part would take the run over its byte budget.
 	SkipBytes Skip = "bytes"
-	// SkipCeiling is when the page was at a ceiling before the call.
+	// SkipCeiling was when the page was at a ceiling before the call; pages
+	// have none now, no run sets it.
+	// TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
 	SkipCeiling Skip = "ceiling"
 	// SkipFailed is when the model call failed.
 	SkipFailed Skip = "failed"
 	// SkipRefused is when the answer broke a fold rule and was thrown away.
 	SkipRefused Skip = "refused"
-	// SkipOverCeiling is when the rewrite would take the page over a ceiling.
+	// SkipOverCeiling was when the rewrite would take the page over a
+	// ceiling; pages have none now, no run sets it.
+	// TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
 	SkipOverCeiling Skip = "over_ceiling"
 	// SkipNoPage is when the model asked no change of a project that has no
 	// page yet.

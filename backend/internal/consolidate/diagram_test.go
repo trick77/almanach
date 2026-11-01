@@ -88,10 +88,10 @@ func TestFoldStatementDiagram(t *testing.T) {
 		t.Errorf("log lacks the dropped stored diagram:\n%s", logs.String())
 	}
 
-	// A rewrite the ceilings reject logs its rejection, not the diagram it
-	// would have left out.
+	// A rewrite refused (an empty summary) logs its rejection, not the
+	// diagram it would have left out.
 	st = newFakeStore()
-	m = &fakeMerger{result: okResult(&inference.Description{Summary: strings.Repeat("x", 500), Statements: []inference.Statement{
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: " ", Statements: []inference.Statement{
 		{Kind: "rule", Name: "R", Text: "T", Diagram: dangling()}}}, nil)}
 	w = newWorker(st, m)
 	logs.Reset()
@@ -339,16 +339,15 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	r := store.BaselineRun{ProjectKey: "PLAT", Slug: "files", Commit: head}
 	left := regexp.MustCompile(`\{[a-z_]+\}`)
 	for name, out := range map[string]string{
-		"describe": renderDescribe(r, existingRepoPage(), limits, 1, 2, 1, budget{4321, 3}, "the overview", "", "_None._", "_None._", nil),
+		"describe": renderDescribe(r, existingRepoPage(), limits, 1, 2, "the overview", "", "_None._", "_None._", nil),
 		"project":  renderProject(r, existingRepoPage(), store.Page{Map: drawnMap("files")}, "_None._", []string{"files", "portal"}, limits),
 		"merge":    render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, limits),
 	} {
 		if ph := left.FindAllString(out, -1); len(ph) > 0 {
 			t.Errorf("%s prompt: placeholders left: %v", name, ph)
 		}
-		if name == "describe" && (!strings.Contains(out, "at most about 4321 characters of prose and add at most 3 new statements") ||
-			!strings.Contains(out, "name, text, files or diagram (one added, replaced, or removed with")) {
-			t.Error("describe prompt lacks the step's budget or the diagram among a statement's changes")
+		if name == "describe" && !strings.Contains(out, "name, text, files or diagram (one added, replaced, or removed with") {
+			t.Error("describe prompt lacks the diagram among a statement's changes")
 		}
 		// The shared rules, once, their caps filled in; the field offered.
 		if !strings.Contains(out, "At most 4 nodes") || strings.Count(out, "## Diagrams") != 1 || !strings.Contains(out, `"diagram": <diagram>`) {
@@ -360,7 +359,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	off := limits
 	off.MaxDiagrams = 0
 	for name, out := range map[string]string{
-		"describe": renderDescribe(r, existingRepoPage(), off, 1, 2, 1, budget{4321, 3}, "the overview", "", "_None._", "_None._", nil),
+		"describe": renderDescribe(r, existingRepoPage(), off, 1, 2, "the overview", "", "_None._", "_None._", nil),
 		"project":  renderProject(r, existingRepoPage(), store.Page{}, "_None._", []string{"files"}, off),
 		"merge":    render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, off),
 	} {
@@ -390,7 +389,7 @@ func TestRun_QuietReconcileDrawsAMissingMap(t *testing.T) {
 		// The repository has its map, drawn from its text as it stands:
 		// only the project's is in question.
 		repo := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
-		repo.RepoMapBasis = mapBasis(repo)
+		repo.RepoMapBasis = repo.MapBasis()
 		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = repo
 		x.st.others = []store.RepoSummary{{Slug: "svc"}}
 		x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}

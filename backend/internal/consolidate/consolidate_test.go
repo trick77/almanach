@@ -22,8 +22,7 @@ import (
 )
 
 var (
-	limits = config.Limits{RepoMaxStatements: 3, ProjectMaxStatements: 2, RepoMaxChars: 400, ProjectMaxChars: 200,
-		DiagramMaxNodes: 4, DiagramMaxEdges: 3, MaxDiagrams: 1}
+	limits   = config.Limits{DiagramMaxNodes: 4, DiagramMaxEdges: 3, MaxDiagrams: 1}
 	mergedAt = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 	older    = time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 )
@@ -237,14 +236,17 @@ func manyFiles(n int) []string {
 	return files
 }
 
-// Every prompt that asks for statements gives the name and file caps
-// fieldCap holds them to: one over a cap costs the statement (an eval's
-// first project page went whole, the file cap never stated).
-func TestPromptsStateTheFieldCaps(t *testing.T) {
+// Every prompt that asks for statements states the one path rule code
+// holds a file to, and no limit on a name, the file count or the page: a
+// description is documentation (user, 2026-11-01).
+func TestPromptsStateNoCeiling(t *testing.T) {
 	for name, p := range map[string]string{"merge": prompts.Merge, "describe": prompts.Describe, "project": prompts.Project} {
-		for _, want := range []string{fmt.Sprintf("at most %d characters>", nameMaxChars), fmt.Sprintf(`"<path, no spaces, at most %d characters>", ..., at most %d paths]`, pathMaxChars, filesMax)} {
-			if !strings.Contains(p, want) {
-				t.Errorf("%s prompt lacks %q", name, want)
+		if want := fmt.Sprintf(`"<path, no spaces, at most %d characters>", ...]`, pathMaxChars); !strings.Contains(p, want) {
+			t.Errorf("%s prompt lacks %q", name, want)
+		}
+		for _, gone := range []string{"## Limits", "ceiling", "<short name, at most", "at most 5", "the five"} {
+			if strings.Contains(p, gone) {
+				t.Errorf("%s prompt still says %q", name, gone)
 			}
 		}
 	}
@@ -510,11 +512,6 @@ func TestFoldKeptIDChangedAppendsPROnce(t *testing.T) {
 }
 
 func TestFoldRejections(t *testing.T) {
-	long := strings.Repeat("x", limits.RepoMaxChars+1)
-	many := make([]inference.Statement, limits.RepoMaxStatements+1)
-	for i := range many {
-		many[i] = inference.Statement{Kind: "rule", Name: "n", Text: "t"}
-	}
 	cases := []struct {
 		name string
 		desc *inference.Description
@@ -524,11 +521,6 @@ func TestFoldRejections(t *testing.T) {
 		{"id used twice", &inference.Description{Summary: "s", Statements: []inference.Statement{
 			{ID: str("s1"), Kind: "rule", Name: "n", Text: "t"}, {ID: str("s1"), Kind: "rule", Name: "m", Text: "u"}}}},
 		{"empty statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: " ", Text: "t"}}}},
-		{"over the statement cap", &inference.Description{Summary: "s", Statements: many}},
-		// The ceiling is the whole description: the summary and the names
-		// and texts together, never one statement by itself.
-		{"description over the cap by a statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: long}}}},
-		{"description over the cap by the summary", &inference.Description{Summary: strings.Repeat("y", limits.RepoMaxChars+1), Statements: nil}},
 		{"empty summary", &inference.Description{Summary: "  ", Statements: nil}},
 	}
 	for _, tc := range cases {
@@ -547,64 +539,40 @@ func TestFoldRejections(t *testing.T) {
 	}
 }
 
-// A statement over a field cap costs that statement, never the rewrite: a
-// new one is left out, an edit leaves the statement as stored, the rest of
-// the answer stands.
-func TestFoldFieldCapsLeaveOneOut(t *testing.T) {
-	keep := inference.Statement{Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}
-	for name, bad := range map[string]inference.Statement{
-		"name over cap":        {Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"},
-		"too many files":       {Kind: "rule", Name: "n", Text: "t", Files: []string{"a", "b", "c", "d", "e", "f"}},
-		"path over cap":        {Kind: "rule", Name: "n", Text: "t", Files: []string{strings.Repeat("p", pathMaxChars+1)}},
-		"path with whitespace": {Kind: "rule", Name: "n", Text: "t", Files: []string{"internal/a file.go"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			st := newFakeStore()
-			st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
-			edit := bad
-			edit.ID = str("s1")
-			newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
-				Statements: []inference.Statement{edit}, Added: []inference.Statement{bad, keep}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
-			if len(st.revisions) != 1 {
-				t.Fatalf("revisions = %+v, want one", st.revisions)
-			}
-			var got []string
-			for _, s := range st.revisions[0].Statements {
-				got = append(got, s.ID+":"+s.Name)
-			}
-			if want := []string{"s1:Uploader", "s2:Grenze"}; !slices.Equal(got, want) {
-				t.Errorf("statements = %v, want %v: the edit left as stored, the bad new one out", got, want)
-			}
-			if s1 := st.revisions[0].Statements[0]; len(s1.Sources) != 1 {
-				t.Errorf("s1 sources = %+v, want the stored one alone", s1.Sources)
-			}
-		})
-	}
-	// Caps that leave out every statement proposed never empty a page; the
-	// refusal names each statement and its cap.
+// No statement is left out for its size (user, 2026-11-01): a long name
+// and many files are taken, an edit and a new one alike; a path no tree
+// can hold (over the cap, with whitespace) leaves the file list, logged,
+// the statement kept. Nor is a page refused for its size.
+func TestFoldTakesEveryStatementWhole(t *testing.T) {
+	long := strings.Repeat("n", 300)
+	files := manyFiles(12)
 	st := newFakeStore()
-	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{},
-		Added: []inference.Statement{{Kind: "rule", Name: "Viele", Text: "t", Files: manyFiles(filesMax + 1)}, {Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}, nil)})
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+	added := []inference.Statement{
+		{Kind: "rule", Name: long, Text: strings.Repeat("t", 70000), Files: files},
+		{Kind: "rule", Name: "Pfade", Text: "t", Files: []string{"ok.go", strings.Repeat("p", pathMaxChars+1), "internal/a file.go"}},
+	}
+	for i := range 50 {
+		added = append(added, inference.Statement{Kind: "rule", Name: fmt.Sprintf("R%d", i), Text: "t", Files: []string{"a.go"}})
+	}
+	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: long, Text: "Nimmt Dateien an.", Files: files}},
+		Added:      added}, nil)})
 	var logs strings.Builder
 	w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	w.Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 0 {
-		t.Errorf("every statement over a cap: revision written %+v", st.revisions)
+	if len(st.revisions) != 1 {
+		t.Fatalf("revisions = %+v, want one", st.revisions)
 	}
-	if want := fmt.Sprintf(`every statement over a field cap: \"Viele\" (names %d files, over %d), \"%s\" (name over %d characters)`, filesMax+1, filesMax, strings.Repeat("n", nameMaxChars+1), nameMaxChars); !strings.Contains(logs.String(), want) {
-		t.Errorf("refusal lacks the statements and caps:\n%s", logs.String())
+	got := st.revisions[0].Statements
+	if len(got) != 53 || got[0].Name != long || len(got[0].Files) != 12 || got[1].Name != long || len(got[1].Text) != 70000 {
+		t.Fatalf("%d statements, want all 53 whole", len(got))
 	}
-	// A statement stored over a cap and returned with its name and files
-	// as they are stays: only a new or changed field meets the caps.
-	st = newFakeStore()
-	page := existingRepoPage()
-	page.Statements[0].Name = strings.Repeat("n", nameMaxChars+1)
-	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
-		{ID: str("s1"), Kind: "component", Name: page.Statements[0].Name, Text: "Nimmt Dateien an, neu.", Files: page.Statements[0].Files}},
-		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 1 || st.revisions[0].Statements[0].Text != "Nimmt Dateien an, neu." {
-		t.Errorf("stored over-cap name: revisions %+v, want the text edit taken", st.revisions)
+	if !slices.Equal(got[2].Files, []string{"ok.go"}) {
+		t.Errorf("Pfade files = %v, want ok.go alone", got[2].Files)
+	}
+	if !strings.Contains(logs.String(), `path over 200 characters or with whitespace taken off, statement kept: \"Pfade\"`) {
+		t.Errorf("bad paths not logged:\n%s", logs.String())
 	}
 }
 
@@ -819,9 +787,8 @@ func TestRender(t *testing.T) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
 	}
-	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown", "at most 3 statements", "at most 2 statements",
-		"400 characters of prose in all", "200 characters of prose in all", "Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
-		"the current description has 54", "the current description has 0",
+	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown",
+		"Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)
@@ -869,21 +836,20 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
-// A statement is as long as its subject needs: a text far over the old
-// per-statement cap is accepted under the page's ceiling, and the chars
-// stored are the prose the ceiling counted. The project scope has its own,
-// smaller ceiling.
-func TestFoldLongStatementUnderThePageCeiling(t *testing.T) {
+// A statement and a page are as long as their subject needs: a repository
+// text and a project summary of 100000 runes each are taken, and the
+// chars stored are the prose runes.
+func TestFoldLongDescriptionsTaken(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
-	text := strings.Repeat("ä", 350) + "\n\n" + strings.Repeat("b", 20)
+	text := strings.Repeat("ä", 100000) + "\n\n" + strings.Repeat("b", 20)
 	repo := &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: text}}}
-	project := &inference.Description{Summary: strings.Repeat("p", limits.ProjectMaxChars+1), Statements: nil}
+	project := &inference.Description{Summary: strings.Repeat("p", 100000), Statements: nil}
 	newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 1 || st.revisions[0].Scope != store.ScopeRepository {
-		t.Fatalf("revisions = %+v, want the repository accepted and the project rejected", st.revisions)
+	if len(st.revisions) != 2 {
+		t.Fatalf("revisions = %+v, want both taken", st.revisions)
 	}
-	if want := 1 + 1 + 350 + 2 + 20; st.revisions[0].Chars != want {
+	if want := 1 + 1 + 100000 + 2 + 20; st.revisions[0].Chars != want {
 		t.Errorf("chars = %d, want the prose runes %d", st.revisions[0].Chars, want)
 	}
 }

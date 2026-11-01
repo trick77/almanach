@@ -7,7 +7,11 @@ required, a commented line is optional and shows its default.
 
 Every variable is `BACKEND_*`, named for the process, never the product.
 A name an earlier release read (`ALMANACH_*`, `SERVER_HOST`, `SERVER_PORT`)
-is a startup fault that names its replacement.
+is a startup fault that names its replacement. The page ceilings
+(`BACKEND_REPO_MAX_STATEMENTS`, `BACKEND_PROJECT_MAX_STATEMENTS`,
+`BACKEND_REPO_MAX_CHARS`, `BACKEND_PROJECT_MAX_CHARS`) are gone: a
+description is system documentation, never cut to a size, and one still set
+is a startup fault too.
 
 ## Required
 
@@ -28,10 +32,6 @@ is a startup fault that names its replacement.
 | `BACKEND_MODEL_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts, or `off` for no reasoning (a no-op on a model that never reasons, a startup fault on one that reasons and cannot be switched off); anything else is a startup fault. Thinking is most of a call's output: measured on a baseline subject step, about 1.5k of 22k output tokens were the patch. |
 | `BACKEND_ADDR` | `0.0.0.0:8080` | Listen address, `host:port`; an empty host (`:8080`) is every interface. |
 | `BACKEND_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `BACKEND_ADDR`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. `compose.yaml` fixes `oidc`, `compose.dev.yaml` `none`; `.env` sets neither. |
-| `BACKEND_REPO_MAX_STATEMENTS` | `40` | Statements a repository description may hold. |
-| `BACKEND_PROJECT_MAX_STATEMENTS` | `24` | Statements a project description may hold. |
-| `BACKEND_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
-| `BACKEND_PROJECT_MAX_CHARS` | `40000` | The same for a project description. |
 | `BACKEND_DIAGRAM_MAX_NODES` | `12` | Nodes one statement diagram may hold (participants of a sequence, tables of an entity model); the project's system map is held to the drawing's 16 instead. At most 16, the most the drawing lays out; a sequence and an entity model stop at 8 whatever this says. Past about a dozen a picture stops reading and should be two; the prompts say so. The node and edge caps hold a new or changed diagram: one stored under higher caps stays as it is. |
 | `BACKEND_DIAGRAM_MAX_EDGES` | `20` | Edges one diagram may hold (messages and notes of a sequence, relationships of an entity model, which stop at 20 and 12). At most 24. |
 | `BACKEND_DIAGRAM_MAX_PER_PAGE` | `6` | Statement diagrams one page may hold, repository or project page; the system map does not count. A diagram added past it is left out, its statement kept. `0`: no schema offers a statement diagram, the map is still drawn. A page already over a lowered cap keeps its diagrams but gains none. |

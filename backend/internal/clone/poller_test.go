@@ -36,6 +36,8 @@ type fakeStore struct {
 	runErr     error
 	failed     int
 	docAsked   int
+	// page is the repository page, none when its scope is "".
+	page store.Page
 	// conflicts is what ApplyListing reports left out; listedAt whether a
 	// listing's time was recorded, by key.
 	conflicts []string
@@ -121,6 +123,9 @@ func dirOf(key, slug string) string {
 
 func (f *fakeStore) LastRun(context.Context, string, string) (store.BaselineRun, int, bool, error) {
 	return f.last, f.failed, f.last.ID != 0, f.runErr
+}
+func (f *fakeStore) CurrentPage(context.Context, string, string, string) (store.Page, bool, error) {
+	return f.page, f.page.Scope != "", nil
 }
 func (f *fakeStore) DocumentedRun(context.Context, string, string) (store.BaselineRun, bool, error) {
 	f.mu.Lock()

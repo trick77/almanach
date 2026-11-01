@@ -15,6 +15,7 @@ import (
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/consolidate"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -126,6 +127,57 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 			g.heads[dirOf("tools", "cli")+"@main"] = "h1"
 			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 				Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}, Now: func() time.Time { return now }})
+			if err := p.CycleOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(s.enqueued, "|"); got != c.want {
+				t.Fatalf("queued %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A done run that skipped parts, or left the repository page without a map
+// drawn from its text (described before maps existed), gets one reconcile
+// a day after it ended, whatever the head: an unchanged head never queues
+// one otherwise, and its button is held. Once: a retry's own leftovers wait
+// for the interval.
+func TestDescribe_RetriesWhatADoneRunLeft(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	month := 30 * 24 * time.Hour
+	described := store.Page{Scope: store.ScopeRepository, Summary: "Ein Dienst."}
+	drawn := described
+	drawn.RepoMap = &diagram.Diagram{Kind: diagram.KindFlow}
+	drawn.RepoMapBasis = drawn.MapBasis()
+	stale := drawn
+	stale.Summary = "Ein Dienst, neu beschrieben."
+	for name, c := range map[string]struct {
+		ago     time.Duration
+		skipped int
+		trigger string
+		page    store.Page
+		head    string
+		want    string
+	}{
+		"skipped parts":            {25 * time.Hour, 2, store.TriggerManual, drawn, "d0", "tools cli reconcile retry d0 d0"},
+		"no map yet":               {25 * time.Hour, 0, store.TriggerFirstReady, described, "d0", "tools cli reconcile retry d0 d0"},
+		"map from older text":      {25 * time.Hour, 0, store.TriggerMonthly, stale, "d0", "tools cli reconcile retry d0 d0"},
+		"head moved, map missing":  {25 * time.Hour, 0, store.TriggerManual, described, "h1", "tools cli reconcile retry d0 h1"},
+		"an hour ago":              {time.Hour, 2, store.TriggerManual, described, "d0", ""},
+		"the retry left some too":  {25 * time.Hour, 2, store.TriggerRetry, described, "d0", ""},
+		"finished, map stands":     {25 * time.Hour, 0, store.TriggerManual, drawn, "d0", ""},
+		"no page, nothing skipped": {25 * time.Hour, 0, store.TriggerManual, store.Page{}, "d0", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, g := newFakeStore(), newFakeGit()
+			s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, Trigger: c.trigger, Commit: "d0", State: store.RunDone,
+				Skipped: c.skipped, FinishedAt: ptr(now.Add(-c.ago))}
+			s.page = c.page
+			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
+			g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+			g.heads[dirOf("tools", "cli")+"@main"] = c.head
+			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Describe: Describe{Reconcile: month, Wake: func() {}}, Now: func() time.Time { return now }})
 			if err := p.CycleOnce(context.Background()); err != nil {
 				t.Fatal(err)
 			}

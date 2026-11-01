@@ -22,27 +22,23 @@ Answer with a patch over the current description below:
 - Return a statement in `statements` only with a change to its kind, name, text{diagram_change}; one you checked and found right goes in `confirmed`, never back unchanged.
 - `summary`, in this order: purpose and boundary (what the repository is for, what is outside it, how it fits the project); structure (its main parts and how they relate, what it talks to); the key flows, end to end; and last and short, working on it: the gate and test commands, the conventions, what the repository's agent notes insist on. Rewritten when this part changes that picture; `null` to keep it. When the description has no summary yet, write one.
 - Everything you do not name stays as it is: you see only part of the code, so leave alone what this part does not cover.
-- Name the files a statement rests on (at most 5, paths as in the files below). No PR numbers, no dates, no names of people.
+- Name the files a statement rests on (paths as in the files below). No PR numbers, no dates, no names of people.
 
 ## Kinds
 
 The first reader is a coding agent about to change the repository, the second a developer in his first weeks. Beside `component`, `rule`, `invariant` and `entity`:
 
 - `decision`: a choice the code embodies, its reason and what was given up ("one serial worker, not a pool: two writers of one page would lose a rewrite"). Only with a stated reason, from a pull request's note, the docs or a code comment that says why; never guessed from code alone. It keeps a reader from "fixing" what is deliberate. Names the files that embody it. A constraint whose stated reason is a choice against an alternative (this, not that, because) is a `decision`, not a `rule`.
-- `extension`: where and how a kind of change is made: to add a route, a step, a source kind, a setting, touch these files, in this order, register here. A change recipe, as terse as the change, its text naming every file it touches, its `files` the five it rests on most; each must be in the tree. Where this part's code shows a kind of change that recurs (a list of routes, steps, kinds or settings that grows by one entry at a time), write its recipe: it is what the agent needs first.
+- `extension`: where and how a kind of change is made: to add a route, a step, a source kind, a setting, touch these files, in this order, register here. A change recipe, as terse as the change, its text naming every file it touches, its `files` those it rests on most; each must be in the tree. Where this part's code shows a kind of change that recurs (a list of routes, steps, kinds or settings that grows by one entry at a time), write its recipe: it is what the agent needs first.
 - `pitfall`: something that broke in this code and how not to break it again. A pitfall only where a problem area below or a bugfix note backs it; without one, write none. Never from reading code alone or from a TODO comment. Names the files. The pull request keys of a problem area tell its evidence apart; they are never written into a statement.
 
 No technical debt, no tutorials for people, no changelog. An `extension` is no tutorial: it is the recipe an agent follows to make a change.
 
 {diagram_rules}
 
-## Limits
-
-These are ceilings against unbounded growth, not targets. Prose is the summary plus every statement's name and text; paths do not count. The repository description may hold at most {repo_max_statements} statements and {repo_max_chars} characters of prose in all; it now has {statements} statements and {repo_chars} characters, and {steps_left} more parts follow this one. A patch that takes the description over either limit is rejected whole and this part's work is lost. Leave room for the parts still to come, and when the description is near a limit, deepen or merge existing statements instead of adding. This part's share of the room left: it {step_budget}. A corrected or deepened statement counts only by what it adds. The share is of the description's room, not a limit on any statement's length: a statement keeps the length its subject needs.
-
 ## Output format
 
-Respond with a single JSON object: `{"summary": "<prose>" | null, "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "confirmed": ["<id>", ...]}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path, no spaces, at most 200 characters>", ..., at most 5 paths]{diagram_field}`.
+Respond with a single JSON object: `{"summary": "<prose>" | null, "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "confirmed": ["<id>", ...]}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path, no spaces, at most 200 characters>", ...]{diagram_field}`.
 
 ## Untrusted input
 
