@@ -144,6 +144,50 @@ paths:
         "401":
           $ref: "#/components/responses/SignInRequired"
 
+  /api/queue:
+    get:
+      tags: [wiki]
+      summary: What the worker does now, takes next and finished lately
+      description: |
+        Every model call goes through one worker, one at a time. `current` is
+        the note or run step in flight, null while the worker waits. `next`
+        is the rest in the order the worker takes it: the notes it may fold,
+        oldest first; the started run's next step; the notes waiting for that
+        run; the queued runs, oldest first. Why the worker does not take an
+        item yet is on that item: a hold on the first one, a run step waiting
+        for its clone or git on that run. `recent` is what it finished in the
+        last 24 hours, `spent` what its own calls cost in that window.
+      operationId: getQueue
+      responses:
+        "200":
+          description: The queue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queue"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+
+  /api/queue/count:
+    get:
+      tags: [wiki]
+      summary: How many notes and runs are queued
+      description: The unfolded notes and the open runs, counted; the nav polls it from every page, so none of the queue page's reads.
+      operationId: getQueueCount
+      responses:
+        "200":
+          description: The count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count]
+                properties:
+                  count:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+
   /api/projects/{key}:
     get:
       tags: [wiki]
@@ -971,6 +1015,229 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Baseline"
             - type: "null"
+
+    Queue:
+      type: object
+      description: The worker's queue.
+      required: [current, next, sync, spent, recent, poll_seconds, max_attempts]
+      properties:
+        current:
+          description: The note or run step in flight; null while the worker waits.
+          oneOf:
+            - $ref: "#/components/schemas/QueueItem"
+            - type: "null"
+        next:
+          type: array
+          description: The rest, in the order the worker takes it.
+          items:
+            $ref: "#/components/schemas/QueueItem"
+        sync:
+          description: The poller's sync cycle; null with the sources off.
+          oneOf:
+            - $ref: "#/components/schemas/SyncCycle"
+            - type: "null"
+        spent:
+          type: object
+          description: What the worker's own calls of the last 24 hours cost.
+          required: [calls]
+          properties:
+            cost_usd:
+              type: string
+              description: 3 decimals; omitted when the gateway priced none.
+            calls:
+              type: integer
+        recent:
+          type: array
+          description: What the worker finished in the last 24 hours, newest first, at most 50.
+          items:
+            $ref: "#/components/schemas/QueueRecent"
+        poll_seconds:
+          type: integer
+          description: How often the worker looks on its own; a note's webhook wakes it at once.
+        max_attempts:
+          type: integer
+          description: The attempt an item is given up at.
+
+    QueueItem:
+      type: object
+      description: A note or a run, with what it waits for.
+      required: [kind, project, repo, attempts]
+      properties:
+        kind:
+          type: string
+          enum: [note, run]
+        project:
+          type: string
+        repo:
+          type: string
+        pr_key:
+          type: string
+          description: A note's.
+        title:
+          type: string
+          description: A note's PR title.
+        change_kind:
+          type: string
+          description: A note's.
+        received_at:
+          type: string
+          format: date-time
+          description: A note's.
+        held_by:
+          type: integer
+          description: The run of the note's repository it waits for; omitted when none.
+        run:
+          $ref: "#/components/schemas/QueueRun"
+        attempts:
+          type: integer
+          description: Calls the endpoint failed so far; at `max_attempts` the item is given up.
+        since:
+          type: string
+          format: date-time
+          description: When the worker took it; on the current item only.
+        wait:
+          type: object
+          description: Why the worker does not take it yet.
+          required: [reason]
+          properties:
+            reason:
+              type: string
+              enum: [timeout, rate_limit, key_refused, unavailable, busy, clone_busy, placing]
+              description: A hold of the whole worker (the first five, `until` set) or a run step that waits (`since` set).
+            until:
+              type: string
+              format: date-time
+            since:
+              type: string
+              format: date-time
+
+    QueueRun:
+      type: object
+      description: An open run with its steps.
+      required: [id, state, mode, trigger, commit, base_commit, calls, queued_at, started_at, steps]
+      properties:
+        id:
+          type: integer
+        state:
+          type: string
+          enum: [queued, cataloguing, describing, project]
+        mode:
+          type: string
+          enum: [full, reconcile]
+        trigger:
+          type: string
+          enum: [manual, first_ready, monthly, retry]
+        commit:
+          type: string
+        base_commit:
+          type: string
+        calls:
+          type: integer
+        queued_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        cost_usd:
+          type: string
+          description: 3 decimals; omitted when the gateway priced none of its calls.
+        steps:
+          type: array
+          description: The catalogue, the overview, the subjects in reading order, the project, the repository map; a queued run lists the catalogue, the project and the map alone.
+          items:
+            type: object
+            required: [kind, name, files, bytes, state, skip, calls, failed, at]
+            properties:
+              kind:
+                type: string
+                enum: [catalogue, overview, subject, project, repo_map]
+              name:
+                type: string
+                description: A subject's name, empty otherwise.
+              files:
+                type: integer
+              bytes:
+                type: integer
+              state:
+                type: string
+                enum: [done, skipped, current, todo]
+              skip:
+                type: string
+                enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
+              calls:
+                type: integer
+              failed:
+                type: integer
+              at:
+                type: [string, "null"]
+                format: date-time
+                description: The step's last call.
+              cost_usd:
+                type: string
+
+    SyncCycle:
+      type: object
+      required: [running, done, total, finished_at, next_at]
+      properties:
+        running:
+          type: boolean
+        project:
+          type: string
+          description: The repository being synced, while running.
+        repo:
+          type: string
+        repo_since:
+          type: string
+          format: date-time
+        done:
+          type: integer
+        total:
+          type: integer
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        next_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the next cycle starts on its own; null with no interval.
+
+    QueueRecent:
+      type: object
+      required: [kind, at, project, repo]
+      properties:
+        kind:
+          type: string
+          enum: [note, run]
+        at:
+          type: string
+          format: date-time
+        project:
+          type: string
+        repo:
+          type: string
+        pr_key:
+          type: string
+        title:
+          type: string
+        outcome:
+          type: string
+          description: A note's merge call outcome (ok, timed_out, unparseable, too_long, error); omitted when no call was made.
+        run_id:
+          type: integer
+        state:
+          type: string
+          enum: [done, failed]
+        skipped:
+          type: integer
+        error:
+          type: string
+        retry_at:
+          type: string
+          format: date-time
+          description: When the poller queues this failed run again at the earliest; on the repository's last run only.
+        cost_usd:
+          type: string
 
     Baseline:
       type: object

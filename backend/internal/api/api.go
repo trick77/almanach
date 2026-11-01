@@ -68,6 +68,8 @@ type Deps struct {
 	// Sources is the clone feature; nil when BACKEND_REPOS_DIR is unset,
 	// and the routes then say so.
 	Sources *SourcesDeps
+	// Queue is the queue page's view of the worker and the poller.
+	Queue *QueueDeps
 	// OIDC, Sessions and RedirectURL are the sign-in, set in oidc mode
 	// only; RedirectURL's origin is trusted for a change beside the
 	// request's own host.
@@ -93,6 +95,10 @@ func Register(s *httpapi.Server, d Deps) {
 	// Also GET /api/projects/{key}/repos/{slug}.md, the repository's.
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
+	if d.Queue != nil {
+		s.HandleFunc("GET /api/queue", d.queue)
+		s.HandleFunc("GET /api/queue/count", d.queueCount)
+	}
 	d.registerSources(s)
 	d.registerAuth(s)
 }

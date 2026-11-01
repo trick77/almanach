@@ -22,7 +22,8 @@ import (
 )
 
 // After a sync the poller queues the runs that are due: the first on a
-// clone's first ready, a reconcile once the interval passed and the head
+// clone's first ready or on a ready clone that never had one (its queueing
+// lost), a reconcile once the interval passed and the head
 // left the documented commit; nothing with the baseline off, and an open
 // run is no failure.
 func TestDescribe_QueuesWhatIsDue(t *testing.T) {
@@ -45,7 +46,7 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 		"due":                 {src, "h0", "h1", "d0", &long, month, true, "tools cli reconcile monthly d0 h1"},
 		"not yet":             {src, "h0", "h1", "d0", &recent, month, true, ""},
 		"head is documented":  {src, "h0", "d0", "d0", &long, month, true, ""},
-		"never described":     {src, "h0", "h1", "", nil, month, true, ""},
+		"ready, never queued": {src, "h0", "h1", "", nil, month, true, "tools cli full first_ready  h1"},
 		"buttons only":        {src, "h0", "h1", "d0", &long, 0, true, ""},
 		"last run still open": {src, "h0", "h1", "d0", nil, month, true, ""},
 	} {
@@ -115,7 +116,7 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 		"full read failed at head":   {failedAt(store.RunFull, 25*time.Hour), "h1", 1, month, "tools cli full retry  h1"},
 		"reconcile failed, off":      {failedAt(store.RunReconcile, 25*time.Hour), "d0", 1, 0, "tools cli reconcile retry d0 h1"},
 		"reconcile failed, no doc":   {failedAt(store.RunReconcile, 25*time.Hour), "", 1, month, "tools cli full retry  h1"},
-		"never ran":                  {store.BaselineRun{}, "", 0, month, ""},
+		"never ran":                  {store.BaselineRun{}, "", 0, month, "tools cli full first_ready  h1"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
@@ -251,6 +252,34 @@ func TestCode_BusyWhileThePollerHoldsTheDisk(t *testing.T) {
 		t.Fatalf("Tree on a cancelled step: err = %v", err)
 	}
 	p.disk.Unlock()
+}
+
+// emptyTree is a clone whose tree is empty; it answers nothing else.
+type emptyTree struct{ Reads }
+
+func (emptyTree) ListEntries(context.Context, string, string) ([]gitrepo.Entry, error) {
+	return nil, nil
+}
+
+// The lock is the repository's: the sync of another one never makes a
+// read busy, the sync of its own does.
+func TestCode_BusyOnlyForItsOwnRepository(t *testing.T) {
+	old := lockWait
+	lockWait = 20 * time.Millisecond
+	t.Cleanup(func() { lockWait = old })
+	p := New(Deps{Store: newFakeStore(), Git: newFakeGit(), Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	code := NewCode(p, emptyTree{})
+	sha := strings.Repeat("a", 40)
+	other := p.lockRepo(idOf("tools/other"))
+	if _, err := code.Tree(context.Background(), "tools", "cli", sha); errors.Is(err, consolidate.ErrCloneBusy) {
+		t.Fatal("a read of cli is busy while another repository syncs")
+	}
+	other()
+	own := p.lockRepo(idOf("tools/cli"))
+	if _, err := code.Tree(context.Background(), "tools", "cli", sha); !errors.Is(err, consolidate.ErrCloneBusy) {
+		t.Fatalf("a read of cli while cli syncs: err = %v, want ErrCloneBusy", err)
+	}
+	own()
 }
 
 func TestDescribe_OpenRunAndStoreFailures(t *testing.T) {

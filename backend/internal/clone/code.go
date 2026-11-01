@@ -13,9 +13,9 @@ import (
 	"github.com/trick77/almanach/internal/store"
 )
 
-// The clones as a baseline run reads them: every read under the poller's
-// disk lock, so a removal or a re-clone never deletes a clone mid-read, and
-// the lock held for the read only, never across a model call.
+// The clones as a baseline run reads them: every read under the clone's
+// lock, so a removal or a re-clone never deletes a clone mid-read, and the
+// lock held for the read only, never across a model call.
 
 // Reads is what a run needs of gitrepo, on a clone's folder.
 type Reads interface {
@@ -36,13 +36,14 @@ type Code struct {
 // NewCode is the poller's clones for reading.
 func NewCode(p *Poller, reads Reads) *Code { return &Code{p: p, reads: reads} }
 
-// lockWait is how long a read waits for the disk lock before it answers
-// busy: the poller holds the lock through a whole clone or fetch, minutes on
-// a large repository, and the single worker must not stand behind it (the
-// notes of every other repository would wait too).
+// lockWait is how long a read waits for the clone's lock before it answers
+// busy: the poller holds it through a whole clone or fetch of this
+// repository, minutes on a large one, and the single worker must not
+// stand behind it (the notes of every other repository would wait too).
+// The sync of another repository never holds it.
 var lockWait = 2 * time.Second
 
-// locked runs fn on the clone's folder under the disk lock, or answers
+// locked runs fn on the clone's folder under its lock, or answers
 // consolidate.ErrCloneBusy when the poller keeps it past lockWait.
 func (c *Code) locked(ctx context.Context, key, slug string, fn func(dir string) error) error {
 	// Any name the repository ever had finds its folder, named by ids: a
@@ -59,7 +60,12 @@ func (c *Code) locked(ctx context.Context, key, slug string, fn func(dir string)
 		return err
 	}
 	deadline := time.Now().Add(lockWait)
-	for !c.p.disk.TryLock() {
+	for {
+		unlock, ok := c.p.tryLockRepo(rid)
+		if ok {
+			defer unlock()
+			return fn(dir)
+		}
 		if time.Now().After(deadline) {
 			return consolidate.ErrCloneBusy
 		}
@@ -69,8 +75,6 @@ func (c *Code) locked(ctx context.Context, key, slug string, fn func(dir string)
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	defer c.p.disk.Unlock()
-	return fn(dir)
 }
 
 // Tree is every entry at sha.

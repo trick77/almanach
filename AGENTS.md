@@ -60,7 +60,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   never in URL; stderr redacted; AES-GCM-sealed, not returned/logged; one origin only (static
   folder = one host, header bound to it).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
-  poller; repo failure on its row. Removal: poller's disk lock, folder, then row.
+  poller; repo failure on its row. Lock per clone (project removal: all); removal: lock,
+  folder, then row. Run due = read from rows each cycle, never from an event.
   `BACKEND_REPOS_DIR` unset = off. UI copy: capital only if first char letter ("Bereit",
   "7 bereit"); "Slug", never "Schlüssel".
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never

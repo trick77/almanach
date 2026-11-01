@@ -332,6 +332,109 @@ export interface SourceDetail {
   repos: SourceRepo[];
 }
 
+/** Why the worker does not take an item yet: a hold of the whole worker
+ *  (until set) or a run step that waits (since set). */
+export type WaitReason =
+  | "timeout"
+  | "rate_limit"
+  | "key_refused"
+  | "unavailable"
+  | "busy"
+  | "clone_busy"
+  | "placing";
+
+export type StepKind =
+  "catalogue" | "overview" | "subject" | "project" | "repo_map";
+
+export interface RunStep {
+  kind: StepKind;
+  /** A subject's, "" otherwise. */
+  name: string;
+  files: number;
+  bytes: number;
+  state: "done" | "skipped" | "current" | "todo";
+  skip: SkipReason;
+  calls: number;
+  failed: number;
+  at: string | null;
+  cost_usd?: string;
+}
+
+export interface QueueRun {
+  id: number;
+  state: Exclude<RunState, "done" | "failed">;
+  mode: "full" | "reconcile";
+  trigger: Baseline["trigger"];
+  commit: string;
+  base_commit: string;
+  calls: number;
+  queued_at: string;
+  started_at: string | null;
+  cost_usd?: string;
+  steps: RunStep[];
+}
+
+/** A note or a run in the queue. */
+export interface QueueItem {
+  kind: "note" | "run";
+  project: string;
+  repo: string;
+  pr_key?: string;
+  title?: string;
+  change_kind?: string;
+  received_at?: string;
+  /** The run of the note's repository it waits for. */
+  held_by?: number;
+  run?: QueueRun;
+  attempts: number;
+  /** When the worker took it; the current item only. */
+  since?: string;
+  wait?: { reason: WaitReason; until?: string; since?: string };
+}
+
+export interface QueueRecent {
+  kind: "note" | "run";
+  at: string;
+  project: string;
+  repo: string;
+  pr_key?: string;
+  title?: string;
+  /** A note's merge call outcome; absent when no call was made. */
+  outcome?: string;
+  run_id?: number;
+  state?: "done" | "failed";
+  skipped?: number;
+  error?: string;
+  retry_at?: string;
+  cost_usd?: string;
+}
+
+export interface Queue {
+  current: QueueItem | null;
+  next: QueueItem[];
+  /** The sync cycle; null with the sources off. */
+  sync: {
+    running: boolean;
+    project?: string;
+    repo?: string;
+    repo_since?: string;
+    done: number;
+    total: number;
+    finished_at: string | null;
+    next_at: string | null;
+  } | null;
+  spent: { cost_usd?: string; calls: number };
+  recent: QueueRecent[];
+  poll_seconds: number;
+  /** The attempt an item is given up at. */
+  max_attempts: number;
+}
+
+/** The queue's size, for the nav. */
+export interface QueueCount {
+  count: number;
+}
+
 /** get fetches one API path. A non-2xx is an error: the pages show their
  *  failed state rather than an empty one. */
 export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {

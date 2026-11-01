@@ -109,12 +109,21 @@ type Poller struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	mu     sync.Mutex
-	// disk serialises the cycle's work on a clone with a removal from the
-	// API: a folder deleted under a running sync would be recreated by the
-	// sync and then belong to no row. removed collects what went during a
-	// cycle, so a job the cycle already listed is skipped.
-	disk    sync.Mutex
+	// disk and each repository's lock serialise the work on one clone: a
+	// sync, a run's read, its removal from the API (a folder deleted under
+	// a running sync would be recreated by the sync and then belong to no
+	// row). Work on one clone holds disk shared and the repository's lock;
+	// a removal of a whole folder holds disk alone. A run reading one
+	// repository thus never waits for the sync of another. removed
+	// collects what went during a cycle, so a job the cycle already listed
+	// is skipped; rm guards it.
+	disk    sync.RWMutex
+	repoMu  sync.Mutex
+	repos   map[int64]*sync.Mutex
+	rm      sync.Mutex
 	removed map[string]bool
+	// cycle is the sync cycle as the queue page shows it, guarded by cur.
+	cycle CycleStatus
 	// current is the sync holding disk, so a removal of that row or its
 	// project can cancel it instead of waiting out a long clone. Guarded
 	// by cur, which Remove takes before it waits on disk.
@@ -125,6 +134,37 @@ type Poller struct {
 		sync.Mutex
 		byRepo map[string]verdict
 	}
+}
+
+// CycleStatus is the sync cycle at one instant: the repository in flight,
+// how far the cycle got, when the next one starts.
+type CycleStatus struct {
+	Running    bool
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	// Done is the repositories the cycle finished, of Total.
+	Done, Total int
+	// ProjectKey and RepoSlug name the repository being synced, since
+	// RepoSince.
+	ProjectKey string
+	RepoSlug   string
+	RepoSince  time.Time
+	// NextAt is when the next cycle starts on its own; nil with no
+	// interval (nudges only).
+	NextAt *time.Time
+}
+
+// Cycle is a copy of the sync cycle's state.
+func (p *Poller) Cycle() CycleStatus {
+	p.cur.Lock()
+	defer p.cur.Unlock()
+	return p.cycle
+}
+
+func (p *Poller) setCycle(f func(*CycleStatus)) {
+	p.cur.Lock()
+	defer p.cur.Unlock()
+	f(&p.cycle)
 }
 
 type inFlight struct {
@@ -143,7 +183,55 @@ func New(d Deps) *Poller {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Poller{Deps: d, wake: make(chan struct{}, 1), removed: map[string]bool{}}
+	return &Poller{Deps: d, wake: make(chan struct{}, 1), removed: map[string]bool{}, repos: map[int64]*sync.Mutex{}}
+}
+
+// repoLock is one repository's lock, made on first use. Kept for the
+// process's life: one mutex per repository ever synced is nothing.
+func (p *Poller) repoLock(repoID int64) *sync.Mutex {
+	p.repoMu.Lock()
+	defer p.repoMu.Unlock()
+	l, ok := p.repos[repoID]
+	if !ok {
+		l = &sync.Mutex{}
+		p.repos[repoID] = l
+	}
+	return l
+}
+
+// lockRepo takes disk shared and the repository's lock; the returned
+// func releases both.
+func (p *Poller) lockRepo(repoID int64) func() {
+	p.disk.RLock()
+	l := p.repoLock(repoID)
+	l.Lock()
+	return func() {
+		l.Unlock()
+		p.disk.RUnlock()
+	}
+}
+
+// tryLockRepo is lockRepo without waiting; ok false when either lock is
+// taken.
+func (p *Poller) tryLockRepo(repoID int64) (unlock func(), ok bool) {
+	if !p.disk.TryRLock() {
+		return nil, false
+	}
+	l := p.repoLock(repoID)
+	if !l.TryLock() {
+		p.disk.RUnlock()
+		return nil, false
+	}
+	return func() {
+		l.Unlock()
+		p.disk.RUnlock()
+	}, true
+}
+
+func (p *Poller) markRemoved(seg string) {
+	p.rm.Lock()
+	p.removed[seg] = true
+	p.rm.Unlock()
 }
 
 // Dir is a clone's folder, by ids, for the API's bodies.
@@ -156,24 +244,25 @@ func (p *Poller) ProjectDir(projectID int64) (string, error) {
 	return p.Git.ProjectDir(projectSeg(projectID))
 }
 
-// Remove deletes one clone, never while a sync touches the disk, and
+// Remove deletes one clone, never while a sync or a read touches it, and
 // marks it so a cycle in flight skips the row. A sync of this very row is
 // cancelled first, so the removal waits for git to die, not to finish.
 func (p *Poller) Remove(projectID, repoID int64) error {
 	p.cutIf(func(f inFlight) bool { return f.projectID == projectID && f.repoID == repoID })
-	p.disk.Lock()
-	defer p.disk.Unlock()
-	p.removed[projectSeg(projectID)+"/"+repoSeg(repoID)] = true
+	unlock := p.lockRepo(repoID)
+	defer unlock()
+	p.markRemoved(projectSeg(projectID) + "/" + repoSeg(repoID))
 	return p.Git.Remove(projectSeg(projectID), repoSeg(repoID))
 }
 
-// RemoveProject deletes a whole project folder under the same lock,
-// cancelling a sync of any of its repositories first.
+// RemoveProject deletes a whole project folder with disk held alone, so no
+// work on any clone runs under it, cancelling a sync of any of its
+// repositories first.
 func (p *Poller) RemoveProject(projectID int64) error {
 	p.cutIf(func(f inFlight) bool { return f.projectID == projectID })
 	p.disk.Lock()
 	defer p.disk.Unlock()
-	p.removed[projectSeg(projectID)] = true
+	p.markRemoved(projectSeg(projectID))
 	return p.Git.RemoveProject(projectSeg(projectID))
 }
 
@@ -220,6 +309,8 @@ func (p *Poller) cutIf(match func(inFlight) bool) {
 // gone reports whether a job's row or project was removed since the cycle
 // listed it.
 func (p *Poller) gone(projectID, repoID int64) bool {
+	p.rm.Lock()
+	defer p.rm.Unlock()
 	return p.removed[projectSeg(projectID)] || p.removed[projectSeg(projectID)+"/"+repoSeg(repoID)]
 }
 
@@ -262,6 +353,13 @@ func (p *Poller) run(ctx context.Context) {
 	delay := jittered(p.FirstDelay)
 	p.Log.Info("sync scheduled", "first_cycle_in", delay.Round(time.Second).String(), "interval", p.Interval.String())
 	for {
+		p.setCycle(func(c *CycleStatus) {
+			c.NextAt = nil
+			if delay > 0 {
+				at := p.Now().UTC().Add(delay)
+				c.NextAt = &at
+			}
+		})
 		if !p.wait(ctx, delay) {
 			return
 		}
@@ -312,31 +410,42 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 	// Forget the last cycle's removals before the rows are read, never
 	// after: a removal landing between the read and the reset would be
 	// lost, and the job it concerned would clone the folder back.
-	p.disk.Lock()
+	p.rm.Lock()
 	p.removed = map[string]bool{}
-	p.disk.Unlock()
+	p.rm.Unlock()
 	jobs, err := p.Store.SyncJobs(ctx)
 	if err != nil {
 		return err
 	}
 	p.Log.Info("sync cycle started", "sources", len(sources), "repositories", len(jobs))
+	p.setCycle(func(c *CycleStatus) {
+		*c = CycleStatus{Running: true, StartedAt: p.Now().UTC(), Total: len(jobs), NextAt: c.NextAt}
+	})
+	defer p.setCycle(func(c *CycleStatus) {
+		c.Running, c.ProjectKey, c.RepoSlug, c.Done = false, "", "", c.Total
+		now := p.Now().UTC()
+		c.FinishedAt = &now
+	})
 	bound, err := p.bindings(ctx, jobs)
 	if err != nil {
 		return err
 	}
 	var synced, unchanged, failed int
-	for _, j := range jobs {
+	for i, j := range jobs {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		repoStart := time.Now()
-		p.disk.Lock()
+		unlock := p.lockRepo(j.Repo.RepoID)
 		var head string
 		var moved bool
 		if p.gone(j.Repo.ProjectID, j.Repo.RepoID) {
-			p.disk.Unlock()
+			unlock()
 			continue
 		}
+		p.setCycle(func(c *CycleStatus) {
+			c.Done, c.ProjectKey, c.RepoSlug, c.RepoSince = i, j.Source.ProjectKey, j.Repo.Slug, p.Now().UTC()
+		})
 		// The sync runs on its own cancellable context, so a removal of
 		// this very row (or its project) can cut it short rather than wait
 		// behind a long clone.
@@ -350,7 +459,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		p.current = inFlight{}
 		p.cur.Unlock()
 		cancel()
-		p.disk.Unlock()
+		unlock()
 		switch {
 		case err != nil && ctx.Err() != nil:
 			// The process is ending, not the repository failing.
@@ -379,20 +488,21 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 }
 
 // describe queues a baseline run after a sync when one is due: the first
-// run on a clone's first ready (its row had no head before), a reconcile
-// when the head is off the documented commit and the last run is older
-// than the interval, and a failed run again, in its own mode, after
-// retryAfter, at most maxRetries times in a row; past that the failed
-// repository is back on the reconcile interval. A done run at the head
-// that skipped parts (a subject gone aside), or left the repository page
-// without a map drawn from its text (a page described before maps
-// existed, a map step skipped), is retried too: a reconcile at the same
-// commit, which reads the skipped parts again and draws the map, after
-// retryAfter, while fewer than maxRetries retries ran in a row and the
-// reconcile interval is on (RetriesOnItsOwn). A head that moved waits for
-// the interval, which reads the skipped parts with the changes. A
-// repository already cloned when the baseline shipped has no run at all
-// and waits for its button. A run already open is no failure.
+// run on a clone's first ready (its row had no head before) or on any
+// sync of a ready clone that has no run at all, a reconcile when the head
+// is off the documented commit and the last run is older than the
+// interval, and a failed run again, in its own mode, after retryAfter, at
+// most maxRetries times in a row; past that the failed repository is back
+// on the reconcile interval. A done run at the head that skipped parts (a
+// subject gone aside), or left the repository page without a map drawn
+// from its text (a page described before maps existed, a map step
+// skipped), is retried too: a reconcile at the same commit, which reads
+// the skipped parts again and draws the map, after retryAfter, while
+// fewer than maxRetries retries ran in a row and the reconcile interval
+// is on (RetriesOnItsOwn). A head that moved waits for the interval, which
+// reads the skipped parts with the changes. Due is read from the rows,
+// never from an event: a run whose queueing was lost is queued by the
+// next cycle. A run already open is no failure.
 func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	if p.Describe.Wake == nil {
 		return
@@ -401,10 +511,17 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	mode, trigger, base := store.RunFull, store.TriggerFirstReady, ""
 	if j.Repo.HeadCommit != "" {
 		last, streak, ok, err := p.Store.LastRun(ctx, key, slug)
-		if err != nil || !ok || last.FinishedAt == nil {
-			// No run yet (cloned before the baseline: its button's), or
-			// one still open.
+		if err != nil || (ok && last.FinishedAt == nil) {
+			// The store not answering, or a run still open.
 			p.logRunCheck(err, key, slug)
+			return
+		}
+		if !ok {
+			// Ready without any run: the first-ready run was never
+			// queued (its write failed, the process ended between the
+			// sync and the queue, the baseline was off). Queued now, at
+			// every cycle until it is.
+			p.enqueue(ctx, key, slug, mode, trigger, base, head)
 			return
 		}
 		// A done last run is the documented one; the store is asked only
@@ -449,9 +566,18 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
 		}
 	}
+	p.enqueue(ctx, key, slug, mode, trigger, base, head)
+}
+
+// enqueue queues a run and wakes the worker. A run already open is no
+// failure; a failed write is logged and, the repository still without
+// its run, tried again by the next cycle.
+func (p *Poller) enqueue(ctx context.Context, key, slug, mode, trigger, base, head string) {
 	id, err := p.Store.EnqueueRun(ctx, key, slug, mode, trigger, base, head)
 	switch {
-	case errors.Is(err, store.ErrExists):
+	case errors.Is(err, store.ErrExists), errors.Is(err, store.ErrNoRepo):
+		// A run already open, or the repository removed under the cycle:
+		// nothing to queue.
 		return
 	case err != nil:
 		p.Log.Warn("baseline_queue_failed", "project", key, "repo", slug, "err", err.Error())
@@ -529,6 +655,17 @@ func (p *Poller) retryAfter() time.Duration {
 		return r
 	}
 	return retryWait
+}
+
+// RetryAt is when the poller queues a repository's failed run again at
+// the earliest (the first cycle after it), given when it finished and how
+// many runs failed in a row; ok false when it will not (the baseline off,
+// the retries spent).
+func (p *Poller) RetryAt(finished time.Time, failedInRow int) (time.Time, bool) {
+	if p.Describe.Wake == nil || failedInRow > maxRetries {
+		return time.Time{}, false
+	}
+	return finished.Add(p.retryAfter()), true
 }
 
 // maxRetries is how many times in a row the poller queues a failed run

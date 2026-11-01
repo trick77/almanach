@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -91,6 +92,13 @@ type Worker struct {
 	// and a busy database would refuse the count's own write.
 	busyRun    int64
 	busyWrites int
+	// smu guards what Status reads from another goroutine: the work in
+	// flight, the step that waits, the hold as the queue page shows it.
+	smu       sync.Mutex
+	busy      *Busy
+	waiting   *Wait
+	holdUntil time.Time
+	holdCause string
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the
@@ -115,9 +123,9 @@ func New(st Store, llm Merger, limits config.Limits, log *slog.Logger) *Worker {
 }
 
 // hold pauses the worker after a gateway-class failure or a database that
-// stayed busy past its timeout (why names which); retryAfter is the
-// endpoint's own ask, zero when it made none.
-func (w *Worker) hold(ctx context.Context, why string, retryAfter time.Duration) {
+// stayed busy past its timeout (cause names which, a Hold code);
+// retryAfter is the endpoint's own ask, zero when it made none.
+func (w *Worker) hold(ctx context.Context, cause string, retryAfter time.Duration) {
 	if w.backoff == 0 {
 		w.backoff = backoffMin
 	} else {
@@ -125,20 +133,18 @@ func (w *Worker) hold(ctx context.Context, why string, retryAfter time.Duration)
 	}
 	wait := max(w.backoff, retryAfter)
 	w.retryAt = w.now().Add(wait)
-	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s hold for %s, no fold until then", why, wait))
+	w.setHold(w.retryAt, cause)
+	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: hold (%s) for %s, no fold until then", cause, wait))
 }
-
-// Why the worker holds.
-const (
-	holdGateway = "gateway"
-	holdBusy    = "database busy"
-)
 
 // holding reports whether a gateway hold is still on.
 func (w *Worker) holding() bool { return w.now().Before(w.retryAt) }
 
 // clearHold forgets the hold once a call got through.
-func (w *Worker) clearHold() { w.backoff, w.retryAt = 0, time.Time{} }
+func (w *Worker) clearHold() {
+	w.backoff, w.retryAt = 0, time.Time{}
+	w.setHold(time.Time{}, "")
+}
 
 // Wake tells the loop a note was queued. Never blocks: a wake already
 // pending is the same wake.
@@ -162,10 +168,22 @@ func (w *Worker) Start(ctx context.Context) {
 			case <-w.quit:
 				return
 			case <-w.wake:
-			case <-time.After(w.poll):
+			case <-time.After(w.nextLook()):
 			}
 		}
 	}()
+}
+
+// nextLook is how long the loop sleeps: the poll, or less when a hold ends
+// sooner, so the next fold starts when the hold says and not up to a poll
+// later.
+func (w *Worker) nextLook() time.Duration {
+	if w.holding() {
+		if left := w.retryAt.Sub(w.now()); left < w.poll {
+			return left
+		}
+	}
+	return w.poll
 }
 
 // Stop ends the loop after the fold in flight: a fold is a paid gateway
@@ -235,6 +253,8 @@ func (w *Worker) drain(ctx context.Context) {
 // the sources existed, or for a repository removed since. The source is
 // the starting point.
 func (w *Worker) foldOrIgnore(ctx context.Context, q store.QueuedNote) bool {
+	w.setBusy(Busy{Kind: KindNote, ProjectKey: q.ProjectKey, RepoSlug: q.RepoSlug, PRKey: q.PRKey})
+	defer w.clearBusy()
 	if w.base != nil {
 		known, err := w.base.Store.IsSourceRepo(ctx, q.ProjectKey, q.RepoSlug)
 		if err != nil {
@@ -261,6 +281,10 @@ func (w *Worker) foldOrIgnore(ctx context.Context, q store.QueuedNote) bool {
 // that is consistently slower than the call cap costs up to this many
 // merges per note, which the log makes visible.
 const maxFoldAttempts = 8
+
+// MaxAttempts is maxFoldAttempts for the queue page: the attempt an item
+// is given up at, a note's or a run step's.
+const MaxAttempts = maxFoldAttempts
 
 // gatewayClass tells a failure of the gateway as a whole (worth a hold and
 // a later retry) from one specific to this call (the note is done). A
@@ -334,7 +358,7 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res.Call); gateway {
-		w.hold(ctx, holdGateway, retryAfter)
+		w.hold(ctx, gatewayCause(res.Call), retryAfter)
 		deferred = w.deferNote(ctx, q, res.Outcome.String(), res.Err)
 		return
 	}
@@ -386,8 +410,8 @@ func (w *Worker) deferBusy(ctx context.Context, q store.QueuedNote, err error) b
 	if !store.IsBusy(err) {
 		return false
 	}
-	w.hold(ctx, holdBusy, 0)
-	return w.deferNote(ctx, q, holdBusy, err)
+	w.hold(ctx, HoldBusy, 0)
+	return w.deferNote(ctx, q, "database busy", err)
 }
 
 // apply checks one rewritten description and writes it as a revision, or

@@ -2,7 +2,13 @@
 // never the sharp s), generic masculine. There is no second language: the
 // readers are German speaking, and the wiki itself is German.
 
-import type { SkippedPart, SkipReason } from "./api";
+import type {
+  QueueRun,
+  SkippedPart,
+  SkipReason,
+  StepKind,
+  WaitReason,
+} from "./api";
 
 export const S = {
   app: "Almanach",
@@ -10,6 +16,7 @@ export const S = {
     label: "Seiten",
     projects: "Projekte",
     sources: "Quellen",
+    queue: "Warteschlange",
     faq: "FAQ",
   },
   common: {
@@ -445,6 +452,112 @@ export const S = {
       reconcile: "Aktualisieren",
       full: "Neu beschreiben",
     },
+  },
+  queue: {
+    title: "Warteschlange",
+    what: "die Warteschlange",
+    polling: "Aktualisiert alle 3 s, solange etwas läuft",
+    tiles: {
+      now: "Jetzt",
+      waiting: "Wartet",
+      spent: "24 h ausgegeben",
+      sync: "Sync",
+    },
+    idle: "–",
+    nothingToDo: "Nichts zu tun",
+    counts: (notes: number, runs: number) =>
+      [
+        notes > 0 ? (notes === 1 ? "1 Notiz" : `${notes} Notizen`) : "",
+        runs > 0 ? (runs === 1 ? "1 Run" : `${runs} Runs`) : "",
+      ]
+        .filter((s) => s !== "")
+        .join(", "),
+    calls: (n: number) => (n === 1 ? "1 Aufruf" : `${n} Aufrufe`),
+    sync: {
+      running: "Läuft",
+      ready: "Bereit",
+      progress: (repo: string, done: number, total: number) =>
+        `${repo}, ${done + 1} von ${total}`,
+      next: (at: string) => `Nächster Zyklus ${at}`,
+      manual: "Nur von Hand",
+    },
+    lane: {
+      now: "Jetzt",
+      next: "Als Nächstes",
+      after: "Danach",
+    },
+    note: "Notiz",
+    run: (id: number) => `Run #${id}`,
+    mode: { full: "Vollständig", reconcile: "Abgleich" } satisfies Record<
+      QueueRun["mode"],
+      string
+    >,
+    trigger: {
+      manual: "von Hand",
+      first_ready: "Erster Clone",
+      monthly: "Monatlich",
+      retry: "Erneut",
+    } satisfies Record<QueueRun["trigger"], string>,
+    step: {
+      catalogue: "Katalog",
+      overview: "Überblick",
+      project: "Projektseite",
+      repo_map: "Aufbau",
+    } satisfies Record<Exclude<StepKind, "subject">, string>,
+    stepSub: {
+      catalogue: "Teile und ihre Dateien",
+      overview: "README und Dokumente",
+      project: "aus den Repository-Seiten",
+      repo_map: "Repository-Karte",
+    } satisfies Record<Exclude<StepKind, "subject">, string>,
+    files: (n: number, size: string) =>
+      n === 1 ? `1 Datei, ${size}` : `${n} Dateien, ${size}`,
+    callRunning: (since: string) => `läuft seit ${since}`,
+    callsFailed: (n: number) =>
+      n === 1 ? "1 Aufruf ohne Antwort" : `${n} Aufrufe ohne Antwort`,
+    skipped: (why: string) => `übersprungen: ${why}`,
+    stepOf: (i: number, n: number) => `Schritt ${i} von ${n}`,
+    continues: (n: number) =>
+      n === 1 ? "weiter, 1 Schritt" : `weiter, ${n} Schritte`,
+    received: (at: string) => `eingegangen ${at}`,
+    queuedSince: (at: string) => `wartet seit ${at}`,
+    started: (at: string, ago: string) => `gestartet ${at}, vor ${ago}`,
+    soFar: "bisher",
+    // A duration past ten minutes; under, it reads 0:42.
+    minutes: (m: number) => `${m} min`,
+    hours: (h: number, m: number) => `${h} h ${m} min`,
+    attempt: (n: number, max: number) => `Versuch ${n + 1} von ${max}`,
+    heldBy: (id: number) => `Wartet auf Run #${id}.`,
+    commit: (from: string, to: string) =>
+      from === "" ? `Commit ${to}` : `von ${from} auf ${to}`,
+    wait: {
+      timeout: "Modell antwortet nicht (Zeitüberschreitung)",
+      unavailable: "Modell antwortet nicht",
+      rate_limit: "Modell ausgelastet",
+      key_refused: "Schlüssel abgelehnt",
+      busy: "Datenbank belegt",
+      clone_busy: "Clone belegt",
+      placing: "Git ordnet einen Merge-Commit ein",
+    } satisfies Record<WaitReason, string>,
+    until: (at: string, left: string) => `${at}, in ${left}`,
+    soon: (s: number) => `in ≤ ${s} s`,
+    waitingSince: (since: string) => `seit ${since}`,
+    empty: "Nichts wartet.",
+    emptyNext: (at: string) => `Nichts wartet. Nächster Sync ${at}.`,
+    recent: "Zuletzt, 24 h",
+    recentHeaders: ["Zeit", "Was", "Ergebnis", "Kosten"],
+    recentEmpty: "In den letzten 24 h nichts abgeschlossen.",
+    runDone: "Beschrieben",
+    runFailed: "Fehlgeschlagen:",
+    retryAt: (at: string) => `Erneut automatisch frühestens ${at}`,
+    noteOutcome: {
+      ok: "Gefaltet",
+      timed_out: "Nicht gefaltet: Zeitüberschreitung",
+      unparseable: "Nicht gefaltet: Antwort unlesbar",
+      too_long: "Nicht gefaltet: Antwort zu lang",
+      error: "Nicht gefaltet: Aufruf fehlgeschlagen",
+      "": "Ohne Modellaufruf abgeschlossen",
+    } as Record<string, string>,
   },
   faq: {
     title: "FAQ",

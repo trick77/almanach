@@ -409,13 +409,15 @@ type LLMCall struct {
 	SourceCommit  string
 	Purpose       string
 	BaselineRunID *int64
-	Outcome       string
-	Model         string
-	InputTokens   int64
-	CachedTokens  int64
-	OutputTokens  int64
-	CostNanoUSD   *int64
-	CallID        string
+	// Step is the run's reading step (overview or subject), nil otherwise.
+	Step         *int
+	Outcome      string
+	Model        string
+	InputTokens  int64
+	CachedTokens int64
+	OutputTokens int64
+	CostNanoUSD  *int64
+	CallID       string
 }
 
 // InsertLLMCall records one model call and returns its id.
@@ -435,11 +437,11 @@ func (s *Store) InsertLLMCall(ctx context.Context, c LLMCall) (int64, error) {
 			return err
 		}
 		return tx.QueryRowContext(ctx, `
-			INSERT INTO llm_calls (repo_id, source_kind, source_pr_key, source_commit, purpose, baseline_run_id,
+			INSERT INTO llm_calls (repo_id, source_kind, source_pr_key, source_commit, purpose, baseline_run_id, step,
 			                       outcome, model, input_tokens, cached_tokens, output_tokens, cost_nano_usd, call_id, created_at)
-			VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?)
+			VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?)
 			RETURNING id`,
-			rid, fromKind(c.SourceKind), c.SourcePR, c.SourceCommit, purpose, c.BaselineRunID,
+			rid, fromKind(c.SourceKind), c.SourcePR, c.SourceCommit, purpose, c.BaselineRunID, c.Step,
 			c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, nowStamp()).Scan(&id)
 	})
 	return id, err

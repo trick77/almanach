@@ -29,6 +29,8 @@ describe("routeFromPath", () => {
       pr: 42,
     });
     expect(routeFromPath("/quellen")).toEqual({ page: "sources" });
+    expect(routeFromPath("/warteschlange")).toEqual({ page: "queue" });
+    expect(routeFromPath("/warteschlange/x")).toEqual({ page: "projects" });
     expect(routeFromPath("/quellen/~jan")).toEqual({
       page: "source",
       key: "~jan",
