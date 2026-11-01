@@ -582,8 +582,8 @@ resumes after a restart. The run pins the clone's head when it starts.
    slug only after them, and the page keeps what it says of them and of a
    cut one), so the page is written as one system: purpose and boundary,
    each repository's role, the flows across them and the runtime in the
-   summary; interfaces, shared entities and cross-repository rules as
-   statements. The summary is rewritten whole; the statements are a patch
+   summary; shared components, shared entities and cross-repository rules
+   as statements. The summary is rewritten whole; the statements are a patch
    like a subject step's (edits by id, `added`, `drop`), a statement not
    named kept: as a full rewrite, one answer naming none emptied a page
    (an eval's second repository wiped the first one's eleven). No tree

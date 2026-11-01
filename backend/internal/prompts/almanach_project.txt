@@ -16,7 +16,7 @@ The description of repository `{repo}` in project `{project}` was just written f
   - The flows that cross the most repositories, end to end.
   - Runtime: what is deployed as its own unit and what talks to what at runtime, as opposed to at build time; only what the descriptions show, no environments.
 - The statements hold what spans repositories:
-  - `component`: the interfaces between repositories (APIs, events, shared libraries, files), which repository owns each and which consume it. This is where breaking changes live.
+  - `component`: a component of the system that more than one repository has a part in or relies on (a shared service, library, store or pipeline): what it is for, which repository owns it and which rely on it.
   - `entity`: the entities that cross repositories, which repository is their system of record, and how their identifiers travel.
   - `rule` and `invariant`: ordering, idempotency, consistency, authentication and tenancy boundaries that span repositories.
   - `decision`: a choice that spans repositories, its reason and what was given up; only with a reason the descriptions state, never guessed.
