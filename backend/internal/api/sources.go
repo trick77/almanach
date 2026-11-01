@@ -140,6 +140,7 @@ type sourceSummaryBody struct {
 	Failed       int        `json:"failed"`
 	Missing      int        `json:"missing"`
 	LastListedAt *time.Time `json:"last_listed_at"`
+	LastSyncedAt *time.Time `json:"last_synced_at"`
 	LastError    string     `json:"last_error"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
@@ -167,7 +168,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 	for _, s := range rows {
 		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, Host: s.Host, HasToken: s.HasToken(),
 			TokenAuth: s.TokenAuth, TokenUser: s.TokenUser, Repos: s.Repos, Ready: s.Ready, Active: s.Active, Failed: s.Failed, Missing: s.Missing,
-			LastListedAt: s.LastListedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
+			LastListedAt: s.LastListedAt, LastSyncedAt: s.LastSyncedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

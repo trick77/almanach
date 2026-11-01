@@ -801,7 +801,7 @@ components:
 
     SourceSummary:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_error, created_at, updated_at]
+      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_synced_at, last_error, created_at, updated_at]
       properties:
         project_key:
           type: string
@@ -832,6 +832,10 @@ components:
         last_listed_at:
           type: [string, "null"]
           format: date-time
+        last_synced_at:
+          type: [string, "null"]
+          format: date-time
+          description: The newest sync of any of its repositories, null before the first.
         last_error:
           type: string
           description: The last listing's failure, or empty.
