@@ -12,6 +12,7 @@ import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
+import { statementMatches } from "./Description";
 import { armSignIn } from "./signin";
 import { Marked, matchesQuery } from "./ui";
 import type {
@@ -313,6 +314,65 @@ describe("ProjectPage", () => {
     // An extension is a repository's: the project page has no such section.
     expect(screen.queryByText("Erweiterungen")).toBeNull();
     expect(window.location.hash).toBe("#beschreibung");
+  });
+
+  it("lays out a statement's text and the summary, nothing beyond the subset", async () => {
+    const d = project.description!;
+    serve({
+      "projects/PAY": {
+        ...project,
+        description: {
+          ...d,
+          summary: "Der **Kern** der Zahlungen.\n\n- Annahme\n- Abrechnung",
+          statements: [
+            {
+              ...d.statements[0],
+              text: "Nimmt Aufträge an.\n\n#### Ablauf\n\n1. Prüfen\n2. Speichern mit **`tx`**\n\n> kein Zitat",
+            },
+            ...d.statements.slice(1),
+          ],
+        },
+      },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    await openTab(/Beschreibung/);
+    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
+    expect(within(desc).getByText("Kern").tagName).toBe("STRONG");
+    expect(within(desc).getByText("Abrechnung").tagName).toBe("LI");
+    expect(within(desc).getByText("Ablauf").tagName).toBe("H5");
+    const step = within(desc).getByText("Prüfen");
+    expect(step.tagName).toBe("LI");
+    expect(step.closest("ol")).not.toBeNull();
+    const tx = within(desc).getByText("tx");
+    expect(tx.tagName).toBe("CODE");
+    expect(tx.closest("strong")).not.toBeNull();
+    expect(within(desc).getByText("> kein Zitat").tagName).toBe("P");
+  });
+
+  it("finds a statement by its words across its bold marks", async () => {
+    const d = project.description!;
+    serve({
+      "projects/PAY": {
+        ...project,
+        description: {
+          ...d,
+          statements: [
+            { ...d.statements[0], text: "Der **Mandant** kommt mit." },
+            ...d.statements.slice(1),
+          ],
+        },
+      },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    await openTab(/Beschreibung/);
+    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
+    expect(
+      statementMatches(
+        { ...d.statements[0], text: "Der **Mandant** kommt mit." },
+        "Mandant kommt",
+      ),
+    ).toBe(true);
+    expect(within(desc).getByText("Mandant").tagName).toBe("STRONG");
   });
 
   it("opens the tab the address names", async () => {
@@ -846,6 +906,16 @@ describe("NotePage", () => {
     expect(screen.getByText("$0.040")).toBeInTheDocument();
     expect(screen.getByText("noch nicht")).toBeInTheDocument();
     expect(screen.getByText(/\(Bug\)/)).toBeInTheDocument();
+  });
+  it("reads a note's text as paragraphs alone: noergler's is not laid out", async () => {
+    serve({
+      "projects/PAY/repos/pay-api/notes/231": {
+        ...note,
+        note: { ...note.note!, summary: "- kein **Punkt**" },
+      },
+    });
+    render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
+    expect((await screen.findByText("- kein **Punkt**")).tagName).toBe("P");
   });
   it("says when noergler reported no call", async () => {
     serve({

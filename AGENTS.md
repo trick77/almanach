@@ -6,8 +6,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 
 - Prompts compiled in, never configurable. UI: German, copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
-  browser write. Statements paragraphs, no markdown but `backtick` code spans (UI mono, user,
-  2026-11-01); diagrams only validated JSON, drawn by rongo's code.
+  browser write. Text, summary: `markup` subset only (paragraphs, flat lists, bold, `code`, text
+  `####`; user, 2026-11-01), `markup.Normalize` before `lang.Prose`, UI `blocks` mirrors it, rest
+  literal; notes paragraphs. Diagrams only validated JSON, drawn by rongo's code.
 - Gate = `make check` (`SHIP_CMD=<binary>` locally); `make hooks` per clone. GitHub never first to
   find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.

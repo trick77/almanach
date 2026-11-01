@@ -20,7 +20,6 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
-	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
@@ -684,7 +683,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
 	summary := page.Summary
 	if applied.Summary != nil {
-		summary = lang.Prose(*applied.Summary)
+		summary = proseSummary(*applied.Summary)
 	}
 	// Checked travels by id, never by position (attach may leave a new
 	// statement out): a statement this step wrote or confirmed was read
@@ -1297,7 +1296,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if len(kept) > 0 {
 		w.log.WarnContext(ctx, "baseline: "+projectLabel+": drop of statements a pull request taught left out", slog.Any("ids", kept))
 	}
-	summary := lang.Prose(d.Summary)
+	summary := proseSummary(d.Summary)
 	// A new statement over a field cap is left out before the ceilings:
 	// the search below needs a check only more statements fail, and one
 	// over a cap among the first ended it (an eval's first page went so).

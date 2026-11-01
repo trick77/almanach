@@ -21,6 +21,7 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/lang"
+	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/llmwire"
@@ -413,7 +414,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 	}
 	statements, leftOut, reason := attachDescription(scope, current.Statements, d, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
-	summary := lang.Prose(d.Summary)
+	summary := proseSummary(d.Summary)
 	chars, capReason := check(summary, statements, maxStatements, maxChars)
 	if reason == "" {
 		reason = capReason
@@ -620,8 +621,9 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			s.ID = old.ID
 			s.Sources = old.Sources
 			// Umlauts written in where old text had ae, oe, ue are spelling,
-			// not something this source taught: stored, never credited.
-			if !lang.SameButSpelling(old.Text, s.Text) || !lang.SameButSpelling(old.Name, s.Name) || !diagram.Equal(old.Diagram, s.Diagram) {
+			// a list or a bold term where there was a sentence is layout:
+			// not something this source taught, stored, never credited.
+			if !sameText(old.Text, s.Text) || !lang.SameButSpelling(old.Name, s.Name) || !diagram.Equal(old.Diagram, s.Diagram) {
 				s.Sources = appendSource(s.Sources, src)
 			} else {
 				s.Checked = old.Checked
@@ -642,9 +644,21 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 }
 
 // cleanStatement is a returned statement's kind, name, text and files as
-// attach stores them: trimmed, Swiss, empty paths dropped.
+// attach stores them: trimmed, Swiss, empty paths dropped, the text in
+// the stored layout (markup.Normalize) before the Swiss rule reads it.
 func cleanStatement(p inference.Statement) store.Statement {
-	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Prose(p.Text), Files: cleanFiles(p.Files)}
+	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Prose(markup.Normalize(p.Text, true)), Files: cleanFiles(p.Files)}
+}
+
+// proseSummary is a returned summary as stored: the summary's layout, no
+// sub-heading (markup.Normalize), then trimmed and Swiss.
+func proseSummary(s string) string { return lang.Prose(markup.Normalize(s, false)) }
+
+// sameText reports whether a statement's new text says what its old one
+// did: umlauts spelled in (lang.SameButSpelling) or only laid out anew,
+// a paragraph turned into a list, a term set in bold (markup.Words).
+func sameText(old, text string) bool {
+	return lang.SameButSpelling(old, text) || lang.SameButSpelling(markup.Words(old), markup.Words(text))
 }
 
 // diagramLimits is what a page's statement diagrams are held to: the caps
@@ -683,7 +697,7 @@ func statementDiagram(proposed *diagram.Diagram, old *store.Statement, s store.S
 	if old == nil || old.Diagram == nil {
 		return nil, false, why
 	}
-	if lang.SameButSpelling(old.Name, s.Name) && lang.SameButSpelling(old.Text, s.Text) {
+	if lang.SameButSpelling(old.Name, s.Name) && sameText(old.Text, s.Text) {
 		return old.Diagram, false, why
 	}
 	return nil, true, why

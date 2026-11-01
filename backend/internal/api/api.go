@@ -22,6 +22,7 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/ingest"
+	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
 	"github.com/trick77/almanach/web"
@@ -471,7 +472,7 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Repos: make([]repoBody, 0, len(repos)), Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	for _, rp := range repos {
-		out.Repos = append(out.Repos, repoBody{Slug: rp.Slug, Revision: rp.Revision, Summary: firstSentence(rp.Summary), Notes: rp.Notes, LastMerge: rp.LastMerge})
+		out.Repos = append(out.Repos, repoBody{Slug: rp.Slug, Revision: rp.Revision, Summary: firstSentence(lead(rp.Summary)), Notes: rp.Notes, LastMerge: rp.LastMerge})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -685,6 +686,20 @@ func noteBodies(rows []store.NoteRow) []noteBody {
 var abbreviations = map[string]bool{
 	"bzw": true, "ca": true, "etc": true, "evtl": true, "ggf": true, "inkl": true, "max": true, "min": true,
 	"nr": true, "usw": true, "vgl": true, "zb": true, "dh": true, "ua": true, "sog": true, "bspw": true, "vs": true,
+}
+
+// lead is a summary's opening as plain text, for a list: its first block
+// that is not a heading set in bold (markup.Normalize's form for one), the
+// layout's marks gone, its lines one line.
+func lead(s string) string {
+	for _, b := range strings.Split(strings.TrimSpace(s), "\n\n") {
+		b = strings.TrimSpace(b)
+		if b == "" || !strings.Contains(b, "\n") && len(b) > 4 && strings.HasPrefix(b, "**") && strings.HasSuffix(b, "**") {
+			continue
+		}
+		return strings.Join(strings.Fields(markup.Plain(b)), " ")
+	}
+	return ""
 }
 
 // firstSentence is a summary's first sentence, for a list: up to the first
