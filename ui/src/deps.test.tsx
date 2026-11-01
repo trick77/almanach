@@ -7,6 +7,7 @@ import {
   libraryRows,
   oddVersions,
   repoNamer,
+  shortVersion,
 } from "./DepsPage";
 import { RepoPage, depGroups } from "./RepoPage";
 
@@ -124,6 +125,10 @@ describe("dependency graph", () => {
     expect(oddVersions(["v1", "v0"])).toEqual([true, true]);
     expect(oddVersions(["v1", "v1"])).toEqual([false, false]);
     expect(oddVersions([])).toEqual([]);
+    expect(shortVersion("v0.1.8")).toBe("v0.1.8");
+    expect(shortVersion("git+https://host.example/x.git#a1b2c3")).toBe(
+      "git+https://hos…",
+    );
     // No version written is no disagreement.
     expect(oddVersions(["1.4.0", ""])).toEqual([false, false]);
     expect(oddVersions(["v1", "v1", "v0", ""])).toEqual([

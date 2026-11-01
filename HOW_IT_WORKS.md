@@ -560,8 +560,7 @@ provide (a fork, a copy) gives no edge to either and is listed as
 ambiguous; when the providers share one clone URL (two sources cloned it
 before the rule) it says so, and removing all but one row gives the edges
 back. A repository's body carries `uses` (with the library's other
-users, `also`) and `used_by`, a project's `libraries` (repositories of
-other projects its repositories use), the `.md` export an
+users, `also`) and `used_by`, the `.md` export an
 `Abhängigkeiten` section, and `GET /api/dependencies` the whole graph,
 drawn on the page "Abhängigkeiten" as a flow from users to libraries. With
 the sources off every list is empty.

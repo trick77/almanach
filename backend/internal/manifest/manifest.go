@@ -16,6 +16,11 @@ import (
 	"strings"
 )
 
+// Version is this package's reading of the manifests: raise it with any
+// change to what Parse makes of one, and every repository's manifests are
+// read again at the next sync, not only those whose head moved.
+const Version = 2
+
 // Ecosystems: the prefix of a coordinate.
 const (
 	Go    = "go"

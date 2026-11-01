@@ -11,11 +11,14 @@
 --
 -- provides: a JSON array of coordinates (`go:<module>`,
 -- `maven:<group>:<artifact>`, `npm:<name>`). requires: a JSON array of
--- {"coord", "version"}, the version as written, "" when none is.
+-- {"coord", "version"}, the version as written, "" when none is. reader:
+-- the manifest package's Version that read them; a newer one reads every
+-- repository again, its head moved or not.
 CREATE TABLE repo_manifests (
     repo_id INTEGER PRIMARY KEY REFERENCES source_repos(repo_id) ON DELETE CASCADE,
     "commit" TEXT NOT NULL,
     provides TEXT NOT NULL CHECK (json_valid(provides) AND json_type(provides) = 'array'),
     requires TEXT NOT NULL CHECK (json_valid(requires) AND json_type(requires) = 'array'),
+    reader INTEGER NOT NULL,
     read_at TEXT NOT NULL CHECK (read_at GLOB '????-??-??T??:??:??.?????????Z')
 );

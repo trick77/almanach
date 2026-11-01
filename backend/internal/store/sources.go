@@ -520,7 +520,8 @@ func (s *Store) ApplyListing(ctx context.Context, key string, listed []ListedRep
 			if elsewhere(held[CloneKey(l.CloneURL)], pid) {
 				// One repository, one clone: another source has it. A row of
 				// this project that knew it stays listed, its URL as it was.
-				res.Elsewhere = append(res.Elsewhere, l.Slug)
+				h := held[CloneKey(l.CloneURL)][0]
+				res.Elsewhere = append(res.Elsewhere, l.Slug+" (as "+h.projectKey+"/"+h.slug+")")
 				if rid, ok, err := knownListed(ctx, tx, pid, l); err != nil {
 					return err
 				} else if ok {

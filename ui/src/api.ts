@@ -130,8 +130,6 @@ export interface ProjectDetail {
    *  and no run is promised to draw one. */
   map_declined: boolean;
   repos: Repo[];
-  /** Repositories of other projects this project's repositories use. */
-  libraries: Library[];
   problems: Problem[];
   problem_window_days: number;
   recent_notes: NoteSummary[];
@@ -176,12 +174,6 @@ export interface DependencyEnd {
 /** A library a repository uses, with the library's other users. */
 export interface Use extends DependencyEnd {
   also: DependencyEnd[];
-}
-
-export interface Library {
-  project: string;
-  slug: string;
-  used_by: DependencyEnd[];
 }
 
 export interface RepoRef {

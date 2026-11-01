@@ -459,11 +459,8 @@ type projectDetailBody struct {
 	MapExpected bool `json:"map_expected"`
 	// MapDeclined says a project step asked for the map and none was
 	// accepted: no map, and none promised for the next run either.
-	MapDeclined bool       `json:"map_declined"`
-	Repos       []repoBody `json:"repos"`
-	// Libraries are the repositories of other projects this project's
-	// repositories use.
-	Libraries   []libraryBody `json:"libraries"`
+	MapDeclined bool          `json:"map_declined"`
+	Repos       []repoBody    `json:"repos"`
 	Problems    []problemBody `json:"problems"`
 	ProblemDays int           `json:"problem_window_days"`
 	Notes       []noteBody    `json:"recent_notes"`
@@ -538,12 +535,6 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	out.Repos = repoBodies(repos)
-	g, err := d.graph(ctx)
-	if err != nil {
-		httpx.ServerError(w, r, err, "dependencies")
-		return
-	}
-	out.Libraries = librariesOf(g, key)
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 

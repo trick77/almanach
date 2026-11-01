@@ -32,10 +32,24 @@ export function repoNamer(d: Dependencies): (r: RepoRef) => string {
   return (r) => (one ? r.slug : refId(r));
 }
 
+/** versionMax is the most of a version an edge label shows: a git URL or a
+ *  commit hash as a version would stretch the drawing; the table shows it
+ *  whole. */
+const versionMax = 16;
+
+/** shortVersion is a version as an edge label: one line, cut at
+ *  versionMax with an ellipsis. */
+export function shortVersion(v: string): string {
+  const one = v.split(/\s+/).join(" ").trim();
+  return one.length <= versionMax ? one : one.slice(0, versionMax - 1) + "…";
+}
+
 /** depGraph is the graph as a flow, left to right: a repository something
  *  uses stands among the libraries, the rest among the users; an edge per
  *  use, labelled with the version the user names. Only repositories with
- *  an edge are drawn. */
+ *  an edge are drawn. Built by code from the graph the store joined, not
+ *  a model's: no validation to pass, every label escaped by the drawing
+ *  as any other. */
 export function depGraph(d: Dependencies): FlowIR {
   const name = repoNamer(d);
   const used = new Set(d.edges.map((e) => refId(e.to)));
@@ -60,7 +74,7 @@ export function depGraph(d: Dependencies): FlowIR {
     edges: d.edges.map((e) => ({
       from: refId(e.from),
       to: refId(e.to),
-      label: e.version,
+      label: shortVersion(e.version),
       dashed: false,
       head: "end",
     })),

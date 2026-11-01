@@ -2086,7 +2086,7 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, system, description, map, map_expected, map_declined, repos, libraries, problems, problem_window_days, recent_notes]
+      required: [key, team, system, description, map, map_expected, map_declined, repos, problems, problem_window_days, recent_notes]
       properties:
         key:
           type: string
@@ -2124,11 +2124,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Repo"
-        libraries:
-          type: array
-          description: Repositories of other projects this project's repositories use, each with its users here.
-          items:
-            $ref: "#/components/schemas/Library"
         problems:
           type: array
           items:
@@ -2234,19 +2229,6 @@ components:
         also:
           type: array
           description: The library's other users, each with the version it names.
-          items:
-            $ref: "#/components/schemas/DependencyEnd"
-
-    Library:
-      type: object
-      required: [project, slug, used_by]
-      properties:
-        project:
-          type: string
-        slug:
-          type: string
-        used_by:
-          type: array
           items:
             $ref: "#/components/schemas/DependencyEnd"
 

@@ -151,9 +151,43 @@ func TestDependencies_ClonedTwice(t *testing.T) {
 	}
 	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:example.invalid/wire"}})
 	saveRead(t, s, "apps", "wire", "1", manifest.Read{Provides: []string{"go:example.invalid/wire"}})
+	// Nothing requires it yet: no line for it.
 	g, err := s.Dependencies(ctx)
+	if err != nil || len(g.Ambiguous) != 0 {
+		t.Fatalf("ambiguous = %+v %v, want none while nothing requires it", g.Ambiguous, err)
+	}
+	addRepos(t, s, SourceRepo{ProjectKey: "apps", Slug: "loom", CloneURL: "https://forge.example.invalid/x/loom"})
+	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:example.invalid/wire", Version: "v1"}}})
+	g, err = s.Dependencies(ctx)
 	if err != nil || len(g.Ambiguous) != 1 || !g.Ambiguous[0].Twice {
 		t.Fatalf("ambiguous = %+v %v, want one cloned twice", g.Ambiguous, err)
+	}
+}
+
+// Manifests read by an older reader are due again; an edge takes the first
+// version one of its coordinates names.
+func TestManifests_ReaderAndVersion(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.CreateSource(ctx, staticSource("libs")); err != nil {
+		t.Fatal(err)
+	}
+	addRepos(t, s,
+		SourceRepo{ProjectKey: "libs", Slug: "lib", CloneURL: "https://forge.example.invalid/x/lib"},
+		SourceRepo{ProjectKey: "libs", Slug: "app", CloneURL: "https://forge.example.invalid/x/app"},
+	)
+	saveRead(t, s, "libs", "lib", "1", manifest.Read{Provides: []string{"maven:g:api", "maven:g:core"}})
+	saveRead(t, s, "libs", "app", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "maven:g:api"}, {Coord: "maven:g:core", Version: "1.2.0"}}})
+	g, err := s.Dependencies(ctx)
+	if err != nil || len(g.Edges) != 1 || g.Edges[0].Version != "1.2.0" {
+		t.Fatalf("edges = %+v %v, want one at 1.2.0", g.Edges, err)
+	}
+	rid := repoIDOf(t, s, "libs", "lib")
+	if _, err := s.db.ExecContext(ctx, `UPDATE repo_manifests SET reader = ? WHERE repo_id = ?`, manifest.Version-1, rid); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.ManifestCommit(ctx, rid); err != nil || ok {
+		t.Fatalf("ManifestCommit after an older reader = %v %v, want due again", ok, err)
 	}
 }
 
@@ -225,7 +259,7 @@ func TestCloneURL_OneRowAcrossSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Added != 1 || !reflect.DeepEqual(res.Elsewhere, []string{"wire"}) {
+	if res.Added != 1 || !reflect.DeepEqual(res.Elsewhere, []string{"wire (as libs/wire)"}) {
 		t.Fatalf("listing = %+v, want cart added and wire left out", res)
 	}
 	repos, err := s.SourceRepos(ctx, "SHOP")
@@ -255,7 +289,7 @@ func TestCloneURL_MissingRowHoldsNothing(t *testing.T) {
 	// Listed again in SHOP: now the folder's, left out there, never missing
 	// twice over.
 	res, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "wire", CloneURL: "https://forge.example.invalid/x/wire.git", ForgeID: 7}})
-	if err != nil || !reflect.DeepEqual(res.Elsewhere, []string{"wire"}) || res.Missing != 0 {
+	if err != nil || !reflect.DeepEqual(res.Elsewhere, []string{"wire (as libs/wire)"}) || res.Missing != 0 {
 		t.Fatalf("listing again = %+v %v, want wire left out, nothing newly missing", res, err)
 	}
 }

@@ -30,14 +30,6 @@ type useBody struct {
 	Also []depBody `json:"also"`
 }
 
-// libraryBody is a repository of another project the project's
-// repositories use, and which of them do.
-type libraryBody struct {
-	Project string    `json:"project"`
-	Slug    string    `json:"slug"`
-	UsedBy  []depBody `json:"used_by"`
-}
-
 type repoRefBody struct {
 	Project string `json:"project"`
 	Slug    string `json:"slug"`
@@ -120,26 +112,6 @@ func usesOf(g store.Graph, repo store.RepoRef) (uses []useBody, usedBy []depBody
 	return uses, usedBy
 }
 
-// librariesOf is the repositories of other projects that the project's
-// repositories use, in the graph's order, each with its users here.
-func librariesOf(g store.Graph, key string) []libraryBody {
-	out := []libraryBody{}
-	at := map[store.RepoRef]int{}
-	for _, e := range g.Edges {
-		if e.From.ProjectKey != key || e.To.ProjectKey == key {
-			continue
-		}
-		i, ok := at[e.To]
-		if !ok {
-			i = len(out)
-			at[e.To] = i
-			out = append(out, libraryBody{Project: e.To.ProjectKey, Slug: e.To.Slug, UsedBy: []depBody{}})
-		}
-		out[i].UsedBy = append(out[i].UsedBy, depBody{Project: e.From.ProjectKey, Slug: e.From.Slug, Version: e.Version})
-	}
-	return out
-}
-
 // markdownDeps is the repository's edges as the export's last section, ""
 // when it has none.
 func markdownDeps(uses []useBody, usedBy []depBody) string {
@@ -150,9 +122,10 @@ func markdownDeps(uses []useBody, usedBy []depBody) string {
 	b.WriteString("\n## Abhängigkeiten\n\n")
 	line := func(d depBody) {
 		fmt.Fprintf(&b, "- `%s/%s`", d.Project, d.Slug)
-		// A version is a manifest's text: one line, whatever it holds.
-		if v := strings.Join(strings.Fields(d.Version), " "); v != "" {
-			fmt.Fprintf(&b, " (%s)", v)
+		// A version is a manifest's text: one line, in a code span with no
+		// backtick to close it, so nothing in it renders as Markdown.
+		if v := strings.Join(strings.Fields(strings.ReplaceAll(d.Version, "`", "'")), " "); v != "" {
+			fmt.Fprintf(&b, " (`%s`)", v)
 		}
 		b.WriteString("\n")
 	}

@@ -11,10 +11,12 @@ import (
 )
 
 // ManifestCommit is the commit a source repository's manifests were last
-// read at; false when they never were.
+// read at by this manifest.Version; false when they never were, or by an
+// older one.
 func (s *Store) ManifestCommit(ctx context.Context, repoID int64) (string, bool, error) {
 	var commit string
-	err := s.db.QueryRowContext(ctx, `SELECT "commit" FROM repo_manifests WHERE repo_id = ?`, repoID).Scan(&commit)
+	err := s.db.QueryRowContext(ctx, `SELECT "commit" FROM repo_manifests WHERE repo_id = ? AND reader = ?`, repoID,
+		manifest.Version).Scan(&commit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -40,10 +42,10 @@ func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, 
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, read_at) VALUES (?, ?, ?, ?, ?)
+		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, reader, read_at) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (repo_id) DO UPDATE SET "commit" = excluded."commit", provides = excluded.provides,
-		       requires = excluded.requires, read_at = excluded.read_at`,
-		repoID, commit, provides, requires, nowStamp())
+		       requires = excluded.requires, reader = excluded.reader, read_at = excluded.read_at`,
+		repoID, commit, provides, requires, manifest.Version, nowStamp())
 	if isForeignKey(err) {
 		return ErrNoRepo
 	}
@@ -58,7 +60,8 @@ type RepoRef struct {
 
 // Edge is one repository using another: From requires coordinates To
 // provides. Coords are those coordinates, sorted; Version is what From
-// names for the first of them, as written ("" when none).
+// names for the first of them that names one, as written ("" when none
+// does).
 type Edge struct {
 	From    RepoRef
 	To      RepoRef
@@ -89,7 +92,8 @@ type Graph struct {
 // the others provide, at read time: nothing of it is stored. A repository
 // gone missing from its listing counts for nothing; a repository's use of
 // itself (a monorepo's modules) is no edge; a coordinate two repositories
-// provide gives no edge and is listed as ambiguous.
+// provide gives no edge, and is listed as ambiguous when something
+// requires it.
 func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.key, r.slug, sr.clone_url, m.provides, m.requires
@@ -156,14 +160,25 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 				order = append(order, p[0])
 			}
 			e.Coords = append(e.Coords, d.Coord)
+			if e.Version == "" {
+				e.Version = d.Version
+			}
 		}
 		sort.Slice(order, func(i, j int) bool { return less(order[i], order[j]) })
 		for _, to := range order {
 			g.Edges = append(g.Edges, *byTo[to])
 		}
 	}
+	required := map[string]bool{}
+	for _, r := range repos {
+		for _, d := range r.requires {
+			required[d.Coord] = true
+		}
+	}
 	for c, p := range providers {
-		if len(p) > 1 {
+		// A name two repositories carry that nothing uses (two web parts
+		// both called "web") costs no edge: not worth a line.
+		if len(p) > 1 && required[c] {
 			twice := clones[p[0]] != ""
 			for _, o := range p[1:] {
 				twice = twice && clones[o] == clones[p[0]]

@@ -102,40 +102,19 @@ func TestRepo_UsesAndUsedBy(t *testing.T) {
 	}
 }
 
-// A project lists the libraries of other projects its repositories use,
-// never its own.
-func TestProject_Libraries(t *testing.T) {
-	h, _, _ := sourcesHandlerWith(t, newFakeSources(), depsStore(), &fakeWaker{}, false)
-	code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil)
-	if code != 200 {
-		t.Fatalf("project: %d", code)
-	}
-	var libs []libraryBody
-	if err := json.Unmarshal(body["libraries"], &libs); err != nil || len(libs) != 1 {
-		t.Fatalf("libraries: %v %s", err, body["libraries"])
-	}
-	if libs[0].Project != "libs" || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 {
-		t.Fatalf("libraries = %+v, want libs/wire used by loom and rongo", libs)
-	}
-	code, body = do(t, h, http.MethodGet, "/api/projects/libs", "", "", nil)
-	if code != 200 || string(body["libraries"]) != "[]" {
-		t.Fatalf("libs' libraries: %d %s, want none", code, body["libraries"])
-	}
-}
-
 // The export closes with the edges; a repository with none has no such
 // section.
 func TestRepoMarkdown_Dependencies(t *testing.T) {
 	st := depsStore()
-	st.graph.Edges[2].Version = "v0.1.6\n# not a heading"
+	st.graph.Edges[2].Version = "v0.1.6\n# not `a` [heading](x)"
 	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
 	rec := getMD(h, "/api/projects/libs/repos/wire.md", "")
-	want := "## Abhängigkeiten\n\nVerwendet von:\n\n- `apps/loom` (v0.1.8)\n- `apps/rongo` (v0.1.6 # not a heading)\n"
+	want := "## Abhängigkeiten\n\nVerwendet von:\n\n- `apps/loom` (`v0.1.8`)\n- `apps/rongo` (`v0.1.6 # not 'a' [heading](x)`)\n"
 	if rec.Code != 200 || !strings.HasSuffix(rec.Body.String(), want) {
 		t.Fatalf("export: %d %q, want it to end in %q", rec.Code, rec.Body.String(), want)
 	}
 	rec = getMD(h, "/api/projects/apps/repos/rongo.md", "")
-	if !strings.Contains(rec.Body.String(), "Verwendet:\n\n- `libs/wire` (v0.1.6") {
+	if !strings.Contains(rec.Body.String(), "Verwendet:\n\n- `libs/wire` (`v0.1.6") {
 		t.Fatalf("rongo export: %q", rec.Body.String())
 	}
 	st.graph = store.Graph{}

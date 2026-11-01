@@ -109,7 +109,6 @@ const project: ProjectDetail = {
   map: null,
   map_expected: false,
   map_declined: false,
-  libraries: [],
   repos: [
     {
       slug: "pay-api",
