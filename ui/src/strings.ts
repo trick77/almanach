@@ -66,7 +66,7 @@ export const S = {
     noNotes: "Noch keine Notiz.",
     map: "Systemkarte",
     noMap:
-      "Noch keine Systemkarte: sie entsteht beim nächsten Lauf, der dieses Projekt aus dem Code beschreibt.",
+      "Noch keine Systemkarte: sie entsteht beim nächsten Run, der dieses Projekt aus dem Code beschreibt.",
   },
   diagram: {
     titles: {
@@ -182,7 +182,7 @@ export const S = {
       "Token",
       "Repos",
       "Zustand",
-      "Letzter Lauf",
+      "Letzter Run",
     ],
     kind: { bitbucket: "bitbucket", static: "statisch" } as Record<
       string,
@@ -194,7 +194,7 @@ export const S = {
     } as Record<string, string>,
     kindHint: {
       bitbucket:
-        "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Lauf neu gelistet.",
+        "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Run neu gelistet.",
       static:
         "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation.",
     } as Record<string, string>,
@@ -226,12 +226,12 @@ export const S = {
       optional: "(optional)",
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",
       tokenHint:
-        "Nur nötig für private Repositories oder ein privates Bitbucket-Projekt. Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.",
+        "Nur nötig für private Repositories oder ein privates Bitbucket-Projekt.",
       tokenAs: "Token senden als",
       bearerHint:
-        "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center die sichere Wahl.",
+        "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center.",
       basicHint:
-        "Basic: Benutzername und Token in der URL für genau diesen einen git-Aufruf. Für GitHub die übliche Wahl.",
+        "Basic: Benutzername und Token als Basic-Auth-Header. Für GitHub.",
       user: "Benutzername",
       userHint:
         "GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).",
@@ -241,7 +241,7 @@ export const S = {
       replace: "Ersetzen",
       clear: "Löschen",
       storedHint:
-        "Das gespeicherte Token wird nie angezeigt. Ersetzen überschreibt es, Löschen macht die Quelle öffentlich.",
+        "Ersetzen überschreibt das gespeicherte Token, Löschen macht die Quelle öffentlich.",
       newToken: "Neues Token",
       saving: "Speichert …",
     },
@@ -315,8 +315,7 @@ export const S = {
       branchHint:
         "Leer: wird mit ls-remote vom Remote gelesen und hier eingetragen.",
       url: "Clone-URL",
-      urlHint:
-        "Nur https. Das Token der Quelle wird beim Klonen mitgegeben, nie in die URL geschrieben.",
+      urlHint: "Nur https.",
       add: "Hinzufügen und klonen",
     },
     listingError: "Letztes Listing fehlgeschlagen:",
@@ -358,7 +357,7 @@ export const S = {
     },
     auto: "Automatisch beschreiben",
     autoHint:
-      "Ein Repository beim ersten Klon (ein Fehlschlag einen Tag später erneut), danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Knöpfe, für alle Repositories dieser Quelle.",
+      "Ein Repository beim ersten Klon, danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Buttons, für alle Repositories dieser Quelle.",
   },
   faq: {
     title: "FAQ",
@@ -367,7 +366,7 @@ export const S = {
       "Almanach ist das lebende Wiki, das noergler beim Reviewen füttert: nach jedem Review schreibt das Modell eine Notiz, was der Pull Request über das Repository lehrt, und beim Merge kommt sie hierher. Almanach fügt jede Notiz in die Beschreibung des Repositorys und des Projekts ein, als Dokumentation mit Quellen, nie von Hand geschrieben.",
     who: "Wer schreibt hier?",
     whoText:
-      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Klon und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Lauf oder Pull Request. Jede Revision bleibt erhalten.",
+      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Klon und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Run oder Pull Request. Jede Revision bleibt erhalten.",
     sources: "Woher kommt eine Aussage?",
     sourcesText:
       "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",
