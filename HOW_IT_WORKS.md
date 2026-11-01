@@ -782,9 +782,9 @@ take the clone's lock for the read only, never across a model call.
   `almanach serve` refuses a schema that is behind, naming the pending
   files. Both check first that the file's folder exists and takes a file.
 - The database is one file (with its `-wal` and `-shm` beside it) on a
-  volume of its own, apart from the clones: a clone volume can be wiped and
-  refilled from the forge, the data volume cannot, and a backup is that
-  volume. A local disk on one node (ReadWriteOnce), never a shared
+  host folder of its own, apart from the clones: the clones can be wiped
+  and refilled from the forge, the database cannot, and a backup is its
+  folder. A local disk on one node (ReadWriteOnce), never a shared
   filesystem: SQLite in WAL needs POSIX locks of one host. One replica.
 - `/healthz` is liveness, `/readyz` asks the database. Both answer loopback
   callers only, so probes are `exec` probes against the binary's

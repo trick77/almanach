@@ -1,6 +1,6 @@
 # Local work, on top of compose.yaml:
 #
-#   make dev        (make dev-down stops it and keeps the volumes)
+#   make dev        (make dev-down stops it and keeps data/ and repos/)
 #
 # which runs
 #
