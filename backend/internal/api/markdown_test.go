@@ -134,6 +134,11 @@ func TestProjectMarkdown(t *testing.T) {
 	if !strings.Contains(md, "## Geteilte Daten\n\n### Zahlung") || strings.Contains(md, "## Entitäten") || strings.Contains(md, "## Aufbau") {
 		t.Errorf("project entities or a repository map:\n%s", md)
 	}
+	// A project leads with its parts: the shared data before the pitfall
+	// stored ahead of it.
+	if strings.Index(md, "## Geteilte Daten") > strings.Index(md, "## Fallstricke") {
+		t.Errorf("project kinds out of order:\n%s", md)
+	}
 	if rec := getMD(h, "/api/projects/NOPE.md", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown project = %d", rec.Code)
 	}
@@ -219,13 +224,30 @@ func TestMarkdownKindsMatchTheUI(t *testing.T) {
 		return string(b)
 	}
 	desc, copyTS := read("Description.tsx"), read("strings.ts")
-	_, list, _ := strings.Cut(desc, "const KINDS: Kind[] = [")
-	list, _, _ = strings.Cut(list, "]")
-	var ui []string
-	for _, f := range strings.Split(list, ",") {
-		if f = strings.Trim(strings.TrimSpace(f), `"`); f != "" {
-			ui = append(ui, f)
+	uiList := func(name string) []string {
+		_, list, ok := strings.Cut(desc, "const "+name+": Kind[] = [")
+		if !ok {
+			t.Fatalf("Description.tsx lacks %s", name)
 		}
+		list, _, _ = strings.Cut(list, "]")
+		var out []string
+		for _, f := range strings.Split(list, ",") {
+			if f = strings.Trim(strings.TrimSpace(f), `"`); f != "" {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+	ui := uiList("KINDS")
+	var project []string
+	for _, k := range kindOrder(store.ScopeProject) {
+		project = append(project, k.kind)
+	}
+	if want := uiList("PROJECT_KINDS"); !slices.Equal(project, want) || !slices.Equal(projectKindOrder, want) {
+		t.Errorf("project export order %v, UI order %v", project, want)
+	}
+	if a, b := slices.Sorted(slices.Values(project)), slices.Sorted(slices.Values(inference.ProjectKinds)); !slices.Equal(a, b) {
+		t.Errorf("project export kinds %v, schema kinds %v", a, b)
 	}
 	var got []string
 	for _, k := range markdownKinds {

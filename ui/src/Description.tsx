@@ -17,8 +17,8 @@ import {
   mono,
 } from "./ui";
 
-/** The kinds in the order the Markdown export has them: what must not
- *  break and why first, the parts after. */
+/** A repository page's kinds in the order the Markdown export has them:
+ *  what must not break and why first, the parts after. */
 const KINDS: Kind[] = [
   "invariant",
   "rule",
@@ -29,9 +29,21 @@ const KINDS: Kind[] = [
   "entity",
 ];
 
-/** kindsOf is a page's kinds: a project's hold no extension. */
+/** A project page's kinds, as its export has them: there a component is an
+ *  interface between repositories, where breaking changes live, and an
+ *  entity data that crosses them, so both lead. No extension. */
+const PROJECT_KINDS: Kind[] = [
+  "component",
+  "entity",
+  "invariant",
+  "rule",
+  "decision",
+  "pitfall",
+];
+
+/** kindsOf is a page's kinds in its order. */
 export function kindsOf(project: boolean): Kind[] {
-  return project ? KINDS.filter((k) => k !== "extension") : KINDS;
+  return project ? PROJECT_KINDS : KINDS;
 }
 
 /** kindLabel names a kind as its page does: the project page's entities

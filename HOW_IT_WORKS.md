@@ -283,14 +283,21 @@ pitfall carries its sources like any statement: the PR on the merge path,
 the run's commit on a baseline run, whose prompt shows the problem area's
 PR keys as evidence only.
 
+The order of the kinds, on the page and in the export: a repository's
+puts what must not break and why first, the parts after: invariants,
+rules, decisions, pitfalls, extensions, components, entities. A
+project's leads with its parts, because there a component is an
+interface between repositories, where a change breaks another, and an
+entity data that crosses them: components (Komponenten), shared data
+(Geteilte Daten), invariants, rules, decisions, pitfalls.
+
 ### The Markdown export
 
 An agent reads files, not JSON. `GET /api/projects/{key}.md` and
 `GET /api/projects/{key}/repos/{slug}.md` answer the current revision as
 `text/markdown; charset=utf-8`: the title and revision, the summary, the
 project's system map as a fenced `json` block, then the statements
-grouped by kind in the order invariants, rules, decisions, pitfalls,
-extensions, components, entities (a kind without statements has no
+grouped by kind in the page's order (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame; a statement's text and the summary
 go in in their stored layout (paragraphs, `- ` and `N. ` items, bold,
