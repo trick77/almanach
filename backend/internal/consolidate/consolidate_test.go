@@ -493,6 +493,34 @@ func TestFoldProjectExtensionRefused(t *testing.T) {
 	}
 }
 
+// validFor holds a returned statement to its page's kinds and a name and
+// text. attach refuses a new or changed one that fails it, never one
+// returned as stored: a statement written before a rule stays (a step's
+// patch passes every unnamed statement through as stored).
+func TestValidFor_StoredStatementsNeverHeld(t *testing.T) {
+	valid := validFor(store.ScopeProject)
+	for want, s := range map[string]inference.Statement{
+		"": {Kind: "rule", Name: "Gut", Text: "Gilt."},
+		"statement kind extension not on a project page": {Kind: "extension", Name: "n", Text: "t"},
+		"statement kind tutorial not on a project page":  {Kind: "tutorial", Name: "n", Text: "t"},
+		"empty statement": {Kind: "rule", Name: " ", Text: "t"},
+	} {
+		if got := valid(s); got != want {
+			t.Errorf("validFor(%+v) = %q, want %q", s, got, want)
+		}
+	}
+	legacy := []store.Statement{{ID: "s1", Kind: "extension", Name: "Alt", Text: "Von früher.", Checked: "old"}}
+	out, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Von früher."}},
+		store.Source{PRKey: "x"}, 2, limitsOf(limits))
+	if reason != "" || len(out) != 1 || out[0].Checked != "old" {
+		t.Fatalf("stored legacy kind: out %+v, reason %q; want it kept as is", out, reason)
+	}
+	if _, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Geändert."}},
+		store.Source{PRKey: "x"}, 2, limitsOf(limits)); reason == "" {
+		t.Error("a merge took a changed statement of a kind its page cannot hold")
+	}
+}
+
 func TestFoldKeptIDUnchangedKeepsSources(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()

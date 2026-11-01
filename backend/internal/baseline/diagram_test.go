@@ -320,8 +320,8 @@ func TestDropDeparted(t *testing.T) {
 func TestApplyPatchKeepsDiagrams(t *testing.T) {
 	d := flowOf("a", "b")
 	current := []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Diagram: d}}
-	applied, reason := ApplyPatch(current, inference.Patch{Statements: []inference.Statement{}}, func(string) bool { return true })
-	if reason != "" || applied.Statements[0].Diagram != d {
-		t.Errorf("applied = %+v, reason %q", applied, reason)
+	applied := ApplyPatch(current, inference.Patch{Statements: []inference.Statement{}}, func(string) bool { return true }, anyKind)
+	if applied.Statements[0].Diagram != d {
+		t.Errorf("applied = %+v", applied)
 	}
 }

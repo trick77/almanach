@@ -34,14 +34,20 @@ func (s Subject) Bytes() int64 {
 // code, the first that hit it. A run from before Why has names alone.
 // Steps is the overview and the project step when the run skipped them,
 // by Part, never by a name: a subject's name is the model's, any string.
+// Again names the subjects, and AgainOverview the overview, that folded
+// but left a statement alone that a newer pull request taught or whose
+// merge commit git could not place: the next reconcile reads them again,
+// as it does a skipped one, but they were no skip.
 type Plan struct {
 	// Format is PlanFormat on every plan the worker writes; 0 is a plan
 	// from before Steps, which Upgrade reads.
-	Format   int             `json:"format,omitempty"`
-	Subjects []Subject       `json:"subjects"`
-	Skipped  []string        `json:"skipped,omitempty"`
-	Why      map[string]Skip `json:"why,omitempty"`
-	Steps    map[Part]Skip   `json:"steps,omitempty"`
+	Format        int             `json:"format,omitempty"`
+	Subjects      []Subject       `json:"subjects"`
+	Skipped       []string        `json:"skipped,omitempty"`
+	Why           map[string]Skip `json:"why,omitempty"`
+	Steps         map[Part]Skip   `json:"steps,omitempty"`
+	Again         []string        `json:"again,omitempty"`
+	AgainOverview bool            `json:"again_overview,omitempty"`
 }
 
 // PlanFormat is the plan as written now: the steps in Steps.
