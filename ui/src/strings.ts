@@ -31,7 +31,7 @@ export const S = {
     revision: (n: number) => `Revision ${n}`,
     noDescription: "noch keine Beschreibung",
     firstDescription:
-      "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Klon bereit ist, oder der nächste gemergte Pull Request.",
+      "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Clone bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
     problems: (n: number) =>
       n === 0
@@ -202,7 +202,7 @@ export const S = {
   },
   sources: {
     title: "Quellen",
-    lede: "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Die Klone sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.",
+    lede: "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Die Clones sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.",
     what: "die Quellen",
     whatOne: "die Quelle",
     empty: "Noch keine Quelle.",
@@ -261,7 +261,7 @@ export const S = {
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",
       tokenHint: {
         bitbucket:
-          "Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und klont seine Repositories.",
+          "Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und clont seine Repositories.",
         static:
           "Nur nötig für private Repositories. Ein Token für den ganzen Ordner: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read».",
       } as Record<string, string>,
@@ -308,7 +308,7 @@ export const S = {
     },
     renameForm: {
       slug: "Neuer Slug",
-      hint: "Auch nur die Gross- und Kleinschreibung. Seiten, Notizen und Klone bleiben, der alte Slug führt weiter hierher. Ein Slug, den ein anderes Projekt je hatte, ist vergeben, in jeder Schreibweise.",
+      hint: "Auch nur die Gross- und Kleinschreibung. Seiten, Notizen und Clones bleiben, der alte Slug führt weiter hierher. Ein Slug, den ein anderes Projekt je hatte, ist vergeben, in jeder Schreibweise.",
       save: "Umbenennen",
     },
     renameRepoForm: {
@@ -318,13 +318,13 @@ export const S = {
         "Auch nur die Gross- und Kleinschreibung. Beschreibung, Notizen und Runs bleiben, der alte Slug führt weiter hierher. Ein Slug, den ein anderes Repository je hatte, ist vergeben.",
       url: "Neue Clone-URL",
       urlPlaceholder: "(bleibt)",
-      urlHint: "Nur https. Eine neue URL holt den Klon neu.",
+      urlHint: "Nur https. Eine neue URL holt den Clone neu.",
       save: "Umbenennen",
     },
     confirmRemove: (key: string, repos: number, dir: string) =>
       `Quelle ${key} entfernen? Löscht die Quelle, ihre ${repos} Repository-Einträge und den Ordner ${dir}. Beschreibungen aus Pull-Request-Notizen bleiben; sie hängen am Projekt, nicht an der Quelle.`,
     confirmRemoveRepo: (slug: string, dir: string) =>
-      `Repository ${slug} entfernen? Löscht den Eintrag und den Klon unter ${dir}. Der Eintrag kann jederzeit neu angelegt werden; der Klon wird dann neu geholt.`,
+      `Repository ${slug} entfernen? Löscht den Eintrag und den Clone unter ${dir}. Der Eintrag kann jederzeit neu angelegt werden; der Clone wird dann neu geholt.`,
     yesRemove: "Ja, entfernen",
     repos: "Repositories",
     reposNote: {
@@ -347,7 +347,7 @@ export const S = {
       static: "Noch kein Repository. Trag eines ein.",
     } as Record<string, string>,
     listedOnly:
-      "Bei einer Bitbucket-Quelle werden Repositories nicht von Hand hinzugefügt: die Liste ist die der API. Ein Repository, das die API nicht mehr liefert, wird als «verschwunden» markiert und sein Klon bleibt, bis du ihn entfernst.",
+      "Bei einer Bitbucket-Quelle werden Repositories nicht von Hand hinzugefügt: die Liste ist die der API. Ein Repository, das die API nicht mehr liefert, wird als «verschwunden» markiert und sein Clone bleibt, bis du ihn entfernst.",
     state: {
       pending: "Ausstehend",
       syncing: "Läuft",
@@ -359,7 +359,7 @@ export const S = {
       sync: "Synchronisieren",
       retry: "Erneut",
       remove: "Entfernen",
-      removeClone: "Klon entfernen",
+      removeClone: "Clone entfernen",
       rename: "Umbenennen",
     },
     addForm: {
@@ -373,7 +373,7 @@ export const S = {
         "Leer: wird mit ls-remote vom Remote gelesen und hier eingetragen.",
       url: "Clone-URL",
       urlHint: "Nur https.",
-      add: "Hinzufügen und klonen",
+      add: "Hinzufügen und clonen",
     },
     listingError: "Letztes Listing fehlgeschlagen:",
     listingErrorHint:
@@ -445,13 +445,13 @@ export const S = {
       "Almanach ist das lebende Wiki, das noergler beim Reviewen füttert: nach jedem Review schreibt das Modell eine Notiz, was der Pull Request über das Repository lehrt, und beim Merge kommt sie hierher. Almanach fügt jede Notiz in die Beschreibung des Repositorys und des Projekts ein, als Dokumentation mit Quellen, nie von Hand geschrieben.",
     who: "Wer schreibt hier?",
     whoText:
-      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Klon und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Run oder Pull Request. Jede Revision bleibt erhalten.",
+      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Clone und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Run oder Pull Request. Jede Revision bleibt erhalten.",
     sources: "Woher kommt eine Aussage?",
     sourcesText:
       "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",
     clones: "Was sind die Quellen?",
     clonesText:
-      "Die Projekte, deren Code Almanach selbst klont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Almanach liest jeden Klon und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
+      "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Almanach liest jeden Clone und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
   },
   auth: {
     checking: "Sitzung wird geprüft …",
