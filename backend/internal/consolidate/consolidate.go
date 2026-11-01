@@ -632,9 +632,11 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			s.Sources = []store.Source{src}
 		}
 	}
-	// Caps that left out every statement proposed never empty a page.
+	// Caps that left out every statement proposed never empty a page. The
+	// refusal names them: logLeftOut never runs on a refused rewrite, and
+	// an eval's first project page went with no trace of which cap.
 	if len(proposed) > 0 && len(out) == 0 {
-		return nil, leftOutParts{}, "every statement over a field cap"
+		return nil, leftOutParts{}, "every statement over a field cap: " + strings.Join(leftOut.overCap, ", ")
 	}
 	return out, leftOut, ""
 }
@@ -811,6 +813,20 @@ func check(summary string, statements []store.Statement, maxStatements, maxChars
 	// chars on the revision is the figure the ceiling gated, so the API
 	// shows the same number the cap applies to.
 	return size, ""
+}
+
+// withinFieldCaps is the new statements within the field caps, and the
+// rest by name and cap, as attach names them.
+func withinFieldCaps(added []inference.Statement) (kept []inference.Statement, over []string) {
+	for _, a := range added {
+		s := cleanStatement(a)
+		if why := fieldCap(s); why != "" {
+			over = append(over, fmt.Sprintf("%q (%s)", s.Name, why))
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept, over
 }
 
 // fieldCap is why a statement, as stored (trimmed, Swiss), is over a cap

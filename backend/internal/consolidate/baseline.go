@@ -1243,6 +1243,13 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: "+projectName+": drop of statements a pull request taught left out", slog.Any("ids", kept))
 	}
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
+	// A new statement over a field cap is left out before the ceilings:
+	// the search below needs a check only more statements fail, and one
+	// over a cap among the first ended it (an eval's first page went so).
+	added, overCap := withinFieldCaps(d.Added)
+	if len(page.Statements) == 0 && len(added) == 0 && len(overCap) > 0 {
+		return nil, "every statement over a field cap: " + strings.Join(overCap, ", "), nil
+	}
 	fold := func(added []inference.Statement) ([]store.Statement, leftOutParts, int, string, string) {
 		applied, reason := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: added, Drop: drop}, noTree)
 		if reason != "" {
@@ -1256,7 +1263,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 		return statements, leftOut, chars, "", capReason
 	}
-	statements, leftOut, chars, reason, capReason := fold(d.Added)
+	statements, leftOut, chars, reason, capReason := fold(added)
 	// Over a ceiling with new statements: as many as fit are kept, in the
 	// order written, the rest left out (user, 2026-10-31: a first page of
 	// 25 against 24 was refused whole). A page is never written without
@@ -1269,11 +1276,11 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	// edits do and no count of new statements helps. Then the most that
 	// fit, by halving: more new statements only ever grow the page.
 	fits := func(n int) bool {
-		_, _, _, re, ca := fold(d.Added[:n])
+		_, _, _, re, ca := fold(added[:n])
 		return re == "" && ca == ""
 	}
-	if reason == "" && capReason != "" && least < len(d.Added) && fits(least) {
-		lo, hi := least, len(d.Added)-1
+	if reason == "" && capReason != "" && least < len(added) && fits(least) {
+		lo, hi := least, len(added)-1
 		for lo < hi {
 			if mid := (lo + hi + 1) / 2; fits(mid) {
 				lo = mid
@@ -1281,8 +1288,8 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 				hi = mid - 1
 			}
 		}
-		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(d.Added)-lo, "new statement"), capReason))
-		statements, leftOut, chars, _, capReason = fold(d.Added[:lo])
+		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(added)-lo, "new statement"), capReason))
+		statements, leftOut, chars, _, capReason = fold(added[:lo])
 	}
 	if reason == "" {
 		reason = capReason
@@ -1290,6 +1297,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if reason != "" {
 		return nil, reason, nil
 	}
+	leftOut.overCap = append(overCap, leftOut.overCap...)
 	logLeftOut(ctx, w.log, "baseline: "+projectName, leftOut)
 	drawn := w.revisionMap(ctx, page, d.Map, slugs)
 	if summary == page.Summary && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {

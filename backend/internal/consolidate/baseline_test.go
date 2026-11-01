@@ -1190,6 +1190,17 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 	if p := first(stmt(ref("s1"), "rule", "Eins", strings.Repeat("x", 300), "x.go")); p.Summary == "Zu viel." {
 		t.Errorf("first project page with nothing that fits written: %q %v", p.Summary, ids(p))
 	}
+	// A first statement over a field cap no longer ends the search: it is
+	// left out first, the next two kept; with every one over a cap the page
+	// is refused, never written without statements.
+	long := strings.Repeat("n", nameMaxChars+1)
+	p = first(stmt(ref("s1"), "rule", long, "A.", "x.go"), stmt(ref("s2"), "rule", "Zwei", "B.", "x.go"), stmt(ref("s3"), "rule", "Drei", "C.", "x.go"), stmt(ref("s4"), "rule", "Vier", "D.", "x.go"))
+	if want := []string{"s1:Zwei:B.", "s2:Drei:C."}; p.Summary != "Zu viel." || !slices.Equal(ids(p), want) {
+		t.Errorf("first project page, first statement over a cap = %q %v, want %v", p.Summary, ids(p), want)
+	}
+	if p := first(stmt(ref("s1"), "rule", long, "A.", "x.go")); p.Summary == "Zu viel." {
+		t.Errorf("first project page, every statement over a cap, written: %q %v", p.Summary, ids(p))
+	}
 	// A step's edit over a field cap leaves the statement as stored, never
 	// marked as checked against the commit read.
 	x = newWorld(t, 3)
