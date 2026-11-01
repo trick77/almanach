@@ -331,7 +331,9 @@ export function Tile({
   note?: string;
 }) {
   return (
-    <div className="rounded-ui border border-border bg-panel px-3.5 py-3">
+    // min-w-0: a grid item, so a long note (a clone path) breaks inside the
+    // tile instead of widening it past its track.
+    <div className="min-w-0 rounded-ui border border-border bg-panel px-3.5 py-3">
       <div className="text-[11px] font-medium tracking-[.12em] text-faint uppercase">
         {label}
       </div>
@@ -339,7 +341,7 @@ export function Tile({
         {value}
       </div>
       {note && (
-        <div className="text-[12px] text-muted wrap-anywhere">{note}</div>
+        <div className="text-[12px] text-muted wrap-break-word">{note}</div>
       )}
     </div>
   );

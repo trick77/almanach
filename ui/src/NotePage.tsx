@@ -232,7 +232,7 @@ function Body({ n }: { n: NoteDetail }) {
               note={S.note.allRoundsNote(call.rounds, call.rounds_input_tokens)}
             />
           </Tiles>
-          <p className="mt-2.5 text-[12.5px] text-faint">
+          <p className="mt-2.5 text-[12.5px] text-faint wrap-break-word">
             {[call.model, call.outcome, call.note_status]
               .filter((s) => s)
               .join(` ${S.common.sep} `)}
@@ -246,9 +246,10 @@ function Body({ n }: { n: NoteDetail }) {
 /** Fact is a label/value row: a short value at the right edge, or, with
  *  `aligned`, every value of the box in one left-aligned column beside a
  *  label column: the bugfix box, whose symptom and cause are sentences and
- *  read badly right-ragged. min-w-0 (minmax(0,1fr)) and wrap-break-word: a
- *  path in a cause, a SHA or a model label breaks inside its row instead
- *  of past the box. */
+ *  read badly right-ragged. wrap-break-word: a path in a cause, a SHA or a
+ *  model label breaks inside its row instead of past the box; the aligned
+ *  column lets it shrink by minmax(0,1fr), the plain row by min-w-0 on the
+ *  value, the label shrink-0 so the value gives way, not the label. */
 function Fact({
   label,
   last = false,
@@ -271,11 +272,11 @@ function Fact({
         row + " py-[7px]" + (last ? "" : " border-b border-border-soft")
       }
     >
-      <dt className="text-muted">{label}</dt>
+      <dt className="shrink-0 text-muted">{label}</dt>
       <dd
         className={
-          "m-0 min-w-0 text-ink-dim wrap-break-word " +
-          (aligned ? "" : "text-right")
+          "m-0 text-ink-dim wrap-break-word " +
+          (aligned ? "" : "min-w-0 text-right")
         }
       >
         {children}
