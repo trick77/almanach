@@ -1,9 +1,9 @@
 // Copied from rongo (ui/src/DiagramView.tsx), kept in step by hand.
 // Almanach: the title and the kind come in as props (rongo reads them off
 // the mermaid source), the copy is strings.ts's, and the drawing's wrapper
-// (rongo's MermaidSvg) lives here as DiagramSvg. The full view draws 1:1 on
-// a sheet as wide as the window, not scaled into rongo's 1100px: the page
-// column is 1400px, so a scaled sheet could open smaller than the page.
+// (rongo's MermaidSvg) lives here as DiagramSvg. The sheet has no max-width
+// (rongo: 1100px): the page column is 1400px, and the full view must have
+// more room than the page, not less.
 import { useRef, type ReactNode } from "react";
 import { download, fileName, toSvgFile } from "./diagramExport";
 import OverlayShell from "./OverlayShell";
@@ -12,9 +12,10 @@ import { S } from "./strings";
 
 /**
  * DiagramView is the diagram seen whole. On the page a wide picture is
- * scaled down into the column; here it is drawn at its own size, 1:1, and
- * scrolls when it is wider or taller than the window, so it never opens
- * smaller than the page showed it.
+ * scaled into the column; here it has a sheet as wide as the window. On a
+ * window just over the column's width, the sheet's padding leaves it a few
+ * pixels under the page's (user's choice, 2026-11-01): the whole drawing in
+ * view, a phone's included, beats a 1:1 crop that has to be panned.
  */
 export default function DiagramView({
   title,
@@ -56,14 +57,14 @@ export default function DiagramView({
         </>
       }
     >
-      {/* 1:1: the SVG's own width, the page's max-width lifted. Centred
-          while it fits; center-safe, so a wider one starts at the left edge
-          and scrolls instead of being cut off on both sides. */}
+      {/* The drawing scales to the sheet's width and no further: the SVG
+          carries its own max-width, so a small diagram stays 1:1 and is
+          centred, and a wide one fits. */}
       <div
         ref={body}
-        className="grid min-h-0 place-items-center-safe overflow-auto p-6"
+        className="grid min-h-0 place-items-center overflow-auto p-6"
       >
-        <div className="diagram-full w-max">
+        <div className="w-full">
           <DiagramSvg svg={svg} title={title} />
         </div>
       </div>
