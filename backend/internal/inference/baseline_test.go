@@ -111,6 +111,30 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
+const testRepoMap = `{"kind": "flow", "direction": "LR", "nodes": [{"id": "api", "label": "HTTP-API", "shape": "step", "zone": "entry"}], "edges": [], "zones": [{"id": "entry", "title": "Eingang"}]}`
+
+func TestRepoMap(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(`{"map": ` + testRepoMap + `}`)
+	res := testClient(srv.Client()).RepoMap(context.Background(), "the repository")
+	if res.Outcome != OutcomeOK || res.Map == nil || res.Map.Nodes[0].Zone != "entry" {
+		t.Fatalf("RepoMap = %+v", res)
+	}
+	if name := schemaName(t, srv); name != RepoMapSchemaName {
+		t.Errorf("schema = %q", name)
+	}
+	srv.SetReply(`{"map": null}`)
+	if res := testClient(srv.Client()).RepoMap(context.Background(), "p"); res.Outcome != OutcomeOK || res.Map != nil {
+		t.Errorf("keep = %+v, want ok and nil", res)
+	}
+	for _, reply := range []string{"null", "Gerne!", "{}", `{"other": 1}`, `{"map": 3}`} {
+		srv.SetReply(reply)
+		if res := testClient(srv.Client()).RepoMap(context.Background(), "p"); res.Outcome != OutcomeUnparseable {
+			t.Errorf("reply %q: Outcome = %s, want unparseable", reply, res.Outcome)
+		}
+	}
+}
+
 // A call that fails at the gateway says so the same way for every kind of
 // step, so the worker classes them alike.
 func TestBaselineCallsShareTheFailureOutcomes(t *testing.T) {
@@ -122,6 +146,7 @@ func TestBaselineCallsShareTheFailureOutcomes(t *testing.T) {
 		"catalogue": c.Catalogue(ctx, "p").Outcome,
 		"patch":     c.Patch(ctx, "p").Outcome,
 		"describe":  c.Describe(ctx, "p").Outcome,
+		"repo map":  c.RepoMap(ctx, "p").Outcome,
 	} {
 		if outcome == OutcomeOK || outcome == OutcomeUnparseable {
 			t.Errorf("%s on a cancelled context: Outcome = %s, want a failure of the call", name, outcome)
@@ -130,7 +155,7 @@ func TestBaselineCallsShareTheFailureOutcomes(t *testing.T) {
 }
 
 func TestStrictFormatsRequireEveryProperty(t *testing.T) {
-	for _, f := range []map[string]any{catalogueFormat().Schema, patchFormat(true).Schema, descriptionFormat(true).Schema} {
+	for _, f := range []map[string]any{catalogueFormat().Schema, patchFormat(true).Schema, descriptionFormat(true).Schema, repoMapFormat().Schema} {
 		props, _ := f["properties"].(map[string]any)
 		req, _ := f["required"].([]any)
 		if len(req) != len(props) || f["additionalProperties"] != false {
@@ -145,7 +170,7 @@ func TestStrictFormatsRequireEveryProperty(t *testing.T) {
 	// Strict mode holds at every depth: each object of every diagram kind,
 	// the map's and the sequence rows' anyOf branches included.
 	for _, diagrams := range []bool{true, false} {
-		for _, f := range []map[string]any{patchFormat(diagrams).Schema, descriptionFormat(diagrams).Schema, mergeFormat(diagrams).Schema} {
+		for _, f := range []map[string]any{patchFormat(diagrams).Schema, descriptionFormat(diagrams).Schema, mergeFormat(diagrams).Schema, repoMapFormat().Schema} {
 			walkObjects(t, f)
 		}
 	}

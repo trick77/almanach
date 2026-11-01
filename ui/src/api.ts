@@ -142,6 +142,9 @@ export interface RepoDetail {
   notes: NoteSummary[];
   notes_total: number;
   last_merge: string | null;
+  /** The repository map, the repository from inside: zones entry, parts,
+   *  stores and external. null before a baseline run drew one. */
+  map: FlowIR | null;
 }
 
 export interface Bugfix {
@@ -281,6 +284,9 @@ export interface SkippedPart {
 export interface Baseline {
   run_id: number;
   state: RunState;
+  /** In state project, the project step is over and the run draws the
+   *  repository map, its last step. */
+  map_step: boolean;
   mode: "full" | "reconcile";
   trigger: "manual" | "first_ready" | "monthly" | "retry";
   commit: string;

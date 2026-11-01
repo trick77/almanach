@@ -43,7 +43,6 @@ export const S = {
   project: {
     what: "das Projekt",
     breadcrumbRoot: "Projekte",
-    description: "Beschreibung",
     noDescription: "Noch keine Beschreibung.",
     noDescriptionHint:
       "Die erste Beschreibung entsteht, wenn Almanach ein Repository dieses Projekts aus dem Code beschreibt oder ein Pull Request gemergt wird.",
@@ -76,11 +75,19 @@ export const S = {
       sequence: "Sequenzdiagramm",
       er: "Datenmodell",
       map: "Systemkarte",
+      repoMap: "Aufbau",
     },
     // The map's zones by id: the backend allows these four and no other.
     zones: {
       clients: "Clients",
       repositories: "Repositories",
+      stores: "Datenspeicher",
+      external: "Externe Systeme",
+    } as Record<string, string>,
+    // A repository map's zones by id, the same rule.
+    repoZones: {
+      entry: "Eingang",
+      parts: "Teile",
       stores: "Datenspeicher",
       external: "Externe Systeme",
     } as Record<string, string>,
@@ -93,9 +100,28 @@ export const S = {
     close: "Schliessen",
     repoLink: (slug: string) => `Repository ${slug} öffnen`,
   },
+  // The tabs of the project and the repository page, and their hash: the
+  // address keeps the tab, so a shared link opens it.
+  tabs: {
+    label: "Ansicht",
+    overview: "Übersicht",
+    description: "Beschreibung",
+    history: "Verlauf",
+  },
+  rail: {
+    label: "Inhalt",
+    search: "Durchsuchen",
+    searchLabel: "Beschreibung durchsuchen",
+    hits: (n: number, of: number, kinds: number) =>
+      `${n} von ${of} ${of === 1 ? "Eintrag" : "Einträgen"} ${S.common.sep} ${kinds} ${kinds === 1 ? "Art" : "Arten"}`,
+    noHits: "keine Treffer",
+    summary: "Überblick",
+    project: "Projekt",
+  },
   repo: {
     what: "das Repository",
     project: "Projekt",
+    map: "Aufbau",
     revisions: "Revisionen",
     revisionFrom: "aus",
     current: "aktuell",
@@ -113,6 +139,11 @@ export const S = {
     extension: "Erweiterungen",
     pitfall: "Fallstricke",
   },
+  // The project page's names where they differ: its entities are the ones
+  // that cross repositories, who owns them and how their ids travel.
+  projectKinds: {
+    entity: "Geteilte Daten",
+  } as Partial<Record<string, string>>,
   noteHeaders: ["PR", "Titel", "Art", "Einträge", "Issues / Hinweise", "Merge"],
   changeKind: {
     bugfix: "Bugfix",
@@ -364,6 +395,8 @@ export const S = {
       describing: (step: number, steps: number) =>
         `Beschreibt ${step}/${steps}`,
       project: "Projekt",
+      // The run's last step, in state project once the project step is over.
+      repoMap: "Aufbau",
       done: "Beschrieben",
       partial: "Teilweise",
       failed: "Fehlgeschlagen",

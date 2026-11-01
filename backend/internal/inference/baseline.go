@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"sort"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/llmwire"
 )
 
 // The calls of a baseline run, one per step, each with its own strict
 // schema: the catalogue (what to read), the patch (what one part of the
-// code teaches the repository page) and the project description. Same
+// code teaches the repository page), the project description and the
+// repository's map. Same
 // rules as the merge: one Chat, never streaming, no retry inside a call.
 
 // Subject is one piece of a repository as the catalogue names it: a flow
@@ -58,11 +60,19 @@ type DescriptionResult struct {
 	Description *Description
 }
 
+// RepoMapResult is one repository map call: Map nil means keep the map the
+// page has.
+type RepoMapResult struct {
+	Call
+	Map *diagram.Diagram
+}
+
 // Schema names on the wire.
 const (
 	CatalogueSchemaName   = "almanach_catalogue"
 	PatchSchemaName       = "almanach_patch"
 	DescriptionSchemaName = "almanach_description"
+	RepoMapSchemaName     = "almanach_repo_map"
 )
 
 // Catalogue asks which subjects a repository is made of.
@@ -113,6 +123,38 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 	}
 	out.Description = &d
 	return out
+}
+
+// RepoMap asks for the repository's map drawn from its description, or
+// null to keep the one it has.
+func (c *Client) RepoMap(ctx context.Context, prompt string) RepoMapResult {
+	content, call := c.call(ctx, prompt, repoMapFormat())
+	out := RepoMapResult{Call: call}
+	if call.Outcome != OutcomeOK {
+		return out
+	}
+	// The key must be there: {} is no answer, not "keep".
+	var answer *struct {
+		Map json.RawMessage `json:"map"`
+	}
+	if !parse(content, &answer) || answer == nil || answer.Map == nil {
+		out.Outcome = OutcomeUnparseable
+		return out
+	}
+	if string(answer.Map) == "null" {
+		return out
+	}
+	var d diagram.Diagram
+	if json.Unmarshal(answer.Map, &d) != nil {
+		out.Outcome = OutcomeUnparseable
+		return out
+	}
+	out.Map = &d
+	return out
+}
+
+func repoMapFormat() llmwire.ResponseFormat {
+	return strict(RepoMapSchemaName, map[string]any{"map": nullable(repoMapSchema())})
 }
 
 func strict(name string, properties map[string]any) llmwire.ResponseFormat {

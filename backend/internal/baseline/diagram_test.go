@@ -255,6 +255,46 @@ func TestCheckMap(t *testing.T) {
 	}
 }
 
+// The repository map: a flow in its own four zones, no slug rule (a node
+// named like a repository is just a part).
+func TestCheckRepoMap(t *testing.T) {
+	repoMapOf := func(nodes ...ir.Node) *ir.Diagram {
+		return &ir.Diagram{Kind: ir.KindFlow, Direction: "LR", Nodes: nodes, Zones: []ir.Zone{
+			{ID: ir.ZoneEntry, Title: "Eingang"}, {ID: ir.ZoneParts, Title: "Teile"}, {ID: ir.ZoneStores, Title: "Speicher"}, {ID: ir.ZoneExternal, Title: "Extern"}}}
+	}
+	good := repoMapOf(node("api", ir.ZoneEntry), node("billing", ir.ZoneParts), node("pg", ir.ZoneStores))
+	good.Edges = []ir.Edge{edge("api", "billing", "call"), edge("billing", "pg", "DB")}
+	out, reason := CheckRepoMap(good, caps)
+	if reason != "" || len(out.Zones) != 3 || len(out.Edges) != 2 {
+		t.Fatalf("map = %+v, reason %q; want held, the unused zone gone", out, reason)
+	}
+	withEdge := func(d *ir.Diagram, e ir.Edge) *ir.Diagram { d.Edges = append(d.Edges, e); return d }
+	cases := map[string]struct {
+		d    *ir.Diagram
+		want string
+	}{
+		"missing":    {nil, "no map"},
+		"not a flow": {seqOf(msg("a", "b")), "not a flow"},
+		"system map zone": {func() *ir.Diagram {
+			d := repoMapOf(node("api", ir.ZoneEntry))
+			d.Zones[1].ID = ir.ZoneRepositories
+			return d
+		}(), `zone "repositories" is none of`},
+		"no node":         {repoMapOf(), "0 nodes, not 1 to"},
+		"node in no zone": {repoMapOf(node("api", ir.ZoneEntry), node("pg", "")), "sits in no zone"},
+		"undeclared zone": {func() *ir.Diagram { d := repoMapOf(node("api", ir.ZoneEntry)); d.Zones = d.Zones[1:]; return d }(), "undeclared zone"},
+		"dangling edge":   {withEdge(repoMapOf(node("api", ir.ZoneEntry)), edge("api", "ghost", "HTTP")), "no declared node"},
+		"self edge":       {withEdge(repoMapOf(node("api", ir.ZoneEntry)), edge("api", "api", "call")), "points at itself"},
+		"over the cap":    {repoMapOf(node("a", ir.ZoneEntry), node("b", ir.ZoneParts), node("c", ir.ZoneParts), node("d", ir.ZoneParts), node("e", ir.ZoneStores)), "5 nodes"},
+	}
+	for name, c := range cases {
+		_, reason := CheckRepoMap(c.d, caps)
+		if !strings.Contains(reason, c.want) {
+			t.Errorf("%s: reason = %q, want %q", name, reason, c.want)
+		}
+	}
+}
+
 // A repository node whose slug left the project goes, with its edges; a
 // node of another zone named like nothing stays for CheckMap to judge.
 func TestDropDeparted(t *testing.T) {

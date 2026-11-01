@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/trick77/almanach/internal/diagram"
 )
 
 // The baseline runs: one repository documented at one commit, one model call
@@ -233,6 +235,41 @@ func (s *Store) ApplyBaselineStep(ctx context.Context, rev NewRevision, r Baseli
 		return 0, false, err
 	}
 	return n, true, nil
+}
+
+// SetRepoMap is the map step's write: the repository page's map and the
+// basis it was drawn from, set on the page's current revision in place,
+// and the run's end, in one transaction. No revision of its own: the text
+// did not change ("identical rewrite = no revision"). ok false, and nothing
+// written, when the run is over or gone. A page that vanished meanwhile
+// (the repository removed) takes nothing.
+func (s *Store) SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r BaselineRun) (bool, error) {
+	drawn, err := jsonOf(m)
+	if err != nil {
+		return false, err
+	}
+	var ok bool
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		if ok, err = saveRun(ctx, tx, r); err != nil || !ok {
+			return err
+		}
+		// Any name the repository ever had finds it, as CurrentPage does.
+		rid, found, err := repoID(ctx, tx, project, repo)
+		if err != nil || !found {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			UPDATE revisions SET repo_map = ?, repo_map_basis = ?
+			 WHERE scope = 'repository' AND id = (SELECT current_revision_id FROM pages
+			                                       WHERE scope = 'repository' AND repo_id = ?)`,
+			drawn, basis, rid)
+		return err
+	})
+	if err != nil || !ok {
+		return false, err
+	}
+	return true, nil
 }
 
 // RepoRuns is what the source page shows of one repository's runs: the

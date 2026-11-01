@@ -88,6 +88,13 @@ type Page struct {
 	// Map is a project page's system map, nil on a repository page and on
 	// a project page no baseline project step has drawn yet.
 	Map *diagram.Diagram
+	// RepoMap is a repository page's map of itself, nil on a project page
+	// and on a repository page no run's map step has drawn yet.
+	RepoMap *diagram.Diagram
+	// RepoMapBasis is the description RepoMap was drawn from, as the map
+	// step hashed it; "" with no map. A basis that no longer matches the
+	// page's text is a map due again.
+	RepoMapBasis string
 }
 
 // QueuedNote is the next note the worker folds in.
@@ -193,15 +200,16 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 		return Page{}, false, err
 	}
 	p := Page{Scope: scope}
-	var statements, drawn []byte
+	var statements, drawn, repoDrawn []byte
 	err = s.db.QueryRowContext(ctx, `
 		SELECT pj.key, COALESCE(rp.slug, ''), r.id, r.revision, r.summary, r.statements, r.source_kind,
-		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), p.updated_at, r.map
+		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), p.updated_at, r.map,
+		       r.repo_map, COALESCE(r.repo_map_basis, '')
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
 		  JOIN projects pj ON pj.id = p.project_id LEFT JOIN repos rp ON rp.id = p.repo_id
 		 WHERE p.scope = ? AND p.project_id = ? AND p.repo_id = ?`, scope, pid, rid).Scan(
 		&p.ProjectKey, &p.RepoSlug, &p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR,
-		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn)
+		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &repoDrawn, &p.RepoMapBasis)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Page{}, false, nil
 	}
@@ -214,11 +222,11 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	if p.Statements == nil {
 		p.Statements = []Statement{}
 	}
-	if drawn != nil {
-		p.Map = &diagram.Diagram{}
-		if err := json.Unmarshal(drawn, p.Map); err != nil {
-			return Page{}, false, err
-		}
+	if p.Map, err = diagramOf(drawn); err != nil {
+		return Page{}, false, err
+	}
+	if p.RepoMap, err = diagramOf(repoDrawn); err != nil {
+		return Page{}, false, err
 	}
 	return p, true, nil
 }
@@ -240,6 +248,13 @@ type NewRevision struct {
 	BaselineRunID *int64
 	// Map is a project revision's system map: the project step's, or the
 	// current page's carried forward; nil on a repository revision.
+	//
+	// A repository revision names no map: insertRevision carries the page's
+	// repository map and its basis into it, and only SetRepoMap changes
+	// them. Carried in the store, unlike Map: nothing removes or repairs a
+	// repository map on the way, while a project revision's caller drops
+	// departed repositories from Map and writes its sentinel, so only the
+	// caller knows the map to carry.
 	Map *diagram.Diagram
 }
 
@@ -287,13 +302,24 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 	now := nowStamp()
 	var id int64
 	var n int
+	// A repository revision takes the page's map and its basis, read in
+	// this transaction: a merge or a run's describe step changes the text,
+	// never the map, and the basis then says the map is due again. On a
+	// project revision both stay NULL: the subqueries' scope never matches
+	// a project page.
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO revisions (scope, project_id, repo_id, revision, summary, statements, chars,
-		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id, map, created_at)
+		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id, map,
+		                       repo_map, repo_map_basis, created_at)
 		VALUES (?1, ?2, ?3,
 		    (SELECT COALESCE(MAX(revision), 0) + 1 FROM revisions
 		      WHERE scope = ?1 AND project_id = ?2 AND COALESCE(repo_id, 0) = ?4),
-		    ?5, ?6, ?7, ?8, NULLIF(?9, ''), NULLIF(?10, ''), ?11, ?12, ?13, ?14)
+		    ?5, ?6, ?7, ?8, NULLIF(?9, ''), NULLIF(?10, ''), ?11, ?12, ?13,
+		    (SELECT r.repo_map FROM pages p JOIN revisions r ON r.id = p.current_revision_id
+		      WHERE ?1 = 'repository' AND p.scope = ?1 AND p.project_id = ?2 AND p.repo_id = ?4),
+		    (SELECT r.repo_map_basis FROM pages p JOIN revisions r ON r.id = p.current_revision_id
+		      WHERE ?1 = 'repository' AND p.scope = ?1 AND p.project_id = ?2 AND p.repo_id = ?4),
+		    ?14)
 		RETURNING id, revision`,
 		rev.Scope, pid, repo, rid, rev.Summary, statements, rev.Chars,
 		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn, now).Scan(&id, &n)
@@ -306,6 +332,18 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 		return 0, err
 	}
 	return n, nil
+}
+
+// diagramOf reads a stored diagram column; NULL is nil.
+func diagramOf(raw []byte) (*diagram.Diagram, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	d := &diagram.Diagram{}
+	if err := json.Unmarshal(raw, d); err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 // fromKind is a source kind as stored: "" is a PR.
@@ -323,6 +361,7 @@ const (
 	PurposeOverview  = "overview"
 	PurposeSubject   = "subject"
 	PurposeProject   = "project"
+	PurposeRepoMap   = "repo_map"
 )
 
 // LLMCall is one model call as the gateway described it. SourceKind "" and

@@ -387,7 +387,11 @@ func TestRun_QuietReconcileDrawsAMissingMap(t *testing.T) {
 		plan, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p",
 			Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
 		x.st.documented = &store.BaselineRun{Commit: older40, Plan: plan, State: store.RunDone}
-		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		// The repository has its map, drawn from its text as it stands:
+		// only the project's is in question.
+		repo := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
+		repo.RepoMapBasis = mapBasis(repo)
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = repo
 		x.st.others = []store.RepoSummary{{Slug: "svc"}}
 		x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 		x.queue(store.RunReconcile, older40)
@@ -401,7 +405,7 @@ func TestRun_QuietReconcileDrawsAMissingMap(t *testing.T) {
 	}
 	x := quiet(false)
 	if x.run().State != store.RunDone || len(x.st.calls) != 1 || x.st.calls[0].Purpose != store.PurposeProject {
-		t.Fatalf("without a map: run %+v, calls %+v; want the project step", x.run(), x.st.calls)
+		t.Fatalf("without a map: run %+v, calls %+v; want the project step alone: the repository has its map and the run changed nothing", x.run(), x.st.calls)
 	}
 	if p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; !diagram.Equal(p.Map, drawnMap("svc")) {
 		t.Errorf("project map = %+v", p.Map)
@@ -668,7 +672,8 @@ func TestRun_ProjectTooLargeForAMap(t *testing.T) {
 	if p.Summary != "Werkzeuge." || p.Map != nil {
 		t.Errorf("project page = %+v, want the text and no map", p)
 	}
-	prompt := x.models.prompts[len(x.models.prompts)-1]
+	// The project's prompt, the repository map's after it.
+	prompt := x.models.prompts[len(x.models.prompts)-2]
 	if !strings.Contains(prompt, "This project has 17 repositories, more than one map holds: `map` is null") {
 		t.Errorf("project prompt does not say the map is null")
 	}

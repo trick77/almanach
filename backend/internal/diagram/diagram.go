@@ -61,6 +61,17 @@ const (
 // MapZones is the four in the order the prompt names them.
 var MapZones = []string{ZoneClients, ZoneRepositories, ZoneStores, ZoneExternal}
 
+// A repository map's own zones: where the repository is entered, and its
+// parts. Its stores and external systems share the system map's ids.
+const (
+	ZoneEntry = "entry"
+	ZoneParts = "parts"
+)
+
+// RepoMapZones is the repository map's four in the order the prompt names
+// them.
+var RepoMapZones = []string{ZoneEntry, ZoneParts, ZoneStores, ZoneExternal}
+
 // Sentinel is the map a project revision carries when a map was due and
 // none was accepted: asked for, not drawn. The API and the UI read it as
 // no map; the baseline does not run a step again to ask for one.

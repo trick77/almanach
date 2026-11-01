@@ -205,8 +205,12 @@ type sourceRepoBody struct {
 
 // baselineBody is what the source page shows of a repository's runs.
 type baselineBody struct {
-	RunID            int64             `json:"run_id"`
-	State            string            `json:"state"`
+	RunID int64  `json:"run_id"`
+	State string `json:"state"`
+	// MapStep: in state project, the project step is over and the run draws
+	// the repository map, its last step. The state has no value of its own
+	// for it (a CHECK on baseline_runs); the plan says so.
+	MapStep          bool              `json:"map_step"`
 	Mode             string            `json:"mode"`
 	Trigger          string            `json:"trigger"`
 	Commit           string            `json:"commit"`
@@ -229,9 +233,22 @@ type baselineBody struct {
 func baselineOf(rr store.RepoRuns) (*baselineBody, error) {
 	r := rr.Last
 	parts, err := skippedOf(r.Plan)
-	return &baselineBody{RunID: r.ID, State: r.State, Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, Step: r.Step, Steps: r.Steps,
+	return &baselineBody{RunID: r.ID, State: r.State, MapStep: inMapStep(r), Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, Step: r.Step, Steps: r.Steps,
 		Skipped: r.Skipped, SkippedParts: parts, CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt}, err
+}
+
+// inMapStep reports whether a run in state project has its project step
+// behind it: the worker's plan carries project_done. A plan that does not
+// read says no.
+func inMapStep(r store.BaselineRun) bool {
+	if r.State != store.RunProject {
+		return false
+	}
+	var p struct {
+		ProjectDone bool `json:"project_done"`
+	}
+	return json.Unmarshal(r.Plan, &p) == nil && p.ProjectDone
 }
 
 type sourceDetailBody struct {

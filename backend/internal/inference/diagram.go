@@ -49,6 +49,12 @@ func mapSchema() map[string]any {
 	return flow(enum(diagram.MapZones...), enum(diagram.MapZones...))
 }
 
+// repoMapSchema is a repository's map: a flow whose every node sits in one
+// of its four zones.
+func repoMapSchema() map[string]any {
+	return flow(enum(diagram.RepoMapZones...), enum(diagram.RepoMapZones...))
+}
+
 func flow(nodeZone, zoneID map[string]any) map[string]any {
 	return object(map[string]any{
 		"kind":      enum(diagram.KindFlow),

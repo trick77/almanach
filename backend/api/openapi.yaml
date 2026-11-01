@@ -973,13 +973,16 @@ components:
     Baseline:
       type: object
       description: The repository's newest baseline run and the commit last documented.
-      required: [run_id, state, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at]
+      required: [run_id, state, map_step, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at]
       properties:
         run_id:
           type: integer
         state:
           type: string
           enum: [queued, cataloguing, describing, project, done, failed]
+        map_step:
+          type: boolean
+          description: In state project, the project step is over and the run draws the repository map, its last step.
         mode:
           type: string
           enum: [full, reconcile]
@@ -1817,12 +1820,21 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, revisions, notes, notes_total, last_merge]
+      required: [project_key, slug, description, map, revisions, notes, notes_total, last_merge]
       properties:
         project_key:
           type: string
         slug:
           type: string
+        map:
+          description: >-
+            The repository's map of itself (Aufbau): a flow whose zones are
+            entry, parts, stores and external. Drawn by a baseline run's last
+            step from the repository's description; a merge carries it
+            forward. Null before a run's map step drew one.
+          oneOf:
+            - $ref: "#/components/schemas/FlowDiagram"
+            - type: "null"
         notes_total:
           type: integer
           description: Every note of the repository; `notes` lists the newest hundred.
