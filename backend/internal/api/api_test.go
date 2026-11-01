@@ -686,6 +686,9 @@ func TestLead(t *testing.T) {
 		"Eins.\n\nZwei.":                            "Eins.",
 		"`a**b` bleibt.":                            "`a**b` bleibt.",
 		"":                                          "",
+		"#### Zweck\n\nDer Dienst liest.\n\n#### Rollen": "Der Dienst liest.",
+		"#### Rollen\n\n- `api`: Dienst":                 "`api`: Dienst",
+		"#### Nur ein Titel":                             "Nur ein Titel",
 	} {
 		if got := lead(in); got != want {
 			t.Errorf("lead(%q) = %q, want %q", in, got, want)

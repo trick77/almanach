@@ -74,7 +74,6 @@ describe("blocks", () => {
     expect(
       blocks(
         "Erst.\nZeile.\n\n#### Ablauf\n\n- eins\nweiter\n- zwei\n\n3. drei\n4. vier\n\nDanach.",
-        true,
       ),
     ).toEqual([
       { kind: "p", text: "Erst.\nZeile." },
@@ -85,31 +84,28 @@ describe("blocks", () => {
     ]);
   });
   it("keeps one list over a blank line between items, as markup.Normalize", () => {
-    expect(blocks("- a\n\n- b\n\nDanach.", true)).toEqual([
+    expect(blocks("- a\n\n- b\n\nDanach.")).toEqual([
       { kind: "ul", items: ["a", "b"] },
       { kind: "p", text: "Danach." },
     ]);
   });
   it("starts a list under a paragraph line, a new one on a change of kind", () => {
-    expect(blocks("Fälle:\n- a\n1. b", true)).toEqual([
+    expect(blocks("Fälle:\n- a\n1. b")).toEqual([
       { kind: "p", text: "Fälle:" },
       { kind: "ul", items: ["a"] },
       { kind: "ol", start: 1, items: ["b"] },
     ]);
   });
-  it("takes no sub-heading in a summary and nothing outside the subset", () => {
-    expect(blocks("#### Titel", false)).toEqual([
-      { kind: "p", text: "#### Titel" },
-    ]);
+  it("takes nothing outside the subset", () => {
     expect(
-      blocks("## Zwei\n> zitiert\n* Stern\n1) Klammer\n-5 Grad\n| a |", true),
+      blocks("## Zwei\n> zitiert\n* Stern\n1) Klammer\n-5 Grad\n| a |"),
     ).toEqual([
       {
         kind: "p",
         text: "## Zwei\n> zitiert\n* Stern\n1) Klammer\n-5 Grad\n| a |",
       },
     ]);
-    expect(blocks("  \n\n", true)).toEqual([]);
+    expect(blocks("  \n\n")).toEqual([]);
   });
 });
 
@@ -154,16 +150,15 @@ describe("plain", () => {
     );
     expect(plain("**`strict`** gilt, **x")).toBe("strict gilt, **x");
   });
-  it("reads as Doc renders: an item with its continuation, no #### in a summary", () => {
+  it("reads as Doc renders: an item with its continuation", () => {
     expect(plain("- Bilder\nund Texte")).toBe("Bilder und Texte");
-    expect(plain("#### x", false)).toBe("#### x");
   });
   it("reads only the stored item form, as markup.StoredItem", () => {
-    expect(blocks("-  zwei Blanks\n1.  auch", true)).toEqual([
+    expect(blocks("-  zwei Blanks\n1.  auch")).toEqual([
       { kind: "p", text: "-  zwei Blanks\n1.  auch" },
     ]);
     // A rule is no item.
-    expect(blocks("- - -", true)).toEqual([{ kind: "p", text: "- - -" }]);
+    expect(blocks("- - -")).toEqual([{ kind: "p", text: "- - -" }]);
   });
 });
 

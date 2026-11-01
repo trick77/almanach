@@ -109,7 +109,13 @@ function ProjectTile({ p, links }: { p: Project; links?: Links }) {
       </div>
       {p.repo !== null && p.repo.summary !== "" && (
         <div className="mt-3 line-clamp-3 text-[13.5px] text-muted">
-          {plain(p.repo.summary, false)}
+          {plain(
+            // The tile reads on, no part's title in its three lines.
+            p.repo.summary
+              .split("\n\n")
+              .filter((b) => !b.startsWith("#### "))
+              .join("\n\n"),
+          )}
         </div>
       )}
       {links && (links.uses.length > 0 || links.usedBy > 0) && (

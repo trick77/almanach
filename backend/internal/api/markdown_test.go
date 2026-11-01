@@ -86,7 +86,7 @@ func TestRepoMarkdown(t *testing.T) {
 		t.Fatalf("export = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 	md := rec.Body.String()
-	order := []string{"# Repository pay-api (Projekt PAY)\n", "Revision 4, Stand 2026-10-20.", "Die API nimmt Zahlungen an.\n\nArbeiten daran: make check.",
+	order := []string{"# Repository pay-api (Projekt PAY)\n", "Revision 4, Stand 2026-10-20.", "## Überblick\n\nDie API nimmt Zahlungen an.\n\nArbeiten daran: make check.",
 		"## Aufbau\n\n```json\n{", `"zone": "entry"`, "## Invarianten", "### Einmal", "## Regeln", "### Limit", "## Entscheidungen", "### Ein Worker", "## Fallstricke", "### Doppelte Buchung",
 		"## Erweiterungen", "### Neue Route", "## Komponenten", "### Annahme", "Nimmt an.\n\nPrüft.", "```json\n{", "## Entitäten", "### Zahlung"}
 	at := 0
@@ -124,7 +124,7 @@ func TestProjectMarkdown(t *testing.T) {
 	h := handler(t, exportStore(), &fakeWaker{}, config.AuthNone)
 	rec := getMD(h, "/api/projects/PAY.md", "")
 	md := rec.Body.String()
-	if rec.Code != http.StatusOK || !strings.HasPrefix(md, "# Projekt PAY\n\nRevision 2, Stand 2026-10-20.\n\nDas Projekt.\n\n## Systemkarte\n\n```json\n") {
+	if rec.Code != http.StatusOK || !strings.HasPrefix(md, "# Projekt PAY\n\nRevision 2, Stand 2026-10-20.\n\n## Überblick\n\nDas Projekt.\n\n## Systemkarte\n\n```json\n") {
 		t.Fatalf("project export = %d:\n%s", rec.Code, md)
 	}
 	if !strings.Contains(md, "## Fallstricke\n\n### Quer\n\nBrach.\n\nDateien: `x.go`\n") || strings.Contains(md, "## Regeln") {
@@ -177,24 +177,25 @@ func TestMarkdownBearerInOIDC(t *testing.T) {
 }
 
 // Model text never becomes the export's structure beyond its stored layout:
-// a "- " or "N. " item and a statement's "#### " stay; a heading of another
-// level, a #### in a summary, a quote, fence, * item, 1) item or underline
+// a "- " or "N. " item stays, a "#### " a level under its text's heading
+// (a statement's ####, a summary's ### under ## Überblick); a heading of
+// another level, a quote, fence, * item, 1) item or underline
 // line is escaped, a fence in a diagram label outlasted, a backtick in a
 // path kept inside its code span.
 func TestMarkdownEscapesModelText(t *testing.T) {
 	label := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "x ```` y < z", Shape: "step"}}}
-	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel\n#### Auch keiner\n- Punkt",
+	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel\n#### Ein Teil\n- Punkt",
 		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen",
 			Text:  "Satz.\n## Regeln\n#### Ablauf\n```\n> zitiert\n---\n\n    eingerückt\n***\n1. Punkt\n1) Klammer\n* Stern\n<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10",
 			Files: []string{"a`b.go"}, Diagram: label}}}, true)
-	for _, want := range []string{"\\# Kein Titel\n\\#### Auch keiner\n- Punkt\n", "### Zwei Zeilen\n",
+	for _, want := range []string{"## Überblick\n\n\\# Kein Titel\n### Ein Teil\n- Punkt\n", "### Zwei Zeilen\n",
 		"Satz.\n\\## Regeln\n#### Ablauf\n\\```\n\\> zitiert\n\\---\n\neingerückt\n\\***\n1. Punkt\n1\\) Klammer\n\\* Stern\n\\<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10\n",
 		"Dateien: `` a`b.go ``\n", "`````json\n", `"label": "x ` + "````" + ` y < z"`} {
 		if !strings.Contains(md, want) {
 			t.Errorf("export lacks %q:\n%s", want, md)
 		}
 	}
-	if strings.Count(md, "\n## ") != 1 {
+	if strings.Count(md, "\n## ") != 2 {
 		t.Errorf("model text opened a heading:\n%s", md)
 	}
 }
@@ -250,6 +251,10 @@ func TestMarkdownKindsMatchTheUI(t *testing.T) {
 	// The project page's own label for the entity kind.
 	if !strings.Contains(copyTS, fmt.Sprintf("    entity: %q,\n", projectEntityHeading)) {
 		t.Errorf("strings.ts lacks the project's entity label %q", projectEntityHeading)
+	}
+	// The summary's label over it.
+	if !strings.Contains(copyTS, fmt.Sprintf("    summary: %q,\n", summaryHeading)) {
+		t.Errorf("strings.ts lacks the summary label %q", summaryHeading)
 	}
 	if a, b := slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(inference.RepoKinds)); !slices.Equal(a, b) {
 		t.Errorf("export kinds %v, schema kinds %v", a, b)

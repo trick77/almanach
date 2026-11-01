@@ -111,7 +111,8 @@ export function descriptionRail(
   return { items, hitLine };
 }
 
-/** DescriptionView is a page's description: the summary laid out, then the
+/** DescriptionView is a page's description: the summary laid out as a
+ *  statement's text is (sub-headings, lists, bold), then the
  *  statements grouped by kind, each a block with its name, its text laid
  *  out (Doc), its files and its sources as citation chips. pageRepo is
  *  the repository a repository page shows, whose slug its chips leave out;
@@ -263,7 +264,6 @@ export function StatementBlock({
       </h4>
       <Doc
         text={s.text}
-        headings
         query={query}
         className="mt-1 mb-1.5 font-serif text-[15.5px] leading-[1.55] text-ink-dim"
       />

@@ -239,7 +239,7 @@ func TestFoldRespellingIsNoChange(t *testing.T) {
 // A statement only laid out anew, its sentence turned into a list with a
 // bold term, is stored so but keeps its sources: layout is not something
 // the fold learned. What the model wrote outside the stored layout (a *
-// bullet, a ## heading, a heading in the summary) is stored in it.
+// bullet, a ## heading, in the text or the summary) is stored in it.
 func TestFoldLayoutIsNoChange(t *testing.T) {
 	st := newFakeStore()
 	page := existingRepoPage()
@@ -253,7 +253,7 @@ func TestFoldLayoutIsNoChange(t *testing.T) {
 		t.Fatalf("revisions = %+v", st.revisions)
 	}
 	r := st.revisions[0]
-	if want := "Der Dienst."; r.Summary != want {
+	if want := "#### Zweck\n\nDer Dienst."; r.Summary != want {
 		t.Errorf("summary = %q, want %q", r.Summary, want)
 	}
 	s := r.Statements[0]

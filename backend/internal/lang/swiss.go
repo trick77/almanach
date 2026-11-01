@@ -19,8 +19,8 @@ func Prose(s string) string { return SwissSS(redact.Text(strings.TrimSpace(s))) 
 // it (a PEM block's header ends its line only there), then the stored
 // layout (markup.Normalize), then Swiss spelling, which so sees no line as
 // indented code.
-func Laid(s string, headings bool) string {
-	return SwissSS(markup.Normalize(redact.Text(strings.TrimSpace(s)), headings))
+func Laid(s string) string {
+	return SwissSS(markup.Normalize(redact.Text(strings.TrimSpace(s))))
 }
 
 var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")

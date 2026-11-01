@@ -1,6 +1,6 @@
 // Package markup is the layout a statement's text and a page's summary
-// may carry: paragraphs, flat lists, **bold**, `code` spans and, in a
-// statement's text, one level of #### sub-heading. Normalize puts what a
+// may carry, one layout for both: paragraphs, flat lists, **bold**, `code`
+// spans and one level of #### sub-heading. Normalize puts what a
 // model writes into that stored form, inside lang.Laid: after redaction,
 // before the Swiss rule. Anything beyond the subset stays text.
 // ui/src/format.ts blocks reads the same form, the Markdown export passes
@@ -14,27 +14,27 @@ import (
 	"unicode/utf8"
 )
 
-// Heading is the one sub-heading level statement text holds: under the
+// Heading is the one sub-heading level a text or summary holds: under the
 // export's ### statement names and the prompt frame's ### [id] lines.
 const Heading = "#### "
 
 // Normalize is model text in the stored form: blocks one blank line apart;
 // a paragraph's lines as written, their indents dropped (so the Swiss rule
 // skips none as code); a list item one "- " or "N. " line, its
-// continuation lines joined to it; a heading, any level, a "#### " line
-// where headings is set and dropped where not (a summary); a rule
-// ("* * *", "---") dropped, a block's end. A fenced block's lines become
-// `code` spans: a "# comment" in it never turns into a heading. What was
-// dropped is the text when nothing else is: a summary that is only a
-// heading keeps its title, never empty for the page check to refuse.
+// continuation lines joined to it; a heading, any level, a "#### " line;
+// a rule ("* * *", "---") dropped, a block's end. A fenced block's lines
+// become `code` spans: a "# comment" in it never turns into a heading.
+// What was dropped is the text when nothing else is: a text that is only
+// headings or a fence's word keeps the titles or the word as lines, never
+// empty headings to show or an empty text for the page check to refuse.
 // Normalize of its own output is that output: one pass is repeated until
 // nothing changes (a pass only drops and joins, so few do), for marks the
 // first pass leaves that the next reads anew ("* -" and "-" joined are
 // "- - -", a rule) would otherwise drop an item on a later read.
-func Normalize(s string, headings bool) string {
-	out := normalizeOnce(s, headings)
+func Normalize(s string) string {
+	out := normalizeOnce(s)
 	for range 8 {
-		next := normalizeOnce(out, headings)
+		next := normalizeOnce(out)
 		if next == out {
 			break
 		}
@@ -44,9 +44,10 @@ func Normalize(s string, headings bool) string {
 }
 
 // normalizeOnce is one pass of Normalize.
-func normalizeOnce(s string, headings bool) string {
+func normalizeOnce(s string) string {
 	var blocks []string
-	var dropped []string // titles and fence words left out
+	var dropped []string // fence words left out, heading titles
+	body := false        // a block that is no heading was written
 	var cur []string     // the open paragraph's or list's lines
 	list := false        // cur is a list
 	gap := false         // a blank line in an open list: an item next goes on
@@ -55,12 +56,13 @@ func normalizeOnce(s string, headings bool) string {
 		switch {
 		case len(cur) == 0:
 		case list && lastList:
-			// Two lists with nothing between (a dropped heading, a
-			// blank line) are one: the next read would join them.
+			// Two lists with nothing between (a blank line) are one: the
+			// next read would join them.
 			blocks[len(blocks)-1] += "\n" + strings.Join(cur, "\n")
 		default:
 			blocks = append(blocks, strings.Join(cur, "\n"))
 			lastList = list
+			body = true
 		}
 		cur, list, gap = nil, false, false
 	}
@@ -120,15 +122,10 @@ func normalizeOnce(s string, headings bool) string {
 			continue
 		}
 		if title, ok := heading(line); ok {
-			// A summary holds no heading: the prompt asks for none, and a
-			// title kept as a bold line would read as its opening.
 			flush()
-			if headings {
-				blocks = append(blocks, Heading+title)
-				lastList = false
-			} else {
-				dropped = append(dropped, title)
-			}
+			blocks = append(blocks, Heading+title)
+			dropped = append(dropped, title)
+			lastList = false
 			continue
 		}
 		if item, ok := ListItem(line); ok {
@@ -147,9 +144,11 @@ func normalizeOnce(s string, headings bool) string {
 		cur = append(cur, line)
 	}
 	flush()
-	if len(blocks) == 0 {
-		// Only what reads back as itself: a title "```" or "---" kept as a
-		// line would be a fence or a rule on the next read, and gone.
+	if !body {
+		// Headings over nothing are no layout: their titles are the text,
+		// never an empty part to show, an empty one for the page check to
+		// refuse. Only what reads back as itself: a title "```" or "---"
+		// kept as a line would be a fence or a rule on the next read, gone.
 		kept := slices.DeleteFunc(dropped, func(d string) bool {
 			_, h := heading(d)
 			_, item := ListItem(d)

@@ -615,6 +615,9 @@ func TestShorten(t *testing.T) {
 		{"zu lang für den Anteil", 10, ""},
 		// An abbreviation is no sentence end.
 		{"Erster Satz hier. Danach z. B. Kafka und mehr Text dahinter.", 46, "Erster Satz hier." + shortenedMark},
+		// A part's heading without its text goes with the cut.
+		{"#### Zweck\n\nDer Dienst liest Notizen.\n\n#### Arbeiten daran\n\nGate: make check und mehr Text.", 79,
+			"#### Zweck\n\nDer Dienst liest Notizen." + shortenedMark},
 	} {
 		if got := shorten(c.in, c.n); got != c.want || len(got) > max(c.n, len(c.in)) {
 			t.Errorf("shorten(%q, %d) = %q, want %q", c.in, c.n, got, c.want)

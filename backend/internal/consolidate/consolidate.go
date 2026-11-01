@@ -728,12 +728,12 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 // attach stores them: trimmed, Swiss, empty paths dropped, the text in
 // the stored layout (lang.Laid).
 func cleanStatement(p inference.Statement) store.Statement {
-	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Laid(p.Text, true), Files: cleanFiles(p.Files)}
+	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Laid(p.Text), Files: cleanFiles(p.Files)}
 }
 
-// proseSummary is a returned summary as stored: the summary's layout, no
-// sub-heading (lang.Laid).
-func proseSummary(s string) string { return lang.Laid(s, false) }
+// proseSummary is a returned summary as stored: a statement's layout,
+// sub-headings and all (lang.Laid).
+func proseSummary(s string) string { return lang.Laid(s) }
 
 // sameText reports whether a statement's new text says what its old one
 // did: umlauts spelled in (lang.SameButSpelling) or only laid out anew,
