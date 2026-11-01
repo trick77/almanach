@@ -297,7 +297,7 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 		}
 	}
 	for _, p := range proposed {
-		name := strings.TrimSpace(p.Name)
+		name := lang.Prose(p.Name)
 		if name == "" {
 			continue
 		}
@@ -310,7 +310,7 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 		if len(out.Subjects) >= maxSubjects {
 			continue
 		}
-		s := Subject{Name: name, Purpose: strings.TrimSpace(p.Purpose)}
+		s := Subject{Name: name, Purpose: lang.Prose(p.Purpose)}
 		ix.add(&s, p.Paths)
 		if len(s.Files) > 0 {
 			out.Subjects = append(out.Subjects, s)

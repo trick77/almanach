@@ -1,7 +1,17 @@
 // Package lang is the one spelling rule: Swiss Standard German, ss never ß.
 package lang
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/trick77/almanach/internal/redact"
+)
+
+// Prose is a piece of the model's prose as stored: trimmed, any credential
+// shape replaced (a model echoes what it read, and the input filters are
+// regexes), Swiss spelling. Deterministic, so an unchanged rewrite stays
+// unchanged.
+func Prose(s string) string { return SwissSS(redact.Text(strings.TrimSpace(s))) }
 
 var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")
 

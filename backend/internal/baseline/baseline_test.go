@@ -34,6 +34,12 @@ func TestBlocked(t *testing.T) {
 		"src/__snapshots__/a.test.ts.snap": true,
 		"build.gradle":                     false,
 		"buildinfo/x.go":                   false,
+		"deploy/certs/tls.key":             true,
+		"certs/ca.PEM":                     true,
+		"src/main/resources/store.jks":     true,
+		"ops/.ssh/id_ed25519":              true,
+		".aws/credentials":                 true,
+		"internal/credentials/store.go":    false,
 	} {
 		if got := Blocked(p); got != want {
 			t.Errorf("Blocked(%q) = %v, want %v", p, got, want)

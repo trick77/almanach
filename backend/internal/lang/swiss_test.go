@@ -19,3 +19,11 @@ func TestSameButSpelling(t *testing.T) {
 		}
 	}
 }
+
+// Prose trims, redacts and spells Swiss, in one call.
+func TestProse(t *testing.T) {
+	in := "  Der Schlüssel ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 heißt TOKEN.  " // ship:allow-secret: invented fixture
+	if got, want := Prose(in), "Der Schlüssel <redacted> heisst TOKEN."; got != want {
+		t.Errorf("Prose = %q, want %q", got, want)
+	}
+}

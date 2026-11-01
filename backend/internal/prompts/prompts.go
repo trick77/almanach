@@ -47,3 +47,8 @@ var DiagramsOff string
 // Spelling is the spelling rule every prompt that asks for German states,
 // word for word: one rule, never five wordings drifting apart.
 const Spelling = `"ss", never "ß"; umlauts stay ä, ö, ü, Ä, Ö, Ü, never spelled out as ae, oe, ue`
+
+// Redacted is what every prompt that reads code or notes says about the
+// marker the redact package leaves, word for word. The code removes the
+// value; the sentence only keeps the model from inventing one.
+const Redacted = "`<redacted>` in what you read marks a credential the code removed before you saw it: never guess, reconstruct or quote its value; where it matters, say that a credential is configured there."

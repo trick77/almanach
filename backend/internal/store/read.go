@@ -7,9 +7,18 @@ import (
 	"errors"
 	"slices"
 	"time"
+
+	"github.com/trick77/almanach/internal/redact"
 )
 
 // The read side: what the API serves. Structs, never maps.
+
+// noteOut is a stored note's free text as it may leave the store, for a
+// reader or a model: the row keeps what noergler sent (deliveries and notes
+// are verbatim), every read of it passes redact.
+func noteOut(title string, bugfix, body []byte) (string, json.RawMessage, json.RawMessage) {
+	return redact.Text(title), redact.JSON(bugfix), redact.JSON(body)
+}
 
 // ProjectRow is one project in the list.
 type ProjectRow struct {
@@ -277,6 +286,7 @@ func (s *Store) Notes(ctx context.Context, project, repo string, limit int) ([]N
 		if err := rows.Scan(&r.PRID, &r.PRKey, &r.PRTitle, &r.RepoSlug, &r.TicketKey, &r.ChangeKind, timeAt(&r.MergedAt), &r.Items, &r.Issues, &r.Suggestions); err != nil {
 			return nil, err
 		}
+		r.PRTitle = redact.Text(r.PRTitle)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -337,7 +347,7 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	}
 	d.TicketKey, d.IssueType, d.ChangeKind = deref(ticket), deref(issueType), deref(kind)
 	d.BugfixArea, d.BugfixComponent, d.ReviewedCommit, d.MergeCommit, d.ModelLabel = deref(area), deref(comp), deref(reviewed), deref(merge), deref(model)
-	d.Bugfix, d.Body = json.RawMessage(bugfix), json.RawMessage(note)
+	d.PRTitle, d.Bugfix, d.Body = noteOut(d.PRTitle, bugfix, note)
 	if runID != nil {
 		d.RunID = *runID
 	}
@@ -421,6 +431,8 @@ func (s *Store) Problems(ctx context.Context, project string, days int) ([]Probl
 		if err := rows.Scan(&p.RepoSlug, &p.Area, &p.Component, &p.Bugfixes, &p.TopCause, &p.TopCauseN, &p.Issues, &p.Suggestions, &p.LastFixPR, timeAt(&p.LastFixAt)); err != nil {
 			return nil, err
 		}
+		// The component is a name from noergler's note: note text like any.
+		p.Component = redact.Text(p.Component)
 		out = append(out, p)
 	}
 	return out, rows.Err()

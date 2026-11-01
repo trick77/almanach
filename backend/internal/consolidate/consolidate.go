@@ -413,7 +413,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 	}
 	statements, leftOut, reason := attachDescription(scope, current.Statements, d, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
 	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
-	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
+	summary := lang.Prose(d.Summary)
 	chars, capReason := check(summary, statements, maxStatements, maxChars)
 	if reason == "" {
 		reason = capReason
@@ -499,12 +499,12 @@ func (w *Worker) asNew(ctx context.Context, where string, current []store.Statem
 	}
 	named := map[string]bool{}
 	for _, a := range added {
-		named[a.Kind+"\x00"+lang.SwissSS(strings.TrimSpace(a.Name))] = true
+		named[a.Kind+"\x00"+lang.Prose(a.Name)] = true
 	}
 	moved := make([]inference.Statement, 0, len(edits)+len(added))
 	var twice []string
 	for _, e := range edits {
-		key := e.Kind + "\x00" + lang.SwissSS(strings.TrimSpace(e.Name))
+		key := e.Kind + "\x00" + lang.Prose(e.Name)
 		if named[key] {
 			twice = append(twice, e.Name)
 			continue
@@ -644,7 +644,7 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 // cleanStatement is a returned statement's kind, name, text and files as
 // attach stores them: trimmed, Swiss, empty paths dropped.
 func cleanStatement(p inference.Statement) store.Statement {
-	return store.Statement{Kind: p.Kind, Name: lang.SwissSS(strings.TrimSpace(p.Name)), Text: lang.SwissSS(strings.TrimSpace(p.Text)), Files: cleanFiles(p.Files)}
+	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Prose(p.Text), Files: cleanFiles(p.Files)}
 }
 
 // diagramLimits is what a page's statement diagrams are held to: the caps
