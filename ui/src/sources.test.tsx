@@ -199,6 +199,9 @@ describe("SourcesPage", () => {
       { target: { value: "pat" } },
     );
     expect(screen.getByText("Token senden als")).toBeInTheDocument();
+    expect(
+      screen.getByText(/listet das Projekt über die API/),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toEqual({
@@ -215,6 +218,18 @@ describe("SourcesPage", () => {
       },
     });
     await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
+  });
+
+  it("gives the token the selected kind's hint", async () => {
+    serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    expect(screen.getByText(/privates Bitbucket-Projekt/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    expect(screen.getByText(/«Contents: read»/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/privates Bitbucket-Projekt/),
+    ).not.toBeInTheDocument();
   });
 
   it("creates a source that describes nothing on its own", async () => {
@@ -320,6 +335,11 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     fireEvent.click(await screen.findByText("Token"));
+    // A static folder's token hint: one token, the GitHub scopes.
+    expect(
+      screen.getByText(/gilt für jedes Repository darin/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/listet das Projekt/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText(/Automatisch beschreiben/));
     fireEvent.click(screen.getByText("Speichern"));
     await waitFor(() => expect(writes).toHaveLength(1));
@@ -327,6 +347,24 @@ describe("SourcePage baseline", () => {
       token_auth: "basic",
       token_user: "",
       auto_describe: false,
+    });
+  });
+
+  it("sends a token typed in the access form", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    fireEvent.click(await screen.findByText("Token"));
+    fireEvent.change(
+      screen.getByPlaceholderText("Leer lassen für öffentliche Repositories"),
+      { target: { value: "ghp" } },
+    );
+    fireEvent.click(screen.getByText("Speichern"));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]?.body).toEqual({
+      token: "ghp",
+      token_auth: "basic",
+      token_user: "",
+      auto_describe: true,
     });
   });
 });

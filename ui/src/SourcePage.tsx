@@ -785,14 +785,17 @@ function AccessForm({
               </button>
             </div>
           ) : (
-            <input
-              className={input}
-              type="password"
-              autoComplete="off"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={data.has_token ? f.newToken : f.tokenPlaceholder}
-            />
+            <>
+              <input
+                className={input}
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder={data.has_token ? f.newToken : f.tokenPlaceholder}
+              />
+              <span className={fieldHint}>{f.tokenHint[data.kind]}</span>
+            </>
           )}
         </div>
         <AutoDescribeField value={auto} onChange={setAuto} />

@@ -2,6 +2,10 @@
 // never the sharp s), generic masculine. There is no second language: the
 // readers are German speaking, and the wiki itself is German.
 
+// How a source's token is kept, the end of every kind's token hint.
+const tokenKept =
+  "Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.";
+
 export const S = {
   app: "Almanach",
   nav: {
@@ -226,13 +230,15 @@ export const S = {
       token: "Personal Access Token",
       optional: "(optional)",
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",
-      tokenHint:
-        "Nur nötig für private Repositories. Beim Bitbucket-Projekt listet und klont es die Repositories, beim statischen Ordner gilt das eine Token für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read». Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.",
+      tokenHint: {
+        bitbucket: `Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und klont seine Repositories. ${tokenKept}`,
+        static: `Nur nötig für private Repositories. Ein Token für den ganzen Ordner: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read». ${tokenKept}`,
+      } as Record<string, string>,
       tokenAs: "Token senden als",
       bearerHint:
         "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center die sichere Wahl.",
       basicHint:
-        "Basic: Benutzername und Token in der URL für genau diesen einen git-Aufruf. Für GitHub die übliche Wahl.",
+        "Basic: Benutzername und Token als Authorization-Header für genau diesen einen git-Aufruf, wie bei Bearer, nie in der URL. Für GitHub die übliche Wahl.",
       user: "Benutzername",
       userHint:
         "GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).",

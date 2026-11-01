@@ -298,7 +298,7 @@ function NewSourceForm({
             onChange={(e) => setToken(e.target.value)}
             placeholder={f.tokenPlaceholder}
           />
-          <span className={fieldHint}>{f.tokenHint}</span>
+          <span className={fieldHint}>{f.tokenHint[kind]}</span>
         </label>
         {token !== "" && (
           <div>
