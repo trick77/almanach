@@ -196,3 +196,47 @@ func less(a, b RepoRef) bool {
 	}
 	return a.Slug < b.Slug
 }
+
+// Library is a source repository others use, with the summary of its
+// current description ("" before the first) and the users the question
+// was asked for.
+type Library struct {
+	RepoRef
+	Summary string
+	UsedBy  []RepoRef
+}
+
+// Libraries is what a repository uses (slug set), or what a project's
+// repositories use of other projects' (slug ""): the context a step reads
+// beside its own code. In the graph's order, each once.
+func (s *Store) Libraries(ctx context.Context, key, slug string) ([]Library, error) {
+	g, err := s.Dependencies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []Library{}
+	at := map[RepoRef]int{}
+	for _, e := range g.Edges {
+		mine := e.From.ProjectKey == key && (slug == "" && e.To.ProjectKey != key || e.From.Slug == slug)
+		if !mine {
+			continue
+		}
+		i, ok := at[e.To]
+		if !ok {
+			i = len(out)
+			at[e.To] = i
+			out = append(out, Library{RepoRef: e.To})
+		}
+		out[i].UsedBy = append(out[i].UsedBy, e.From)
+	}
+	for i := range out {
+		p, ok, err := s.CurrentPage(ctx, ScopeRepository, out[i].ProjectKey, out[i].Slug)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[i].Summary = p.Summary
+		}
+	}
+	return out, nil
+}

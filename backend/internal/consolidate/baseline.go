@@ -39,6 +39,7 @@ type RunStore interface {
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
+	Libraries(ctx context.Context, key, slug string) ([]store.Library, error)
 	ProjectFolded(ctx context.Context, key string) error
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 }
@@ -625,7 +626,11 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		problems = problemsFor(w.problems, read)
 	}
 	focus := w.focus(plan, page, newer)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), newer)
+	libs, err := w.libraries(ctx, r, r.Slug)
+	if err != nil {
+		return err
+	}
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), libs, newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -1144,7 +1149,11 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 			return err
 		}
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), slugs(repos), w.limits))
+	libs, err := w.libraries(ctx, r, "")
+	if err != nil {
+		return err
+	}
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), w.limits))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -1230,6 +1239,18 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 		return false, nil, err
 	}
 	return !diagram.MapFits(len(repos)), repos, nil
+}
+
+// libraries is the libraries the run's repository (slug set) or its
+// project uses, as a step's prompt shows them. A store that does not
+// answer pauses the drain: a step is not paid without its context.
+func (w *Worker) libraries(ctx context.Context, r *store.BaselineRun, slug string) (string, error) {
+	libs, err := w.base.Store.Libraries(ctx, r.ProjectKey, slug)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: libraries read failed, drain paused", logging.Err(err))
+		return "", errStop
+	}
+	return libraries(libs, slug == ""), nil
 }
 
 // repoSummaries is the project's source repositories with their summaries.
@@ -1686,9 +1707,10 @@ func renderProblems(problems []store.RepoProblem) string {
 	return b.String()
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems string, newer map[string]string) string {
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs string,
+	newer map[string]string) string {
 	return strings.NewReplacer(
-		"{problem_areas}", problems,
+		"{problem_areas}", problems, "{libraries}", libs,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps),
 		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
@@ -1696,9 +1718,9 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 	).Replace(prompts.Describe)
 }
 
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, repoSlugs []string, l config.Limits) string {
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others, libs string, repoSlugs []string, l config.Limits) string {
 	return strings.NewReplacer(
-		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
+		"{libraries}", libs, "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
 		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),
@@ -1756,6 +1778,32 @@ func projectMap(p store.Page) string {
 // with a share too small to hold one (hundreds of repositories), are
 // named. A prompt's input, never stored text.
 func otherRepos(repos []store.RepoSummary, self string) string {
+	return fitSummaries(repos, self, baseline.ProjectReposMaxBytes, "Also in the project, without a summary here")
+}
+
+// libraries is the summaries of the source repositories a repository, or
+// a project's repositories, use (store.Libraries), named project/slug, each
+// with its users when they are a project's; fitted to LibrariesMaxBytes
+// like otherRepos. A prompt's input, never stored text.
+func libraries(libs []store.Library, users bool) string {
+	repos := make([]store.RepoSummary, 0, len(libs))
+	for _, l := range libs {
+		name := l.ProjectKey + "/" + l.Slug
+		if users && len(l.UsedBy) > 0 {
+			var by []string
+			for _, u := range l.UsedBy {
+				by = append(by, u.Slug)
+			}
+			name += " (used by " + strings.Join(by, ", ") + ")"
+		}
+		repos = append(repos, store.RepoSummary{Slug: name, Summary: l.Summary})
+	}
+	return fitSummaries(repos, "", baseline.LibrariesMaxBytes, "Also used, without a summary here")
+}
+
+// fitSummaries is otherRepos' and libraries' fitting: every summary but
+// self's within max bytes, the rest named after also.
+func fitSummaries(repos []store.RepoSummary, self string, max int, also string) string {
 	var others []store.RepoSummary
 	for _, r := range repos {
 		if r.Slug != self && r.Summary != "" {
@@ -1765,7 +1813,7 @@ func otherRepos(repos []store.RepoSummary, self string) string {
 	bySize := slices.Clone(others)
 	slices.SortStableFunc(bySize, func(a, b store.RepoSummary) int { return len(a.Summary) - len(b.Summary) })
 	text := map[string]string{}
-	left := baseline.ProjectReposMaxBytes
+	left := max
 	for i, r := range bySize {
 		// The heading counts against the share; the names after are not.
 		frame := len(repoEntry(r.Slug, ""))
@@ -1786,7 +1834,7 @@ func otherRepos(repos []store.RepoSummary, self string) string {
 		}
 	}
 	if len(named) > 0 {
-		fmt.Fprintf(&b, "Also in the project, without a summary here: %s.\n", strings.Join(named, ", "))
+		fmt.Fprintf(&b, "%s: %s.\n", also, strings.Join(named, ", "))
 	}
 	if b.Len() == 0 {
 		return "_None._"

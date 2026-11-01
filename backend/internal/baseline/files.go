@@ -29,6 +29,10 @@ const (
 	// ProjectReposMaxBytes is what the project step reads of the other
 	// repositories' summaries.
 	ProjectReposMaxBytes = 80_000
+	// LibrariesMaxBytes is what a step reads of the summaries of the
+	// libraries its repository, or its project, uses: beside every step,
+	// so less than the project's own repositories get.
+	LibrariesMaxBytes = 24_000
 	// CatalogueDocsBytes is what the catalogue step reads of the docs.
 	CatalogueDocsBytes = 60_000
 	// ListMaxEntries: over it the catalogue sees directories, not files.

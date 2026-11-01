@@ -147,3 +147,33 @@ func TestSources_ClonedElsewhere(t *testing.T) {
 		t.Fatalf("rename: %d %v, want 409", code, body)
 	}
 }
+
+// A project lists the libraries of other projects its repositories use,
+// never its own; a standalone folder none, having no map.
+func TestProject_Libraries(t *testing.T) {
+	st := depsStore()
+	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil)
+	if code != 200 {
+		t.Fatalf("project: %d", code)
+	}
+	var libs []libraryBody
+	if err := json.Unmarshal(body["libraries"], &libs); err != nil || len(libs) != 1 {
+		t.Fatalf("libraries: %v %s", err, body["libraries"])
+	}
+	if libs[0].Project != "libs" || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 {
+		t.Fatalf("libraries = %+v, want libs/wire used by loom and rongo", libs)
+	}
+	if code, body = do(t, h, http.MethodGet, "/api/projects/libs", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
+		t.Fatalf("libs' libraries: %d %s, want none", code, body["libraries"])
+	}
+	st.standalone = map[string]bool{"apps": true}
+	if code, body = do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
+		t.Fatalf("standalone apps' libraries: %d %s, want none", code, body["libraries"])
+	}
+	st.standalone = nil
+	st.graphErr = errors.New("database is locked")
+	if code, _ := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 500 {
+		t.Fatalf("failing store: %d, want 500", code)
+	}
+}

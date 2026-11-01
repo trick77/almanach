@@ -293,3 +293,37 @@ func TestCloneURL_MissingRowHoldsNothing(t *testing.T) {
 		t.Fatalf("listing again = %+v %v, want wire left out, nothing newly missing", res, err)
 	}
 }
+
+// A repository's libraries are what it uses, whatever project; a
+// project's are what its repositories use of other projects', with the
+// users; each carries its current summary.
+func TestLibraries(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, k := range []string{"apps", "libs"} {
+		if err := s.CreateSource(ctx, staticSource(k)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addRepos(t, s,
+		SourceRepo{ProjectKey: "libs", Slug: "wire", CloneURL: "https://forge.example.invalid/x/wire"},
+		SourceRepo{ProjectKey: "apps", Slug: "fetch", CloneURL: "https://forge.example.invalid/x/fetch"},
+		SourceRepo{ProjectKey: "apps", Slug: "loom", CloneURL: "https://forge.example.invalid/x/loom"},
+		SourceRepo{ProjectKey: "apps", Slug: "rongo", CloneURL: "https://forge.example.invalid/x/rongo"},
+	)
+	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:w"}})
+	saveRead(t, s, "apps", "fetch", "1", manifest.Read{Provides: []string{"go:f"}})
+	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:f"}, {Coord: "go:w"}}})
+	saveRead(t, s, "apps", "rongo", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:w"}}})
+	libs, err := s.Libraries(ctx, "apps", "loom")
+	if err != nil || len(libs) != 2 || libs[0].Slug != "fetch" || libs[1].Slug != "wire" {
+		t.Fatalf("loom's libraries = %+v %v, want fetch and wire", libs, err)
+	}
+	libs, err = s.Libraries(ctx, "apps", "")
+	if err != nil || len(libs) != 1 || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 {
+		t.Fatalf("apps' libraries = %+v %v, want wire used by loom and rongo", libs, err)
+	}
+	if libs, err := s.Libraries(ctx, "libs", "wire"); err != nil || len(libs) != 0 {
+		t.Fatalf("wire's libraries = %+v %v, want none", libs, err)
+	}
+}

@@ -126,6 +126,8 @@ export const S = {
       repositories: "Repositories",
       stores: "Datenspeicher",
       external: "Externe Systeme",
+      // Drawn by code from the manifests, never by the model.
+      libraries: "Bibliotheken",
     } as Record<string, string>,
     // The dependency graph's zones by id, drawn by code.
     depZones: {

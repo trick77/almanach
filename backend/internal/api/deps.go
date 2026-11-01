@@ -145,3 +145,36 @@ func markdownDeps(uses []useBody, usedBy []depBody) string {
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
+
+// libraryBody is a repository of another project the project's
+// repositories use, and which of them do.
+type libraryBody struct {
+	Project string        `json:"project"`
+	Slug    string        `json:"slug"`
+	UsedBy  []repoRefBody `json:"used_by"`
+}
+
+// libraries is the project's libraries, none with the sources off or for
+// a project whose repositories stand alone (no system map to draw them
+// on).
+func (d Deps) libraries(ctx context.Context, key string) ([]libraryBody, error) {
+	out := []libraryBody{}
+	if d.Sources == nil {
+		return out, nil
+	}
+	if alone, err := d.standalone(ctx, key); err != nil || alone {
+		return out, err
+	}
+	libs, err := d.Store.Libraries(ctx, key, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range libs {
+		b := libraryBody{Project: l.ProjectKey, Slug: l.Slug, UsedBy: make([]repoRefBody, 0, len(l.UsedBy))}
+		for _, u := range l.UsedBy {
+			b.UsedBy = append(b.UsedBy, refBody(u))
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
