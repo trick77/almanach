@@ -229,6 +229,7 @@ describe("SourcesPage", () => {
         token: "pat",
         token_auth: "bearer",
         token_user: "",
+        system: true,
       },
     });
     await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
@@ -262,6 +263,29 @@ describe("SourcesPage", () => {
     await waitFor(() => expect(writes).toHaveLength(1));
     const body = writes[0]?.body as { host: string };
     expect(body.host).toBe("https://forge.example.invalid");
+  });
+
+  it("creates a static folder whose repositories stand alone", async () => {
+    const writes = serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    // A Bitbucket project is always a system: no choice offered.
+    expect(screen.queryByText("Bildet ein System")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    expect(
+      screen.getByText(/eine Projektseite und eine Systemkarte/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Aus"));
+    expect(
+      screen.getByText(/etwa Bibliotheken und Werkzeuge/),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
+      target: { value: "tools" },
+    });
+    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    const body = writes[0]?.body as { kind: string; system: boolean };
+    expect(body).toMatchObject({ kind: "static", system: false });
   });
 });
 

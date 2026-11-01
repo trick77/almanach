@@ -305,6 +305,11 @@ export const S = {
       hintOff:
         "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln. Eine frühere Projektseite bleibt gespeichert.",
       meta: (system: boolean) => (system ? "Ein System" : standaloneRepos),
+      // The create form's hint for off: a new folder has no page to keep.
+      createHintOff:
+        "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln. Für Repositories, die nichts miteinander zu tun haben, etwa Bibliotheken und Werkzeuge.",
+      createHint:
+        "Später auf der Seite der Quelle umschaltbar. Ein Bitbucket-Projekt ist immer ein System.",
     },
     counts: {
       ready: (n: number) => `${n} bereit`,

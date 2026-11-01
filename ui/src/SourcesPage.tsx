@@ -217,9 +217,11 @@ function NewSourceForm({
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>("bearer");
   const [user, setUser] = useState("");
+  const [system, setSystem] = useState<"on" | "off">("on");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
+  const sys = S.sources.system;
 
   const pickKind = (k: SourceKind) => {
     setKind(k);
@@ -237,6 +239,8 @@ function NewSourceForm({
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
+        // A Bitbucket project is always one; the API refuses false for it.
+        system: kind === "bitbucket" || system === "on",
       });
       if (created) onDone(created);
     } catch (e) {
@@ -287,6 +291,23 @@ function NewSourceForm({
             />
             <span className={fieldHint}>{f.hostHint}</span>
           </label>
+        )}
+        {kind === "static" && (
+          <div className="sm:col-span-2">
+            <span className={fieldLabel}>{sys.label}</span>
+            <Segmented
+              value={system}
+              onChange={setSystem}
+              options={[
+                { value: "on", label: sys.on },
+                { value: "off", label: sys.off },
+              ]}
+            />
+            <span className={fieldHint}>
+              {system === "on" ? sys.hintOn : sys.createHintOff}{" "}
+              {sys.createHint}
+            </span>
+          </div>
         )}
         <label className="sm:col-span-2">
           <span className={fieldLabel}>
