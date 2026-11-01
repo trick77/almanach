@@ -1144,8 +1144,7 @@ the reason in the log and the page unchanged:
 
 - A statement's `kind` is one of `component`, `interface`, `rule`,
   `invariant`, `entity`, `decision`, `extension`, `pitfall`; on the
-  project page not
-  `extension`. Any other kind rejects the rewrite.
+  project page not `extension`. Any other kind rejects the rewrite.
 - `name` and `text` are trimmed and Swiss-spelled before anything is
   checked; an empty one rejects the rewrite.
 - A kept `id` must exist on the current page and may appear once; an edit
@@ -1223,7 +1222,9 @@ the reason in the log and the page unchanged:
   webhook and the ping never pass the sign-in.
 - The Markdown exports take a team bearer in oidc mode, GET only; a
   bearer opens no other route. A statement's text is never rewritten into
-  Markdown; the export's order is the kinds' order above.
+  Markdown; the export's order is the UI's (invariants, interfaces,
+  rules, decisions, pitfalls, extensions, components, entities), held to
+  it by a test.
 
 ### The sources
 

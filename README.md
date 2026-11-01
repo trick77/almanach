@@ -44,9 +44,9 @@ Nothing flows back into reviews.
   (`/api/projects/{key}/repos/{slug}.md`) with a team token.
 - **Project page**: the system as a whole: purpose and boundary, each
   repository's role, the flows across them, what runs where; then the
-  components several repositories share, who owns them and the interface
-  they offer, the entities that cross them and their system of record,
-  the rules that span them.
+  components several repositories share and who owns them, the public
+  interfaces one repository offers the others, the entities that cross
+  them and their system of record, the rules that span them.
 - **Problem areas**: bugfix notes grouped by the directory the fixes
   touched, with the most common cause, so a team sees where it fixes the
   same thing over and over.
