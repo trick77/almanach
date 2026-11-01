@@ -258,8 +258,7 @@ export const S = {
     },
     actions: {
       sync: "Synchronisieren",
-      syncRunning:
-        "Ein Sync läuft gerade; der Knopf ist wieder frei, sobald er fertig ist.",
+      syncRunning: "Synchronisieren läuft gerade.",
       queued: "Angestossen …",
       addRepo: "Repository hinzufügen",
       access: { bitbucket: "Host und Token", static: "Token" } as Record<

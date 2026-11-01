@@ -115,6 +115,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const active = data.repos.filter(
     (r) => r.state === "pending" || r.state === "syncing",
   ).length;
+  const syncing = data.repos.some((r) => r.state === "syncing");
   const failed = data.repos.filter((r) => r.state === "failed").length;
   const describing = data.repos.filter((r) => runOpen(r.baseline)).length;
   const described = data.repos.filter(
@@ -234,10 +235,11 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         <button
           type="button"
           className={btnPrimary}
-          // A clone or fetch under way holds the button; a baseline run
-          // does not, it pins its commit.
-          disabled={queued || active > 0}
-          title={active > 0 ? S.sources.actions.syncRunning : undefined}
+          // A clone or fetch being worked holds the button. Pending does
+          // not: a stuck queue would lock it for good. Nor does a baseline
+          // run, which pins its commit.
+          disabled={queued || syncing}
+          title={syncing ? S.sources.actions.syncRunning : undefined}
           onClick={sync}
         >
           {queued ? S.sources.actions.queued : S.sources.actions.sync}
