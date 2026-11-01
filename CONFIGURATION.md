@@ -127,11 +127,10 @@ and clone paths itself; `BACKEND_GIT_CA_FILE` it leaves to `.env`, so
 under compose the bundle sits in `./conf`, mounted read-only at `/conf`,
 and the variable reads `/conf/ca.pem`.
 
-almanach has `pull_policy: build`: `up` builds the checkout and never
-pulls a release by surprise; migrate runs the same image without a build
-of its own (`pull_policy: never`), so it is built once. A published
-release: `docker pull ghcr.io/trick77/almanach:latest`, then
-`docker compose up -d --no-build`. Needs Docker Compose 2.24.4 or later.
+`up` pulls the published image when it is missing, so a host needs only
+`compose.yaml`, `.env` and `conf/`; a new release is `docker compose pull`
+then `up -d`. In a checkout, `up -d --build` builds it instead. Needs
+Docker Compose 2.24.4 or later.
 
 The stop grace is 11 minutes: the worker waits up to the call timeout
 plus 15 s for a paid call in flight before it cuts it off, and Docker's

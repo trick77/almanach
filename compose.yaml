@@ -1,18 +1,19 @@
-# Production stack: Almanach behind an external Traefik that terminates TLS,
-# readers signed in over OIDC at your identity provider. No host port: the
-# only way in is the Traefik router below. Requires the external "traefik"
-# network the Traefik stack creates. For local work, compose.dev.yaml on top
-# (make dev; README, "Running it").
+# Production stack: the published image behind an external Traefik that
+# terminates TLS, readers signed in over OIDC at your identity provider. No
+# checkout needed: this file, .env and conf/ are the whole deployment. No
+# host port: the only way in is the Traefik router below. Requires the
+# external "traefik" network the Traefik stack creates. For local work,
+# compose.dev.yaml on top (make dev; README, "Running it").
 #
 # First-run setup:
 #
-# 1. Copy .env.example to .env and fill it in: the gateway and the model,
+# 1. Write .env from .env.example and fill it in: the gateway and the model,
 #    PUBLIC_FQDN (the hostname Traefik routes Almanach on) and the OIDC
 #    block, the client secret and BACKEND_SESSION_SECRET included
 #    (openssl rand -base64 48). For private repositories also
 #    BACKEND_SOURCE_TOKEN_KEY (openssl rand -base64 32).
 #
-#      cp .env.example .env
+#      curl -fsSL -o .env https://raw.githubusercontent.com/trick77/almanach/master/.env.example
 #
 #    The example leaves PUBLIC_FQDN and the OIDC block blank, and this file
 #    checks all six: `up` stops with the message next to each until a real
@@ -33,20 +34,16 @@
 #    hot-reloaded on change. The container runs as 65532:65532 and reads
 #    it through the group; you stay its owner, others get nothing:
 #
-#      cp conf/team-keys.example.json conf/team-keys.json
+#      mkdir -p conf && curl -fsSL -o conf/team-keys.json https://raw.githubusercontent.com/trick77/almanach/master/conf/team-keys.example.json
 #      sudo chgrp -R 65532 conf && chmod 750 conf && chmod 640 conf/team-keys.json
 #
 #    conf/ is the container's /conf: a CA bundle for a forge behind an
 #    internal CA goes there too, with BACKEND_GIT_CA_FILE=/conf/ca.pem in
 #    .env (the path inside the container, never the host's).
 #
-# 3. docker compose up -d: builds this checkout, migrate runs, then
-#    almanach. almanach has pull_policy: build, so `up` never pulls a
-#    release by surprise. To run a published release instead, pull it and
-#    start without building:
-#
-#      docker pull ghcr.io/trick77/almanach:latest
-#      docker compose up -d --no-build
+# 3. docker compose up -d: pulls the image if missing, migrate runs, then
+#    almanach. A new release: docker compose pull && docker compose up -d.
+#    In a checkout, docker compose up -d --build builds it instead.
 #
 # The database and the clones live on the named volumes data and repos,
 # which take uid 65532 from the image on first mount: nothing to chown. A
@@ -78,8 +75,6 @@ services:
   # service, never inside it. Same image, same data volume.
   migrate:
     <<: *almanach
-    # almanach's build makes the image; never built twice, never pulled.
-    pull_policy: never
     command: ["migrate"]
     # No env_file: migrate needs the database path and nothing else, least
     # of all the gateway key.
@@ -95,7 +90,6 @@ services:
     build:
       context: .
       dockerfile: Containerfile
-    pull_policy: build
     restart: unless-stopped
     # Longer than serve's own shutdown: the HTTP drain (15 s), then the
     # worker's grace for the paid call in flight and its writes
