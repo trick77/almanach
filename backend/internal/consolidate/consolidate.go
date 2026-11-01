@@ -488,34 +488,32 @@ func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added
 // numbering what it writes, the mistake the empty page's note warns of (an
 // eval's project step was refused whole for "unknown statement id s2" so).
 // Its edits join the new statements, their ids cleared by Proposed and
-// ApplyPatch, logged; an edit repeating a new statement's kind and name is
-// that statement twice and goes. An id used twice is no numbering but a
-// muddle: nothing moves, and the rules refuse it as before. On a page with
-// statements nothing moves either. Every path that applies an answer to a
-// page calls it first.
+// ApplyPatch, logged; an edit repeating a new statement's or an earlier
+// edit's kind and name (Swiss) is that statement twice and goes, logged.
+// With nothing on the page an edit could delete, an id used twice moves
+// too. On a page with statements nothing moves. Every path that applies an
+// answer to a page calls it first.
 func (w *Worker) asNew(ctx context.Context, where string, current []store.Statement, edits, added []inference.Statement) ([]inference.Statement, []inference.Statement) {
 	if len(current) > 0 || len(edits) == 0 {
 		return edits, added
 	}
-	ids := map[string]bool{}
-	for _, e := range edits {
-		if e.ID == nil || *e.ID == "" {
-			continue
-		}
-		if ids[*e.ID] {
-			return edits, added
-		}
-		ids[*e.ID] = true
-	}
 	named := map[string]bool{}
 	for _, a := range added {
-		named[a.Kind+"\x00"+strings.TrimSpace(a.Name)] = true
+		named[a.Kind+"\x00"+lang.SwissSS(strings.TrimSpace(a.Name))] = true
 	}
 	moved := make([]inference.Statement, 0, len(edits)+len(added))
+	var twice []string
 	for _, e := range edits {
-		if !named[e.Kind+"\x00"+strings.TrimSpace(e.Name)] {
-			moved = append(moved, e)
+		key := e.Kind + "\x00" + lang.SwissSS(strings.TrimSpace(e.Name))
+		if named[key] {
+			twice = append(twice, e.Name)
+			continue
 		}
+		named[key] = true
+		moved = append(moved, e)
+	}
+	if len(twice) > 0 {
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: edit repeating a statement left out: %s", where, strings.Join(twice, ", ")))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("%s: %s on a page without statements taken as new", where, plural(len(moved), "edit")))
 	return []inference.Statement{}, append(moved, added...)
@@ -537,7 +535,10 @@ func attachDescription(scope string, current []store.Statement, d *inference.Des
 // when the text changed; a new one starts with src, numbered from next (one
 // past every id the page's history used, so a dropped id is never
 // reissued). An id the current page does not have is the model inventing
-// one: rejected. Spelling is Swiss on every prose field. A diagram is held
+// one, an id edited twice a muddle: rejected. On a merge, a whole page,
+// leaving such an edit out would delete what it meant to edit; a step's
+// patch leaves it out before (baseline.ApplyPatch), its unnamed ids kept.
+// Spelling is Swiss on every prose field. A diagram is held
 // to baseline.CheckDiagram; one that breaks a rule, or one past the page's
 // count, is left out (its statement kept) and named in leftOut: one bad
 // diagram costs that diagram, never the statements of a whole part. A
@@ -592,7 +593,16 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			olds = append(olds, old)
 			continue
 		}
-		d, stale, why := statementDiagram(p.Diagram, old, s, dl.caps)
+		// A returned flow loses its self and repeated edges first, as the
+		// map does: one such edge cost a whole diagram.
+		flow, dropped := p.Diagram, []string(nil)
+		if flow != nil && flow.Kind == diagram.KindFlow {
+			flow, dropped = baseline.RepairEdges(flow)
+		}
+		d, stale, why := statementDiagram(flow, old, s, dl.caps)
+		if len(dropped) > 0 && why == "" {
+			leftOut.edges = append(leftOut.edges, fmt.Sprintf("%q (%s)", s.Name, strings.Join(dropped, ", ")))
+		}
 		if why != "" {
 			leftOut.invalid = append(leftOut.invalid, fmt.Sprintf("%q (%s)", s.Name, why))
 		}
@@ -704,16 +714,23 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 // a rule, by name gone stale beside a changed name or text; the new
 // statements over a field cap (fieldCap) left out, by name and reason
 // (overCap); and the edits over one, the statement kept as stored, by id
-// (capKept, which a step never marks checked) and with the reason.
+// (capKept, which a step never marks checked) and with the reason; the
+// edits of an unknown or repeated id a step's patch left out, by id and
+// reason (badEdits); the self and repeated edges taken out of a flow that
+// passed its check, by name and edge (edges).
 type leftOutParts struct {
 	overCount, invalid, stale, overCap []string
 	capKept, capKeptWhy                []string
+	badEdits, edges                    []string
 }
 
 // logLeftOut says which statements lost a diagram or were left out, and
 // why. Called once the rewrite passed its ceilings: a rejected one logs its
 // rejection only.
 func logLeftOut(ctx context.Context, log *slog.Logger, at string, s leftOutParts) {
+	if len(s.badEdits) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: edit left out: %s", at, strings.Join(s.badEdits, ", ")))
+	}
 	if len(s.overCap) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: new statement over a field cap left out: %s", at, strings.Join(s.overCap, ", ")))
 	}
@@ -722,6 +739,9 @@ func logLeftOut(ctx context.Context, log *slog.Logger, at string, s leftOutParts
 	}
 	if len(s.invalid) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: diagram breaking a rule left out: %s", at, strings.Join(s.invalid, ", ")))
+	}
+	if len(s.edges) > 0 {
+		log.InfoContext(ctx, fmt.Sprintf("%s: self or repeated edges taken out: %s", at, strings.Join(s.edges, ", ")))
 	}
 	if len(s.stale) > 0 {
 		log.InfoContext(ctx, fmt.Sprintf("%s: stored diagram dropped with a changed name or text: %s", at, strings.Join(s.stale, ", ")))
