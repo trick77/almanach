@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/ncruces/go-sqlite3 v0.36.0
-	github.com/trick77/llmwire v0.1.8
+	github.com/trick77/llmwire v0.2.2
 	github.com/trick77/ship/kit v0.18.0
 	github.com/trick77/ship/kit/auth v0.3.2
 	golang.org/x/oauth2 v0.37.0
