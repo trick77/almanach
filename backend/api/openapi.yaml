@@ -916,7 +916,7 @@ components:
     Baseline:
       type: object
       description: The repository's newest baseline run and the commit last documented.
-      required: [run_id, state, mode, trigger, commit, step, steps, skipped, error, queued_at, started_at, finished_at, documented_commit, documented_at]
+      required: [run_id, state, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at]
       properties:
         run_id:
           type: integer
@@ -939,6 +939,23 @@ components:
         skipped:
           type: integer
           description: Subjects the run could not fold; the next reconcile reads them again.
+        skipped_parts:
+          type: array
+          description: The parts the run left out, in the order it hit them; one per part, where skipped counts each time.
+          items:
+            type: object
+            required: [part, name, reason]
+            properties:
+              part:
+                type: string
+                enum: [overview, subject, project]
+              name:
+                type: string
+                description: The subject's name, empty for the overview and the project.
+              reason:
+                type: string
+                enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
+                description: Why it was left out; empty for a run from before reasons were kept.
         cost_usd:
           type: string
           description: What the gateway priced of the run's calls, 3 decimals; omitted when it priced none.

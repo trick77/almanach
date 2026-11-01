@@ -195,6 +195,31 @@ func TestBuildPlan_HoldsTheCatalogueToTheTree(t *testing.T) {
 	}
 }
 
+// A part is named once with the first reason that hit it; the overview and
+// the project list without a name, and a run from before reasons has none.
+func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
+	var p Plan
+	p.Skip(OverviewPart, SkipCeiling)
+	p.Skip("Auth", SkipFailed)
+	p.Skip("Auth", SkipCalls)
+	p.Skip(ProjectPart, SkipNoPage)
+	want := []Skipped{
+		{Part: "overview", Name: "", Reason: SkipCeiling},
+		{Part: "subject", Name: "Auth", Reason: SkipFailed},
+		{Part: "project", Name: "", Reason: SkipNoPage},
+	}
+	if got := p.SkippedParts(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("parts = %+v\nwant %+v", got, want)
+	}
+	old := Plan{Skipped: []string{"Auth"}}
+	if got := old.SkippedParts(); !reflect.DeepEqual(got, []Skipped{{Part: "subject", Name: "Auth", Reason: ""}}) {
+		t.Errorf("old plan parts = %+v", got)
+	}
+	if got := (Plan{}).SkippedParts(); got == nil || len(got) != 0 {
+		t.Errorf("no skips = %#v, want an empty list", got)
+	}
+}
+
 func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	old := Plan{Subjects: []Subject{
 		{Name: "Auth", Purpose: "p", Files: []File{{"auth/login.go", 100}, {"auth/gone.go", 10}}},

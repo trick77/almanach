@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/secret"
@@ -189,27 +191,28 @@ type sourceRepoBody struct {
 
 // baselineBody is what the source page shows of a repository's runs.
 type baselineBody struct {
-	RunID            int64      `json:"run_id"`
-	State            string     `json:"state"`
-	Mode             string     `json:"mode"`
-	Trigger          string     `json:"trigger"`
-	Commit           string     `json:"commit"`
-	Step             int        `json:"step"`
-	Steps            int        `json:"steps"`
-	Skipped          int        `json:"skipped"`
-	CostUSD          string     `json:"cost_usd,omitempty"`
-	Error            string     `json:"error"`
-	QueuedAt         time.Time  `json:"queued_at"`
-	StartedAt        *time.Time `json:"started_at"`
-	FinishedAt       *time.Time `json:"finished_at"`
-	DocumentedCommit string     `json:"documented_commit"`
-	DocumentedAt     *time.Time `json:"documented_at"`
+	RunID            int64              `json:"run_id"`
+	State            string             `json:"state"`
+	Mode             string             `json:"mode"`
+	Trigger          string             `json:"trigger"`
+	Commit           string             `json:"commit"`
+	Step             int                `json:"step"`
+	Steps            int                `json:"steps"`
+	Skipped          int                `json:"skipped"`
+	SkippedParts     []baseline.Skipped `json:"skipped_parts"`
+	CostUSD          string             `json:"cost_usd,omitempty"`
+	Error            string             `json:"error"`
+	QueuedAt         time.Time          `json:"queued_at"`
+	StartedAt        *time.Time         `json:"started_at"`
+	FinishedAt       *time.Time         `json:"finished_at"`
+	DocumentedCommit string             `json:"documented_commit"`
+	DocumentedAt     *time.Time         `json:"documented_at"`
 }
 
 func baselineOf(rr store.RepoRuns) *baselineBody {
 	r := rr.Last
 	return &baselineBody{RunID: r.ID, State: r.State, Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, Step: r.Step, Steps: r.Steps,
-		Skipped: r.Skipped, CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		Skipped: r.Skipped, SkippedParts: skippedOf(r.Plan), CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt}
 }
 
@@ -818,4 +821,15 @@ func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
 		d.Worker.Wake()
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, describedBody{Status: "queued", RunID: id, Mode: mode})
+}
+
+// skippedOf is the parts a run left out, named, from its plan. The plan is
+// the worker's own JSON; one that does not decode lists none, and the count
+// beside it still says how many.
+func skippedOf(raw json.RawMessage) []baseline.Skipped {
+	var p baseline.Plan
+	if len(raw) == 0 || json.Unmarshal(raw, &p) != nil {
+		return []baseline.Skipped{}
+	}
+	return p.SkippedParts()
 }

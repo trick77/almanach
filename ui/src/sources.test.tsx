@@ -133,6 +133,7 @@ const detail: SourceDetail = {
         step: 3,
         steps: 4,
         skipped: 0,
+        skipped_parts: [],
         cost_usd: "2.418",
         error: "",
         queued_at: when,
@@ -299,7 +300,23 @@ describe("SourcePage baseline", () => {
           cost_usd: "0.812",
         },
       },
-      { ...detail.repos[0], slug: "b", baseline: { ...run, skipped: 2 } },
+      {
+        ...detail.repos[0],
+        slug: "b",
+        baseline: {
+          ...run,
+          skipped: 3,
+          skipped_parts: [
+            { part: "overview" as const, name: "", reason: "ceiling" as const },
+            {
+              part: "subject" as const,
+              name: "Auth",
+              reason: "ceiling" as const,
+            },
+            { part: "project" as const, name: "", reason: "failed" as const },
+          ],
+        },
+      },
       {
         ...detail.repos[0],
         slug: "c",
@@ -315,7 +332,14 @@ describe("SourcePage baseline", () => {
     expect(await screen.findByText("Beschreibt 2/3")).toBeInTheDocument();
     expect(screen.getByText("Bei 7e1d9a0 · $0.812 bisher")).toBeInTheDocument();
     expect(screen.getByText("Teilweise")).toBeInTheDocument();
-    expect(screen.getByText(/2 Themen übersprungen/)).toBeInTheDocument();
+    expect(screen.getByText(/3 Themen übersprungen/)).toBeInTheDocument();
+    // The skipped parts by reason, one line each, the run's order kept.
+    expect(
+      screen.getByText("Seite an der Obergrenze: Überblick, Auth"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Modellaufruf fehlgeschlagen: Projekt"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Beschreibung fehlgeschlagen: the catalogue failed/),
     ).toBeInTheDocument();

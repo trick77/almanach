@@ -3,6 +3,7 @@ import {
   ApiError,
   send,
   type Baseline,
+  type SkippedPart,
   type SourceDetail,
   type SourceRepo,
   type TokenAuth,
@@ -636,8 +637,29 @@ function BaselineCell({ b }: { b: Baseline | null }) {
           {parts.join(` ${S.common.sep} `)}
         </div>
       )}
+      {b.state === "done" &&
+        skipGroups(b.skipped_parts).map(([reason, names]) => (
+          <div
+            key={reason}
+            className="mt-0.5 max-w-[190px] text-[11.5px] text-muted"
+          >
+            {S.baseline.skipReason[reason] ?? reason}: {names.join(", ")}
+          </div>
+        ))}
     </>
   );
+}
+
+/** skipGroups is a run's skipped parts by reason, each reason once in the
+ *  order the run first hit it: a page at its ceiling skips every part left,
+ *  one line rather than one per part. */
+function skipGroups(parts: SkippedPart[]): [string, string[]][] {
+  const groups = new Map<string, string[]>();
+  for (const p of parts) {
+    const name = p.part === "subject" ? p.name : S.baseline.skippedPart[p.part];
+    groups.set(p.reason, [...(groups.get(p.reason) ?? []), name]);
+  }
+  return [...groups];
 }
 
 /** AccessForm edits the host (Bitbucket) and the token: an omitted token

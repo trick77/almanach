@@ -705,6 +705,8 @@ func TestRun_SkipsAndCeiling(t *testing.T) {
 	}
 	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A", "B"}) {
 		t.Errorf("skipped = %v, want A (failed) and B (ceiling)", p.Skipped)
+	} else if want := map[string]baseline.Skip{"A": baseline.SkipFailed, "B": baseline.SkipOverCeiling}; !reflect.DeepEqual(p.Why, want) {
+		t.Errorf("why = %v, want %v", p.Why, want)
 	}
 	if page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; len(page.Statements) != 1 || page.Statements[0].Name != "Kurz" {
 		t.Errorf("page = %+v, want B's rewrite rejected and C's statement taken", page.Statements)
@@ -738,6 +740,8 @@ func TestRun_PageAtItsCeilingMakesNoCall(t *testing.T) {
 		}
 		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{overviewName, "A"}) {
 			t.Errorf("%s: skipped = %v", name, p.Skipped)
+		} else if p.Why[overviewName] != baseline.SkipCeiling || p.Why["A"] != baseline.SkipCeiling {
+			t.Errorf("%s: why = %v, want the ceiling for both", name, p.Why)
 		}
 	}
 }
@@ -1119,6 +1123,9 @@ func TestRun_ProjectSkippedWhenRefused(t *testing.T) {
 	r := x.run()
 	if r.State != store.RunDone || r.Skipped != 1 || !slices.Contains(x.plan(t).Skipped, projectName) {
 		t.Fatalf("run = %+v plan %+v, want the refused project rewrite skipped", r, x.plan(t))
+	}
+	if why := x.plan(t).Why[projectName]; why != baseline.SkipRefused {
+		t.Errorf("why = %q, want refused", why)
 	}
 }
 

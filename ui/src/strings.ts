@@ -352,6 +352,24 @@ export const S = {
     soFar: "bisher",
     skipped: (n: number) =>
       n === 1 ? "1 Thema übersprungen" : `${n} Themen übersprungen`,
+    // A skipped part by name: a subject is its own, the overview and the
+    // project step are these.
+    skippedPart: { overview: "Überblick", project: "Projekt" } as Record<
+      string,
+      string
+    >,
+    // Why a part was left out, one line per reason in front of its parts.
+    skipReason: {
+      gone: "Nicht mehr im Katalog",
+      calls: "Aufrufe aufgebraucht",
+      bytes: "Lesebudget überschritten",
+      ceiling: "Seite an der Obergrenze",
+      failed: "Modellaufruf fehlgeschlagen",
+      refused: "Antwort verworfen",
+      over_ceiling: "Über der Obergrenze verworfen",
+      no_page: "Projekt ohne Seite",
+      "": "Grund nicht erfasst",
+    } as Record<string, string>,
     failedRun: "Beschreibung fehlgeschlagen:",
     upToDate:
       "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",
