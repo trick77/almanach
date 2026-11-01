@@ -25,8 +25,17 @@ describe("dates", () => {
 });
 
 describe("money and shares", () => {
-  it("shows the API's string with a sign, or unpriced", () => {
-    expect(money("0.012")).toBe("$0.012");
+  it("shows the API's string at 2 decimals, rounded half up, or unpriced", () => {
+    expect(money("0.012")).toBe("$0.01");
+    expect(money("0.015")).toBe("$0.02");
+    expect(money("0.004")).toBe("$0.00");
+    expect(money("0.995")).toBe("$1.00");
+    expect(money("9.995")).toBe("$10.00");
+    expect(money("1284.733")).toBe("$1284.73");
+    expect(money("3")).toBe("$3.00");
+    expect(money("0.5")).toBe("$0.50");
+    expect(money("-0.004")).toBe("$0.00");
+    expect(money("-1.236")).toBe("-$1.24");
     expect(money(undefined)).toBe("nicht bepreist");
     expect(money("")).toBe("nicht bepreist");
   });
