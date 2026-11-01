@@ -28,10 +28,18 @@ type fakeQueueStore struct {
 	openRead   bool
 	callsAsked []int64
 	countRuns  bool
+	byID       map[int64]store.BaselineRun
 }
 
-func (f *fakeQueueStore) PendingNotes(context.Context) ([]store.PendingNote, error) {
+func (f *fakeQueueStore) PendingNotes(_ context.Context, limit int) ([]store.PendingNote, error) {
+	if len(f.notes) > limit {
+		return f.notes[:limit], nil
+	}
 	return f.notes, nil
+}
+func (f *fakeQueueStore) RunByID(_ context.Context, id int64) (store.BaselineRun, bool, error) {
+	r, ok := f.byID[id]
+	return r, ok, nil
 }
 func (f *fakeQueueStore) OpenRuns(context.Context) ([]store.BaselineRun, error) {
 	f.openRead = true
@@ -269,5 +277,37 @@ func TestQueueCount(t *testing.T) {
 		Queue: &QueueDeps{Store: st, Worker: fakeWorkerStatus{}, Sync: fakeSync{}}, Log: discard})
 	if code, body := do(t, srv.Handler(), "GET", "/api/queue/count", "", "", nil); code != 200 || field(t, body, "count") != "2" {
 		t.Errorf("sources on: count = %d %v", code, body)
+	}
+}
+
+// A run that ended between the status and the read of the runs is still
+// the work in flight; a hold is never put on the next item while the
+// worker is busy.
+func TestQueue_RunOverMeanwhile(t *testing.T) {
+	r := startedRun()
+	r.State = store.RunDone
+	until := at(2)
+	st := &fakeQueueStore{notes: []store.PendingNote{pending("ledger", "pay/ledger#813", -2, 0)},
+		byID: map[int64]store.BaselineRun{41: r}}
+	busy := consolidate.Busy{Kind: consolidate.KindRun, ProjectKey: "pay", RepoSlug: "billing", RunID: 41, Since: at(0)}
+	out := getQueue(t, &QueueDeps{Store: st, Sync: fakeSync{},
+		Worker: fakeWorkerStatus{consolidate.Status{Busy: &busy, HoldUntil: &until, HoldCause: consolidate.HoldTimeout}}})
+	if out.Current == nil || out.Current.Run == nil || out.Current.Run.ID != 41 || out.Current.Run.Steps[0].State != consolidate.StepDone {
+		t.Fatalf("current = %+v", out.Current)
+	}
+	if len(out.Next) != 1 || out.Next[0].Wait != nil {
+		t.Errorf("next = %+v, want no hold while busy", out.Next)
+	}
+}
+
+// Past notesMax the notes are counted, not listed.
+func TestQueue_MoreThanListed(t *testing.T) {
+	st := &fakeQueueStore{}
+	for i := 0; i < notesMax+5; i++ {
+		st.notes = append(st.notes, pending("ledger", "pay/ledger#"+itoa(i+1), -3, 0))
+	}
+	out := getQueue(t, &QueueDeps{Store: st, Worker: fakeWorkerStatus{}})
+	if len(out.Next) != notesMax || out.More != 5 {
+		t.Errorf("listed %d, more %d; want %d and 5", len(out.Next), out.More, notesMax)
 	}
 }

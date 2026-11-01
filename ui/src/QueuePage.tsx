@@ -82,7 +82,17 @@ function useNow(): number {
 
 /** Worker is what the cards say of the worker: how often it looks on its
  *  own, the attempt it gives an item up at. */
-const Worker = createContext({ poll: 30, maxAttempts: 8 });
+const Worker = createContext<{ poll: number; maxAttempts: number } | null>(
+  null,
+);
+
+/** useWorker is Worker's value; the timeline always provides it, from the
+ *  body, so there is no default to drift from the backend. */
+function useWorker(): { poll: number; maxAttempts: number } {
+  const w = useContext(Worker);
+  if (w === null) throw new Error("useWorker outside Worker.Provider");
+  return w;
+}
 
 function Body({ q }: { q: Queue }) {
   const now = useNow();
@@ -92,7 +102,9 @@ function Body({ q }: { q: Queue }) {
   const hold = q.current === null ? q.next[0]?.wait : undefined;
   return (
     <>
-      {queueBusy(q) && <p className={meta}>{S.queue.polling}</p>}
+      {queueBusy(q) && (
+        <p className={meta}>{S.queue.polling(pollEvery / 1000)}</p>
+      )}
       <div className="mt-5">
         <Tiles>
           <Tile
@@ -151,6 +163,11 @@ function Body({ q }: { q: Queue }) {
           value={{ poll: q.poll_seconds, maxAttempts: q.max_attempts }}
         >
           <Timeline q={q} now={now} />
+          {q.more > 0 && (
+            <p className="mt-1 pl-7 text-[13px] text-muted">
+              {S.queue.more(q.more)}
+            </p>
+          )}
         </Worker.Provider>
       ) : (
         <div className="mt-7">
@@ -359,7 +376,7 @@ function NoteTitle({ item }: { item: QueueItem }) {
 }
 
 function NoteMeta({ item, now }: { item: QueueItem; now: number }) {
-  const { maxAttempts } = useContext(Worker);
+  const { maxAttempts } = useWorker();
   const kind = item.change_kind ? changeLabel(item.change_kind) : "";
   return (
     <>
@@ -397,7 +414,7 @@ function RunMeta({
   attempts: number;
   now: number;
 }) {
-  const { maxAttempts } = useContext(Worker);
+  const { maxAttempts } = useWorker();
   return (
     <>
       <b className="font-medium text-muted">{S.queue.mode[run.mode]}</b>,{" "}
@@ -440,7 +457,7 @@ function WaitLine({
   wait: NonNullable<QueueItem["wait"]>;
   now: number;
 }) {
-  const { poll } = useContext(Worker);
+  const { poll } = useWorker();
   let when: string;
   if (wait.until) {
     when = S.queue.until(clock(wait.until), left(wait.until, now));

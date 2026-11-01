@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/llmwire"
 )
 
@@ -126,6 +127,40 @@ func (w *Worker) setHold(until time.Time, cause string) {
 	w.smu.Lock()
 	w.holdUntil, w.holdCause = until, cause
 	w.smu.Unlock()
+}
+
+// Order is the queue as drain takes it: every note it may fold, oldest
+// first (NextQueued); the started run's next step (NextRun takes a started
+// run before a queued one); the notes waiting for that run, free once it
+// is over; the queued runs, oldest first. Kept beside drain: a change to
+// what drain takes first changes this too.
+type Order struct {
+	Free    []store.PendingNote
+	Started *store.BaselineRun
+	Held    []store.PendingNote
+	Queued  []store.BaselineRun
+}
+
+// QueueOrder lays notes (PendingNotes' order) and open runs (OpenRuns'
+// order) out as drain takes them.
+func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun) Order {
+	var o Order
+	for _, n := range notes {
+		if n.HeldBy != 0 {
+			o.Held = append(o.Held, n)
+		} else {
+			o.Free = append(o.Free, n)
+		}
+	}
+	for i := range runs {
+		switch {
+		case runs[i].State == store.RunQueued:
+			o.Queued = append(o.Queued, runs[i])
+		case o.Started == nil:
+			o.Started = &runs[i]
+		}
+	}
+	return o
 }
 
 // gatewayCause names a gateway-class failure for the queue page.

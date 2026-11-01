@@ -428,6 +428,8 @@ export interface Queue {
   poll_seconds: number;
   /** The attempt an item is given up at. */
   max_attempts: number;
+  /** Items queued past the listed ones. */
+  more: number;
 }
 
 /** The queue's size, for the nav. */

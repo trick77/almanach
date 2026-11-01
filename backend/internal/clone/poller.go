@@ -409,10 +409,15 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 	}
 	// Forget the last cycle's removals before the rows are read, never
 	// after: a removal landing between the read and the reset would be
-	// lost, and the job it concerned would clone the folder back.
+	// lost, and the job it concerned would clone the folder back. Under
+	// disk held alone: a removal still deleting holds disk shared with its
+	// clone's lock, so the reset waits for the deletion to end, as it did
+	// with one lock for every clone.
+	p.disk.Lock()
 	p.rm.Lock()
 	p.removed = map[string]bool{}
 	p.rm.Unlock()
+	p.disk.Unlock()
 	jobs, err := p.Store.SyncJobs(ctx)
 	if err != nil {
 		return err

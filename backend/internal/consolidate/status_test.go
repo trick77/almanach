@@ -41,6 +41,19 @@ func TestStatus_NamesTheNoteInFlight(t *testing.T) {
 	}
 }
 
+// The queue as drain takes it: free notes, the started run, the notes it
+// holds, the queued runs; a second started run (none should exist) is
+// left out rather than shown first.
+func TestQueueOrder(t *testing.T) {
+	notes := []store.PendingNote{{PRKey: "a", HeldBy: 7}, {PRKey: "b"}, {PRKey: "c", HeldBy: 7}}
+	runs := []store.BaselineRun{{ID: 7, State: store.RunDescribing}, {ID: 8, State: store.RunProject}, {ID: 9, State: store.RunQueued}}
+	o := QueueOrder(notes, runs)
+	if len(o.Free) != 1 || o.Free[0].PRKey != "b" || len(o.Held) != 2 || o.Held[0].PRKey != "a" || o.Started == nil ||
+		o.Started.ID != 7 || len(o.Queued) != 1 || o.Queued[0].ID != 9 {
+		t.Errorf("order = %+v", o)
+	}
+}
+
 // The loop sleeps a poll, or until a hold ends when that is sooner.
 func TestNextLook(t *testing.T) {
 	w := newWorker(newFakeStore(), &fakeMerger{})

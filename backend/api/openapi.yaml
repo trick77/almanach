@@ -1019,7 +1019,7 @@ components:
     Queue:
       type: object
       description: The worker's queue.
-      required: [current, next, sync, spent, recent, poll_seconds, max_attempts]
+      required: [current, next, sync, spent, recent, poll_seconds, max_attempts, more]
       properties:
         current:
           description: The note or run step in flight; null while the worker waits.
@@ -1057,6 +1057,9 @@ components:
         max_attempts:
           type: integer
           description: The attempt an item is given up at.
+        more:
+          type: integer
+          description: Items queued past the listed ones; `next` lists at most 100 notes.
 
     QueueItem:
       type: object

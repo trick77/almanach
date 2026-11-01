@@ -456,7 +456,8 @@ export const S = {
   queue: {
     title: "Warteschlange",
     what: "die Warteschlange",
-    polling: "Aktualisiert alle 3 s, solange etwas läuft",
+    polling: (s: number) => `Aktualisiert alle ${s} s, solange etwas läuft`,
+    more: (n: number) => (n === 1 ? "Und 1 weitere" : `Und ${n} weitere`),
     tiles: {
       now: "Jetzt",
       waiting: "Wartet",

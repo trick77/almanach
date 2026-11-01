@@ -141,6 +141,7 @@ function queue(over: Partial<Queue> = {}): Queue {
     recent: [],
     poll_seconds: 20,
     max_attempts: 5,
+    more: 0,
     ...over,
   };
 }
@@ -202,7 +203,7 @@ describe("QueuePage", () => {
     expect(
       within(screen.getByTestId("timeline")).getByText(S.queue.lane.after),
     ).toBeInTheDocument();
-    expect(screen.getByText(S.queue.polling)).toBeInTheDocument();
+    expect(screen.getByText(S.queue.polling(3))).toBeInTheDocument();
     expect(screen.getByText("$1.28")).toBeInTheDocument();
   });
 
@@ -286,12 +287,18 @@ describe("QueuePage", () => {
       await screen.findByText(/^Nichts wartet\. Nächster Sync/),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("timeline")).not.toBeInTheDocument();
-    expect(screen.queryByText(S.queue.polling)).not.toBeInTheDocument();
+    expect(screen.queryByText(S.queue.polling(3))).not.toBeInTheDocument();
     expect(
       screen.getByText(/Erneut automatisch frühestens/),
     ).toBeInTheDocument();
     expect(screen.getByText(S.queue.noteOutcome.ok)).toBeInTheDocument();
     expect(screen.getByText(S.queue.noteOutcome[""])).toBeInTheDocument();
+  });
+
+  it("counts what it does not list", async () => {
+    serve({ queue: queue({ next: [note(812)], more: 5 }) });
+    render(<QueuePage />);
+    expect(await screen.findByText(S.queue.more(5))).toBeInTheDocument();
   });
 
   it("names no next sync while one runs", async () => {

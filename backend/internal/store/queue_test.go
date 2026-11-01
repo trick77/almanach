@@ -24,7 +24,10 @@ func TestPendingAndFoldedNotes(t *testing.T) {
 	if _, err := s.DeferFold(ctx, "PRJ", "other", 2); err != nil {
 		t.Fatal(err)
 	}
-	notes, err := s.PendingNotes(ctx)
+	if one, err := s.PendingNotes(ctx, 1); err != nil || len(one) != 1 || one[0].RepoSlug != "svc" {
+		t.Fatalf("PendingNotes limited to 1 = %+v, %v", one, err)
+	}
+	notes, err := s.PendingNotes(ctx, 50)
 	if err != nil || len(notes) != 3 {
 		t.Fatalf("PendingNotes = %+v, %v", notes, err)
 	}

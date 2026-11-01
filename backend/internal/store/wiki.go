@@ -153,8 +153,7 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 		       n.merged_at, n.run_id, n.model_label, n.issues_posted, n.suggestions_posted, n.received_at
 		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
 		 WHERE n.consolidated_at IS NULL
-		   AND NOT EXISTS (SELECT 1 FROM baseline_runs b WHERE b.repo_id = n.repo_id
-		                      AND b.state NOT IN ('queued', 'done', 'failed'))
+		   AND NOT EXISTS (`+startedRunOfNote+`)
 		 ORDER BY n.received_at, n.pr_id LIMIT 1`).Scan(
 		&q.ProjectKey, &q.RepoSlug, &q.PRID, &q.Team, &q.PRKey, &q.PRTitle, &ticket, &issueType, &kind,
 		&bugfix, &area, &comp, &note, &reviewed, &q.SourceCommit, &merge, timeAt(&q.MergedAt),

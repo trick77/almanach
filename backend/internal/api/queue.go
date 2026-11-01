@@ -17,8 +17,9 @@ import (
 
 // QueueStore is what the queue page reads of the store.
 type QueueStore interface {
-	PendingNotes(ctx context.Context) ([]store.PendingNote, error)
+	PendingNotes(ctx context.Context, limit int) ([]store.PendingNote, error)
 	OpenRuns(ctx context.Context) ([]store.BaselineRun, error)
+	RunByID(ctx context.Context, id int64) (store.BaselineRun, bool, error)
 	FinishedRuns(ctx context.Context, since time.Time, limit int) ([]store.FinishedRun, error)
 	FoldedNotes(ctx context.Context, since time.Time, limit int) ([]store.FoldedNote, error)
 	QueueCount(ctx context.Context, runs bool) (int, error)
@@ -51,6 +52,9 @@ const recentWindow = 24 * time.Hour
 // recentMax bounds the finished list.
 const recentMax = 50
 
+// notesMax bounds the notes the page lists; the rest are counted (More).
+const notesMax = 100
+
 type queueBody struct {
 	// Current is the work in flight, null when the worker waits.
 	Current *queueItemBody  `json:"current"`
@@ -63,6 +67,8 @@ type queueBody struct {
 	PollSeconds int `json:"poll_seconds"`
 	// MaxAttempts is the attempt an item is given up at.
 	MaxAttempts int `json:"max_attempts"`
+	// More is the items queued past the listed ones.
+	More int `json:"more"`
 }
 
 type queueCountBody struct {
@@ -200,7 +206,7 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 	st := q.Worker.Status()
 	out := queueBody{Next: []queueItemBody{}, Recent: []recentBody{}, PollSeconds: int(st.Poll / time.Second),
 		MaxAttempts: consolidate.MaxAttempts}
-	notes, err := q.Store.PendingNotes(ctx)
+	notes, err := q.Store.PendingNotes(ctx, notesMax)
 	if err != nil {
 		return out, err
 	}
@@ -211,30 +217,19 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 		}
 	}
 
-	// The worker's order (consolidate.drain): every note it may fold, oldest
-	// first; then the started run's next step; then the notes that wait
-	// for that run; then the queued runs, oldest first.
-	var started *store.BaselineRun
-	var queued []store.BaselineRun
-	for i := range runs {
-		if runs[i].State == store.RunQueued {
-			queued = append(queued, runs[i])
-		} else if started == nil {
-			started = &runs[i]
-		}
-	}
+	// The worker's order, its own (consolidate.QueueOrder).
+	order := consolidate.QueueOrder(notes, runs)
+	queued := order.Queued
 	var free, held []queueItemBody
-	for _, n := range notes {
-		it := noteItem(n)
-		if n.HeldBy != 0 {
-			held = append(held, it)
-		} else {
-			free = append(free, it)
-		}
+	for _, n := range order.Free {
+		free = append(free, noteItem(n))
+	}
+	for _, n := range order.Held {
+		held = append(held, noteItem(n))
 	}
 	var startedItem *queueItemBody
-	if started != nil {
-		it, err := q.runItem(ctx, *started)
+	if order.Started != nil {
+		it, err := q.runItem(ctx, *order.Started)
 		if err != nil {
 			return out, err
 		}
@@ -276,6 +271,21 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 					}
 				}
 			}
+			// Over between the status and the read of the runs (its last
+			// step): still the work in flight a moment ago.
+			if out.Current == nil {
+				r, ok, err := q.Store.RunByID(ctx, b.RunID)
+				if err != nil {
+					return out, err
+				}
+				if ok {
+					it, err := q.runItem(ctx, r)
+					if err != nil {
+						return out, err
+					}
+					out.Current = &it
+				}
+			}
 		}
 		if out.Current != nil {
 			since := b.Since
@@ -306,8 +316,21 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 			}
 		}
 	}
-	if st.HoldUntil != nil && out.Current == nil && len(out.Next) > 0 {
+	if st.HoldUntil != nil && st.Busy == nil && out.Current == nil && len(out.Next) > 0 {
 		out.Next[0].Wait = &waitBody{Reason: st.HoldCause, Until: st.HoldUntil}
+	}
+	// The notes past notesMax are counted, not listed: a backlog of a long
+	// hold is not read and sent every few seconds.
+	if len(notes) == notesMax {
+		total, err := q.Store.QueueCount(ctx, q.Sync != nil)
+		if err != nil {
+			return out, err
+		}
+		shown := len(out.Next)
+		if out.Current != nil {
+			shown++
+		}
+		out.More = max(total-shown, 0)
 	}
 
 	if q.Sync != nil {
@@ -353,19 +376,22 @@ func (q *QueueDeps) runItem(ctx context.Context, r store.BaselineRun) (queueItem
 	}
 	body := &queueRunBody{ID: r.ID, State: r.State, Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, BaseCommit: r.BaseCommit,
 		Calls: r.Calls, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, Steps: make([]stepBody, 0, len(steps))}
-	var total *int64
 	for _, s := range steps {
 		body.Steps = append(body.Steps, stepBody{Kind: s.Kind, Name: s.Name, Files: s.Files, Bytes: s.Bytes, State: s.State,
 			Skip: string(s.Skip), Calls: s.Calls, Failed: s.Failed, At: s.At, CostUSD: usd(s.CostNanoUSD)})
-		if s.CostNanoUSD != nil {
-			sum := *s.CostNanoUSD
-			if total != nil {
-				sum += *total
-			}
-			total = &sum
+	}
+	// The run's cost is every call's, as RunCosts sums a finished run,
+	// not the steps' (a call no step holds still cost).
+	var total int64
+	priced := false
+	for _, c := range calls {
+		if c.CostNanoUSD != nil {
+			total, priced = total+*c.CostNanoUSD, true
 		}
 	}
-	body.CostUSD = usd(total)
+	if priced {
+		body.CostUSD = usd(&total)
+	}
 	return queueItemBody{Kind: consolidate.KindRun, Project: r.ProjectKey, Repo: r.Slug, Run: body, Attempts: r.Attempts}, nil
 }
 

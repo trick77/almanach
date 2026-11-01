@@ -50,9 +50,10 @@ type RunStep struct {
 	CostNanoUSD *int64
 }
 
-// RunSteps lists an open run's steps; a run that is over is never asked.
-// A queued run has no plan yet: its subjects are unknown until the
-// catalogue, so it lists the catalogue, the project and the map alone.
+// RunSteps lists a run's steps: an open run's, or one that ended while
+// the queue page read it. A queued run has no plan yet: its subjects are
+// unknown until the catalogue, so it lists the catalogue, the project and
+// the map alone.
 func RunSteps(r store.BaselineRun, calls []store.RunCall) ([]RunStep, error) {
 	plan, err := decodePlan(r.Plan)
 	if err != nil {
@@ -101,6 +102,13 @@ func RunSteps(r store.BaselineRun, calls []store.RunCall) ([]RunStep, error) {
 			steps[repoMap].State = StepCurrent
 		} else {
 			steps[project].State = StepCurrent
+		}
+	case store.RunDone:
+		// Over at its last step, the moment the page caught it: every
+		// step reached. A failed run stops anywhere, its steps unknown
+		// here: left to do.
+		for i := range steps {
+			done(i)
 		}
 	}
 	// Skipped parts override done.

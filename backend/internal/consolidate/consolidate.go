@@ -220,6 +220,8 @@ func (w *Worker) stopping() bool {
 // Notes come first: a note is a small, timely delta, a run minutes of
 // calls. With the baseline on, one step of the oldest open run follows
 // when no note is due, and the notes are looked at again after it.
+// QueueOrder lays the queue out in this order for the queue page: a
+// change here changes it too.
 func (w *Worker) drain(ctx context.Context) {
 	w.saveFailed = nil
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {

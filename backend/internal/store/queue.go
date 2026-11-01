@@ -27,16 +27,21 @@ type PendingNote struct {
 	HeldBy int64
 }
 
-// PendingNotes is every unfolded note, oldest first, as NextQueued takes
-// them.
-func (s *Store) PendingNotes(ctx context.Context) ([]PendingNote, error) {
+// startedRunOfNote is the started run of note n's repository, the run its
+// note waits for: NextQueued skips a note that has one, PendingNotes names
+// it. One rule, so the page shows the hold the worker keeps.
+const startedRunOfNote = `SELECT b.id FROM baseline_runs b WHERE b.repo_id = n.repo_id
+	AND b.state NOT IN ('queued', 'done', 'failed')`
+
+// PendingNotes is the unfolded notes, oldest first, as NextQueued takes
+// them, at most limit.
+func (s *Store) PendingNotes(ctx context.Context, limit int) ([]PendingNote, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.key, r.slug, n.pr_key, n.pr_title, COALESCE(n.change_kind, ''), n.received_at, n.fold_attempts,
-		       COALESCE((SELECT b.id FROM baseline_runs b WHERE b.repo_id = n.repo_id
-		                    AND b.state NOT IN ('queued', 'done', 'failed') LIMIT 1), 0)
+		       COALESCE((`+startedRunOfNote+` LIMIT 1), 0)
 		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
 		 WHERE n.consolidated_at IS NULL
-		 ORDER BY n.received_at, n.pr_id`)
+		 ORDER BY n.received_at, n.pr_id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
