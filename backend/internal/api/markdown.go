@@ -31,17 +31,24 @@ var markdownKinds = []struct{ kind, heading string }{
 	{"entity", "Entitäten"},
 }
 
-// projectKindOrder is a project export's order (Description.tsx
-// PROJECT_KINDS, held to it by a test): there a component is an interface
-// between repositories, where breaking changes live, and an entity data
-// that crosses them, so both lead. A project holds no extension.
-var projectKindOrder = []string{"component", "entity", "invariant", "rule", "decision", "pitfall"}
-
 // projectEntityHeading is the entity kind's heading on a project's export:
 // there the kind holds the entities that cross repositories, their system
 // of record and how their ids travel. The UI's label (strings.ts
 // S.projectKinds), held to it by a test.
 const projectEntityHeading = "Geteilte Daten"
+
+// projectMarkdownKinds is a project export's order and headings
+// (Description.tsx PROJECT_KINDS, held to it by a test): there a component
+// is an interface between repositories, where breaking changes live, and
+// an entity data that crosses them, so both lead. No extension.
+var projectMarkdownKinds = []struct{ kind, heading string }{
+	{"component", "Komponenten"},
+	{"entity", projectEntityHeading},
+	{"invariant", "Invarianten"},
+	{"rule", "Regeln"},
+	{"decision", "Entscheidungen"},
+	{"pitfall", "Fallstricke"},
+}
 
 const markdownType = "text/markdown; charset=utf-8"
 
@@ -96,10 +103,9 @@ func writeMarkdown(w http.ResponseWriter, body string) {
 // renderMarkdown is a page's current revision as Markdown: the title, the
 // revision, the summary, the page's map (the project's system map, a
 // repository's Aufbau), then the statements grouped by kind in
-// kindOrder's order, each with its files, its PR keys and its diagram.
-// A kind without statements has no heading; a project's entities are
-// headed projectEntityHeading. A page without a revision yet says so under
-// its title.
+// the scope's order (markdownKinds, projectMarkdownKinds), each with its
+// files, its PR keys and its diagram. A kind without statements has no
+// heading. A page without a revision yet says so under its title.
 func renderMarkdown(title, scope string, p store.Page, found bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", title)
@@ -120,11 +126,11 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 		b.WriteString("## Aufbau\n\n")
 		writeJSONBlock(&b, p.RepoMap)
 	}
-	for _, k := range kindOrder(scope) {
-		heading := k.heading
-		if k.kind == "entity" && scope == store.ScopeProject {
-			heading = projectEntityHeading
-		}
+	kinds := markdownKinds
+	if scope == store.ScopeProject {
+		kinds = projectMarkdownKinds
+	}
+	for _, k := range kinds {
 		var list []store.Statement
 		for _, s := range p.Statements {
 			if s.Kind == k.kind {
@@ -134,29 +140,12 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 		if len(list) == 0 {
 			continue
 		}
-		fmt.Fprintf(&b, "## %s\n\n", heading)
+		fmt.Fprintf(&b, "## %s\n\n", k.heading)
 		for _, s := range list {
 			writeStatement(&b, s)
 		}
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
-}
-
-// kindOrder is a scope's kinds in its export order, with their headings:
-// markdownKinds on a repository, projectKindOrder on a project.
-func kindOrder(scope string) []struct{ kind, heading string } {
-	if scope != store.ScopeProject {
-		return markdownKinds
-	}
-	out := make([]struct{ kind, heading string }, 0, len(projectKindOrder))
-	for _, kind := range projectKindOrder {
-		for _, k := range markdownKinds {
-			if k.kind == kind {
-				out = append(out, k)
-			}
-		}
-	}
-	return out
 }
 
 func writeStatement(b *strings.Builder, s store.Statement) {

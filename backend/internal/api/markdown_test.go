@@ -47,7 +47,9 @@ func exportStore() *fakeStore {
 		Map: &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "pay-api", Label: "pay-api", Shape: "step", Zone: "repositories"}},
 			Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}}},
 		Statements: []store.Statement{{ID: "s1", Kind: "pitfall", Name: "Quer", Text: "Brach.", Files: []string{"x.go"}},
-			{ID: "s2", Kind: "entity", Name: "Zahlung", Text: "Gehört pay-api; die anderen sehen die ID.", Files: []string{"pay.go"}}}}
+			{ID: "s2", Kind: "entity", Name: "Zahlung", Text: "Gehört pay-api; die anderen sehen die ID.", Files: []string{"pay.go"}},
+			{ID: "s3", Kind: "invariant", Name: "Einmal", Text: "Jede Zahlung genau einmal.", Files: []string{"pay.go"}},
+			{ID: "s4", Kind: "component", Name: "Webhook", Text: "pay-api bietet ihn an.", Files: []string{"api.go"}}}}
 	return st
 }
 
@@ -134,10 +136,15 @@ func TestProjectMarkdown(t *testing.T) {
 	if !strings.Contains(md, "## Geteilte Daten\n\n### Zahlung") || strings.Contains(md, "## Entitäten") || strings.Contains(md, "## Aufbau") {
 		t.Errorf("project entities or a repository map:\n%s", md)
 	}
-	// A project leads with its parts: the shared data before the pitfall
-	// stored ahead of it.
-	if strings.Index(md, "## Geteilte Daten") > strings.Index(md, "## Fallstricke") {
-		t.Errorf("project kinds out of order:\n%s", md)
+	// A project leads with its parts, whatever order they are stored in.
+	var headings []string
+	for _, l := range strings.Split(md, "\n") {
+		if strings.HasPrefix(l, "## ") {
+			headings = append(headings, l)
+		}
+	}
+	if want := []string{"## Systemkarte", "## Komponenten", "## Geteilte Daten", "## Invarianten", "## Fallstricke"}; !slices.Equal(headings, want) {
+		t.Errorf("project headings %q, want %q", headings, want)
 	}
 	if rec := getMD(h, "/api/projects/NOPE.md", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown project = %d", rec.Code)
@@ -213,8 +220,9 @@ func TestMarkdownEscapesItemText(t *testing.T) {
 	}
 }
 
-// The export's kinds are the UI's: the same order as Description.tsx's
-// KINDS, each heading the label strings.ts gives the kind.
+// The export's kinds are the UI's: a repository's in Description.tsx's
+// KINDS order, a project's in PROJECT_KINDS order, each heading the label
+// strings.ts gives the kind, and each list the kinds its schema offers.
 func TestMarkdownKindsMatchTheUI(t *testing.T) {
 	read := func(p string) string {
 		b, err := os.ReadFile(filepath.Join("..", "..", "..", "ui", "src", p))
@@ -240,10 +248,18 @@ func TestMarkdownKindsMatchTheUI(t *testing.T) {
 	}
 	ui := uiList("KINDS")
 	var project []string
-	for _, k := range kindOrder(store.ScopeProject) {
+	for _, k := range projectMarkdownKinds {
 		project = append(project, k.kind)
+		// A project's headings are the repository's, but for its entities.
+		want := projectEntityHeading
+		if k.kind != "entity" {
+			want = fmt.Sprintf("    %s: %q,\n", k.kind, k.heading)
+		}
+		if !strings.Contains(copyTS, want) {
+			t.Errorf("strings.ts labels the project's %s otherwise than %q", k.kind, k.heading)
+		}
 	}
-	if want := uiList("PROJECT_KINDS"); !slices.Equal(project, want) || !slices.Equal(projectKindOrder, want) {
+	if want := uiList("PROJECT_KINDS"); !slices.Equal(project, want) {
 		t.Errorf("project export order %v, UI order %v", project, want)
 	}
 	if a, b := slices.Sorted(slices.Values(project)), slices.Sorted(slices.Values(inference.ProjectKinds)); !slices.Equal(a, b) {

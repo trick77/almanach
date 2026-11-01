@@ -424,6 +424,38 @@ describe("ProjectPage", () => {
     delete (Element.prototype as Partial<Element>).scrollIntoView;
   });
 
+  it("leads with the interfaces and shared data, in the rail and the tab", async () => {
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    const rail = await screen.findByRole("navigation", { name: "Inhalt" });
+    const order = [
+      "Komponenten",
+      "Geteilte Daten",
+      "Invarianten",
+      "Regeln",
+      "Entscheidungen",
+      "Fallstricke",
+    ];
+    const kinds = within(rail)
+      .getAllByRole("link")
+      .map((a) => order.find((label) => a.textContent?.startsWith(label)))
+      .filter((label) => label !== undefined);
+    expect(kinds).toEqual(order);
+    expect(within(rail).queryByText("Erweiterungen")).toBeNull();
+    await openTab(/Beschreibung/);
+    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
+    expect(
+      Array.from(desc.querySelectorAll("[id^=art-]")).map((e) => e.id),
+    ).toEqual([
+      "art-component",
+      "art-entity",
+      "art-invariant",
+      "art-rule",
+      "art-decision",
+      "art-pitfall",
+    ]);
+  });
+
   it("searches the description: typing on the overview goes there", async () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
