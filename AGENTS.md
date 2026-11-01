@@ -33,10 +33,10 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   page stays, never truncated; project step keeps the new statements that fit. Identical rewrite =
   no revision. Flow (map, statement): self/repeated edges dropped before its check.
 - Provenance is code's: `sources` carried by id, current PR appended on text change. Edit of an
-  unknown id (invented) or one already edited: that edit left out, logged, first edit counts
-  (user, 2026-11-01; page without statements: edits taken as new); unknown drop/confirmed
-  skipped, logged. New statements in id-less `added`; id from `NextStatementID` over whole
-  history, never reissued.
+  unknown id (invented) or one already edited: merge (whole page) rejected; step's patch leaves
+  that edit out, logged, first edit counts (user, 2026-11-01). Page without statements: edits
+  taken as new. Unknown drop/confirmed skipped, logged. New statements in id-less `added`; id
+  from `NextStatementID` over whole history, never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:

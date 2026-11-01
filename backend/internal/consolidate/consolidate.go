@@ -489,23 +489,31 @@ func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added
 // eval's project step was refused whole for "unknown statement id s2" so).
 // Its edits join the new statements, their ids cleared by Proposed and
 // ApplyPatch, logged; an edit repeating a new statement's or an earlier
-// edit's kind and name is that statement twice and goes. Left as edits they
-// would all be left out as unknown ids. On a page with statements nothing
-// moves. Every path that applies an answer to a page calls it first.
+// edit's kind and name (Swiss) is that statement twice and goes, logged.
+// With nothing on the page an edit could delete, an id used twice moves
+// too. On a page with statements nothing moves. Every path that applies an
+// answer to a page calls it first.
 func (w *Worker) asNew(ctx context.Context, where string, current []store.Statement, edits, added []inference.Statement) ([]inference.Statement, []inference.Statement) {
 	if len(current) > 0 || len(edits) == 0 {
 		return edits, added
 	}
 	named := map[string]bool{}
 	for _, a := range added {
-		named[a.Kind+"\x00"+strings.TrimSpace(a.Name)] = true
+		named[a.Kind+"\x00"+lang.SwissSS(strings.TrimSpace(a.Name))] = true
 	}
 	moved := make([]inference.Statement, 0, len(edits)+len(added))
+	var twice []string
 	for _, e := range edits {
-		if key := e.Kind + "\x00" + strings.TrimSpace(e.Name); !named[key] {
-			named[key] = true
-			moved = append(moved, e)
+		key := e.Kind + "\x00" + lang.SwissSS(strings.TrimSpace(e.Name))
+		if named[key] {
+			twice = append(twice, e.Name)
+			continue
 		}
+		named[key] = true
+		moved = append(moved, e)
+	}
+	if len(twice) > 0 {
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: edit repeating a statement left out: %s", where, strings.Join(twice, ", ")))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("%s: %s on a page without statements taken as new", where, plural(len(moved), "edit")))
 	return []inference.Statement{}, append(moved, added...)
@@ -527,8 +535,10 @@ func attachDescription(scope string, current []store.Statement, d *inference.Des
 // when the text changed; a new one starts with src, numbered from next (one
 // past every id the page's history used, so a dropped id is never
 // reissued). An id the current page does not have is the model inventing
-// one, an id edited twice a muddle: that edit is left out, named in
-// leftOut. Spelling is Swiss on every prose field. A diagram is held
+// one, an id edited twice a muddle: rejected. On a merge, a whole page,
+// leaving such an edit out would delete what it meant to edit; a step's
+// patch leaves it out before (baseline.ApplyPatch), its unnamed ids kept.
+// Spelling is Swiss on every prose field. A diagram is held
 // to baseline.CheckDiagram; one that breaks a rule, or one past the page's
 // count, is left out (its statement kept) and named in leftOut: one bad
 // diagram costs that diagram, never the statements of a whole part. A
@@ -538,7 +548,7 @@ func attachDescription(scope string, current []store.Statement, d *inference.Des
 // commit a statement was last checked against stays while its name, text
 // and diagram do; a change voids it, the caller sets a new one when it read
 // the code. A kind the scope's page may not hold (any unknown one, an
-// extension on the project page) rejects the rewrite.
+// extension on the project page) rejects the rewrite like an invented id.
 func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, leftOut leftOutParts, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
@@ -548,29 +558,24 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 	olds := make([]*store.Statement, 0, len(proposed))
 	seen := map[string]bool{}
 	for _, p := range proposed {
-		// An edit of an id the page does not have, or of one an earlier
-		// edit took, costs that edit (user, 2026-11-01): the first edit of
-		// an id counts.
-		var old *store.Statement
-		if p.ID != nil && *p.ID != "" {
-			o, ok := byID[*p.ID]
-			if !ok {
-				leftOut.badEdits = append(leftOut.badEdits, baseline.UnknownEdit(*p.ID))
-				continue
-			}
-			if seen[*p.ID] {
-				leftOut.badEdits = append(leftOut.badEdits, baseline.TwiceEdit(*p.ID))
-				continue
-			}
-			seen[*p.ID] = true
-			old = &o
-		}
 		if !kinds[scope][p.Kind] {
 			return nil, leftOutParts{}, "statement kind " + p.Kind + " not on a " + scope + " page"
 		}
 		s := cleanStatement(p)
 		if s.Name == "" || s.Text == "" {
 			return nil, leftOutParts{}, "empty statement"
+		}
+		var old *store.Statement
+		if p.ID != nil && *p.ID != "" {
+			o, ok := byID[*p.ID]
+			if !ok {
+				return nil, leftOutParts{}, "unknown statement id " + *p.ID
+			}
+			if seen[*p.ID] {
+				return nil, leftOutParts{}, "statement id used twice " + *p.ID
+			}
+			seen[*p.ID] = true
+			old = &o
 		}
 		// One statement over a field cap costs that statement, never the
 		// rewrite (user, 2026-10-31: an eval lost seven parts so): a new one
@@ -590,12 +595,12 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 		}
 		// A returned flow loses its self and repeated edges first, as the
 		// map does: one such edge cost a whole diagram.
-		proposed, dropped := p.Diagram, []string(nil)
-		if proposed != nil && proposed.Kind == diagram.KindFlow {
-			proposed, dropped = baseline.RepairEdges(proposed)
+		flow, dropped := p.Diagram, []string(nil)
+		if flow != nil && flow.Kind == diagram.KindFlow {
+			flow, dropped = baseline.RepairEdges(flow)
 		}
-		d, stale, why := statementDiagram(proposed, old, s, dl.caps)
-		if len(dropped) > 0 {
+		d, stale, why := statementDiagram(flow, old, s, dl.caps)
+		if len(dropped) > 0 && why == "" {
 			leftOut.edges = append(leftOut.edges, fmt.Sprintf("%q (%s)", s.Name, strings.Join(dropped, ", ")))
 		}
 		if why != "" {
@@ -627,9 +632,9 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			s.Sources = []store.Source{src}
 		}
 	}
-	// Statements left out, every one proposed, never empty a page.
+	// Caps that left out every statement proposed never empty a page.
 	if len(proposed) > 0 && len(out) == 0 {
-		return nil, leftOutParts{}, "every statement left out"
+		return nil, leftOutParts{}, "every statement over a field cap"
 	}
 	return out, leftOut, ""
 }
@@ -710,8 +715,9 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 // statements over a field cap (fieldCap) left out, by name and reason
 // (overCap); and the edits over one, the statement kept as stored, by id
 // (capKept, which a step never marks checked) and with the reason; the
-// edits of an unknown or repeated id, by id and reason (badEdits); the
-// self and repeated edges taken out of a flow, by name and edge (edges).
+// edits of an unknown or repeated id a step's patch left out, by id and
+// reason (badEdits); the self and repeated edges taken out of a flow that
+// passed its check, by name and edge (edges).
 type leftOutParts struct {
 	overCount, invalid, stale, overCap []string
 	capKept, capKeptWhy                []string

@@ -1555,6 +1555,8 @@ func returnedUnchanged(before []store.Statement, p inference.Patch) int {
 		if !ok {
 			continue
 		}
+		// An id edited twice counts once: ApplyPatch takes the first edit.
+		delete(was, *st.ID)
 		c := cleanStatement(st)
 		c.ID, c.Diagram = old.ID, old.Diagram
 		// null, the stored diagram again, or none on a statement without one

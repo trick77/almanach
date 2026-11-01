@@ -336,9 +336,9 @@ func TestFoldAgentKinds(t *testing.T) {
 }
 
 // New statements come in `added` and the code numbers them, whatever id an
-// answer slipped in; an edit must name an id. One the page lacks is
-// invented and left out, the rest kept; an answer of nothing else would
-// empty the page and is rejected.
+// answer slipped in; an edit must name an id, and one the page lacks is
+// invented: the rewrite is rejected, as before the split. A merge is the
+// whole page, so leaving such an edit out would delete what it meant.
 func TestFoldEditsAndAdded(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
@@ -354,8 +354,8 @@ func TestFoldEditsAndAdded(t *testing.T) {
 		t.Errorf("statements = %+v, want s1 kept and the new one numbered s2", got)
 	}
 
-	// An invented edit and a repeated one cost only themselves: the first
-	// edit of s1 counts.
+	// An invented edit beside a valid one, or an id edited twice, still
+	// rejects the merge: the page stays.
 	st = newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
 	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
@@ -366,11 +366,8 @@ func TestFoldEditsAndAdded(t *testing.T) {
 		},
 		Added: []inference.Statement{},
 	}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 1 {
-		t.Fatalf("bad edits: revisions = %+v", st.revisions)
-	}
-	if got := st.revisions[0].Statements; len(got) != 1 || got[0].ID != "s1" || got[0].Text != "Nimmt Dateien an, bis 10 MB." {
-		t.Errorf("bad edits: statements = %+v, want s1 with its first edit only", got)
+	if len(st.revisions) != 0 {
+		t.Errorf("bad edits: revision written %+v", st.revisions)
 	}
 
 	for name, d := range map[string]*inference.Description{
@@ -402,8 +399,8 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	if want := []string{"s1:Grenze", "s2:Takt", "s3:Uploader"}; !slices.Equal(got, want) {
 		t.Errorf("empty page: statements = %v, want %v", got, want)
 	}
-	// An edit repeating a new statement, or an earlier edit, is that
-	// statement once.
+	// An edit repeating a new statement, or an earlier edit (an id used
+	// twice), is that statement once.
 	st = newFakeStore()
 	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}},
@@ -513,6 +510,8 @@ func TestFoldRejections(t *testing.T) {
 	}{
 		{"unknown id", &inference.Description{Summary: "s", Statements: []inference.Statement{{ID: str("s9"), Kind: "rule", Name: "n", Text: "t"}}}},
 		{"unknown kind", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "opinion", Name: "n", Text: "t"}}}},
+		{"id used twice", &inference.Description{Summary: "s", Statements: []inference.Statement{
+			{ID: str("s1"), Kind: "rule", Name: "n", Text: "t"}, {ID: str("s1"), Kind: "rule", Name: "m", Text: "u"}}}},
 		{"empty statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: " ", Text: "t"}}}},
 		{"over the statement cap", &inference.Description{Summary: "s", Statements: many}},
 		// The ceiling is the whole description: the summary and the names

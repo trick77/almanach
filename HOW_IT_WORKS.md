@@ -151,7 +151,7 @@ statements in two lists: `statements`, every statement it keeps or edits,
 each with its `id` (the schema requires the string), and `added`, the new
 ones, which have no id field at all. A model asked to write `null` for a
 new statement's id numbered it anyway (`s1` on an empty page, `s36` on one
-up to `s35`) and lost the rewrite to the invented-id rule then; with no field to
+up to `s35`) and lost the rewrite to the invented-id rule; with no field to
 write, it cannot. The code numbers a new statement. On a page without
 statements the model still put new ones in `statements` with ids (an
 eval's project step, `s2`); there is nothing to edit there, so on every
@@ -164,10 +164,10 @@ The answer is then held to rules the model cannot bend:
   this pull request only when its text or name changed; a new statement
   starts with this pull request, numbered past every id the page's history
   ever used, so an id dropped in one fold never names another fact later.
-  An edit of an id the page does not have (invented), or of one an earlier
-  edit took, is left out and logged ("edit left out: s9 (unknown id)"); the
-  first edit of an id counts, the rest of the answer stands. An answer of
-  nothing else would empty the page and is rejected.
+  An id the page does not have, or one used twice, rejects the rewrite:
+  the answer is the whole page, so leaving such an edit out would delete
+  the statement it meant to edit (a baseline step's patch keeps every id
+  it does not name, and leaves only that edit out).
 - Ceilings: statement count per scope and runes per whole description
   (the summary and every statement's name and text). No statement has a
   length cap of its own: a description is documentation, each statement as
@@ -889,9 +889,9 @@ so the choice is not undone as a cleanup.
   model asked to maintain them would invent PR numbers. So the model
   returns statements with their ids and code carries the sources forward,
   appending the current PR when the text changed. An edited id the page
-  never had is invented and never accepted: that edit is left out, not the
-  answer; new statements come in a list with no id field, numbered by code;
-  a dropped id is never reissued.
+  never had is invented and never accepted: a merge is rejected, a step's
+  patch loses that edit; new statements come in a list with no id field,
+  numbered by code; a dropped id is never reissued.
 - **Caps are enforced in code, and a rewrite over a ceiling is rejected
   whole.** The prompt tells the model the numbers, but prose grows unless
   something refuses it. Truncating would produce a description that lies
