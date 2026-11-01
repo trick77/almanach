@@ -11,6 +11,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Gate = `make check` (`SHIP_CMD=<binary>` locally); `make hooks` per clone. GitHub never first to
   find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.
+- Fresh clone: `ship hooks` before the first push (check, conform and init install it too); without the pre-push hook a push skips the gate.
 - Release: `gh workflow run Release`, GitHub-hosted runners only.
 - ship, kit never hand-pinned: `ship init`, kit `@latest`, Dependabot.
 - No web framework, ORM, logging lib beyond kit's.
