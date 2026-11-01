@@ -152,7 +152,8 @@ type Baseline struct {
 	// that picks what to read; "" means Model.
 	CatalogueModel string
 	// MaxCalls is the model calls one run may make: catalogue, overview, one
-	// per subject, project.
+	// per subject, project, repository map (a refused map asked again
+	// counts too).
 	MaxCalls int
 	// MaxBytes is the file content one run may read.
 	MaxBytes int
@@ -161,8 +162,9 @@ type Baseline struct {
 	Reconcile time.Duration
 }
 
-// minBaselineCalls is a run with no subject: catalogue, overview, project.
-const minBaselineCalls = 3
+// minBaselineCalls is a run with no subject: catalogue, overview, project,
+// repository map.
+const minBaselineCalls = 4
 
 // App is the whole configuration.
 type App struct {
@@ -235,7 +237,7 @@ func Load(lookup func(string) string) (*App, error) {
 		r.Fail("BACKEND_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
 	}
 	if app.Baseline.MaxCalls > 0 && app.Baseline.MaxCalls < minBaselineCalls {
-		r.Fail("BACKEND_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
+		r.Fail("BACKEND_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project, repository map), got %d", minBaselineCalls, app.Baseline.MaxCalls)
 	}
 	// A diagram past the drawing's ceilings is not drawn, so the caps may
 	// not go past them either.

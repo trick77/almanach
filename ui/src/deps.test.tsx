@@ -75,6 +75,7 @@ const repo: RepoDetail = {
   revisions: [],
   notes: [],
   map: null,
+  map_declined: false,
   uses: [
     {
       project: "tools",

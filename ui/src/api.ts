@@ -158,6 +158,9 @@ export interface RepoDetail {
   /** The repository map, the repository from inside: zones entry, parts,
    *  stores and external. null before a baseline run drew one. */
   map: FlowIR | null;
+  /** The map step asked for the map and refused every answer: map is
+   *  null until the description changes. */
+  map_declined: boolean;
   /** The source repositories this one uses, by its manifests. */
   uses: Use[];
   /** The source repositories that use this one. */

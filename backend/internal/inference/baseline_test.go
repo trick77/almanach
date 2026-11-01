@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/llmwire/llmwiretest"
 )
 
@@ -113,6 +114,24 @@ func TestDescribe(t *testing.T) {
 
 const testRepoMap = `{"kind": "flow", "direction": "LR", "nodes": [{"id": "api", "label": "HTTP-API", "shape": "step", "zone": "entry"}], "edges": [], "zones": [{"id": "entry", "title": "Eingang"}]}`
 
+// The system map asked again alone: its own schema, the system map's
+// zones, the map parsed as a repository map's is.
+func TestProjectMap(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(`{"map": {"kind": "flow", "direction": "TB", "nodes": [{"id": "svc", "label": "svc", "shape": "step", "zone": "repositories"}], "edges": [], "zones": [{"id": "repositories", "title": "Repositories"}]}}`)
+	res := testClient(srv.Client()).ProjectMap(context.Background(), "the project")
+	if res.Outcome != OutcomeOK || res.Map == nil || res.Map.Nodes[0].Zone != "repositories" {
+		t.Fatalf("ProjectMap = %+v", res)
+	}
+	if name := schemaName(t, srv); name != ProjectMapSchemaName {
+		t.Errorf("schema = %q", name)
+	}
+	srv.SetReply(`{"other": 1}`)
+	if res := testClient(srv.Client()).ProjectMap(context.Background(), "p"); res.Outcome != OutcomeUnparseable {
+		t.Errorf("no map key: Outcome = %s, want unparseable", res.Outcome)
+	}
+}
+
 func TestRepoMap(t *testing.T) {
 	srv := llmwiretest.NewServer(t)
 	srv.SetReply(`{"map": ` + testRepoMap + `}`)
@@ -214,6 +233,17 @@ func TestDiagramSchemas(t *testing.T) {
 	zone := mapSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["zone"].(map[string]any)
 	if !slices.Equal(zone["enum"].([]any), []any{"clients", "repositories", "stores", "external"}) {
 		t.Errorf("map node zone = %v", zone)
+	}
+	// Both maps bounded by the map caps, a statement's flow by none: its
+	// caps are config's, held by the validator.
+	for name, m := range map[string]map[string]any{"system map": mapSchema(), "repository map": repoMapSchema()} {
+		props := m["properties"].(map[string]any)
+		if props["nodes"].(map[string]any)["maxItems"] != diagram.MapMaxNodes || props["edges"].(map[string]any)["maxItems"] != diagram.MapMaxEdges {
+			t.Errorf("%s: nodes %v, edges %v, want maxItems %d and %d", name, props["nodes"], props["edges"], diagram.MapMaxNodes, diagram.MapMaxEdges)
+		}
+	}
+	if _, ok := flowSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["maxItems"]; ok {
+		t.Error("a statement's flow bounded in the schema")
 	}
 	// The three kinds, the removal, and null to keep.
 	branches := statementDiagram()["anyOf"].([]any)

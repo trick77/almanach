@@ -337,6 +337,7 @@ function SystemMap({
     <Diagram
       ir={ir}
       title={S.diagram.titles.map}
+      map
       links={(id) => {
         const r = byId.get(id);
         if (r) return repoPath(r.project, r.slug);
@@ -367,7 +368,7 @@ export function withShared(map: FlowIR, repos: SharedRepo[]): FlowIR {
   const drawn = repos.filter((r) => r.used_by.some((u) => own.has(u.slug)));
   for (let n = drawn.length; n > 0; n--) {
     const out = drawShared(map, drawn.slice(0, n), repos);
-    if (fits(out)) return out;
+    if (fits(out, true)) return out;
   }
   return map;
 }

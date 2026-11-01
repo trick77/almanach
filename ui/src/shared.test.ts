@@ -69,10 +69,10 @@ describe("withShared", () => {
       ...llmwire,
       slug: `lib${i}`,
     }));
-    // 2 edges stored, 2 per library within 24: eleven.
+    // 2 edges stored, 2 per library within a map's 33: fifteen.
     const ir = withShared(map, many);
-    expect(ir.nodes.filter((n) => n.zone === "shared")).toHaveLength(11);
-    expect(ir.nodes.some((n) => n.id === "shared:tools/lib10")).toBe(true);
+    expect(ir.nodes.filter((n) => n.zone === "shared")).toHaveLength(15);
+    expect(ir.nodes.some((n) => n.id === "shared:tools/lib14")).toBe(true);
   });
 
   it("leaves a node alone that is no library use", () => {

@@ -166,6 +166,8 @@ export const S = {
     project: "Projekt",
     single: "Projekt aus einem Repository",
     map: "Aufbau",
+    mapDeclined:
+      "Kein Aufbau: der letzte Run hat jeden Entwurf verworfen, weil er gegen die Regeln der Karte verstiess. Er wird neu gezeichnet, sobald sich die Beschreibung ändert.",
     revisions: "Revisionen",
     revisionFrom: "aus",
     current: "aktuell",

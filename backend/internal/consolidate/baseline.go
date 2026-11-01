@@ -64,11 +64,12 @@ type Cataloguer interface {
 }
 
 // Describer is the model that writes: the patch of a step, the project,
-// the repository's map.
+// the repository's map, and the project's map asked again alone.
 type Describer interface {
 	Patch(ctx context.Context, prompt string) inference.PatchResult
 	Describe(ctx context.Context, prompt string) inference.DescriptionResult
 	RepoMap(ctx context.Context, prompt string) inference.RepoMapResult
+	ProjectMap(ctx context.Context, prompt string) inference.RepoMapResult
 }
 
 // Baseline is the runs' part of the worker; without it (the sources off)
@@ -327,6 +328,23 @@ func (w *Worker) maxSubjects() int {
 	return max(w.base.Limits.MaxCalls-4, 0)
 }
 
+// keptCalls is the calls a run's parts leave to the steps after them: one
+// for the repository map, which the parts once spent on every run of a
+// large repository (loom had no map), and one for the project's in a
+// project of more than one. A placing call or a part read again past
+// maxSubjects ends the reading early, not the map.
+func (w *Worker) keptCalls(ctx context.Context, r *store.BaselineRun) (int, error) {
+	n, err := w.store.SourceRepoCount(ctx, r.ProjectKey)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project source read failed, drain paused", logging.Err(err))
+		return 0, errStop
+	}
+	if store.Single(n) {
+		return 1, nil
+	}
+	return 2, nil
+}
+
 // catalogue is a run's catalogue step: one call to the catalogue model for
 // a full run, or for a reconcile with files no subject holds; none for a
 // reconcile whose changes all fall in known subjects.
@@ -577,7 +595,11 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		}
 		part, purpose, read = fmt.Sprintf("the subject %q: %s", s.Name, s.Purpose), store.PurposeSubject, s.Files
 	}
-	if r.Calls >= w.base.Limits.MaxCalls {
+	kept, err := w.keptCalls(ctx, r)
+	if err != nil {
+		return err
+	}
+	if r.Calls >= w.base.Limits.MaxCalls-kept {
 		return w.endReading(ctx, r, &plan, baseline.SkipCalls, "the run's calls are spent")
 	}
 	var size int64
@@ -1160,7 +1182,10 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: shared repositories read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), w.limits))
+	prompt := func(refused string) string {
+		return renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), w.limits, refused)
+	}
+	res := w.base.Describer.Describe(ctx, prompt(""))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -1178,7 +1203,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		rev = w.carriedRevision(ctx, r, projectPage, slugs(repos))
 	} else {
 		var refused string
-		rev, refused, err = w.projectRevision(ctx, r, plan, projectPage, res.Description, slugs(repos))
+		rev, refused, err = w.projectRevision(ctx, r, plan, projectPage, res.Description, slugs(repos), prompt)
 		if err != nil {
 			return err
 		}
@@ -1295,9 +1320,10 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 // (a note's fold, which carries what the PR taught, may rewrite it), its
 // drop left out and logged; an edit may change any statement's files.
 // The page has no ceiling. The map never sinks the description: see
-// revisionMap. slugs are the project's source
-// repositories.
-func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string) (*store.NewRevision, string, error) {
+// revisionMap. slugs are the project's source repositories; prompt is the
+// step's prompt, given the rule a refused map broke.
+func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string,
+	prompt func(refused string) string) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
@@ -1347,7 +1373,10 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	// (user, 2026-11-01).
 	chars := prose(summary, statements)
 	logLeftOut(ctx, w.log, "baseline: "+projectLabel, leftOut)
-	drawn := w.revisionMap(ctx, page, d.Map, slugs)
+	drawn, err := w.revisionMap(ctx, r, page, d.Map, slugs, prompt)
+	if err != nil {
+		return nil, "", err
+	}
 	if summary == page.Summary && sameStatements(page.Statements, statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, "", nil
@@ -1362,32 +1391,89 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 // revisionMap is the map a project revision carries. A project too large for
 // one gets none. Otherwise the returned map, its self and repeated edges
 // and its departed repositories taken out (RepairEdges, DropDeparted), its
-// repository nodes labelled by slug, is held to the map's rules and the
-// drawing's limits (not the
-// statement diagrams' caps); one that fails, or none returned, keeps the
-// stored map, with the reason logged: the map never costs the description.
-func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *diagram.Diagram, slugs []string) *diagram.Diagram {
+// repository nodes labelled by slug, is held to the map's rules and caps
+// (not the statement diagrams'). One refused is asked again, the map
+// alone, with the rule it broke, at most mapRetries more calls while the
+// run keeps one for the repository map; each counts against the run. One
+// still refused, or none returned, keeps the stored map, with the reason
+// logged: the map never costs the description. A hold of the gateway
+// during a retry stops the step, which asks again from the start.
+func (w *Worker) revisionMap(ctx context.Context, r *store.BaselineRun, page store.Page, proposed *diagram.Diagram, slugs []string,
+	prompt func(refused string) string) (*diagram.Diagram, error) {
 	at := "baseline: " + projectLabel + " map"
 	if !diagram.MapFits(len(slugs)) {
 		if proposed != nil || page.Map != nil {
 			w.log.InfoContext(ctx, fmt.Sprintf("%s: %d repositories, more than a map holds, none drawn", at, len(slugs)))
 		}
-		return nil
+		return nil, nil
 	}
-	if proposed == nil {
-		w.log.WarnContext(ctx, at+": none returned, the stored one kept")
-		return w.carriedMap(ctx, page, slugs)
+	for try := 0; ; try++ {
+		if proposed == nil {
+			w.log.WarnContext(ctx, at+": none returned, the stored one kept")
+			return w.carriedMap(ctx, page, slugs), nil
+		}
+		repaired, dropped := baseline.RepairEdges(proposed)
+		if len(dropped) > 0 {
+			w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
+		}
+		drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, repaired, slugs)), slugs, baseline.MapCaps)
+		if why == "" {
+			return drawn, nil
+		}
+		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(proposed)))
+		if try == mapRetries || r.Calls >= w.base.Limits.MaxCalls-1 {
+			w.log.WarnContext(ctx, at+": still refused, the stored one kept")
+			return w.carriedMap(ctx, page, slugs), nil
+		}
+		res := w.base.Describer.ProjectMap(ctx, prompt(why))
+		ok, err := w.call(ctx, r, store.PurposeProject, res.Call)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return w.carriedMap(ctx, page, slugs), nil
+		}
+		proposed = res.Map
 	}
-	repaired, dropped := baseline.RepairEdges(proposed)
-	if len(dropped) > 0 {
-		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
+}
+
+// mapRetries is how many more calls a refused map is asked again in the
+// same run, the rule it broke in the prompt.
+const mapRetries = 2
+
+// mapLabels is a refused map's node labels by zone, so the log says what
+// the model drew: "entry: HTTP-API, SPA; parts: …".
+func mapLabels(d *diagram.Diagram) string {
+	var zones []string
+	by := map[string][]string{}
+	for _, n := range d.Nodes {
+		if _, ok := by[n.Zone]; !ok {
+			zones = append(zones, n.Zone)
+		}
+		by[n.Zone] = append(by[n.Zone], n.Label)
 	}
-	drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, repaired, slugs)), slugs, baseline.DrawCaps)
-	if why != "" {
-		w.log.WarnContext(ctx, at+" refused ("+why+"), the stored one kept")
-		return w.carriedMap(ctx, page, slugs)
+	out := make([]string, 0, len(zones))
+	for _, z := range zones {
+		name := z
+		if name == "" {
+			name = "no zone"
+		}
+		out = append(out, name+": "+strings.Join(by[z], ", "))
 	}
-	return drawn
+	return strings.Join(out, "; ")
+}
+
+// refusedMap is the line a map asked again carries: the rule the last
+// one broke. "" on the first ask.
+func refusedMap(why string, only bool) string {
+	if why == "" {
+		return ""
+	}
+	again := "Return the whole map again with that fixed"
+	if only {
+		again = "Answer with the map alone this time, `{\"map\": <flow>}`, the whole map with that fixed; your description is taken from your last answer"
+	}
+	return "\n- Your last map was refused and not drawn: " + why + ". " + again + ". Every rule here still holds."
 }
 
 // noTree is the project's file check: no path pins a project statement.
@@ -1404,7 +1490,7 @@ func (w *Worker) carriedMap(ctx context.Context, page store.Page, slugs []string
 	}
 	// Checked again only for what the trim may break: a map whose last
 	// repository left holds nothing of the project, and an emptied zone goes.
-	carried, why := baseline.CheckMap(w.withoutDeparted(ctx, page.Map, slugs), slugs, baseline.DrawCaps)
+	carried, why := baseline.CheckMap(w.withoutDeparted(ctx, page.Map, slugs), slugs, baseline.MapCaps)
 	if why != "" {
 		return diagram.Sentinel()
 	}
@@ -1454,14 +1540,20 @@ func (w *Worker) projectOver(ctx context.Context, r *store.BaselineRun, plan run
 // map it has (null). Last because it is the first thing a tight budget
 // drops: with the run's calls spent it is skipped and the stored map
 // stays. A map whose basis is the page's text as it stands is due no
-// call. A map off its rules or the drawing's limits is not stored, with
-// the reason logged; the description is never touched. What the step
-// keeps (a new map, or the stored one confirmed) is set on the page's
+// call. A map off its rules or caps is asked again in the same run, the
+// rule it broke in the prompt, at most mapRetries more calls, each one
+// against the run's budget; the description is never touched. What the
+// step keeps (a new map, or the stored one confirmed) is set on the page's
 // current revision in place, with its basis, and the run's end, in one
-// transaction: no revision of its own, the text did not change. A skip,
-// a failed call or a refused map writes nothing, so the basis stays stale
-// and the next run draws again. The map is optional: a database busy past
-// its attempts ends the run done without it, never failed.
+// transaction: no revision of its own, the text did not change. A map
+// still refused keeps a stored one, writing nothing; with none stored, the
+// sentinel is set with the basis: declined, said on the page, not asked
+// again until the text changes. A skip, a failed call, or null for a page
+// without a map writes nothing, so the basis stays stale and the next run
+// asks again (null was recorded once, and a map then never came). The map
+// is optional: a database busy past its attempts ends the run done
+// without it, never failed. A hold of the gateway during a retry stops the
+// step, which asks again from the start.
 func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	at := "baseline: " + repoMapName
 	if r.Calls >= w.base.Limits.MaxCalls {
@@ -1481,39 +1573,52 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		w.log.InfoContext(ctx, at+" skipped: drawn from the description as it stands, the stored one kept")
 		return w.finish(ctx, r, plan)
 	}
-	res := w.base.Describer.RepoMap(ctx, renderRepoMap(*r, page))
-	okCall, err := w.call(ctx, r, store.PurposeRepoMap, res.Call)
-	if err != nil {
-		return err
-	}
-	if !okCall {
-		w.log.WarnContext(ctx, at+" skipped: the call failed: "+res.Outcome.String()+", the stored one kept")
-		return w.finish(ctx, r, plan)
-	}
+	// The sentinel is no map: declined for an older text.
 	keep := page.RepoMap
-	switch {
-	case res.Map == nil && keep == nil:
-		// Recorded with the basis like a map: the model is not asked again
-		// for the same text (a retry per run otherwise, forever).
-		w.log.InfoContext(ctx, at+": none drawn")
-	case res.Map == nil:
-		w.log.InfoContext(ctx, at+": no change")
-	default:
-		repaired, dropped := baseline.RepairEdges(res.Map)
-		if len(dropped) > 0 {
-			w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
+	if diagram.IsSentinel(keep) {
+		keep = nil
+	}
+	refused := ""
+	for try := 0; ; try++ {
+		res := w.base.Describer.RepoMap(ctx, renderRepoMap(*r, page, refused))
+		okCall, err := w.call(ctx, r, store.PurposeRepoMap, res.Call)
+		if err != nil {
+			return err
 		}
-		drawn, why := baseline.CheckRepoMap(repaired, baseline.DrawCaps)
-		if why != "" {
-			w.log.WarnContext(ctx, at+" refused ("+why+"), the stored one kept")
+		if !okCall {
+			w.log.WarnContext(ctx, at+" skipped: the call failed: "+res.Outcome.String()+", the stored one kept")
 			return w.finish(ctx, r, plan)
 		}
-		if diagram.Equal(drawn, keep) {
+		var drawn *diagram.Diagram
+		if res.Map != nil {
+			repaired, dropped := baseline.RepairEdges(res.Map)
+			if len(dropped) > 0 {
+				w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
+			}
+			if drawn, refused = baseline.CheckRepoMap(repaired, baseline.MapCaps); refused != "" {
+				w.log.WarnContext(ctx, at+" refused ("+refused+")", slog.String("nodes", mapLabels(res.Map)))
+			}
+		}
+		switch {
+		case drawn != nil && diagram.Equal(drawn, keep), res.Map == nil && keep != nil:
 			w.log.InfoContext(ctx, at+": no change")
-		} else {
+		case drawn != nil:
 			keep = drawn
 			w.log.InfoContext(ctx, fmt.Sprintf("%s: drawn (%d nodes, %d edges)", at, len(drawn.Nodes), len(drawn.Edges)))
+		case res.Map == nil && try == 0:
+			w.log.InfoContext(ctx, at+": none drawn, asked again by the next run")
+			return w.finish(ctx, r, plan)
+		case try < mapRetries && r.Calls < w.base.Limits.MaxCalls:
+			w.log.InfoContext(ctx, fmt.Sprintf("%s: asked again, %d of %d", at, try+1, mapRetries))
+			continue
+		case keep != nil:
+			w.log.WarnContext(ctx, at+": still refused, the stored one kept")
+			return w.finish(ctx, r, plan)
+		default:
+			w.log.WarnContext(ctx, at+": still refused, declined")
+			keep = diagram.Sentinel()
 		}
+		break
 	}
 	prev := *r
 	if err := w.markDone(ctx, r, plan); err != nil {
@@ -1721,42 +1826,48 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 	).Replace(prompts.Describe)
 }
 
+// renderProject is the project step's prompt; refused is the rule its last
+// map broke, asking for the map alone again ("" the first time).
 func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, libs []store.SharedRepo, repoSlugs []string,
-	l config.Limits) string {
+	l config.Limits, refused string) string {
 	nodes, edges := mapRoom(libs, len(repoSlugs))
 	return strings.NewReplacer(
 		"{shared}", sharedRepos(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
 		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(nodes), "{map_max_edges}", fmt.Sprint(edges),
+		"{map_refused}", refusedMap(refused, true),
 	).Replace(prompts.Project)
 }
 
 // mapRoom is the nodes and edges the model may draw on the system map:
-// what one drawing holds less what code adds for the shared repositories (a
+// what one map holds less what code adds for the shared repositories (a
 // node each, an edge per user), so the map with them still fits; never fewer
 // than the repositories need, the UI then showing as many of them as
 // fit.
 func mapRoom(libs []store.SharedRepo, repos int) (int, int) {
-	edges := diagram.DrawMaxEdges
+	edges := diagram.MapMaxEdges
 	for _, l := range libs {
 		edges -= len(l.UsedBy)
 	}
-	return max(diagram.DrawMaxNodes-len(libs), repos), max(edges, repos)
+	return max(diagram.MapMaxNodes-len(libs), repos), max(edges, repos)
 }
 
-func renderRepoMap(r store.BaselineRun, page store.Page) string {
+// renderRepoMap is the map step's prompt; refused is the rule its last map
+// broke ("" the first time).
+func renderRepoMap(r store.BaselineRun, page store.Page, refused string) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{repo_map}", repoMap(page), "{repo_description}", describeRead(page),
-		"{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),
+		"{map_max_nodes}", fmt.Sprint(diagram.MapMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.MapMaxEdges),
+		"{map_refused}", refusedMap(refused, false),
 	).Replace(prompts.RepoMap)
 }
 
 // repoMap is the repository's current map as the JSON the model returns,
-// so the map step can say it stands.
+// so the map step can say it stands. The sentinel is no map.
 func repoMap(p store.Page) string {
-	if p.RepoMap == nil {
+	if p.RepoMap == nil || diagram.IsSentinel(p.RepoMap) {
 		return "_None yet: draw it._"
 	}
 	j, err := json.Marshal(p.RepoMap)

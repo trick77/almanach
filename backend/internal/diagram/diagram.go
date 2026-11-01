@@ -22,12 +22,18 @@ const (
 )
 
 // The most rongo's drawing lays out (ui/src/diagramIR.ts fits, which names
-// these): the one place the backend keeps them. A flow, the system map
-// included, holds DrawMaxNodes and DrawMaxEdges; a sequence and an entity
-// model are wider per item and stop sooner.
+// these): the one place the backend keeps them. A statement's flow holds
+// DrawMaxNodes and DrawMaxEdges; a sequence and an entity model are wider
+// per item and stop sooner. A map, the system map or a repository's, holds
+// MapMaxNodes and MapMaxEdges: every external system it names is its own
+// node, never merged into one (user, 2026-11-01), and the UI lays a map out
+// in rows that grow downwards (ui/src/mapLayout.ts), not in ELK's layers.
+// The edges grow with the nodes, 24/16 of them.
 const (
 	DrawMaxNodes    = 16
 	DrawMaxEdges    = 24
+	MapMaxNodes     = 22
+	MapMaxEdges     = 33
 	DrawMaxActors   = 8
 	DrawMaxRows     = 20
 	DrawMaxEntities = 8
@@ -83,7 +89,7 @@ func IsSentinel(d *Diagram) bool { return d != nil && d.Kind == KindNone }
 // MapFits reports whether a project of this many source repositories can
 // have a system map: every repository a node, and room for at least one
 // node beside them. A larger project gets none.
-func MapFits(repos int) bool { return repos <= DrawMaxNodes-1 }
+func MapFits(repos int) bool { return repos <= MapMaxNodes-1 }
 
 // Diagram is one of the three kinds, told apart by Kind; only that kind's
 // fields are set, and only they go on the wire.

@@ -544,8 +544,15 @@ func TestRepo(t *testing.T) {
 	st.pages[store.ScopeRepository+"|PLAT|files"] = page
 	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files", "", "", nil)
 	var drawn diagram.Diagram
-	if err := json.Unmarshal(body["map"], &drawn); err != nil || !diagram.Equal(&drawn, page.RepoMap) {
-		t.Errorf("map = %s", body["map"])
+	if err := json.Unmarshal(body["map"], &drawn); err != nil || !diagram.Equal(&drawn, page.RepoMap) || string(body["map_declined"]) != "false" {
+		t.Errorf("map = %s, declined %s", body["map"], body["map_declined"])
+	}
+	// Declined (every map refused): no map, and said so.
+	page.RepoMap = diagram.Sentinel()
+	st.pages[store.ScopeRepository+"|PLAT|files"] = page
+	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files", "", "", nil)
+	if string(body["map"]) != "null" || string(body["map_declined"]) != "true" {
+		t.Errorf("declined: map = %s, map_declined = %s", body["map"], body["map_declined"])
 	}
 }
 

@@ -142,10 +142,11 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
     if (q.trim() !== "" && tab !== DESCRIPTION) openTab(DESCRIPTION);
   }
 
-  const lead: RailItem[] =
-    data.map !== null
-      ? [{ id: ids.map, label: S.repo.map, tab: DESCRIPTION }]
-      : [];
+  // A map refused on every try says so: never just a missing section.
+  const showMap = data.map !== null || data.map_declined;
+  const lead: RailItem[] = showMap
+    ? [{ id: ids.map, label: S.repo.map, tab: DESCRIPTION }]
+    : [];
   const extra: RailItem[] =
     problems.length > 0
       ? [
@@ -277,10 +278,14 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             pageRepo={data.slug}
             query={query}
             lead={
-              data.map !== null && (
+              showMap && (
                 <section id={ids.map} className="scroll-mt-16">
                   <div className={eyebrow}>{S.repo.map}</div>
-                  <RepoMap map={data.map} />
+                  {data.map === null ? (
+                    <Empty>{S.repo.mapDeclined}</Empty>
+                  ) : (
+                    <RepoMap map={data.map} />
+                  )}
                 </section>
               )
             }
@@ -361,6 +366,7 @@ function RepoMap({ map }: { map: FlowIR }) {
     <Diagram
       ir={titledZones(map, S.diagram.repoZones)}
       title={S.diagram.titles.repoMap}
+      map
     />
   );
 }

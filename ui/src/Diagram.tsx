@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DiagramIR, FlowIR } from "./diagramIR";
 import { fits } from "./diagramIR";
 import { layoutFlow, type Elk, type FlowLayout } from "./diagramLayout";
+import { layoutMap } from "./mapLayout";
 import { drawER, drawFlow, drawSequence } from "./diagramDraw";
 import { layoutER } from "./diagramER";
 import { layoutSequence } from "./diagramSequence";
@@ -42,13 +43,22 @@ function engine(): Promise<Elk> {
 }
 
 /** drawIR lays a diagram out and writes it as SVG. ids prefixes the marker
- * ids: two drawings on one page must not share one. */
-export async function drawIR(ir: DiagramIR, ids: string): Promise<Drawn> {
+ * ids: two drawings on one page must not share one. A map is laid out in
+ * bands by code (mapLayout.ts), without the engine. */
+export async function drawIR(
+  ir: DiagramIR,
+  ids: string,
+  map = false,
+): Promise<Drawn> {
   if (ir.kind === "sequence")
     return {
       svg: drawSequence(layoutSequence(ir), palette(), ids),
       layout: null,
     };
+  if (ir.kind === "flow" && map) {
+    const layout = layoutMap(ir);
+    return { svg: drawFlow(layout, palette(), ids), layout };
+  }
   const e = await engine();
   if (ir.kind === "er")
     return { svg: drawER(await layoutER(ir, e), palette()), layout: null };
@@ -76,10 +86,13 @@ export function Diagram({
   ir,
   title,
   links,
+  map = false,
 }: {
   ir: DiagramIR;
   title: string;
   links?: (id: string) => string | null;
+  /** A map, the system map or a repository's: its caps and its layout. */
+  map?: boolean;
 }): ReactNode {
   const [ids] = useState(() => `almanach-diagram-${++seq}`);
   const key = JSON.stringify(ir);
@@ -92,7 +105,7 @@ export function Diagram({
   const card = useRef<HTMLDivElement>(null);
   // Every diagram the backend stores fits: its caps are below these. One
   // that does not is a defect, said rather than drawn crowded.
-  const ok = fits(ir);
+  const ok = fits(ir, map);
   const names = new Map(
     ir.kind === "flow" ? ir.nodes.map((n) => [n.id, n.label]) : [],
   );
@@ -100,14 +113,14 @@ export function Diagram({
   useEffect(() => {
     if (!ok) return;
     let live = true;
-    drawIR(JSON.parse(key) as DiagramIR, ids).then(
+    drawIR(JSON.parse(key) as DiagramIR, ids, map).then(
       (drawn) => live && setState({ key, drawn, failed: false }),
       () => live && setState({ key, drawn: null, failed: true }),
     );
     return () => {
       live = false;
     };
-  }, [key, ids, ok]);
+  }, [key, ids, ok, map]);
 
   if (!ok || (state.key === key && state.failed))
     return <p className="my-2 text-[13.5px] text-faint">{S.diagram.failed}</p>;

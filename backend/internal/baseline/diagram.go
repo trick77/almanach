@@ -33,10 +33,9 @@ type DiagramCaps struct {
 	MaxEdges int
 }
 
-// DrawCaps is the most rongo's drawing lays out, the bound config's caps may
-// not pass: what the system map and an unchanged stored diagram are held
-// to. The sequence and entity limits are diagram.DrawMax* too.
-var DrawCaps = DiagramCaps{MaxNodes: ir.DrawMaxNodes, MaxEdges: ir.DrawMaxEdges}
+// MapCaps is what both maps, the system map and a repository's, are held
+// to: diagram.MapMax*, not the statement diagrams' caps from config.
+var MapCaps = DiagramCaps{MaxNodes: ir.MapMaxNodes, MaxEdges: ir.MapMaxEdges}
 
 // Fixed caps on a diagram's text, like a statement name's.
 const (

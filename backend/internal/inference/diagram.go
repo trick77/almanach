@@ -38,41 +38,49 @@ func array(items map[string]any) map[string]any {
 }
 
 // flowSchema is a flow: a flowchart or a state machine. zone is a node's
-// zone id, null for none.
+// zone id, null for none. Its caps are config's, the validator's alone.
 func flowSchema() map[string]any {
-	return flow(map[string]any{"type": []any{"string", "null"}}, str())
+	return flow(map[string]any{"type": []any{"string", "null"}}, str(), 0, 0)
 }
 
 // mapSchema is the project's system map: a flow whose every node sits in
 // one of the four zones.
 func mapSchema() map[string]any {
-	return flow(enum(diagram.MapZones...), enum(diagram.MapZones...))
+	return flow(enum(diagram.MapZones...), enum(diagram.MapZones...), diagram.MapMaxNodes, diagram.MapMaxEdges)
 }
 
 // repoMapSchema is a repository's map: a flow whose every node sits in one
 // of its four zones.
 func repoMapSchema() map[string]any {
-	return flow(enum(diagram.RepoMapZones...), enum(diagram.RepoMapZones...))
+	return flow(enum(diagram.RepoMapZones...), enum(diagram.RepoMapZones...), diagram.MapMaxNodes, diagram.MapMaxEdges)
 }
 
-func flow(nodeZone, zoneID map[string]any) map[string]any {
+// flow is a flow's schema; maxNodes and maxEdges above 0 bound its arrays
+// (maxItems), so a map over its caps is not even answered: loom's was
+// refused at 18 nodes with the cap in the prompt alone.
+func flow(nodeZone, zoneID map[string]any, maxNodes, maxEdges int) map[string]any {
+	nodes := array(object(map[string]any{
+		"id":    str(),
+		"label": str(),
+		"shape": enum(diagram.Shapes...),
+		"zone":  nodeZone,
+	}))
+	edges := array(object(map[string]any{
+		"from":   str(),
+		"to":     str(),
+		"label":  str(),
+		"dashed": map[string]any{"type": "boolean"},
+		"head":   enum(diagram.Heads...),
+	}))
+	if maxNodes > 0 {
+		nodes["maxItems"], edges["maxItems"] = maxNodes, maxEdges
+	}
 	return object(map[string]any{
 		"kind":      enum(diagram.KindFlow),
 		"direction": enum(diagram.Directions...),
-		"nodes": array(object(map[string]any{
-			"id":    str(),
-			"label": str(),
-			"shape": enum(diagram.Shapes...),
-			"zone":  nodeZone,
-		})),
-		"edges": array(object(map[string]any{
-			"from":   str(),
-			"to":     str(),
-			"label":  str(),
-			"dashed": map[string]any{"type": "boolean"},
-			"head":   enum(diagram.Heads...),
-		})),
-		"zones": array(object(map[string]any{"id": zoneID, "title": str()})),
+		"nodes":     nodes,
+		"edges":     edges,
+		"zones":     array(object(map[string]any{"id": zoneID, "title": str()})),
 	})
 }
 

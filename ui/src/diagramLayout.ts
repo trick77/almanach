@@ -81,7 +81,11 @@ export type Elk = { layout(graph: ElkNode): Promise<ElkNode> };
 /** Text to frame, each side. */
 const padX = 16;
 /** Space around the drawing, inside the canvas. */
-const margin = 24;
+export const margin = 24;
+/** Almanach: the widest a drawing shows unscaled, the page column's main
+ * track (Rail.tsx: 1400px less its padding, the rail and the gap beside
+ * it). Wider, the card shrinks it and its text with it. */
+export const pageColumn = 1080;
 /** Vertical space between two boxes on the path; the arrow between them. */
 const stepGap = 24;
 /** Clear space between a label and its line. */
@@ -133,7 +137,11 @@ const longestWord = (n: FlowNodeIR) => {
  * line, within bounds; past the upper bound labels wrap. Never narrower than
  * the longest word, which wrapping cannot shorten: a long identifier widens
  * every box rather than running out of its own. */
-function boxWidth(nodes: FlowNodeIR[], min: number, max: number): number {
+export function boxWidth(
+  nodes: FlowNodeIR[],
+  min: number,
+  max: number,
+): number {
   const w = Math.max(0, ...nodes.map(width1));
   const word = Math.max(0, ...nodes.map(longestWord));
   return Math.max(
@@ -142,7 +150,7 @@ function boxWidth(nodes: FlowNodeIR[], min: number, max: number): number {
   );
 }
 
-function lay(n: FlowNodeIR, kind: NodeKind, w: number): NodeBox {
+export function lay(n: FlowNodeIR, kind: NodeKind, w: number): NodeBox {
   const s = styleOf(n);
   const lines = wrap(n.label, w - 2 * padX, s.size, s.face);
   const base = kind === "outcome" ? 36 : 40;
@@ -874,8 +882,35 @@ type Side = "NORTH" | "SOUTH" | "EAST" | "WEST";
  * branch straight on, second right, third left) crossed whenever the
  * engine put the second branch's target left of the first's. Left free in
  * the drawing itself, a loop back entered a diamond from below and the
- * branches left partway down its slopes. */
+ * branches left partway down its slopes.
+ *
+ * Almanach: a top-down flow wider than the page column is laid out again
+ * with no layer holding more boxes than one row of the column fits
+ * (COFFMAN_GRAHAM), the narrower kept. Only top-down: across, a layer is a
+ * column, and bounding it widens the drawing. Only past the column: every
+ * narrower flow stays as it was. It helps little: the edges into the boxes
+ * moved down keep their room in the layers they pass (a fan of eight,
+ * 1552px plain, 1495px bounded, measured 2026-11-01). */
 export async function layoutElk(ir: FlowIR, elk: Elk): Promise<FlowLayout> {
+  const plain = await elkOnce(ir, elk, {});
+  if (ir.direction !== "TB" || plain.width <= pageColumn) return plain;
+  const w = plain.nodes.reduce((m, n) => Math.max(m, n.w), 0);
+  const bound = Math.max(
+    1,
+    Math.floor((pageColumn - 2 * margin + 32) / (w + 32)),
+  );
+  const bounded = await elkOnce(ir, elk, {
+    "elk.layered.layering.strategy": "COFFMAN_GRAHAM",
+    "elk.layered.layering.coffmanGraham.layerBound": String(bound),
+  });
+  return bounded.width < plain.width ? bounded : plain;
+}
+
+async function elkOnce(
+  ir: FlowIR,
+  elk: Elk,
+  layering: Record<string, string>,
+): Promise<FlowLayout> {
   const tb = ir.direction === "TB";
   const w = boxWidth(
     ir.nodes.filter((n) => n.shape !== "decision"),
@@ -1002,6 +1037,7 @@ export async function layoutElk(ir: FlowIR, elk: Elk): Promise<FlowLayout> {
         "elk.padding": "[top=0,left=0,bottom=0,right=0]",
         ...spacing,
         ...ordering,
+        ...layering,
       },
       // A zone nothing landed in is not drawn: an empty frame says nothing.
       children: children.filter(

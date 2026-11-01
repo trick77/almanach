@@ -66,10 +66,10 @@ func TestRun_LibrariesAsContext(t *testing.T) {
 // library, an edge per user; never less than the repositories need.
 func TestMapRoom(t *testing.T) {
 	nodes, edges := mapRoom([]store.SharedRepo{lib("libs", "a", "", "x", "y"), lib("libs", "b", "", "x")}, 3)
-	if nodes != 14 || edges != 21 {
-		t.Errorf("room = %d nodes, %d edges; want 14 and 21", nodes, edges)
+	if nodes != 20 || edges != 30 {
+		t.Errorf("room = %d nodes, %d edges; want 20 and 30", nodes, edges)
 	}
-	if nodes, edges := mapRoom(make([]store.SharedRepo, 30), 5); nodes != 5 || edges != 24 {
+	if nodes, edges := mapRoom(make([]store.SharedRepo, 30), 5); nodes != 5 || edges != 33 {
 		t.Errorf("room with many libraries = %d, %d; want the repositories' 5 and all edges", nodes, edges)
 	}
 }
