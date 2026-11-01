@@ -47,7 +47,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Money: nano-USD INTEGER, JSON 3-decimal string, no float. `llm_calls` (own), `note_calls`
   (noergler's) never summed.
 - SQLite: one file, own volume, WAL, writes BEGIN IMMEDIATE; no shared FS. `serve` never migrates;
-  never edit applied migration. Probes exec, not httpGet.
+  never edit applied migration (0001 squashed once, DB dropped, 2026-11-01). Probes exec.
 - oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,
   gates nothing.
 - Project, repo = id; names only in `projects`, `repos`, `*_names`; never join on one. Name once
@@ -67,7 +67,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  Left part/no map at head: ≤3 auto retries, rule `LeftParts`. Folder `system` off (sources
-  on only): no project call/page; on again = `project_due` fold; run checks: `projectStands`.
-- Deps code's: manifests depth ≤1, poller; edges joined at read, never stored; ambiguous = no
-  edge; 1 clone URL = 1 source row. Libs: step context; map zone UI-drawn, never stored.
+  Left part/no map at head: ≤3 auto retries, rule `LeftParts`. 1 source repo = project of one,
+  derived: no project call/page (`projectStands`).
+- Deps code's: manifests depth ≤1; edges joined at read, never stored; ambiguous = no edge; 1
+  clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.

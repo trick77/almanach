@@ -305,7 +305,7 @@ PR keys as evidence only.
 An agent reads files, not JSON. `GET /api/projects/{key}.md` and
 `GET /api/projects/{key}/repos/{slug}.md` answer the current revision as
 `text/markdown; charset=utf-8`: the title and revision, the summary, the
-project's system map as a fenced `json` block, then the statements
+project's architecture overview as a fenced `json` block, then the statements
 grouped by kind in the order invariants, interfaces, rules, decisions,
 pitfalls, extensions, components, entities (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
@@ -415,25 +415,19 @@ repositories of one GitHub organisation. Both land as
 key or slug; nothing else is ever written there. In compose that folder is
 the `repos` volume, in a deployment a volume claim.
 
-A source's repositories form **one system** by default: a project page
-and a system map, written by every run's project step (4b), the way a
-Bitbucket project is one product. A static folder can say otherwise
-("Bildet ein System" off, `system: false`): a folder of repositories that
-merely share a host and a token, a GitHub account's libraries and tools
-side by side, is no system, and a project page would describe one that
-does not exist. Its repositories then stand alone: each keeps its page and
-its repository map, the run makes no project call, a note's fold shows the
-model no project page and asks for null (whatever comes is not written),
-the wiki lists the repositories one by one under "Einzelne Repositories"
-and serves the project without a description, map or Markdown export. A
-project page written while the folder was a system stays in the store with
-its history; switched back on, the folder is marked due (`project_due`)
-and the next run of any of its repositories folds the project whatever a
-reconcile would skip, the mark cleared once that step got its answer, so
-the kept page catches up with repositories that came, went or changed
-meanwhile. With the sources off the word counts for nothing: every project
-is a system again. A Bitbucket project is always one system: the switch is
-a 422 there.
+A source is a project, and its repositories are the project: a Bitbucket
+project, or a static folder created with its first repository (the slug,
+if left empty, is the repository's name from its clone URL, the project
+key the slug). A project of **one** repository, as most repositories on a
+GitHub account are, has no project page of its own: the run makes no
+project call, a note's fold shows the model no project page and asks for
+null (whatever comes is not written), and the wiki serves the project as
+its repository's page, at the project's path, its `.md` export the
+repository's. Nothing is stored to say so: the count of source rows
+decides (`SourceRepoCount`). When a second repository comes, the project
+has no page yet, and the next run of either folds it whatever a reconcile
+would skip. With the sources off there are no sources, and every project
+keeps its page.
 
 A project and a repository are ids; the key and the slug are names. Every
 name either ever had stays a name of it, so a renamed project or repository
@@ -559,25 +553,31 @@ itself (a monorepo's modules) is no edge; a coordinate two repositories
 provide (a fork, a copy) gives no edge to either and is listed as
 ambiguous; when the providers share one clone URL (two sources cloned it
 before the rule) it says so, and removing all but one row gives the edges
-back. A repository's body carries `uses` (with the library's other
-users, `also`) and `used_by`, the `.md` export an
-`Abhängigkeiten` section, and `GET /api/dependencies` the whole graph,
-drawn on the page "Abhängigkeiten" as a flow from users to libraries. With
+back. A repository's body carries `uses` (with the other users, `also`)
+and `used_by`, the `.md` export an `Abhängigkeiten` section, and
+`GET /api/dependencies` the whole graph, drawn on the page
+"Abhängigkeiten" as a flow from users to the repositories they use. With
 the sources off every list is empty.
 
-A library is described once, on its own page, and read as context where
-it is used. Every describe step gets the summaries of the libraries its
-repository uses (`store.Libraries`, read once a run before the files,
-fitted to `LibrariesMaxBytes` like the project's other repositories), the
-project step those of other projects the project's repositories use; both
+A repository others depend on is a **shared** repository, whatever it is
+(a library, a client module of a service, a contract): the manifests say
+only that one requires what the other publishes, a build dependency.
+There is no kind to declare. A shared repository is described once, on
+its own page, and read as context where it is used. Every describe step
+gets the summaries of the repositories its repository depends on
+(`store.Shared`, read once a run before the files, fitted to
+`SharedMaxBytes` like the project's other repositories), the project step
+those of other projects the project's repositories depend on; both
 prompts ask how the repository or the system uses them, never what they
-are. A project with a map carries those libraries as `libraries`, and the
-UI draws them on the system map in a zone of its own ("Bibliotheken")
-with an edge from each user; the stored map never holds them. The model
-is told not to draw them and gets a node and edge cap lowered by what
-they need (`mapRoom`); the UI draws as many as fit. An external node the
-model drew anyway, named by a library's slug and touched only by
-`library` edges, gives way to the library's node.
+are. A project with a map carries them as `shared`, and the UI draws them
+on the architecture overview in a zone of its own ("Geteilte
+Repositories") with an edge from each user ("Abhängigkeit"); the stored
+map never holds them. The model is told not to draw them and gets a node
+and edge cap lowered by what they need (`mapRoom`); the UI draws as many
+as fit. An external node the model drew anyway, named by the repository's
+slug and touched only by `library` edges, gives way to its node. Sharing
+at runtime (a service several projects call over HTTP) is in no manifest:
+the model draws it from the descriptions, as an external system.
 
 ## 4b. The baseline
 
@@ -664,9 +664,9 @@ resumes after a restart. The run pins the clone's head when it starts.
    or a ceiling: the page has none, and every part writes what its code
    teaches. The growth after the fold is logged.
 4. *Project.* The repository's new description folded into the project
-   page, on a full run always, on a reconcile when the summary changed;
-   never for a folder whose repositories stand alone (4a), which ends the
-   step without a call and with nothing skipped.
+   page, on a full run always, on a reconcile when the summary changed or
+   the project has no page yet; never for a project of one (4a), which
+   ends the step without a call and with nothing skipped.
    Beside it the step sees the summaries of the project's other source
    repositories (80 kB with their headings; past that an even share each,
    a long summary cut at a paragraph or sentence and marked; those without
@@ -733,7 +733,7 @@ longer said. A changed diagram is a changed statement (reordering is
 none), and only a new or changed one meets today's caps, so lowering a
 cap never freezes a page; a page over the count may keep it, not grow.
 Every project with no more source repositories than a map holds (15,
-room left for one more node) carries a system map, the project step's alone
+room left for one more node) carries an architecture overview, the project step's alone
 (`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
 a repository node named and labelled by a source repository's slug (code
 sets the label on a new map, whatever the model wrote, unless the slug is
@@ -759,7 +759,7 @@ Every repository page carries a map of its own, the repository map step's
 alone (`revisions.repo_map`, repository revisions only): the repository
 from inside, zones `entry`, `parts`, `stores`, `external`, an edge
 labelled HTTP, event, DB, library, file or call, the same drawing limits
-and the same repairs as the system map. No statement diagram, it counts
+and the same repairs as the architecture overview. No statement diagram, it counts
 toward none. A map that breaks a rule, or none returned, keeps the stored
 one, logged; there is no sentinel, and the page shows no placeholder.
 Every new repository revision (a describe step's, a note's fold) takes
@@ -1299,7 +1299,7 @@ baseline step's patch never is: its bad items are left out one by one (see
   project, a repository page its hundred most recent notes and fifty
   revisions.
 - Both pages have two tabs and a rail beside them. The project page opens
-  on Übersicht (system map, repositories, problem areas, recent notes),
+  on Übersicht (architecture overview, repositories, problem areas, recent notes),
   the hub's job, then Beschreibung; a repository page opens on
   Beschreibung (its map, the summary, its own problem areas, the
   statements), its content, then Verlauf (notes, revisions). The hash

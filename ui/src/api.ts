@@ -14,11 +14,9 @@ export interface Project {
   notes: number;
   revision: number;
   last_merge: string | null;
-  /** False when the repositories stand alone: no project page, they are
-   *  listed one by one in repositories. */
-  system: boolean;
-  /** A standalone project's repositories, empty for a system. */
-  repositories: Repo[];
+  /** The repository of a project of one (a source with one repository):
+   *  its page is the project's. null for every other project. */
+  repo: Repo | null;
 }
 
 export interface Projects {
@@ -115,24 +113,24 @@ export interface Problem {
 export interface ProjectDetail {
   key: string;
   team: string;
-  /** False when the repositories stand alone: description and map are
-   *  null and none is expected. */
-  system: boolean;
+  /** A project of one: its repository's page is the project's;
+   *  description and map are null and none is expected. */
+  single: boolean;
   description: Description | null;
-  /** The system map: zones clients, repositories, stores and external; a
+  /** The architecture overview: zones clients, repositories, stores and external; a
    *  repository node's id is its slug. null before the first baseline
    *  project step wrote one. */
   map: FlowIR | null;
-  /** A baseline run will draw a map: the sources are on, the project has a
-   *  source repository, and not more than one map holds. */
+  /** A baseline run will draw a map: the sources are on, the project has
+   *  more than one source repository, and not more than one map holds. */
   map_expected: boolean;
   /** A project step asked for the map and none was accepted: map is null,
    *  and no run is promised to draw one. */
   map_declined: boolean;
   repos: Repo[];
-  /** Repositories of other projects this project's repositories use: the
-   *  map's libraries zone, drawn here, not stored in the map. */
-  libraries: Library[];
+  /** Repositories of other projects this project's repositories depend
+   *  on: the map's shared zone, drawn here, not stored in the map. */
+  shared: SharedRepo[];
   problems: Problem[];
   problem_window_days: number;
   recent_notes: NoteSummary[];
@@ -174,7 +172,7 @@ export interface DependencyEnd {
   version: string;
 }
 
-/** A library a repository uses, with the library's other users. */
+/** A repository another one depends on, with its other users. */
 export interface Use extends DependencyEnd {
   also: DependencyEnd[];
 }
@@ -184,7 +182,7 @@ export interface RepoRef {
   slug: string;
 }
 
-export interface Library {
+export interface SharedRepo {
   project: string;
   slug: string;
   used_by: RepoRef[];
@@ -270,8 +268,6 @@ export type RepoState = "pending" | "syncing" | "ready" | "failed" | "missing";
 export interface SourceSummary {
   project_key: string;
   kind: SourceKind;
-  /** The repositories form one system; false when each stands alone. */
-  system: boolean;
   host: string;
   has_token: boolean;
   token_auth: TokenAuth;
@@ -320,13 +316,7 @@ export type RunState =
 
 /** Why a run left a part out; "" for a run from before it was kept. */
 export type SkipReason =
-  | ""
-  | "gone"
-  | "calls"
-  | "bytes"
-  | "failed"
-  | "refused"
-  | "no_page";
+  "" | "gone" | "calls" | "bytes" | "failed" | "refused" | "no_page";
 
 /** One part a run left out: a subject by name, or the overview or the
  *  project step. */
@@ -370,7 +360,6 @@ export interface Baseline {
 export interface SourceDetail {
   project_key: string;
   kind: SourceKind;
-  system: boolean;
   host: string;
   has_token: boolean;
   token_auth: TokenAuth;

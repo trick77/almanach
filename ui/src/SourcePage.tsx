@@ -16,6 +16,7 @@ import {
   dayTime,
   money,
   shortSHA,
+  slugFromURL,
   stateLabel,
   stateTone,
   type Tone,
@@ -34,7 +35,6 @@ import {
   Segmented,
   Sep,
   Skeleton,
-  SystemToggle,
   Tile,
   Tiles,
   btn,
@@ -170,11 +170,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         <Chip to={null}>{S.sources.kind[data.kind]}</Chip>
         <Sep />
         {isStatic ? (
-          <>
-            {S.sources.manual}
-            <Sep />
-            {S.sources.system.meta(data.system)}
-          </>
+          <>{S.sources.manual}</>
         ) : (
           <span className={mono}>{data.host}</span>
         )}
@@ -241,15 +237,6 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           />
         </Tiles>
       </div>
-
-      {isStatic && (
-        <SystemSwitch
-          system={data.system}
-          onSwitch={() =>
-            act(() => send("PATCH", path, { system: !data.system }))
-          }
-        />
-      )}
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
@@ -417,38 +404,6 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
       )}
       {!isStatic && <Empty>{S.sources.listedOnly}</Empty>}
     </>
-  );
-}
-
-/** SystemSwitch is a static folder's "Bildet ein System": on, its
- *  repositories share a project page and a system map; off, each stands
- *  alone. One click is the PATCH, the hint says what it means. */
-function SystemSwitch({
-  system,
-  onSwitch,
-}: {
-  system: boolean;
-  onSwitch: () => void;
-}) {
-  return (
-    <div className="mt-4 flex items-start gap-3.5 rounded-ui border border-border bg-panel px-4 py-3">
-      <span className="w-40 shrink-0 pt-0.5 text-[13.5px] text-muted">
-        {S.sources.system.label}
-      </span>
-      <div className="min-w-0">
-        <SystemToggle
-          system={system}
-          onSwitch={onSwitch}
-          describedBy="system-hint"
-        />
-        <p
-          id="system-hint"
-          className={"mt-1 text-[12.5px] text-faint " + measure}
-        >
-          {system ? S.sources.system.hintOn : S.sources.system.hintOff}
-        </p>
-      </div>
-    </div>
   );
 }
 
@@ -1147,6 +1102,8 @@ function AddRepoForm({
 }) {
   const f = S.sources.addForm;
   const [slug, setSlug] = useState("");
+  // The slug follows the URL until it is typed by hand.
+  const [slugTyped, setSlugTyped] = useState(false);
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1181,15 +1138,34 @@ function AddRepoForm({
         {f.title}
       </h3>
       <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+        <label className="sm:col-span-2">
+          <span className={fieldLabel}>{f.url}</span>
+          <input
+            className={input + " " + mono}
+            value={url}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              if (!slugTyped) setSlug(slugFromURL(e.target.value));
+            }}
+            placeholder="https://github.com/acme/acme-cli.git"
+          />
+          <span className={fieldHint}>{f.urlHint}</span>
+        </label>
         <label>
-          <span className={fieldLabel}>{f.slug}</span>
+          <span className={fieldLabel}>
+            {f.slug}{" "}
+            <span className="text-faint">{S.sources.form.optional}</span>
+          </span>
           <input
             className={input + " " + mono}
             value={slug}
-            onChange={(e) => setSlug(e.target.value)}
+            onChange={(e) => {
+              setSlug(e.target.value);
+              setSlugTyped(e.target.value !== "");
+            }}
             placeholder="acme-cli"
           />
-          <span className={fieldHint}>{f.slugHint}</span>
+          <span className={fieldHint}>{S.sources.form.slugFromURL}</span>
         </label>
         <label>
           <span className={fieldLabel}>{f.branch}</span>
@@ -1201,22 +1177,12 @@ function AddRepoForm({
           />
           <span className={fieldHint}>{f.branchHint}</span>
         </label>
-        <label className="sm:col-span-2">
-          <span className={fieldLabel}>{f.url}</span>
-          <input
-            className={input + " " + mono}
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://github.com/acme/acme-cli.git"
-          />
-          <span className={fieldHint}>{f.urlHint}</span>
-        </label>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
           type="button"
           className={btnPrimary}
-          disabled={busy || slug.trim() === "" || url.trim() === ""}
+          disabled={busy || url.trim() === ""}
           onClick={submit}
         >
           {busy ? S.sources.form.saving : f.add}

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Library, ProjectDetail } from "./api";
+import type { ProjectDetail, SharedRepo } from "./api";
 import { DescriptionView, descriptionRail } from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
+import { RepoPage } from "./RepoPage";
 import {
   Rail,
   RailPage,
@@ -28,7 +29,6 @@ import {
   column,
   eyebrow,
   h2,
-  lede,
   meta,
   page,
   table,
@@ -74,6 +74,9 @@ export function ProjectPage({ projectKey }: { projectKey: string }) {
         </div>
       </div>
     );
+  // A project of one: its repository's page is the project's.
+  if (data.single && data.repos.length === 1)
+    return <RepoPage projectKey={data.key} slug={data.repos[0].slug} single />;
   return <Body data={data} />;
 }
 
@@ -90,9 +93,7 @@ function ProjectCrumbs({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const scroller = useRef<HTMLDivElement>(null);
-  // Repositories that stand alone have no description: the overview is
-  // the only tab, a #beschreibung in the address the start tab.
-  const [tab, setTab] = useHashTab(data.system ? TABS : [OVERVIEW], OVERVIEW);
+  const [tab, setTab] = useHashTab(TABS, OVERVIEW);
   const [query, setQuery] = useState("");
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
@@ -117,8 +118,7 @@ function Body({ data }: { data: ProjectDetail }) {
   // A search is over the description: typing on the overview goes there.
   function onQuery(q: string) {
     setQuery(q);
-    if (q.trim() !== "" && data.system && tab !== DESCRIPTION)
-      openTab(DESCRIPTION);
+    if (q.trim() !== "" && tab !== DESCRIPTION) openTab(DESCRIPTION);
   }
 
   const desc = descriptionRail(data.description, true, query, DESCRIPTION);
@@ -149,8 +149,7 @@ function Body({ data }: { data: ProjectDetail }) {
         },
       ],
     },
-    // Repositories that stand alone have no description to search.
-    ...(data.system ? [{ title: S.tabs.description, items: desc.items }] : []),
+    { title: S.tabs.description, items: desc.items },
   ];
 
   return (
@@ -183,29 +182,22 @@ function Body({ data }: { data: ProjectDetail }) {
         <Sep />
         {S.projects.notes(notes)}
         <Sep />
-        {!data.system
-          ? S.project.standalone
-          : data.description
-            ? S.project.descriptionRevision(data.description.revision)
-            : S.projects.noDescription}
+        {data.description
+          ? S.project.descriptionRevision(data.description.revision)
+          : S.projects.noDescription}
         <Sep />
         {S.projects.lastMerge}{" "}
         {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
 
-      {!data.system && <p className={lede}>{S.project.standaloneHint}</p>}
       <Tabs
         tabs={[
           { id: OVERVIEW, label: S.tabs.overview },
-          ...(data.system
-            ? [
-                {
-                  id: DESCRIPTION,
-                  label: S.tabs.description,
-                  count: data.description?.statements.length,
-                },
-              ]
-            : []),
+          {
+            id: DESCRIPTION,
+            label: S.tabs.description,
+            count: data.description?.statements.length,
+          },
         ]}
         value={tab}
         onChange={openTab}
@@ -248,7 +240,7 @@ function Overview({
               map={data.map}
               projectKey={data.key}
               slugs={data.repos.map((r) => r.slug)}
-              libraries={data.libraries}
+              shared={data.shared}
             />
           )}
         </section>
@@ -328,26 +320,26 @@ function SystemMap({
   map,
   projectKey,
   slugs,
-  libraries,
+  shared,
 }: {
   map: FlowIR;
   projectKey: string;
   slugs: string[];
-  libraries: Library[];
+  shared: SharedRepo[];
 }) {
   const ir = useMemo(
-    () => titledZones(withLibraries(map, libraries), S.diagram.zones),
-    [map, libraries],
+    () => titledZones(withShared(map, shared), S.diagram.zones),
+    [map, shared],
   );
   const repoZone = new Map(map.nodes.map((n) => [n.id, n.zone]));
-  const libs = new Map(libraries.map((l) => [libId(l), l]));
+  const byId = new Map(shared.map((r) => [sharedId(r), r]));
   return (
     <Diagram
       ir={ir}
       title={S.diagram.titles.map}
       links={(id) => {
-        const l = libs.get(id);
-        if (l) return repoPath(l.project, l.slug);
+        const r = byId.get(id);
+        if (r) return repoPath(r.project, r.slug);
         return repoZone.get(id) === "repositories" && slugs.includes(id)
           ? repoPath(projectKey, id)
           : null;
@@ -356,48 +348,48 @@ function SystemMap({
   );
 }
 
-const libId = (l: Library) => `library:${l.project}/${l.slug}`;
+const sharedId = (r: SharedRepo) => `shared:${r.project}/${r.slug}`;
 
-/** withLibraries is the stored map with the libraries of other projects
- *  the project's repositories use, drawn by code, never by the model: a
- *  zone of their own, a node each, an edge from each user the map shows.
+/** withShared is the stored map with the repositories of other projects
+ *  the project's repositories depend on, drawn by code, never by the model:
+ *  a zone of their own, a node each, an edge from each user the map shows.
  *  A node the model drew for one anyway gives way to it, its edges moved
- *  over, so nothing is drawn twice: an external node named by the
- *  library's slug (by project/slug when two libraries share it) whose
- *  every edge is a library use, nothing else. Only libraries a repository
- *  on the map uses (a map older than a repository does not show its
- *  user), as many as one drawing holds, in the order given; with none of
- *  them fitting, the map as stored. */
-export function withLibraries(map: FlowIR, libraries: Library[]): FlowIR {
+ *  over, so nothing is drawn twice: an external node named by its slug (by
+ *  project/slug when two of them share it) whose every edge is a `library`
+ *  use, nothing else. Only repositories a repository on the map depends on
+ *  (a map older than a repository does not show its user), as many as one
+ *  drawing holds, in the order given; with none of them fitting, the map
+ *  as stored. */
+export function withShared(map: FlowIR, repos: SharedRepo[]): FlowIR {
   const own = new Set(
     map.nodes.filter((n) => n.zone === "repositories").map((n) => n.id),
   );
-  const drawn = libraries.filter((l) => l.used_by.some((u) => own.has(u.slug)));
+  const drawn = repos.filter((r) => r.used_by.some((u) => own.has(u.slug)));
   for (let n = drawn.length; n > 0; n--) {
-    const out = drawLibraries(map, drawn.slice(0, n), libraries);
+    const out = drawShared(map, drawn.slice(0, n), repos);
     if (fits(out)) return out;
   }
   return map;
 }
 
-/** libraryEdge says an edge the model drew is a use of a library: its
- *  label starts with the map's `library` kind. */
+/** libraryEdge says an edge the model drew is a build-time use: its label
+ *  starts with the map's `library` kind. */
 const libraryEdge = (e: FlowIR["edges"][number]) =>
   e.label.trim().toLowerCase().startsWith("library");
 
-/** drawLibraries draws libraries; all is every library of the project, so a
- *  slug two of them share stays ambiguous when one was cut. */
-function drawLibraries(
+/** drawShared draws repos; all is every shared repository of the project,
+ *  so a slug two of them share stays ambiguous when one was cut. */
+function drawShared(
   map: FlowIR,
-  libraries: Library[],
-  all: Library[],
+  repos: SharedRepo[],
+  all: SharedRepo[],
 ): FlowIR {
   const own = new Set(
     map.nodes.filter((n) => n.zone === "repositories").map((n) => n.id),
   );
   const slugCount = new Map<string, number>();
-  for (const l of all) {
-    const s = l.slug.toLowerCase();
+  for (const r of all) {
+    const s = r.slug.toLowerCase();
     slugCount.set(s, (slugCount.get(s) ?? 0) + 1);
   }
   const drawnAs = new Map<string, string>();
@@ -406,21 +398,21 @@ function drawLibraries(
     const touching = map.edges.filter((e) => e.from === n.id || e.to === n.id);
     if (touching.length === 0 || !touching.every(libraryEdge)) continue;
     const names = [n.id, n.label].map((s) => s.toLowerCase());
-    const l = libraries.find((l) => {
-      const full = `${l.project}/${l.slug}`.toLowerCase();
-      const slug = l.slug.toLowerCase();
+    const r = repos.find((r) => {
+      const full = `${r.project}/${r.slug}`.toLowerCase();
+      const slug = r.slug.toLowerCase();
       return (
         names.includes(full) ||
         (slugCount.get(slug) === 1 && names.includes(slug))
       );
     });
-    if (l) drawnAs.set(n.id, libId(l));
+    if (r) drawnAs.set(n.id, sharedId(r));
   }
   const to = (id: string) => drawnAs.get(id) ?? id;
   const edges: FlowIR["edges"] = [];
   const seen = new Set<string>();
-  // A pair once, whichever way the model drew it: a library edge the model
-  // drew backwards is the use code draws.
+  // A pair once, whichever way the model drew it: a use the model drew
+  // backwards is the use code draws.
   const add = (e: FlowIR["edges"][number]) => {
     const k = [e.from, e.to].sort().join(">");
     if (e.from === e.to || seen.has(k)) return;
@@ -428,13 +420,13 @@ function drawLibraries(
     edges.push(e);
   };
   for (const e of map.edges) add({ ...e, from: to(e.from), to: to(e.to) });
-  for (const l of libraries)
-    for (const u of l.used_by)
+  for (const r of repos)
+    for (const u of r.used_by)
       if (own.has(u.slug))
         add({
           from: u.slug,
-          to: libId(l),
-          label: S.diagram.libraryEdge,
+          to: sharedId(r),
+          label: S.diagram.sharedEdge,
           dashed: false,
           head: "end",
         });
@@ -442,11 +434,11 @@ function drawLibraries(
     ...map,
     nodes: [
       ...map.nodes.filter((n) => !drawnAs.has(n.id)),
-      ...libraries.map((l) => ({
-        id: libId(l),
-        label: `${l.project}/${l.slug}`,
+      ...repos.map((r) => ({
+        id: sharedId(r),
+        label: `${r.project}/${r.slug}`,
         shape: "pill" as const,
-        zone: "libraries",
+        zone: "shared",
       })),
     ],
     edges,
@@ -454,7 +446,7 @@ function drawLibraries(
       ...map.zones.filter((z) =>
         map.nodes.some((n) => n.zone === z.id && !drawnAs.has(n.id)),
       ),
-      { id: "libraries", title: "libraries" },
+      { id: "shared", title: "shared" },
     ],
   };
 }

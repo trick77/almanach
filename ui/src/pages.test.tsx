@@ -55,8 +55,7 @@ const projects: Projects = {
       notes: 23,
       revision: 7,
       last_merge: mergedAt,
-      system: true,
-      repositories: [],
+      repo: null,
     },
     {
       key: "MOB",
@@ -65,8 +64,7 @@ const projects: Projects = {
       notes: 2,
       revision: 0,
       last_merge: null,
-      system: true,
-      repositories: [],
+      repo: null,
     },
   ],
 };
@@ -74,7 +72,7 @@ const projects: Projects = {
 const project: ProjectDetail = {
   key: "PAY",
   team: "platform",
-  system: true,
+  single: false,
   description: {
     revision: 7,
     summary:
@@ -109,7 +107,7 @@ const project: ProjectDetail = {
   map: null,
   map_expected: false,
   map_declined: false,
-  libraries: [],
+  shared: [],
   repos: [
     {
       slug: "pay-api",
@@ -253,96 +251,48 @@ describe("ProjectsPage", () => {
     expect(await screen.findByText("tools")).toBeInTheDocument();
     expect(screen.queryByText(/Team/)).not.toBeInTheDocument();
   });
-  it("lists the repositories of a folder that is no system one by one", async () => {
+  it("shows a project of one as its repository, with what it shares", async () => {
     serve({
       projects: {
         projects: [
           projects.projects[0]!,
           {
-            key: "tools",
+            key: "loom",
             team: "",
-            repos: 2,
+            repos: 1,
             notes: 0,
             revision: 0,
             last_merge: null,
-            system: false,
-            repositories: [
-              {
-                slug: "llmwire",
-                revision: 3,
-                summary: "Ein Client für das Gateway.",
-                notes: 0,
-                last_merge: null,
-              },
-              {
-                slug: "webfetch",
-                revision: 0,
-                summary: "",
-                notes: 0,
-                last_merge: null,
-              },
-            ],
+            repo: {
+              slug: "loom",
+              revision: 3,
+              summary: "Ein Recherche-Agent.",
+              notes: 0,
+              last_merge: null,
+            },
           },
         ],
       },
-    });
-    render(<ProjectsPage />);
-    expect(await screen.findByText("Systeme")).toBeInTheDocument();
-    expect(screen.getByText("Einzelne Repositories")).toBeInTheDocument();
-    // The folder has no card of its own, each repository has one.
-    expect(
-      screen
-        .getAllByRole("link")
-        .some((a) => a.getAttribute("href") === "/projekte/tools"),
-    ).toBe(false);
-    expect(screen.getByText("llmwire").closest("a")?.getAttribute("href")).toBe(
-      "/projekte/tools/repos/llmwire",
-    );
-    expect(screen.getByText("Ein Client für das Gateway.")).toBeInTheDocument();
-    expect(screen.getByText("webfetch")).toBeInTheDocument();
-  });
-  it("keeps the card of a standalone folder without a repository yet", async () => {
-    serve({
-      projects: {
-        projects: [
+      dependencies: {
+        repos: [],
+        edges: [
           {
-            ...projects.projects[1]!,
-            key: "tools",
-            repos: 0,
-            system: false,
-            repositories: [],
+            from: { project: "loom", slug: "loom" },
+            to: { project: "llmwire", slug: "llmwire" },
+            version: "v0.1.8",
+            coords: [],
           },
         ],
+        ambiguous: [],
       },
     });
     render(<ProjectsPage />);
-    expect(
-      (await screen.findByText("tools")).closest("a")?.getAttribute("href"),
-    ).toBe("/projekte/tools");
-  });
-  it("lists only standalone repositories without the headings", async () => {
-    serve({
-      projects: {
-        projects: [
-          {
-            ...projects.projects[1]!,
-            key: "tools",
-            system: false,
-            repositories: [
-              {
-                slug: "vibecheck",
-                revision: 1,
-                summary: "",
-                notes: 0,
-                last_merge: null,
-              },
-            ],
-          },
-        ],
-      },
-    });
-    render(<ProjectsPage />);
-    expect(await screen.findByText("vibecheck")).toBeInTheDocument();
+    const tile = (await screen.findByText("loom")).closest("a")!;
+    expect(tile.getAttribute("href")).toBe("/projekte/loom");
+    expect(within(tile).getByText("Ein Recherche-Agent.")).toBeInTheDocument();
+    expect(within(tile).getByText(/Revision 3/)).toBeInTheDocument();
+    expect(within(tile).getByText("llmwire/llmwire")).toBeInTheDocument();
+    // No headings splitting projects: one grid.
     expect(screen.queryByText("Einzelne Repositories")).toBeNull();
   });
   it("shows the empty and the failed state", async () => {
@@ -545,32 +495,39 @@ describe("ProjectPage", () => {
     expect(within(desc).getByText("max_size")).toBeInTheDocument();
   });
 
-  it("shows a folder whose repositories stand alone without a description tab", async () => {
+  it("shows a project of one as its repository's page, at the project's path", async () => {
     serve({
-      "projects/tools": {
+      "projects/loom": {
         ...project,
-        key: "tools",
-        system: false,
+        key: "loom",
+        single: true,
         description: null,
         map: null,
         map_expected: false,
+        repos: [
+          {
+            slug: "loom",
+            revision: 0,
+            summary: "",
+            notes: 0,
+            last_merge: null,
+          },
+        ],
+      },
+      "projects/loom/repos/loom": {
+        ...repo,
+        project_key: "loom",
+        slug: "loom",
       },
     });
-    render(<ProjectPage projectKey="tools" />);
+    window.history.replaceState({}, "", "/projekte/loom");
+    render(<ProjectPage projectKey="loom" />);
     expect(
-      await screen.findByText(/stehen für sich: jedes hat seine eigene Seite/),
+      await screen.findByText(/Projekt aus einem Repository/),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /Beschreibung/ })).toBeNull();
-    // A search does not leave the overview for a tab that is not there.
-    fireEvent.change(screen.getByRole("searchbox"), {
-      target: { value: "client" },
-    });
-    expect(window.location.hash).toBe("");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute(
-      "aria-label",
-      "Übersicht",
-    );
-    expect(screen.getByText(/Einzelne Repositories/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("loom");
+    // Its own path, not the repository's.
+    expect(window.location.pathname).toBe("/projekte/loom");
   });
 
   it("says so without a description and fails cleanly", async () => {
@@ -622,7 +579,9 @@ describe("ProjectPage", () => {
     expect(document.activeElement).toBe(search);
     search.blur();
     fireEvent.click(
-      await screen.findByRole("button", { name: "Systemkarte: Vollansicht" }),
+      await screen.findByRole("button", {
+        name: "Architekturübersicht: Vollansicht",
+      }),
     );
     fireEvent.keyDown(document.body, { key: "/" });
     expect(document.activeElement).not.toBe(search);
@@ -669,7 +628,9 @@ describe("ProjectPage", () => {
   it("draws the system map above the repositories, repository nodes linked", async () => {
     serve({ "projects/PAY": { ...project, map } });
     render(<ProjectPage projectKey="PAY" />);
-    const drawing = await screen.findByRole("img", { name: "Systemkarte" });
+    const drawing = await screen.findByRole("img", {
+      name: "Architekturübersicht",
+    });
     expect(drawing.querySelector("svg")).toBeTruthy();
     // The zones are titled from strings.ts, not by the model.
     expect(drawing.textContent).toContain("Datenspeicher");
@@ -698,10 +659,12 @@ describe("ProjectPage", () => {
     serve({ "projects/PAY": { ...project, map } });
     render(<ProjectPage projectKey="PAY" />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Systemkarte: Vollansicht" }),
+      await screen.findByRole("button", {
+        name: "Architekturübersicht: Vollansicht",
+      }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(dialog.getAttribute("aria-label")).toBe("Systemkarte");
+    expect(dialog.getAttribute("aria-label")).toBe("Architekturübersicht");
     const link = within(dialog).getByRole("link", {
       name: "Repository pay-api öffnen",
     });
@@ -757,7 +720,7 @@ describe("ProjectPage", () => {
     serve({ "projects/PAY": { ...project, map_expected: true } });
     render(<ProjectPage projectKey="PAY" />);
     expect(
-      await screen.findByText(/Noch keine Systemkarte/),
+      await screen.findByText(/Noch keine Architekturübersicht/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.queryByText(/wird gezeichnet/)).toBeNull();
@@ -769,16 +732,16 @@ describe("ProjectPage", () => {
     });
     render(<ProjectPage projectKey="PAY" />);
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
-    expect(screen.queryByText(/Noch keine Systemkarte/)).toBeNull();
-    expect(screen.queryByText("Systemkarte")).toBeNull();
+    expect(screen.queryByText(/Noch keine Architekturübersicht/)).toBeNull();
+    expect(screen.queryByText("Architekturübersicht")).toBeNull();
   });
 
   it("promises no map where no run will draw one", async () => {
     serve({ "projects/PAY": { ...project, map_expected: false } });
     render(<ProjectPage projectKey="PAY" />);
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
-    expect(screen.queryByText(/Noch keine Systemkarte/)).toBeNull();
-    expect(screen.queryByText("Systemkarte")).toBeNull();
+    expect(screen.queryByText(/Noch keine Architekturübersicht/)).toBeNull();
+    expect(screen.queryByText("Architekturübersicht")).toBeNull();
     // The page asks for nothing beyond its project.
     expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
       expect.stringContaining("sources"),

@@ -68,7 +68,6 @@ const sources: Sources = {
     {
       project_key: "SHOP",
       kind: "bitbucket",
-      system: true,
       host: "https://forge.example.invalid",
       has_token: true,
       token_auth: "bearer",
@@ -87,7 +86,6 @@ const sources: Sources = {
     {
       project_key: "werkzeuge",
       kind: "static",
-      system: true,
       host: "",
       has_token: false,
       token_auth: "basic",
@@ -109,7 +107,6 @@ const sources: Sources = {
 const detail: SourceDetail = {
   project_key: "werkzeuge",
   kind: "static",
-  system: true,
   host: "",
   has_token: false,
   token_auth: "basic",
@@ -266,36 +263,36 @@ describe("SourcesPage", () => {
     expect(body).not.toHaveProperty("system");
   });
 
-  it("creates a static folder whose repositories stand alone", async () => {
+  it("creates a static folder with its first repository, the slug from the URL", async () => {
     const writes = serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
-    // A Bitbucket project is always a system: no choice offered.
-    expect(screen.queryByText("Bildet ein System")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText(/^Statischer Ordner/));
-    expect(
-      screen.getByText(/eine Projektseite und eine Systemkarte/),
-    ).toBeInTheDocument();
-    const toggle = screen.getByRole("switch", { name: "Bildet ein System" });
-    expect(toggle).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    // Another kind and back: the default again, as with the token's.
-    fireEvent.click(screen.getByText("Bitbucket-Projekt"));
-    fireEvent.click(screen.getByText(/^Statischer Ordner/));
-    const again = screen.getByRole("switch", { name: "Bildet ein System" });
-    expect(again).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(again);
-    expect(
-      screen.getByText(/etwa Bibliotheken und Werkzeuge/),
-    ).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
-      target: { value: "tools" },
-    });
-    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    // No switch any more: a folder of one repository is a project of one.
+    expect(screen.queryByRole("switch")).toBeNull();
+    const create = screen.getByText("Anlegen und synchronisieren");
+    expect(create).toBeDisabled();
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/ipverse/lens.git"),
+      { target: { value: "https://github.com/ipverse/lens-gateway.git" } },
+    );
+    const slug = screen.getByPlaceholderText("lens") as HTMLInputElement;
+    expect(slug.value).toBe("lens-gateway");
+    // Typed by hand, the slug stays when the URL changes.
+    fireEvent.change(slug, { target: { value: "gateway" } });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/ipverse/lens.git"),
+      { target: { value: "https://github.com/ipverse/lens-gateway" } },
+    );
+    expect(slug.value).toBe("gateway");
+    fireEvent.click(create);
     await waitFor(() => expect(writes).toHaveLength(1));
-    const body = writes[0]?.body as { kind: string; system: boolean };
-    expect(body).toMatchObject({ kind: "static", system: false });
+    expect(writes[0]?.body).toMatchObject({
+      project_key: "gateway",
+      kind: "static",
+      clone_url: "https://github.com/ipverse/lens-gateway",
+      slug: "gateway",
+    });
   });
 });
 
@@ -513,39 +510,6 @@ describe("SourcePage baseline", () => {
     });
   });
 
-  it("switches a static folder between one system and standalone repositories", async () => {
-    const writes = serve({ "sources/werkzeuge": detail });
-    render(<SourcePage projectKey="werkzeuge" />);
-    const sw = await screen.findByRole("switch", { name: "Bildet ein System" });
-    expect(sw).toHaveAttribute("aria-checked", "true");
-    expect(
-      screen.getByText(/eine Projektseite und eine Systemkarte/),
-    ).toBeInTheDocument();
-    fireEvent.click(sw);
-    await waitFor(() => expect(writes).toHaveLength(1));
-    expect(writes[0]).toEqual({
-      method: "PATCH",
-      path: "sources/werkzeuge",
-      body: { system: false },
-    });
-  });
-
-  it("offers no switch for a Bitbucket project", async () => {
-    serve({
-      "sources/SHOP": {
-        ...detail,
-        project_key: "SHOP",
-        kind: "bitbucket",
-        host: "https://forge.example.invalid",
-      },
-    });
-    render(<SourcePage projectKey="SHOP" />);
-    expect(
-      await screen.findByText("https://forge.example.invalid"),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("switch")).toBeNull();
-  });
-
   it("sends a token typed in the access form", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
@@ -578,6 +542,14 @@ describe("SourcePage", () => {
     expect(screen.getByText("Erneut")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Repository hinzufügen"));
+    // The slug follows the URL until typed by hand.
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/acme/acme-cli.git"),
+      { target: { value: "https://github.com/acme/tool.git" } },
+    );
+    expect(
+      (screen.getByPlaceholderText("acme-cli") as HTMLInputElement).value,
+    ).toBe("tool");
     fireEvent.change(screen.getByPlaceholderText("acme-cli"), {
       target: { value: "neu" },
     });

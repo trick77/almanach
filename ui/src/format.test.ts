@@ -14,6 +14,7 @@ import {
   runs,
   share,
   shortDay,
+  slugFromURL,
 } from "./format";
 import { fmtInt } from "./strings";
 
@@ -217,5 +218,19 @@ describe("labels and tones", () => {
     expect(problemTone(1)).toBe("none");
     expect(problemTone(2)).toBe("warn");
     expect(problemTone(4)).toBe("fail");
+  });
+});
+
+describe("slugFromURL", () => {
+  it("is the repository's name, as the backend derives it", () => {
+    expect(slugFromURL("https://github.com/ipverse/lens-gateway.git")).toBe(
+      "lens-gateway",
+    );
+    expect(slugFromURL("https://github.com/ipverse/lens-gateway/")).toBe(
+      "lens-gateway",
+    );
+    expect(slugFromURL(" https://forge.example/scm/abc/Def ")).toBe("Def");
+    expect(slugFromURL("https://forge.example")).toBe("");
+    expect(slugFromURL("not a url")).toBe("");
   });
 });

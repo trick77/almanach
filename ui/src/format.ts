@@ -333,3 +333,20 @@ export function bytes(n: number): string {
 export function shortSHA(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
+
+/** slugFromURL is the repository's name in a clone URL: its last path
+ *  segment without a trailing slash or ".git", as the backend derives it
+ *  (store.SlugFromURL); "" when the URL has none. */
+export function slugFromURL(url: string): string {
+  let path: string;
+  try {
+    path = new URL(url.trim()).pathname;
+  } catch {
+    return "";
+  }
+  path = path
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
+  return path.slice(path.lastIndexOf("/") + 1);
+}
