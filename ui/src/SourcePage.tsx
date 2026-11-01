@@ -234,7 +234,10 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         <button
           type="button"
           className={btnPrimary}
-          disabled={queued}
+          // A clone or fetch under way holds the button; a baseline run
+          // does not, it pins its commit.
+          disabled={queued || active > 0}
+          title={active > 0 ? S.sources.actions.syncRunning : undefined}
           onClick={sync}
         >
           {queued ? S.sources.actions.queued : S.sources.actions.sync}

@@ -372,6 +372,40 @@ describe("SourcePage", () => {
     );
   });
 
+  it("holds the sync button while a repo clones, not while a run describes", async () => {
+    const [cli, legacy] = detail.repos;
+    if (!cli || !legacy) throw new Error("fixture");
+    serve({
+      "sources/werkzeuge": {
+        ...detail,
+        repos: [cli, { ...legacy, state: "syncing" }],
+      },
+    });
+    const { unmount } = render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    const held = screen.getAllByText("Synchronisieren")[0];
+    expect(held).toBeDisabled();
+    expect(held).toHaveAttribute(
+      "title",
+      expect.stringMatching(/läuft gerade/),
+    );
+    unmount();
+
+    const run = cli.baseline;
+    if (!run) throw new Error("fixture");
+    serve({
+      "sources/werkzeuge": {
+        ...detail,
+        repos: [{ ...cli, baseline: { ...run, state: "describing" } }, legacy],
+      },
+    });
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    const free = screen.getAllByText("Synchronisieren")[0];
+    expect(free).toBeEnabled();
+    expect(free).not.toHaveAttribute("title");
+  });
+
   it("confirms before removing", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
