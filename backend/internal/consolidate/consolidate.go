@@ -38,7 +38,7 @@ type Store interface {
 	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
 	InsertLLMCall(ctx context.Context, c store.LLMCall) (int64, error)
-	ProjectSystemOf(ctx context.Context, key string) (store.ProjectSystem, error)
+	SourceRepoCount(ctx context.Context, key string) (int, error)
 }
 
 // Merger is the model call.
@@ -349,9 +349,9 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		deferred = w.deferBusy(ctx, q, err)
 		return
 	}
-	// A folder whose repositories stand alone has no project page: the
-	// prompt shows none and asks for null, and whatever comes is not folded.
-	alone, err := w.standalone(ctx, q.ProjectKey)
+	// A project of one has no project page: the prompt shows none and asks
+	// for null, and whatever comes is not folded.
+	alone, err := w.single(ctx, q.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: project source read failed", logging.Err(err))
 		deferred = w.deferBusy(ctx, q, err)
@@ -369,7 +369,7 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 
 	projectDescription := describe(projectPage)
 	if alone {
-		projectDescription = standaloneProject
+		projectDescription = singleProject
 	}
 	prompt := renderWith(prompts.Merge, q, repoPage, projectDescription, w.limits)
 	res := w.llm.Merge(ctx, inference.MergeRequest{Prompt: prompt})
@@ -405,7 +405,7 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	}
 	if alone {
 		if res.Merge.Project != nil {
-			w.log.InfoContext(ctx, "consolidate: project rewrite left out, the repositories stand alone")
+			w.log.InfoContext(ctx, "consolidate: project rewrite left out, a project of one")
 		}
 		return
 	}
@@ -415,20 +415,20 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	return
 }
 
-// standalone reports whether a project's repositories stand alone: its
-// source says so, and the sources are on (the baseline with them). With
-// them off every project is a system again, a folder's old word included.
-func (w *Worker) standalone(ctx context.Context, key string) (bool, error) {
+// single reports whether a project is a project of one: its source holds
+// one repository, and the sources are on (the baseline with them). With
+// them off there are no sources, and every project keeps its page.
+func (w *Worker) single(ctx context.Context, key string) (bool, error) {
 	if w.base == nil {
 		return false, nil
 	}
-	ps, err := w.store.ProjectSystemOf(ctx, key)
-	return ps.Standalone, err
+	n, err := w.store.SourceRepoCount(ctx, key)
+	return n == 1, err
 }
 
-// standaloneProject stands in the merge prompt for the project description
-// of a folder whose repositories stand alone.
-const standaloneProject = "_None: the repositories of this project stand alone, it has no project description. Answer `\"project\": null`._"
+// singleProject stands in the merge prompt for the project description of
+// a project of one: its repository's page is the project's.
+const singleProject = "_None: this project is one repository, it has no project description. Answer `\"project\": null`._"
 
 // deferNote leaves a note queued with its failed attempt counted, after a
 // hold; reports whether it stays queued: false once maxFoldAttempts is
@@ -738,7 +738,7 @@ func proseSummary(s string) string { return lang.Laid(s, false) }
 // sameText reports whether a statement's new text says what its old one
 // did: umlauts spelled in (lang.SameButSpelling) or only laid out anew,
 // a paragraph turned into a list, a term set in bold (markup.Words). The
-// old text is read laid out (store, lang.Relaid), as the new one is.
+// old text was stored laid out (lang.Laid), as the new one is.
 func sameText(old, text string) bool {
 	return lang.SameButSpelling(old, text) || lang.SameButSpelling(markup.Words(old), markup.Words(text))
 }

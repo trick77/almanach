@@ -494,12 +494,8 @@ export const S = {
       gone: "Nicht mehr im Katalog",
       calls: "Aufrufe des Laufs aufgebraucht",
       bytes: "Lesebudget des Laufs überschritten",
-      // TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
-      ceiling: "An der früheren Seitengrenze",
       failed: "Fehler: Modellaufruf fehlgeschlagen",
       refused: "Fehler: Antwort regelwidrig, verworfen",
-      // TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
-      over_ceiling: "Über der früheren Seitengrenze verworfen",
       no_page: "Projekt ohne Seite",
       "": "Grund nicht erfasst",
     } satisfies Record<SkipReason, string>,

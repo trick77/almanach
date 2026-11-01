@@ -157,28 +157,11 @@ type fakeGit struct {
 	access   []gitrepo.Access
 	accessBy map[string]gitrepo.Access
 	onClone  func(dir string)
-	// legacy are clones in folders named by names ("/base/key/slug"), as
-	// before the ids; MoveLegacy moves them and records the move in moved.
-	legacy map[string]string
-	moved  []string
-}
-
-// MoveLegacy is gitrepo's: TRANSITIONAL(ids), goes with it.
-func (g *fakeGit) MoveLegacy(fromKey, fromSlug, toKey, toSlug string) (bool, error) {
-	from, to := "/base/"+fromKey+"/"+fromSlug, "/base/"+toKey+"/"+toSlug
-	origin, ok := g.legacy[from]
-	if !ok || g.origins[to] != "" {
-		return false, nil
-	}
-	delete(g.legacy, from)
-	g.origins[to] = origin
-	g.moved = append(g.moved, from+" → "+to)
-	return true, nil
 }
 
 func newFakeGit() *fakeGit {
 	return &fakeGit{origins: map[string]string{}, heads: map[string]string{}, fetchErr: map[string]error{},
-		cloneErr: map[string]error{}, accessBy: map[string]gitrepo.Access{}, legacy: map[string]string{}}
+		cloneErr: map[string]error{}, accessBy: map[string]gitrepo.Access{}}
 }
 
 func (g *fakeGit) Dir(key, slug string) (string, error) {
@@ -282,42 +265,6 @@ func TestCycle_ClonesResolvesFetchesMarksReady(t *testing.T) {
 	if len(g.access) != 1 || g.access[0].Token != "tok" || g.access[0].Auth != store.TokenBasic || g.access[0].User != "me" ||
 		g.access[0].Origin != "https://x" {
 		t.Fatalf("access handed to git = %+v", g.access)
-	}
-}
-
-// TRANSITIONAL(ids): a clone from before the ids, in a folder named by its
-// names, is moved to its id folder and fetched there, not cloned again.
-// Remove with MoveLegacy.
-func TestCycle_MovesALegacyClone(t *testing.T) {
-	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
-	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
-	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "abc", src)}
-	g.legacy["/base/tools/cli"] = "https://x/cli.git"
-	g.heads[dirOf("tools", "cli")+"@main"] = "abc"
-	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(g.moved) != 1 || g.moved[0] != "/base/tools/cli → "+dirOf("tools", "cli") {
-		t.Fatalf("moved = %v", g.moved)
-	}
-	if got := strings.Join(g.calls, ","); got != "fetch "+dirOf("tools", "cli") {
-		t.Fatalf("git calls = %s, want the fetch only", got)
-	}
-}
-
-// TRANSITIONAL(ids): a removal also takes the clone a sync never moved out
-// of its folder named by names, never an id folder. Remove with
-// RemoveLegacy.
-func TestRemoveLegacy(t *testing.T) {
-	g := newFakeGit()
-	p := poller(newFakeStore(), g, &fakeLister{}, testKey(t))
-	for _, err := range []error{p.RemoveLegacy("tools", "cli"), p.RemoveLegacyProject("tools"), p.RemoveLegacy("p3", "r4"), p.RemoveLegacyProject("p3")} {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := strings.Join(g.calls, ","); got != "remove /base/tools/cli,remove-project /base/tools" {
-		t.Fatalf("git calls = %s", got)
 	}
 }
 

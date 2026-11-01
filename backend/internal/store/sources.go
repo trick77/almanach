@@ -57,10 +57,6 @@ type ProjectSource struct {
 	UpdatedAt    time.Time
 	LastListedAt *time.Time
 	LastError    string
-	// Standalone: the repositories each stand for themselves, no project
-	// page, no system map. False (every source by default) is one system.
-	// A Bitbucket project is always one.
-	Standalone bool
 }
 
 // HasToken reports whether a credential is stored.
@@ -104,11 +100,11 @@ const sourcesFrom = `sources s JOIN projects p ON p.id = s.project_id`
 // sourceColumns are a source's columns over sourcesFrom in the order
 // sourceDest scans them.
 const sourceColumns = `s.project_id, p.key, s.kind, COALESCE(s.host, ''), s.token_auth, s.token_user, s.token_enc,
-	s.created_at, s.updated_at, s.last_listed_at, s.last_error, s.standalone`
+	s.created_at, s.updated_at, s.last_listed_at, s.last_error`
 
 func sourceDest(src *ProjectSource) []any {
 	return []any{&src.ProjectID, &src.ProjectKey, &src.Kind, &src.Host, &src.TokenAuth, &src.TokenUser, &src.TokenEnc,
-		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError, &src.Standalone}
+		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError}
 }
 
 // projectByName and repoByName are a project and a repository by any name
@@ -169,29 +165,47 @@ func (s *Store) SourceByKey(ctx context.Context, key string) (ProjectSource, boo
 // case.
 func (s *Store) CreateSource(ctx context.Context, src ProjectSource) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		self, _, err := projectID(ctx, tx, src.ProjectKey)
-		if err != nil {
-			return err
-		}
-		rows, err := tx.QueryContext(ctx, `SELECT key, project_id FROM project_names`)
-		if err != nil {
-			return err
-		}
-		if taken, err := takenByOther(rows, src.ProjectKey, self); err != nil {
-			return err
-		} else if taken {
-			return ErrNameTaken
-		}
-		pid, err := ensureProject(ctx, tx, src.ProjectKey)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO sources (project_id, kind, host, token_auth, token_user, token_enc, created_at, updated_at, standalone)
-			VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?7, ?8)`,
-			pid, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), nowStamp(), src.Standalone)
-		return uniqueAsExists(err)
+		_, err := createSource(ctx, tx, src)
+		return err
 	})
+}
+
+// CreateSourceWith creates a static source and its first repository in one
+// transaction: either both are there, or neither, with AddSourceRepo's
+// errors for the repository.
+func (s *Store) CreateSourceWith(ctx context.Context, src ProjectSource, first SourceRepo) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		pid, err := createSource(ctx, tx, src)
+		if err != nil {
+			return err
+		}
+		return addSourceRepo(ctx, tx, pid, first)
+	})
+}
+
+func createSource(ctx context.Context, tx *sql.Tx, src ProjectSource) (int64, error) {
+	self, _, err := projectID(ctx, tx, src.ProjectKey)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT key, project_id FROM project_names`)
+	if err != nil {
+		return 0, err
+	}
+	if taken, err := takenByOther(rows, src.ProjectKey, self); err != nil {
+		return 0, err
+	} else if taken {
+		return 0, ErrNameTaken
+	}
+	pid, err := ensureProject(ctx, tx, src.ProjectKey)
+	if err != nil {
+		return 0, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO sources (project_id, kind, host, token_auth, token_user, token_enc, created_at, updated_at)
+		VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?7)`,
+		pid, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), nowStamp())
+	return pid, uniqueAsExists(err)
 }
 
 // ProjectSpelledOtherwise is the spelling noergler delivers a project key
@@ -230,42 +244,13 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 	return n == 1, err
 }
 
-// SetSourceStandalone sets whether a source's repositories stand alone.
-// Reports whether it changed: false when the source already said so, or
-// is gone. Becoming a system again marks the project due, so the next run
-// folds the page the folder kept.
-func (s *Store) SetSourceStandalone(ctx context.Context, key string, standalone bool) (bool, error) {
-	n, err := affected(s.db.ExecContext(ctx, `
-		UPDATE sources SET standalone = ?1, project_due = NOT ?1, updated_at = ?2
-		 WHERE project_id = `+projectByName+` AND standalone <> ?1`, standalone, nowStamp(), key))
-	return n == 1, err
-}
-
-// ProjectSystem is what a project's source says of it as a system.
-type ProjectSystem struct {
-	// Standalone: the repositories stand for themselves, no project page.
-	Standalone bool
-	// Due: the folder became a system again, the project page it kept
-	// must be folded by the next run.
-	Due bool
-}
-
-// ProjectSystemOf is what a project's source says of it; a project without
-// a source is a system, nothing due.
-func (s *Store) ProjectSystemOf(ctx context.Context, key string) (ProjectSystem, error) {
-	var ps ProjectSystem
-	err := s.db.QueryRowContext(ctx, `SELECT standalone, project_due FROM sources WHERE project_id = `+projectByName,
-		key).Scan(&ps.Standalone, &ps.Due)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ProjectSystem{}, nil
-	}
-	return ps, err
-}
-
-// ProjectFolded clears a project's due mark: a project step got its answer.
-func (s *Store) ProjectFolded(ctx context.Context, key string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sources SET project_due = 0 WHERE project_due AND project_id = `+projectByName, key)
-	return err
+// SourceRepoCount is how many source repositories a project has, 0 for a
+// project without a source. One is a project of one: its repository's
+// page is the project's, no project page, no project step.
+func (s *Store) SourceRepoCount(ctx context.Context, key string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_repos WHERE project_id = `+projectByName, key).Scan(&n)
+	return n, err
 }
 
 // IsSourceRepo reports whether (key, slug) is a source repository: the
@@ -409,22 +394,26 @@ func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
 		if !ok {
 			return ErrNoProject
 		}
-		if err := oneHostIn(ctx, tx, pid, 0, r.CloneURL); err != nil {
-			return err
-		}
-		rid, _, err := claimSlug(ctx, tx, pid, r.Slug)
-		if err != nil {
-			return err
-		}
-		if err := clonedElsewhere(ctx, tx, rid, r.CloneURL); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO source_repos (repo_id, project_id, clone_url, origin, branch, state, created_at)
-			VALUES (?, ?, ?, 'manual', NULLIF(?, ''), 'pending', ?)`,
-			rid, pid, r.CloneURL, r.Branch, nowStamp())
-		return uniqueAsExists(err)
+		return addSourceRepo(ctx, tx, pid, r)
 	})
+}
+
+func addSourceRepo(ctx context.Context, tx *sql.Tx, pid int64, r SourceRepo) error {
+	if err := oneHostIn(ctx, tx, pid, 0, r.CloneURL); err != nil {
+		return err
+	}
+	rid, _, err := claimSlug(ctx, tx, pid, r.Slug)
+	if err != nil {
+		return err
+	}
+	if err := clonedElsewhere(ctx, tx, rid, r.CloneURL); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO source_repos (repo_id, project_id, clone_url, origin, branch, state, created_at)
+		VALUES (?, ?, ?, 'manual', NULLIF(?, ''), 'pending', ?)`,
+		rid, pid, r.CloneURL, r.Branch, nowStamp())
+	return uniqueAsExists(err)
 }
 
 // claimSlug is the repository a new source repository's slug names: the one
@@ -645,12 +634,8 @@ func listedRepo(ctx context.Context, tx *sql.Tx, pid int64, l ListedRepo, forges
 		_, err := tx.ExecContext(ctx, `UPDATE repos SET forge_id = ? WHERE id = ?`, l.ForgeID, rid)
 		return rid, false, err
 	case !forge.Valid:
-		// TRANSITIONAL(ids): a repository from before 0002 has no forge id
-		// until a listing names it; its slug matches, so it takes the listed
-		// one. Remove when every listed repository on every instance has a
-		// forge_id (SELECT COUNT(*) FROM source_repos sr JOIN repos r ON
-		// r.id = sr.repo_id WHERE sr.origin = 'listed' AND r.forge_id IS NULL
-		// is 0).
+		// A repository a note brought before any listing has no forge id;
+		// its slug matches, so it takes the listed one.
 		_, err := tx.ExecContext(ctx, `UPDATE repos SET forge_id = ? WHERE id = ?`, l.ForgeID, rid)
 		return rid, false, err
 	case forge.Int64 != l.ForgeID && forges[forge.Int64]:

@@ -177,11 +177,11 @@ func TestProject_Libraries(t *testing.T) {
 	if code, body = do(t, h, http.MethodGet, "/api/projects/libs", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
 		t.Fatalf("libs' libraries: %d %s, want none", code, body["libraries"])
 	}
-	st.standalone = map[string]bool{"apps": true}
+	st.single = map[string]store.RepoRow{"apps": {Slug: "loom"}}
 	if code, body = do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
-		t.Fatalf("standalone apps' libraries: %d %s, want none", code, body["libraries"])
+		t.Fatalf("apps of one: libraries %d %s, want none", code, body["libraries"])
 	}
-	st.standalone = nil
+	st.single = nil
 	st.graphErr = errors.New("database is locked")
 	if code, _ := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 500 {
 		t.Fatalf("failing store: %d, want 500", code)

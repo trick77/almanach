@@ -7,7 +7,6 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/manifest"
 )
 
@@ -285,9 +284,7 @@ func (s *Store) sourceSummaries(ctx context.Context, refs []RepoRef) (map[RepoRe
 		if err := rows.Scan(&r.ProjectKey, &r.Slug, &sum); err != nil {
 			return nil, err
 		}
-		// TRANSITIONAL(layout): Remove when every page's current revision was
-		// written after the layout.
-		out[r] = lang.Relaid(sum, false)
+		out[r] = sum
 	}
 	return out, rows.Err()
 }

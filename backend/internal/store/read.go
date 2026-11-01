@@ -8,7 +8,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/redact"
 )
 
@@ -29,9 +28,6 @@ type ProjectRow struct {
 	Notes     int
 	Revision  int
 	LastMerge *time.Time
-	// Standalone: its source says the repositories stand alone; the wiki
-	// lists them one by one, no project page.
-	Standalone bool
 }
 
 // What the wiki lists. With the sources on (sourced), a project is a source
@@ -65,8 +61,7 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 		       (SELECT COUNT(*) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
 		       COALESCE((SELECT rv.revision FROM pages pg JOIN revisions rv ON rv.id = pg.current_revision_id
 		                  WHERE pg.scope = 'project' AND pg.project_id = p.id AND pg.repo_id = 0), 0),
-		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
-		       EXISTS (SELECT 1 FROM sources s WHERE s.project_id = p.id AND s.standalone)
+		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id)
 		  FROM `+projectsFrom(sourced)+` p ORDER BY p.key`)
 	if err != nil {
 		return nil, err
@@ -75,7 +70,7 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 	out := []ProjectRow{}
 	for rows.Next() {
 		var r ProjectRow
-		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, timeOrNil(&r.LastMerge), &r.Standalone); err != nil {
+		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, timeOrNil(&r.LastMerge)); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -122,9 +117,6 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 		if err := rows.Scan(&r.Slug, &r.Summary); err != nil {
 			return nil, err
 		}
-		// TRANSITIONAL(layout): Remove when every page's current revision was
-		// written after the layout.
-		r.Summary = lang.Relaid(r.Summary, false)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -157,18 +149,16 @@ func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]Repo
 		if err := rows.Scan(&r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge)); err != nil {
 			return nil, err
 		}
-		// TRANSITIONAL(layout): Remove when every page's current revision was
-		// written after the layout.
-		r.Summary = lang.Relaid(r.Summary, false)
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
-// StandaloneRepos is the source repositories of every project whose
-// repositories stand alone, by the project's current key, in one query:
-// what the wiki's entry lists one by one.
-func (s *Store) StandaloneRepos(ctx context.Context) (map[string][]RepoRow, error) {
+// SingleRepos is the repository of every project of one (a source with one
+// repository), by the project's current key, in one query: what the
+// project list shows for such a project, its repository's page being the
+// project's.
+func (s *Store) SingleRepos(ctx context.Context) (map[string]RepoRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.key, r.slug,
 		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
@@ -180,22 +170,19 @@ func (s *Store) StandaloneRepos(ctx context.Context) (map[string][]RepoRow, erro
 		  JOIN repos r ON r.id = sr.repo_id
 		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
-		 WHERE s.standalone ORDER BY p.key, r.slug`)
+		 WHERE (SELECT COUNT(*) FROM source_repos x WHERE x.project_id = s.project_id) = 1`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[string][]RepoRow{}
+	out := map[string]RepoRow{}
 	for rows.Next() {
 		var key string
 		var r RepoRow
 		if err := rows.Scan(&key, &r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge)); err != nil {
 			return nil, err
 		}
-		// TRANSITIONAL(layout): Remove when every page's current revision was
-		// written after the layout.
-		r.Summary = lang.Relaid(r.Summary, false)
-		out[key] = append(out[key], r)
+		out[key] = r
 	}
 	return out, rows.Err()
 }

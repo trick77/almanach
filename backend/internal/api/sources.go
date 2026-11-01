@@ -30,8 +30,8 @@ type SourceStore interface {
 	Sources(ctx context.Context) ([]store.SourceRow, error)
 	SourceByKey(ctx context.Context, key string) (store.ProjectSource, bool, error)
 	CreateSource(ctx context.Context, src store.ProjectSource) error
+	CreateSourceWith(ctx context.Context, src store.ProjectSource, first store.SourceRepo) error
 	UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, tokenUser string, tokenEnc []byte, setToken bool) (bool, error)
-	SetSourceStandalone(ctx context.Context, key string, standalone bool) (bool, error)
 	DeleteSource(ctx context.Context, key string) (bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	AddSourceRepo(ctx context.Context, r store.SourceRepo) error
@@ -56,12 +56,6 @@ type Checkouts interface {
 	ProjectDir(projectID int64) (string, error)
 	Remove(projectID, repoID int64) error
 	RemoveProject(projectID int64) error
-	// TRANSITIONAL(ids): a clone from before the ids that no sync has moved
-	// yet (a missing repository is never synced) still sits in a folder
-	// named by names; a removal takes it too. Remove when every instance
-	// has synced once on a release with ids.
-	RemoveLegacy(key, slug string) error
-	RemoveLegacyProject(key string) error
 }
 
 // SourcesDeps is the clone feature as the routes see it; nil in Deps means
@@ -146,11 +140,8 @@ func jsonBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 }
 
 type sourceSummaryBody struct {
-	ProjectKey string `json:"project_key"`
-	Kind       string `json:"kind"`
-	// System: the repositories form one system (a project page, a system
-	// map); false when each stands for itself. Always true for Bitbucket.
-	System       bool       `json:"system"`
+	ProjectKey   string     `json:"project_key"`
+	Kind         string     `json:"kind"`
 	Host         string     `json:"host"`
 	HasToken     bool       `json:"has_token"`
 	TokenAuth    string     `json:"token_auth"`
@@ -187,7 +178,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, s := range rows {
-		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, System: !s.Standalone, Host: s.Host, HasToken: s.HasToken(),
+		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, Host: s.Host, HasToken: s.HasToken(),
 			TokenAuth: s.TokenAuth, TokenUser: s.TokenUser, Repos: s.Repos, Ready: s.Ready, Active: s.Active, Failed: s.Failed, Missing: s.Missing,
 			LastListedAt: s.LastListedAt, LastSyncedAt: s.LastSyncedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
 	}
@@ -269,7 +260,6 @@ func inMapStep(r store.BaselineRun) bool {
 type sourceDetailBody struct {
 	ProjectKey   string           `json:"project_key"`
 	Kind         string           `json:"kind"`
-	System       bool             `json:"system"`
 	Host         string           `json:"host"`
 	HasToken     bool             `json:"has_token"`
 	TokenAuth    string           `json:"token_auth"`
@@ -292,7 +282,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 	if err != nil {
 		return sourceDetailBody{}, err
 	}
-	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, System: !src.Standalone, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
+	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
 		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError,
 		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos))}
 	if dir, err := d.Sources.Git.ProjectDir(src.ProjectID); err == nil {
@@ -361,8 +351,12 @@ type createSourceBody struct {
 	Token      string `json:"token"`
 	TokenAuth  string `json:"token_auth"`
 	TokenUser  string `json:"token_user"`
-	// System, absent: true. Only a static folder may be false.
-	System *bool `json:"system"`
+	// CloneURL, Slug and Branch are a static folder's first repository,
+	// created with it. Slug empty: the repository's name from the URL;
+	// project_key empty: the slug.
+	CloneURL string `json:"clone_url"`
+	Slug     string `json:"slug"`
+	Branch   string `json:"branch"`
 }
 
 // validCloneURL is https with a host and no credentials: the token travels
@@ -438,7 +432,27 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.ProjectKey, in.Kind, in.Host = strings.TrimSpace(in.ProjectKey), strings.ToLower(strings.TrimSpace(in.Kind)), strings.TrimRight(strings.TrimSpace(in.Host), "/")
+	in.CloneURL, in.Slug, in.Branch = strings.TrimSpace(in.CloneURL), strings.TrimSpace(in.Slug), strings.TrimSpace(in.Branch)
+	first := in.CloneURL != ""
+	if first && in.Slug == "" {
+		in.Slug = store.SlugFromURL(in.CloneURL)
+	}
+	if first && in.ProjectKey == "" {
+		in.ProjectKey = in.Slug
+	}
 	switch {
+	case first && in.Kind != store.SourceStatic:
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: a Bitbucket source lists its repositories itself")
+		return
+	case first && !validCloneURL(in.CloneURL):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: an https URL without credentials")
+		return
+	case first && !gitrepo.ValidSegment(in.Slug):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "slug: letters, digits, dot, dash, underscore; not . or ..")
+		return
+	case strings.ContainsAny(in.Branch, " \t\n") || strings.HasPrefix(in.Branch, "-"):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "branch: not a branch name")
+		return
 	case !gitrepo.ValidSegment(in.ProjectKey):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
 		return
@@ -450,9 +464,6 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		return
 	case in.Kind == store.SourceStatic && in.Host != "":
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: a static source has none")
-		return
-	case in.Kind == store.SourceBitbucket && in.System != nil && !*in.System:
-		httpx.WriteError(w, http.StatusUnprocessableEntity, systemBitbucket)
 		return
 	}
 	auth, user, problem := access(in.Kind, in.TokenAuth, in.TokenUser)
@@ -477,9 +488,17 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
 		return
 	}
-	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed,
-		Standalone: in.System != nil && !*in.System}
-	if err := d.Sources.Store.CreateSource(ctx, src); err != nil {
+	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed}
+	if first {
+		err = d.Sources.Store.CreateSourceWith(ctx, src, store.SourceRepo{ProjectKey: in.ProjectKey, Slug: in.Slug, CloneURL: in.CloneURL,
+			Branch: in.Branch})
+	} else {
+		err = d.Sources.Store.CreateSource(ctx, src)
+	}
+	if err != nil {
+		if clonedElsewhere(w, err) {
+			return
+		}
 		if errors.Is(err, store.ErrExists) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
 			return
@@ -491,7 +510,7 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
-	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "system", !src.Standalone, "has_token", src.HasToken(),
+	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "first_repo", in.Slug, "has_token", src.HasToken(),
 		"user", d.user(r))
 	d.Sources.Poller.Nudge()
 	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
@@ -518,9 +537,6 @@ type updateSourceBody struct {
 	Token      *string `json:"token"`
 	TokenAuth  *string `json:"token_auth"`
 	TokenUser  *string `json:"token_user"`
-	// System switches a static folder between one system and repositories
-	// that stand alone; alone in its PATCH, like a rename.
-	System *bool `json:"system"`
 }
 
 func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
@@ -541,10 +557,6 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	// no rename.
 	if in.ProjectKey != nil && strings.TrimSpace(*in.ProjectKey) != src.ProjectKey {
 		d.renameSource(w, r, src, in)
-		return
-	}
-	if switching(src, in) {
-		d.switchSystem(w, r, src, in)
 		return
 	}
 	host, tokenAuth, tokenUser := src.Host, src.TokenAuth, src.TokenUser
@@ -616,7 +628,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 // is never given away.
 func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
 	ctx := r.Context()
-	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil || switching(src, in) {
+	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a rename comes alone, the other fields in their own PATCH")
 		return
 	}
@@ -637,43 +649,6 @@ func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.Pro
 	d.Log.InfoContext(ctx, "project_renamed", "project", to, "from", src.ProjectKey, "user", d.user(r))
 	d.Sources.Poller.Nudge()
 	d.writeSource(w, r, to, http.StatusOK)
-}
-
-// switching reports whether a PATCH switches the source: system given and
-// not what it is. An unchanged one (a client sending the source back
-// whole) is no switch, like an unchanged project_key is no rename.
-func switching(src store.ProjectSource, in updateSourceBody) bool {
-	return in.System != nil && *in.System == src.Standalone
-}
-
-// systemBitbucket is the 422 of a Bitbucket source asked to stand alone.
-const systemBitbucket = "system: a Bitbucket project is always one system"
-
-// switchSystem sets whether a static folder's repositories form one system.
-// Off, no run writes the project page any more and the wiki shows each
-// repository alone; the page stays in the store with its history. On, the
-// next run of a repository folds it again. Alone in its PATCH, like a
-// rename.
-func (d Deps) switchSystem(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
-	ctx := r.Context()
-	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "system: comes alone, the other fields in their own PATCH")
-		return
-	}
-	system := *in.System
-	if src.Kind == store.SourceBitbucket && !system {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, systemBitbucket)
-		return
-	}
-	changed, err := d.Sources.Store.SetSourceStandalone(ctx, src.ProjectKey, !system)
-	if err != nil {
-		httpx.ServerError(w, r, err, "update source")
-		return
-	}
-	if changed {
-		d.Log.InfoContext(ctx, "source_system_switched", "project", src.ProjectKey, "system", system, "user", d.user(r))
-	}
-	d.writeSource(w, r, src.ProjectKey, http.StatusOK)
 }
 
 // writeSource answers with the source as stored.
@@ -710,11 +685,6 @@ func (d Deps) deleteSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Sources.Git.RemoveProject(src.ProjectID); err != nil {
-		httpx.ServerError(w, r, err, "remove clones")
-		return
-	}
-	// TRANSITIONAL(ids): goes with Checkouts.RemoveLegacyProject.
-	if err := d.Sources.Git.RemoveLegacyProject(src.ProjectKey); err != nil {
 		httpx.ServerError(w, r, err, "remove clones")
 		return
 	}
@@ -794,6 +764,10 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Slug, in.CloneURL, in.Branch = strings.TrimSpace(in.Slug), strings.TrimSpace(in.CloneURL), strings.TrimSpace(in.Branch)
+	// No slug: the repository's name from the URL.
+	if in.Slug == "" {
+		in.Slug = store.SlugFromURL(in.CloneURL)
+	}
 	switch {
 	case !gitrepo.ValidSegment(in.Slug):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "slug: letters, digits, dot, dash, underscore; not . or ..")
@@ -881,11 +855,6 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	// The clone first, then the row (deleteSource's reason).
 	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
-		httpx.ServerError(w, r, err, "remove clone")
-		return
-	}
-	// TRANSITIONAL(ids): goes with Checkouts.RemoveLegacy.
-	if err := d.Sources.Git.RemoveLegacy(src.ProjectKey, rp.Slug); err != nil {
 		httpx.ServerError(w, r, err, "remove clone")
 		return
 	}

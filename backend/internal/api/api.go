@@ -40,8 +40,8 @@ type Store interface {
 	Ingest(ctx context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	Projects(ctx context.Context, sourced bool) ([]store.ProjectRow, error)
-	ProjectSystemOf(ctx context.Context, key string) (store.ProjectSystem, error)
-	StandaloneRepos(ctx context.Context) (map[string][]store.RepoRow, error)
+	SourceRepoCount(ctx context.Context, key string) (int, error)
+	SingleRepos(ctx context.Context) (map[string]store.RepoRow, error)
 	ProjectExists(ctx context.Context, key string, sourced bool) (string, bool, error)
 	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
 	RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error)
@@ -284,11 +284,9 @@ type projectBody struct {
 	Notes     int        `json:"notes"`
 	Revision  int        `json:"revision"`
 	LastMerge *time.Time `json:"last_merge"`
-	// System: the repositories form one system with a project page; false
-	// when they stand alone, listed one by one in Repositories.
-	System bool `json:"system"`
-	// Repositories is a standalone project's repositories, empty for a system.
-	Repositories []repoBody `json:"repositories"`
+	// Repo is the repository of a project of one (a source with one
+	// repository): its page is the project's. Null for every other project.
+	Repo *repoBody `json:"repo"`
 }
 
 type projectsBody struct {
@@ -303,22 +301,20 @@ func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "projects")
 		return
 	}
-	// Standing alone is the sources' word: with them off, every project is
-	// a system again.
-	alone := map[string][]store.RepoRow{}
+	// A project of one is the sources' notion: with them off there are none.
+	single := map[string]store.RepoRow{}
 	if d.Sources != nil {
-		if alone, err = d.Store.StandaloneRepos(ctx); err != nil {
+		if single, err = d.Store.SingleRepos(ctx); err != nil {
 			httpx.ServerError(w, r, err, "repos")
 			return
 		}
 	}
 	out := projectsBody{Projects: make([]projectBody, 0, len(rows))}
 	for _, p := range rows {
-		standalone := p.Standalone && d.Sources != nil
-		body := projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision, LastMerge: p.LastMerge,
-			System: !standalone, Repositories: []repoBody{}}
-		if standalone {
-			body.Repositories = repoBodies(alone[p.Key])
+		body := projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision, LastMerge: p.LastMerge}
+		if rp, ok := single[p.Key]; ok {
+			b := repoBodies([]store.RepoRow{rp})[0]
+			body.Repo = &b
 		}
 		out.Projects = append(out.Projects, body)
 	}
@@ -399,15 +395,15 @@ type repoBody struct {
 	LastMerge *time.Time `json:"last_merge"`
 }
 
-// standalone reports whether a project's repositories stand alone: its
-// source says so, and the sources are on. With them off every project is
-// a system again, a folder's old word included.
-func (d Deps) standalone(ctx context.Context, key string) (bool, error) {
+// single reports whether a project is a project of one: its source holds
+// one repository, and the sources are on. With them off there are no
+// sources, and every project keeps its page.
+func (d Deps) single(ctx context.Context, key string) (bool, error) {
 	if d.Sources == nil {
 		return false, nil
 	}
-	ps, err := d.Store.ProjectSystemOf(ctx, key)
-	return ps.Standalone, err
+	n, err := d.Store.SourceRepoCount(ctx, key)
+	return n == 1, err
 }
 
 // repoBodies is a project's repositories as the wire lists them.
@@ -448,9 +444,9 @@ type problemBody struct {
 type projectDetailBody struct {
 	Key  string `json:"key"`
 	Team string `json:"team"`
-	// System: false when the repositories stand alone; description and map
-	// are then null and none is expected.
-	System      bool             `json:"system"`
+	// Single: a project of one, its repository's page the project's;
+	// description and map are then null and none is expected.
+	Single      bool             `json:"single"`
 	Description *descriptionBody `json:"description"`
 	// Map is the system map of the current project revision, null before
 	// a baseline project step drew one.
@@ -498,7 +494,7 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "project key")
 		return
 	}
-	alone, err := d.standalone(ctx, key)
+	alone, err := d.single(ctx, key)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project source")
 		return
@@ -530,12 +526,12 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	if declined {
 		drawn = nil
 	}
-	// Repositories that stand alone have no project page: one written
-	// while they were a system stays in the store, not on the wire.
+	// A project of one has no project page: one written while it had more
+	// repositories stays in the store, not on the wire.
 	if alone {
 		found, drawn, mapExpected, declined = false, nil, false, false
 	}
-	out := projectDetailBody{Key: key, Team: team, System: !alone, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
+	out := projectDetailBody{Key: key, Team: team, Single: alone, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	out.Repos = repoBodies(repos)

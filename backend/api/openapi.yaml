@@ -1204,7 +1204,7 @@ components:
                 enum: [done, skipped, current, todo]
               skip:
                 type: string
-                enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
+                enum: ["", gone, calls, bytes, failed, refused, no_page]
               calls:
                 type: integer
               failed:
@@ -1323,8 +1323,8 @@ components:
                 description: The subject's name, empty for the overview and the project.
               reason:
                 type: string
-                enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
-                description: Why it was left out; empty for a run from before reasons were kept. ceiling and over_ceiling only on runs from before pages lost their ceiling.
+                enum: ["", gone, calls, bytes, failed, refused, no_page]
+                description: Why it was left out; empty for a run from before reasons were kept.
         cost_usd:
           type: string
           description: What the gateway priced of the run's calls, 3 decimals; omitted when it priced none.

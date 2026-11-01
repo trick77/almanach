@@ -357,19 +357,17 @@ describe("SourcePage baseline", () => {
           skipped: 8,
           left_parts: true,
           auto_retry: true,
-          // A run from before pages lost their ceiling.
-          // TRANSITIONAL(ceilings): Remove when SkipReason drops "ceiling".
           skipped_parts: [
-            { part: "overview" as const, name: "", reason: "ceiling" as const },
+            { part: "overview" as const, name: "", reason: "bytes" as const },
             {
               part: "subject" as const,
               name: "Auth",
-              reason: "ceiling" as const,
+              reason: "bytes" as const,
             },
             ...["B", "C", "D"].map((name) => ({
               part: "subject" as const,
               name,
-              reason: "ceiling" as const,
+              reason: "bytes" as const,
             })),
             { part: "project" as const, name: "", reason: "failed" as const },
             // A code this bundle does not know yet.
@@ -398,7 +396,7 @@ describe("SourcePage baseline", () => {
     // The skipped parts by reason, one line each, the run's order kept.
     expect(
       screen.getByText(
-        "An der früheren Seitengrenze: Überblick, Auth, B und 2 weitere",
+        "Lesebudget des Laufs überschritten: Überblick, Auth, B und 2 weitere",
       ),
     ).toBeInTheDocument();
     expect(

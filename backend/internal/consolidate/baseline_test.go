@@ -307,7 +307,8 @@ func newWorld(t *testing.T, calls int) world {
 	// starts without one.
 	st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.",
 		Statements: []store.Statement{}, Map: drawnMap("svc")}
-	st.others = []store.RepoSummary{{Slug: "svc"}}
+	// Two repositories: a project of one has no project step.
+	st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 	w := New(st, &fakeMerger{}, config.Limits{DiagramMaxNodes: 12, DiagramMaxEdges: 20, MaxDiagrams: 6},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	w.WithBaseline(Baseline{Store: st, Code: code, Catalogue: models, Describer: models, Limits: config.Baseline{MaxCalls: calls, MaxBytes: 1 << 20}})
@@ -1428,7 +1429,7 @@ func TestRun_StaleMapRedrawnByQuietReconcile(t *testing.T) {
 		planned, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p",
 			Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
 		x.st.documented = &store.BaselineRun{Commit: older40, Plan: planned, State: store.RunDone}
-		x.st.others = []store.RepoSummary{{Slug: "svc"}}
+		x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 		x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 		x.queue(store.RunReconcile, older40)
 		x.models.repoMap = inference.RepoMapResult{Call: called}

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,10 +75,6 @@ type Git interface {
 	HeadSHA(ctx context.Context, dir, branch string) (string, error)
 	Remove(key, slug string) error
 	RemoveProject(key string) error
-	// TRANSITIONAL(ids): moves a clone from its folder named by names to the
-	// one named by ids. Remove when every instance has synced once on a
-	// release with ids (no name-named folder left).
-	MoveLegacy(fromKey, fromSlug, toKey, toSlug string) (bool, error)
 }
 
 // Lister lists a Bitbucket project's repositories.
@@ -268,37 +263,6 @@ func (p *Poller) RemoveProject(projectID int64) error {
 	defer p.disk.Unlock()
 	p.markRemoved(projectSeg(projectID))
 	return p.Git.RemoveProject(projectSeg(projectID))
-}
-
-// idSeg is a folder name the ids use (p12, r7): a legacy move or removal
-// never touches one, whatever a project key or slug happened to be called.
-// Any case: on a case-insensitive volume P1 is p1.
-var idSeg = regexp.MustCompile(`(?i)^[pr][0-9]+$`)
-
-// RemoveLegacy deletes key/slug's clone in the folder named by names, under
-// the disk lock, unless the folder could be an id folder.
-//
-// TRANSITIONAL(ids): a clone from before the ids that no sync moved (a
-// missing repository is never synced). Remove when every instance has
-// synced once on a release with ids.
-func (p *Poller) RemoveLegacy(key, slug string) error {
-	if idSeg.MatchString(key) {
-		return nil
-	}
-	p.disk.Lock()
-	defer p.disk.Unlock()
-	return p.Git.Remove(key, slug)
-}
-
-// RemoveLegacyProject is RemoveLegacy for a whole project folder named by
-// its key. TRANSITIONAL(ids), goes with RemoveLegacy.
-func (p *Poller) RemoveLegacyProject(key string) error {
-	if idSeg.MatchString(key) {
-		return nil
-	}
-	p.disk.Lock()
-	defer p.disk.Unlock()
-	return p.Git.RemoveProject(key)
 }
 
 // cutIf cancels the sync in flight when it is one of the removal's.
@@ -829,16 +793,6 @@ func (p *Poller) sync(ctx context.Context, j store.SyncJob, b binding) (string, 
 	}
 	if err := p.Store.MarkRepoSyncing(ctx, key, slug); err != nil {
 		return "", false, err
-	}
-	// TRANSITIONAL(ids): a clone from before the ids sits in a folder named
-	// by its names; moved once, it is not cloned again. Remove when every
-	// instance has synced once on a release with ids.
-	if !idSeg.MatchString(key) {
-		if moved, err := p.Git.MoveLegacy(key, slug, pseg, rseg); err != nil {
-			p.Log.Warn("moving the clone to its id folder failed; cloning afresh", "project", key, "repo", slug, "err", err.Error())
-		} else if moved {
-			p.Log.Info("clone moved to its id folder", "project", key, "repo", slug, "dir", dir)
-		}
 	}
 	// The directory is a label; the origin is the identity. A corrected
 	// clone URL must not go on serving the old code under the new name.

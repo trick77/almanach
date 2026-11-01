@@ -40,7 +40,6 @@ type RunStore interface {
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 	Libraries(ctx context.Context, key, slug string) ([]store.Library, error)
-	ProjectFolded(ctx context.Context, key string) error
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 }
 
@@ -1168,11 +1167,6 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if !okCall {
 		return w.skipProject(ctx, r, plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
 	}
-	// An answer, whatever it says, is the fold a folder that became a system
-	// again was due; failing to clear the mark costs one more fold, no more.
-	if err := w.base.Store.ProjectFolded(ctx, r.ProjectKey); err != nil {
-		w.log.WarnContext(ctx, "baseline: project due mark not cleared", logging.Err(err))
-	}
 	var rev *store.NewRevision
 	if res.Description == nil {
 		// No change carries the text and the map forward; a project with no
@@ -1221,29 +1215,24 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 // sentinel says a step asked and none was accepted, and only a run that
 // folds the project anyway asks again. page is the project page the caller
 // read; the repositories, when it had to read them, come back for reuse.
-// The one place a run decides on the project: a folder whose repositories
-// stand alone has none to write (no call, nothing skipped), and one that
-// became a system again is folded whatever a reconcile would skip, so the
-// page it kept catches up.
+// The one place a run decides on the project: a project of one has none to
+// write (no call, nothing skipped; its repository's page is the project's),
+// and a project with no page yet (its second repository just came) is
+// folded whatever a reconcile would skip.
 func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page) (bool, []store.RepoSummary, error) {
-	ps, err := w.store.ProjectSystemOf(ctx, r.ProjectKey)
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project source read failed, drain paused", logging.Err(err))
-		return false, nil, errStop
-	}
-	if ps.Standalone {
-		w.log.InfoContext(ctx, "baseline: project step left out, the repositories stand alone")
-		return true, nil, nil
-	}
-	if ps.Due || r.Mode != store.RunReconcile || plan.SummaryChanged {
-		return false, nil, nil
-	}
-	if page.Map != nil {
-		return true, nil, nil
-	}
 	repos, err := w.repoSummaries(ctx, r)
 	if err != nil {
 		return false, nil, err
+	}
+	if len(repos) == 1 {
+		w.log.InfoContext(ctx, "baseline: project step left out, a project of one")
+		return true, repos, nil
+	}
+	if page.RevisionID == 0 || r.Mode != store.RunReconcile || plan.SummaryChanged {
+		return false, repos, nil
+	}
+	if page.Map != nil {
+		return true, repos, nil
 	}
 	return !diagram.MapFits(len(repos)), repos, nil
 }

@@ -106,18 +106,10 @@ const (
 	SkipCalls Skip = "calls"
 	// SkipBytes is when the part would take the run over its byte budget.
 	SkipBytes Skip = "bytes"
-	// SkipCeiling was when the page was at a ceiling before the call; pages
-	// have none now, no run sets it.
-	// TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
-	SkipCeiling Skip = "ceiling"
 	// SkipFailed is when the model call failed.
 	SkipFailed Skip = "failed"
 	// SkipRefused is when the answer broke a fold rule and was thrown away.
 	SkipRefused Skip = "refused"
-	// SkipOverCeiling was when the rewrite would take the page over a
-	// ceiling; pages have none now, no run sets it.
-	// TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
-	SkipOverCeiling Skip = "over_ceiling"
 	// SkipNoPage is when the model asked no change of a project that has no
 	// page yet.
 	SkipNoPage Skip = "no_page"

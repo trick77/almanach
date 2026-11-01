@@ -318,19 +318,14 @@ export interface SourceRepo {
 export type RunState =
   "queued" | "cataloguing" | "describing" | "project" | "done" | "failed";
 
-/** Why a run left a part out; "" for a run from before it was kept.
- *  "ceiling" and "over_ceiling" only on runs from before pages lost their
- *  ceiling. TRANSITIONAL(ceilings): Remove both when no stored run plan
- *  carries them. */
+/** Why a run left a part out; "" for a run from before it was kept. */
 export type SkipReason =
   | ""
   | "gone"
   | "calls"
   | "bytes"
-  | "ceiling"
   | "failed"
   | "refused"
-  | "over_ceiling"
   | "no_page";
 
 /** One part a run left out: a subject by name, or the overview or the

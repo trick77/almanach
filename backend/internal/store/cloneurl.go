@@ -35,6 +35,22 @@ func CloneKey(cloneURL string) string {
 	return origin + p
 }
 
+// SlugFromURL is the repository's name in a clone URL: its last path
+// segment without a trailing slash or `.git`, as written (case kept).
+// "" when the URL has no path segment; the caller checks it as any slug.
+func SlugFromURL(cloneURL string) string {
+	u, err := url.Parse(strings.TrimSpace(cloneURL))
+	if err != nil {
+		return ""
+	}
+	p := strings.TrimRight(u.Path, "/")
+	p = strings.TrimRight(strings.TrimSuffix(p, ".git"), "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		p = p[i+1:]
+	}
+	return p
+}
+
 // ClonedElsewhereError is a clone URL refused because another source row
 // clones that repository already: the row's project and slug.
 type ClonedElsewhereError struct {

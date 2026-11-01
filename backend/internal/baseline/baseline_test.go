@@ -209,12 +209,12 @@ func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
 	p.SkipStep(PartProject, SkipNoPage)
 	p.SkipSubject("Auth", SkipFailed)
 	p.SkipSubject("Auth", SkipCalls)
-	p.SkipStep(PartOverview, SkipCeiling)
+	p.SkipStep(PartOverview, SkipCalls)
 	p.SkipStep(PartOverview, SkipCalls)
 	// The run's order, whatever order they were marked in: overview,
 	// subjects, project.
 	want := []SkippedPart{
-		{Part: "overview", Name: "", Reason: SkipCeiling},
+		{Part: "overview", Name: "", Reason: SkipCalls},
 		{Part: "subject", Name: "Auth", Reason: SkipFailed},
 		{Part: "project", Name: "", Reason: SkipNoPage},
 	}
@@ -275,20 +275,20 @@ func TestPlan_SubjectNamedLikeAStepStaysASubject(t *testing.T) {
 // A plan stored before Steps held the two steps by name in Skipped:
 // Upgrade moves them, with their reasons, and leaves the subjects.
 func TestPlan_UpgradeMovesTheLegacyStepNames(t *testing.T) {
-	raw := json.RawMessage(`{"subjects":[],"skipped":["the overview","Auth","the project"],"why":{"the overview":"ceiling","Auth":"ceiling"}}`)
+	raw := json.RawMessage(`{"subjects":[],"skipped":["the overview","Auth","the project"],"why":{"the overview":"calls","Auth":"calls"}}`)
 	var p Plan
 	if err := json.Unmarshal(raw, &p); err != nil {
 		t.Fatal(err)
 	}
 	p.Upgrade()
-	if !reflect.DeepEqual(p.Skipped, []string{"Auth"}) || !reflect.DeepEqual(p.Why, map[string]Skip{"Auth": SkipCeiling}) ||
-		!reflect.DeepEqual(p.Steps, map[Part]Skip{PartOverview: SkipCeiling, PartProject: ""}) {
+	if !reflect.DeepEqual(p.Skipped, []string{"Auth"}) || !reflect.DeepEqual(p.Why, map[string]Skip{"Auth": SkipCalls}) ||
+		!reflect.DeepEqual(p.Steps, map[Part]Skip{PartOverview: SkipCalls, PartProject: ""}) {
 		t.Fatalf("upgraded = %+v", p)
 	}
 	got, err := RunSkips(raw)
 	want := []SkippedPart{
-		{Part: "overview", Reason: SkipCeiling},
-		{Part: "subject", Name: "Auth", Reason: SkipCeiling},
+		{Part: "overview", Reason: SkipCalls},
+		{Part: "subject", Name: "Auth", Reason: SkipCalls},
 		{Part: "project", Reason: ""},
 	}
 	if err != nil || !reflect.DeepEqual(got, want) {
