@@ -163,14 +163,14 @@ func (s *Store) SingleRepos(ctx context.Context) (map[string]RepoRow, error) {
 		SELECT p.key, r.slug,
 		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
 		       (SELECT COUNT(*) FROM notes n WHERE n.repo_id = r.id),
-		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.repo_id = r.id)
+		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.repo_id = r.id),
+		       (SELECT COUNT(*) FROM source_repos x WHERE x.project_id = s.project_id)
 		  FROM sources s
 		  JOIN projects p ON p.id = s.project_id
 		  JOIN source_repos sr ON sr.project_id = s.project_id
 		  JOIN repos r ON r.id = sr.repo_id
 		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
-		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
-		 WHERE (SELECT COUNT(*) FROM source_repos x WHERE x.project_id = s.project_id) = 1`)
+		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -179,10 +179,14 @@ func (s *Store) SingleRepos(ctx context.Context) (map[string]RepoRow, error) {
 	for rows.Next() {
 		var key string
 		var r RepoRow
-		if err := rows.Scan(&key, &r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge)); err != nil {
+		var n int
+		if err := rows.Scan(&key, &r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge), &n); err != nil {
 			return nil, err
 		}
-		out[key] = r
+		// The one rule, not a copy of it in SQL.
+		if Single(n) {
+			out[key] = r
+		}
 	}
 	return out, rows.Err()
 }

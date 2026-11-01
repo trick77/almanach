@@ -14,7 +14,7 @@ import {
   useHashTab,
   type RailGroup,
 } from "./Rail";
-import { day } from "./format";
+import { day, refName } from "./format";
 import { projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
@@ -436,8 +436,7 @@ function drawShared(
       ...map.nodes.filter((n) => !drawnAs.has(n.id)),
       ...repos.map((r) => ({
         id: sharedId(r),
-        // A project of one is named once.
-        label: r.project === r.slug ? r.slug : `${r.project}/${r.slug}`,
+        label: refName(r.project, r.slug),
         shape: "pill" as const,
         zone: "shared",
       })),

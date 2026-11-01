@@ -348,5 +348,21 @@ export function slugFromURL(url: string): string {
     .replace(/\/+$/, "")
     .replace(/\.git$/, "")
     .replace(/\/+$/, "");
-  return path.slice(path.lastIndexOf("/") + 1);
+  // Decoded, as Go's url.Path is: my%2Dapi is my-api.
+  try {
+    return decodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+  } catch {
+    return "";
+  }
+}
+
+/** refName is a repository as the pages name it beside other projects':
+ *  project/slug, or the slug alone when the project is named like it (a
+ *  project of one, made from its repository, mostly is): llmwire, not
+ *  llmwire/llmwire. The one rule for the cards, the rail, the map and
+ *  the graph. */
+export function refName(project: string, slug: string): string {
+  return project.toLowerCase() === slug.toLowerCase()
+    ? slug
+    : `${project}/${slug}`;
 }

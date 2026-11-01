@@ -434,7 +434,8 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	in.ProjectKey, in.Kind, in.Host = strings.TrimSpace(in.ProjectKey), strings.ToLower(strings.TrimSpace(in.Kind)), strings.TrimRight(strings.TrimSpace(in.Host), "/")
 	in.CloneURL, in.Slug, in.Branch = strings.TrimSpace(in.CloneURL), strings.TrimSpace(in.Slug), strings.TrimSpace(in.Branch)
 	first := in.CloneURL != ""
-	if first && in.Slug == "" {
+	derived := first && in.Slug == ""
+	if derived {
 		in.Slug = store.SlugFromURL(in.CloneURL)
 	}
 	if first && in.ProjectKey == "" {
@@ -451,6 +452,9 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		return
 	case first && !validCloneURL(in.CloneURL):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: an https URL without credentials")
+		return
+	case derived && !gitrepo.ValidSegment(in.Slug):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: no repository name in it to take as the slug; give a slug")
 		return
 	case first && !gitrepo.ValidSegment(in.Slug):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "slug: letters, digits, dot, dash, underscore; not . or ..")
@@ -781,13 +785,17 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Slug, in.CloneURL, in.Branch = strings.TrimSpace(in.Slug), strings.TrimSpace(in.CloneURL), strings.TrimSpace(in.Branch)
 	// No slug: the repository's name from the URL.
-	if in.Slug == "" {
+	derived := in.Slug == ""
+	if derived {
 		in.Slug = store.SlugFromURL(in.CloneURL)
 	}
 	// The URL before the slug, which may be derived from it.
 	switch {
 	case !validCloneURL(in.CloneURL):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: an https URL without credentials")
+		return
+	case derived && !gitrepo.ValidSegment(in.Slug):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: no repository name in it to take as the slug; give a slug")
 		return
 	case !gitrepo.ValidSegment(in.Slug):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "slug: letters, digits, dot, dash, underscore; not . or ..")

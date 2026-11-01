@@ -1,5 +1,5 @@
 import type { Dependencies, Project, Projects } from "./api";
-import { day, plain } from "./format";
+import { day, plain, refName } from "./format";
 import { projectPath } from "./routing";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
@@ -42,9 +42,7 @@ export function linksOf(d: Dependencies | null): Map<string, Links> {
   const users = new Map<string, Set<string>>();
   for (const e of d?.edges ?? []) {
     if (e.from.project === e.to.project) continue;
-    // A project of one is named once: llmwire, not llmwire/llmwire.
-    const name =
-      e.to.project === e.to.slug ? e.to.slug : `${e.to.project}/${e.to.slug}`;
+    const name = refName(e.to.project, e.to.slug);
     const from = at(e.from.project);
     if (!from.uses.includes(name)) from.uses.push(name);
     const set = users.get(e.to.project) ?? new Set<string>();

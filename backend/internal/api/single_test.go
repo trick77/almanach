@@ -35,9 +35,10 @@ func TestSources_CreateWithFirstRepo(t *testing.T) {
 	if code != 422 || !strings.Contains(field(t, body, "error"), "clone_url") {
 		t.Fatalf("Bitbucket with a clone URL: %d %v", code, body)
 	}
-	// A URL with no repository name in it needs a slug.
+	// A URL with no repository name in it needs a slug: the URL is named,
+	// the field the client filled in.
 	code, body = do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"x","kind":"static","clone_url":"https://forge.example.invalid/"}`, jsonHdr)
-	if code != 422 || !strings.Contains(field(t, body, "error"), "slug") {
+	if code != 422 || !strings.HasPrefix(field(t, body, "error"), "clone_url:") {
 		t.Fatalf("URL without a name: %d %v", code, body)
 	}
 	// Cloned already elsewhere: 409, no folder.

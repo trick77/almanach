@@ -13,6 +13,7 @@ import {
   problemTone,
   runs,
   share,
+  refName,
   shortDay,
   slugFromURL,
 } from "./format";
@@ -232,5 +233,15 @@ describe("slugFromURL", () => {
     expect(slugFromURL(" https://forge.example/scm/abc/Def ")).toBe("Def");
     expect(slugFromURL("https://forge.example")).toBe("");
     expect(slugFromURL("not a url")).toBe("");
+    // Decoded, as Go's url.Path is.
+    expect(slugFromURL("https://host.example/team/my%2Dapi.git")).toBe(
+      "my-api",
+    );
+  });
+
+  it("names a repository once when its project is named like it", () => {
+    expect(refName("llmwire", "llmwire")).toBe("llmwire");
+    expect(refName("SHOP", "shop")).toBe("shop");
+    expect(refName("acme", "portal")).toBe("acme/portal");
   });
 });

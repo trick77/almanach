@@ -70,6 +70,10 @@ func (d Deps) projectMarkdown(w http.ResponseWriter, r *http.Request, key string
 			d.repoMarkdown(w, r, key, repos[0].Slug)
 			return
 		}
+		// Its repositories changed between the two reads: no page to serve,
+		// never the project page it no longer has.
+		httpx.WriteError(w, http.StatusNotFound, "no project page: a project of one, export its repository")
+		return
 	}
 	page, found, err := d.Store.CurrentPage(ctx, store.ScopeProject, key, "")
 	if err != nil {

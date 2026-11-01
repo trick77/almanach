@@ -15,7 +15,7 @@ import {
   type RailGroup,
   type RailItem,
 } from "./Rail";
-import { day } from "./format";
+import { day, refName } from "./format";
 import { projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
@@ -314,9 +314,7 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
  *  repository is named with its project. */
 export function depGroups(data: RepoDetail): RailGroup[] {
   const name = (d: DependencyEnd) =>
-    d.project === data.project_key || d.project === d.slug
-      ? d.slug
-      : `${d.project}/${d.slug}`;
+    d.project === data.project_key ? d.slug : refName(d.project, d.slug);
   const groups: RailGroup[] = [];
   if (data.uses.length > 0)
     groups.push({

@@ -3,6 +3,7 @@ import type { Dependencies, RepoRef, Sources } from "./api";
 import { Diagram, titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
 import { repoPath } from "./routing";
+import { refName } from "./format";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import {
@@ -29,8 +30,7 @@ const refId = (r: RepoRef) => `${r.project}/${r.slug}`;
  *  repository of the graph is one project's, else project/slug. */
 export function repoNamer(d: Dependencies): (r: RepoRef) => string {
   const one = new Set(d.repos.map((r) => r.project)).size <= 1;
-  // A project of one is named once: llmwire, not llmwire/llmwire.
-  return (r) => (one || r.project === r.slug ? r.slug : refId(r));
+  return (r) => (one ? r.slug : refName(r.project, r.slug));
 }
 
 /** versionMax is the most of a version an edge label shows: a git URL or a

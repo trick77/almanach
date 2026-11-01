@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
@@ -69,6 +70,40 @@ func TestRun_SecondRepoFoldsTheProject(t *testing.T) {
 	}
 	if !project {
 		t.Fatalf("ledger = %+v, want the project folded; run %+v", x.st.calls, x.run())
+	}
+}
+
+// A project page kept from before (the project stood as one, or had fewer
+// repositories) is folded again once a repository came after it, even in
+// a quiet reconcile: the page has never seen that repository.
+func TestRun_RepoNewerThanThePageFoldsTheProject(t *testing.T) {
+	quiet := func(added time.Time) bool {
+		x := newWorld(t, 16)
+		page := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+		page.UpdatedAt = mergedAt
+		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = page
+		x.st.repos = []store.SourceRepo{{ProjectKey: "tools", Slug: "svc", HeadCommit: head, CreatedAt: mergedAt.Add(-time.Hour)},
+			{ProjectKey: "tools", Slug: "web", CreatedAt: added}}
+		raw, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
+		x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
+		x.queue(store.RunReconcile, older40)
+		x.models.project = inference.DescriptionResult{Call: called}
+		x.models.repoMap = inference.RepoMapResult{Call: called, Map: drawnRepoMap()}
+		x.w.drain(context.Background())
+		for _, c := range x.st.calls {
+			if c.Purpose == store.PurposeProject {
+				return true
+			}
+		}
+		return false
+	}
+	if !quiet(mergedAt.Add(time.Hour)) {
+		t.Error("a repository newer than the page: the project was not folded")
+	}
+	if quiet(mergedAt.Add(-time.Minute)) {
+		t.Error("every repository older than the page: a quiet reconcile folded the project")
 	}
 }
 

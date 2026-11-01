@@ -1232,6 +1232,19 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 	if page.RevisionID == 0 || r.Mode != store.RunReconcile || plan.SummaryChanged {
 		return false, nil, nil
 	}
+	// A repository added after the page was written: the page has never
+	// seen it (a project that grows past one, or grows back to more after
+	// standing as one with its old page kept), whatever a reconcile reads.
+	rows, err := w.base.Store.SourceRepos(ctx, r.ProjectKey)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
+		return false, nil, errStop
+	}
+	for _, row := range rows {
+		if row.CreatedAt.After(page.UpdatedAt) {
+			return false, nil, nil
+		}
+	}
 	if page.Map != nil {
 		return true, nil, nil
 	}
