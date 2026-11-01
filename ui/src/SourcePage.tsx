@@ -573,31 +573,6 @@ function RepoRow({
   );
 }
 
-/** AutoDescribeField is the source's switch for runs that start on their
- *  own, in the create form and the access form alike. */
-export function AutoDescribeField({
-  value,
-  onChange,
-}: {
-  value: boolean;
-  onChange: (on: boolean) => void;
-}) {
-  return (
-    <label className="flex items-start gap-2.5 sm:col-span-2">
-      <input
-        type="checkbox"
-        className="mt-1 accent-accent"
-        checked={value}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span>
-        <span className={fieldLabel}>{S.baseline.auto}</span>
-        <span className={fieldHint}>{S.baseline.autoHint}</span>
-      </span>
-    </label>
-  );
-}
-
 /** baselineState is a run's state as the column shows it: done with
  *  skipped parts is partial. */
 function baselineState(b: Baseline): { label: string; tone: Tone } {
@@ -683,7 +658,6 @@ function AccessForm({
     data.has_token ? "keep" : "replace",
   );
   const [token, setToken] = useState("");
-  const [auto, setAuto] = useState(data.auto_describe);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -691,10 +665,9 @@ function AccessForm({
     setBusy(true);
     setError("");
     try {
-      const body: Record<string, string | boolean> = {
+      const body: Record<string, string> = {
         token_auth: auth,
         token_user: auth === "basic" ? user.trim() : "",
-        auto_describe: auto,
       };
       if (data.kind === "bitbucket") body.host = host.trim();
       // An empty replacement keeps the stored token: only Löschen clears.
@@ -803,7 +776,6 @@ function AccessForm({
             </>
           )}
         </div>
-        <AutoDescribeField value={auto} onChange={setAuto} />
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button

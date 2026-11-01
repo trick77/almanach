@@ -52,9 +52,6 @@ type ProjectSource struct {
 	UpdatedAt    time.Time
 	LastListedAt *time.Time
 	LastError    string
-	// AutoDescribe: runs start on their own (a clone's first ready, the
-	// monthly reconcile); off, only the buttons start one.
-	AutoDescribe bool
 }
 
 // HasToken reports whether a credential is stored.
@@ -87,11 +84,11 @@ type SourceRepo struct {
 
 // sourceColumns are a source's columns in the order sourceDest scans them.
 const sourceColumns = `s.project_key, s.kind, COALESCE(s.host, ''), s.token_auth, s.token_user, s.token_enc,
-	s.created_at, s.updated_at, s.last_listed_at, s.last_error, s.auto_describe`
+	s.created_at, s.updated_at, s.last_listed_at, s.last_error`
 
 func sourceDest(src *ProjectSource) []any {
 	return []any{&src.ProjectKey, &src.Kind, &src.Host, &src.TokenAuth, &src.TokenUser, &src.TokenEnc,
-		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError, &src.AutoDescribe}
+		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError}
 }
 
 // Sources lists every source with its repo counts, by key.
@@ -133,13 +130,12 @@ func (s *Store) SourceByKey(ctx context.Context, key string) (ProjectSource, boo
 	return src, true, nil
 }
 
-// CreateSource inserts a source with its auto_describe as given, in one
-// write; ErrExists when the key is taken.
+// CreateSource inserts a source in one write; ErrExists when the key is taken.
 func (s *Store) CreateSource(ctx context.Context, src ProjectSource) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO sources (project_key, kind, host, token_auth, token_user, token_enc, auto_describe, created_at, updated_at)
-		VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?8, ?8)`,
-		src.ProjectKey, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), src.AutoDescribe, nowStamp())
+		INSERT INTO sources (project_key, kind, host, token_auth, token_user, token_enc, created_at, updated_at)
+		VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?7)`,
+		src.ProjectKey, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), nowStamp())
 	return uniqueAsExists(err)
 }
 
@@ -176,13 +172,6 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 		UPDATE sources SET host = NULLIF(?, ''), token_auth = ?, token_user = ?,
 		       token_enc = CASE WHEN ? THEN ? ELSE token_enc END, updated_at = ?
 		 WHERE project_key = ?`, host, tokenAuth, tokenUser, setToken, nilIfEmpty(tokenEnc), nowStamp(), key))
-	return n == 1, err
-}
-
-// SetAutoDescribe turns a source's automatic runs on or off. Reports
-// whether the source exists.
-func (s *Store) SetAutoDescribe(ctx context.Context, key string, on bool) (bool, error) {
-	n, err := affected(s.db.ExecContext(ctx, `UPDATE sources SET auto_describe = ?, updated_at = ? WHERE project_key = ?`, on, nowStamp(), key))
 	return n == 1, err
 }
 

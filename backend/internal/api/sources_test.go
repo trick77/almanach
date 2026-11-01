@@ -107,14 +107,6 @@ func (f *fakeSources) RequestSync(_ context.Context, key, slug string) (int, err
 	f.synced = append(f.synced, key+"/"+slug)
 	return len(f.repos[key]), nil
 }
-func (f *fakeSources) SetAutoDescribe(_ context.Context, key string, on bool) (bool, error) {
-	s, ok := f.sources[key]
-	if ok {
-		s.AutoDescribe = on
-		f.sources[key] = s
-	}
-	return ok, nil
-}
 func (f *fakeSources) ProjectSpelledOtherwise(_ context.Context, key string) (string, bool, error) {
 	for _, known := range f.noerglerKeys {
 		if strings.EqualFold(known, key) && known != key {

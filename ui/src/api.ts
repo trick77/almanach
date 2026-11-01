@@ -223,7 +223,6 @@ export interface SourceSummary {
   missing: number;
   last_listed_at: string | null;
   last_error: string;
-  auto_describe: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -284,7 +283,6 @@ export interface SourceDetail {
   disk_bytes: number;
   last_listed_at: string | null;
   last_error: string;
-  auto_describe: boolean;
   created_at: string;
   updated_at: string;
   repos: SourceRepo[];

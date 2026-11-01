@@ -21,15 +21,13 @@ import (
 
 // After a sync the poller queues the runs that are due: the first on a
 // clone's first ready, a reconcile once the interval passed and the head
-// left the documented commit; nothing with auto_describe off or the
-// baseline off, and an open run is no failure.
+// left the documented commit; nothing with the baseline off, and an open
+// run is no failure.
 func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	month := 30 * 24 * time.Hour
 	long, recent := now.Add(-month-time.Hour), now.Add(-time.Hour)
-	on := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic, AutoDescribe: true}
-	off := on
-	off.AutoDescribe = false
+	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
 	for name, c := range map[string]struct {
 		src        store.ProjectSource
 		before     string // the row's head before the sync
@@ -40,15 +38,14 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 		baseline   bool
 		want       string
 	}{
-		"first ready":         {on, "", "h1", "", nil, month, true, "tools cli full first_ready  h1"},
-		"first ready, off":    {off, "", "h1", "", nil, month, true, ""},
-		"baseline off":        {on, "", "h1", "", nil, month, false, ""},
-		"due":                 {on, "h0", "h1", "d0", &long, month, true, "tools cli reconcile monthly d0 h1"},
-		"not yet":             {on, "h0", "h1", "d0", &recent, month, true, ""},
-		"head is documented":  {on, "h0", "d0", "d0", &long, month, true, ""},
-		"never described":     {on, "h0", "h1", "", nil, month, true, ""},
-		"buttons only":        {on, "h0", "h1", "d0", &long, 0, true, ""},
-		"last run still open": {on, "h0", "h1", "d0", nil, month, true, ""},
+		"first ready":         {src, "", "h1", "", nil, month, true, "tools cli full first_ready  h1"},
+		"baseline off":        {src, "", "h1", "", nil, month, false, ""},
+		"due":                 {src, "h0", "h1", "d0", &long, month, true, "tools cli reconcile monthly d0 h1"},
+		"not yet":             {src, "h0", "h1", "d0", &recent, month, true, ""},
+		"head is documented":  {src, "h0", "d0", "d0", &long, month, true, ""},
+		"never described":     {src, "h0", "h1", "", nil, month, true, ""},
+		"buttons only":        {src, "h0", "h1", "d0", &long, 0, true, ""},
+		"last run still open": {src, "h0", "h1", "d0", nil, month, true, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
@@ -124,7 +121,7 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 			if c.documented != "" {
 				s.documented = store.BaselineRun{ID: 1, Commit: c.documented, State: store.RunDone}
 			}
-			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
+			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
 			g.origins["/base/tools/cli"] = "https://x/cli.git"
 			g.heads["/base/tools/cli@main"] = "h1"
 			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -167,7 +164,7 @@ func TestDescribe_OpenRunAndStoreFailures(t *testing.T) {
 	for _, err := range []error{store.ErrExists, errors.New("db down")} {
 		s, g := newFakeStore(), newFakeGit()
 		s.enqueueErr = err
-		s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
+		s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "", store.ProjectSource{Kind: store.SourceStatic})}
 		g.heads["/base/tools/cli@main"] = "h1"
 		wakes := 0
 		p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -178,7 +175,7 @@ func TestDescribe_OpenRunAndStoreFailures(t *testing.T) {
 	}
 	s, g := newFakeStore(), newFakeGit()
 	s.runErr = errors.New("db down")
-	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
+	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
 	g.origins["/base/tools/cli"] = "https://x/cli.git"
 	g.heads["/base/tools/cli@main"] = "h1"
 	p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),

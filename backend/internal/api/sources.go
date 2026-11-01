@@ -32,7 +32,6 @@ type SourceStore interface {
 	AddSourceRepo(ctx context.Context, r store.SourceRepo) error
 	DeleteSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RequestSync(ctx context.Context, key, slug string) (int, error)
-	SetAutoDescribe(ctx context.Context, key string, on bool) (bool, error)
 	ProjectSpelledOtherwise(ctx context.Context, key string) (string, bool, error)
 	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
@@ -142,7 +141,6 @@ type sourceSummaryBody struct {
 	Missing      int        `json:"missing"`
 	LastListedAt *time.Time `json:"last_listed_at"`
 	LastError    string     `json:"last_error"`
-	AutoDescribe bool       `json:"auto_describe"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
@@ -169,7 +167,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 	for _, s := range rows {
 		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, Host: s.Host, HasToken: s.HasToken(),
 			TokenAuth: s.TokenAuth, TokenUser: s.TokenUser, Repos: s.Repos, Ready: s.Ready, Active: s.Active, Failed: s.Failed, Missing: s.Missing,
-			LastListedAt: s.LastListedAt, LastError: s.LastError, AutoDescribe: s.AutoDescribe, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
+			LastListedAt: s.LastListedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -226,7 +224,6 @@ type sourceDetailBody struct {
 	DiskBytes    int64            `json:"disk_bytes"`
 	LastListedAt *time.Time       `json:"last_listed_at"`
 	LastError    string           `json:"last_error"`
-	AutoDescribe bool             `json:"auto_describe"`
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`
 	Repos        []sourceRepoBody `json:"repos"`
@@ -242,7 +239,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 		return sourceDetailBody{}, err
 	}
 	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
-		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError, AutoDescribe: src.AutoDescribe,
+		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError,
 		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos))}
 	if dir, err := d.Sources.Git.ProjectDir(src.ProjectKey); err == nil {
 		out.Dir, out.DiskBytes = dir, d.Sources.sizes.size(dir)
@@ -301,8 +298,6 @@ type createSourceBody struct {
 	Token      string `json:"token"`
 	TokenAuth  string `json:"token_auth"`
 	TokenUser  string `json:"token_user"`
-	// AutoDescribe omitted is on, stored with the source in one write.
-	AutoDescribe *bool `json:"auto_describe"`
 }
 
 // validCloneURL is https with a host and no credentials: the token travels
@@ -394,8 +389,7 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
 		return
 	}
-	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed,
-		AutoDescribe: in.AutoDescribe == nil || *in.AutoDescribe}
+	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed}
 	if err := d.Sources.Store.CreateSource(ctx, src); err != nil {
 		if errors.Is(err, store.ErrExists) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
@@ -404,8 +398,7 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
-	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(),
-		"auto_describe", src.AutoDescribe, "user", d.user(r))
+	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(), "user", d.user(r))
 	d.Sources.Poller.Nudge()
 	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
 	if err != nil {
@@ -425,11 +418,10 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateSourceBody struct {
-	Host         *string `json:"host"`
-	Token        *string `json:"token"`
-	TokenAuth    *string `json:"token_auth"`
-	TokenUser    *string `json:"token_user"`
-	AutoDescribe *bool   `json:"auto_describe"`
+	Host      *string `json:"host"`
+	Token     *string `json:"token"`
+	TokenAuth *string `json:"token_auth"`
+	TokenUser *string `json:"token_user"`
 }
 
 func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
@@ -486,12 +478,6 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	if !updated {
 		httpx.WriteError(w, http.StatusNotFound, "unknown source")
 		return
-	}
-	if in.AutoDescribe != nil {
-		if _, err := d.Sources.Store.SetAutoDescribe(ctx, src.ProjectKey, *in.AutoDescribe); err != nil {
-			httpx.ServerError(w, r, err, "auto describe")
-			return
-		}
 	}
 	d.Log.InfoContext(ctx, "source_updated", "project", src.ProjectKey, "token_changed", setToken, "user", d.user(r))
 	d.Sources.Poller.Nudge()
