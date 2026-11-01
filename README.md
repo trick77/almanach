@@ -83,7 +83,7 @@ production stack; for local work `compose.dev.yaml` goes on top: port
 
 ```sh
 cp .env.example .env            # fill in the gateway and the model; for private
-                                # repositories BACKEND_SECRET_KEY (openssl rand -base64 32)
+                                # repositories BACKEND_SOURCE_TOKEN_KEY (openssl rand -base64 32)
 cp conf/team-keys.example.json conf/team-keys.json
 make dev                        # migrate, then almanach on 127.0.0.1:8081; make dev-down stops it
 ```
@@ -104,7 +104,7 @@ backup is the data volume; the clones refill from the forge.
 Open http://localhost:8081/quellen and add a Bitbucket project, or a
 static folder with its repositories entered by hand; each repository's
 baseline runs once its clone is there. A private repository's token is
-sealed with `BACKEND_SECRET_KEY`; without it only public ones clone.
+sealed with `BACKEND_SOURCE_TOKEN_KEY`; without it only public ones clone.
 Then read the result:
 
 ```sh

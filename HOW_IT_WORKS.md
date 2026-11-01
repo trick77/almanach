@@ -445,7 +445,7 @@ stops a cycle. Cycle start and finish log their counts; an unchanged
 repository is a debug line. A shutdown cuts the clone in flight; the next
 cycle finds the half directory and redoes it.
 
-The token at rest is sealed with AES-256-GCM under `BACKEND_SECRET_KEY`,
+The token at rest is sealed with AES-256-GCM under `BACKEND_SOURCE_TOKEN_KEY`,
 a fresh nonce per seal, stdlib only. Without the key a public source still
 works and saving a token is a 422 naming the variable; a stored token the
 key cannot open (the key changed) fails that source's repositories with a
@@ -505,7 +505,7 @@ resumes after a restart. The run pins the clone's head when it starts.
 1. *Catalogue.* The tree at the commit (`ls-tree`, modes and sizes), held
    to what a run may read: regular files, within 100 kB, not vendored,
    built, locked, binary or generated. A full run asks the catalogue model
-   (`BACKEND_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
+   (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
    from the listing (directories over 4000 files) and the docs. Code holds
    the answer to the tree: invented paths dropped, directories expanded,
@@ -590,7 +590,7 @@ it), nothing twice (a statement's flow, like the map, first loses its self
 and repeated edges, logged: they say nothing), unique ids, known shapes, labels present, Swiss and
 capped, the nodes and edges per diagram from config, within the drawing's
 own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule,
-or one added past the page's count (`BACKEND_MAX_DIAGRAMS`), is left out
+or one added past the page's count (`BACKEND_DIAGRAM_MAX_PER_PAGE`), is left out
 and logged with its reason (once the rewrite passed its ceilings), on the
 merge and every baseline step alike: its statement is kept. On the merge
 and the project step a statement nothing else changed keeps its sources
@@ -937,7 +937,7 @@ so the choice is not undone as a cleanup.
   of distroless.
 - **The token is typed in the UI and sealed in the database**, not an
   environment variable name as in ../rongo's `repos.yaml`. A new token is a
-  form, not a redeploy; `BACKEND_SECRET_KEY` is what makes that safe, and
+  form, not a redeploy; `BACKEND_SOURCE_TOKEN_KEY` is what makes that safe, and
   without it no token is stored at all.
 - **Origin is identity.** A checkout is named after its row, and a row's
   clone URL can be corrected; comparing `remote.origin.url` on every cycle
@@ -964,7 +964,7 @@ so the choice is not undone as a cleanup.
   note is folded, a note whose PR the run already read included.
 - **A cheaper model picks, the strong one writes.** The catalogue is a
   listing and the docs, a selection task; the steps that write are the
-  expensive ones. `BACKEND_CATALOGUE_MODEL` is optional.
+  expensive ones. `BACKEND_BASELINE_CATALOGUE_MODEL` is optional.
 
 ## 9. Rules and invariants
 
@@ -1158,7 +1158,7 @@ the reason in the log and the page unchanged:
   Checked on the way in (422 naming the field) and again before a removal.
 - `token_auth` defaults to `bearer` for Bitbucket and `basic` for static;
   `token_user` goes with `basic` only. An omitted token on PATCH keeps the
-  stored one, an empty one clears it. A token without `BACKEND_SECRET_KEY`
+  stored one, an empty one clears it. A token without `BACKEND_SOURCE_TOKEN_KEY`
   is a 422; a stored token the key cannot open fails the source's
   repositories with a line naming the key.
 - The token is a header per command, never a URL; the clone's config never

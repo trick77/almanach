@@ -270,7 +270,7 @@ func TestSources_CreateValidatesAndSeals(t *testing.T) {
 func TestSources_TokenNeedsKey(t *testing.T) {
 	h, _, _ := sourcesHandler(t, newFakeSources(), false)
 	code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"tools","kind":"static","token":"pat"}`, jsonHdr)
-	if code != 422 || !strings.Contains(field(t, body, "error"), "BACKEND_SECRET_KEY") {
+	if code != 422 || !strings.Contains(field(t, body, "error"), "BACKEND_SOURCE_TOKEN_KEY") {
 		t.Fatalf("token without key: %d %v", code, body)
 	}
 	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"tools","kind":"static"}`, jsonHdr); code != 201 {

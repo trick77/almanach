@@ -10,7 +10,7 @@
 #    PUBLIC_FQDN (the hostname Traefik routes Almanach on) and the OIDC
 #    block, the client secret and BACKEND_SESSION_SECRET included
 #    (openssl rand -base64 48). For private repositories also
-#    BACKEND_SECRET_KEY (openssl rand -base64 32).
+#    BACKEND_SOURCE_TOKEN_KEY (openssl rand -base64 32).
 #
 #      cp .env.example .env
 #

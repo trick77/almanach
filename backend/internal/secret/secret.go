@@ -17,7 +17,7 @@ import (
 const KeySize = 32
 
 // ErrNoKey is Seal or Open without a configured key.
-var ErrNoKey = errors.New("no secret key configured (BACKEND_SECRET_KEY)")
+var ErrNoKey = errors.New("no secret key configured (BACKEND_SOURCE_TOKEN_KEY)")
 
 // Key is the configured key; a zero Key seals nothing.
 type Key struct {

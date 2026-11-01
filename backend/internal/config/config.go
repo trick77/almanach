@@ -89,7 +89,7 @@ type Sources struct {
 	// <ReposDir>/<project_key>/<slug>. "" switches the feature off: no
 	// poller, the routes answer 404, the UI hides the entry.
 	ReposDir string
-	// SecretKey is BACKEND_SECRET_KEY as given (base64 of 32 bytes), parsed
+	// SecretKey is BACKEND_SOURCE_TOKEN_KEY as given (base64 of 32 bytes), parsed
 	// by the secret package; "" means no token can be stored.
 	SecretKey string
 	// SyncInterval is the poller's cycle; zero means manual only.
@@ -153,7 +153,7 @@ func Load(lookup func(string) string) (*App, error) {
 		Addr:            r.String("BACKEND_ADDR", "0.0.0.0:8080"),
 		AuthMode:        AuthMode(strings.ToLower(r.Enum("BACKEND_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthOIDC)))),
 		Model:           r.Required("BACKEND_MODEL"),
-		ReasoningEffort: r.String("BACKEND_REASONING_EFFORT", ""),
+		ReasoningEffort: r.String("BACKEND_MODEL_REASONING_EFFORT", ""),
 		Limits: Limits{
 			RepoMaxStatements:    positive(r, "BACKEND_REPO_MAX_STATEMENTS", 40),
 			ProjectMaxStatements: positive(r, "BACKEND_PROJECT_MAX_STATEMENTS", 24),
@@ -161,17 +161,17 @@ func Load(lookup func(string) string) (*App, error) {
 			ProjectMaxChars:      positive(r, "BACKEND_PROJECT_MAX_CHARS", 40000),
 			DiagramMaxNodes:      positive(r, "BACKEND_DIAGRAM_MAX_NODES", 12),
 			DiagramMaxEdges:      positive(r, "BACKEND_DIAGRAM_MAX_EDGES", 20),
-			MaxDiagrams:          nonNegative(r, "BACKEND_MAX_DIAGRAMS", 6),
+			MaxDiagrams:          nonNegative(r, "BACKEND_DIAGRAM_MAX_PER_PAGE", 6),
 		},
 		ProblemWindow: positive(r, "BACKEND_PROBLEM_WINDOW_DAYS", 90),
 		Sources: Sources{
 			ReposDir:     r.String("BACKEND_REPOS_DIR", ""),
-			SecretKey:    r.String("BACKEND_SECRET_KEY", ""),
+			SecretKey:    r.String("BACKEND_SOURCE_TOKEN_KEY", ""),
 			SyncInterval: r.Duration("BACKEND_SYNC_INTERVAL", 30*time.Minute),
 			GitCAFile:    r.String("BACKEND_GIT_CA_FILE", ""),
 		},
 		Baseline: Baseline{
-			CatalogueModel: r.String("BACKEND_CATALOGUE_MODEL", ""),
+			CatalogueModel: r.String("BACKEND_BASELINE_CATALOGUE_MODEL", ""),
 			MaxCalls:       positive(r, "BACKEND_BASELINE_MAX_CALLS", 16),
 			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 2_000_000),
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),

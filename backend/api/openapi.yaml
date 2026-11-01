@@ -338,7 +338,7 @@ paths:
       description: |
         A Bitbucket source needs `host`; a static one must not have one.
         `token_auth` defaults to bearer for Bitbucket and basic for static;
-        `token_user` goes with basic only. A token needs `BACKEND_SECRET_KEY`
+        `token_user` goes with basic only. A token needs `BACKEND_SOURCE_TOKEN_KEY`
         on the instance. The next sync cycle starts at once.
       operationId: createSource
       requestBody:

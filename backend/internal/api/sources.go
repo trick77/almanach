@@ -340,7 +340,7 @@ func (d Deps) seal(token string) ([]byte, string) {
 		return nil, ""
 	}
 	if !d.Sources.Key.Enabled() {
-		return nil, "token: BACKEND_SECRET_KEY is not set, no token can be stored"
+		return nil, "token: BACKEND_SOURCE_TOKEN_KEY is not set, no token can be stored"
 	}
 	sealed, err := d.Sources.Key.Seal(token)
 	if err != nil {

@@ -239,7 +239,7 @@ func serve(log *slog.Logger) error {
 			faults = append(faults, err.Error())
 		}
 		if k, err := secret.Parse(app.Sources.SecretKey); err != nil {
-			faults = append(faults, "BACKEND_SECRET_KEY: "+err.Error())
+			faults = append(faults, "BACKEND_SOURCE_TOKEN_KEY: "+err.Error())
 		} else {
 			key = k
 		}

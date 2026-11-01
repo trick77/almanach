@@ -287,7 +287,7 @@ func TestCycle_TokenWithoutKeyFailsTheRepo(t *testing.T) {
 	if err := poller(s, g, l, secret.Key{}).CycleOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if s.states["cli"] != store.RepoFailed || !strings.Contains(s.errs["cli"], "BACKEND_SECRET_KEY") {
+	if s.states["cli"] != store.RepoFailed || !strings.Contains(s.errs["cli"], "BACKEND_SOURCE_TOKEN_KEY") {
 		t.Fatalf("cli: %s %q", s.states["cli"], s.errs["cli"])
 	}
 	if len(g.calls) != 0 {

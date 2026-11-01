@@ -54,7 +54,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadOverrides(t *testing.T) {
 	env := minimal()
 	env["BACKEND_ADDR"] = "127.0.0.1:9090"
-	env["BACKEND_REASONING_EFFORT"] = "high"
+	env["BACKEND_MODEL_REASONING_EFFORT"] = "high"
 	env["BACKEND_REPO_MAX_STATEMENTS"] = "10"
 	env["BACKEND_PROJECT_MAX_STATEMENTS"] = "5"
 	env["BACKEND_REPO_MAX_CHARS"] = "800"
@@ -62,7 +62,7 @@ func TestLoadOverrides(t *testing.T) {
 	env["BACKEND_PROBLEM_WINDOW_DAYS"] = "30"
 	env["BACKEND_DIAGRAM_MAX_NODES"] = "16"
 	env["BACKEND_DIAGRAM_MAX_EDGES"] = "8"
-	env["BACKEND_MAX_DIAGRAMS"] = "0"
+	env["BACKEND_DIAGRAM_MAX_PER_PAGE"] = "0"
 	env["BACKEND_LOG_LEVEL"] = "DEBUG"
 	app, err := Load(lookup(env))
 	if err != nil {
@@ -232,9 +232,9 @@ func TestNonPositiveCap(t *testing.T) {
 
 func TestDiagramCaps(t *testing.T) {
 	for name, c := range map[string]struct{ value, fault string }{
-		"BACKEND_DIAGRAM_MAX_NODES": {"17", "at most 16, the most the drawing lays out"},
-		"BACKEND_DIAGRAM_MAX_EDGES": {"25", "at most 24, the most the drawing lays out"},
-		"BACKEND_MAX_DIAGRAMS":      {"-1", "must not be negative"},
+		"BACKEND_DIAGRAM_MAX_NODES":    {"17", "at most 16, the most the drawing lays out"},
+		"BACKEND_DIAGRAM_MAX_EDGES":    {"25", "at most 24, the most the drawing lays out"},
+		"BACKEND_DIAGRAM_MAX_PER_PAGE": {"-1", "must not be negative"},
 	} {
 		env := minimal()
 		env[name] = c.value
@@ -259,7 +259,7 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 		t.Fatalf("Baseline = %+v, want %+v", app.Baseline, want)
 	}
 	env := minimal()
-	env["BACKEND_CATALOGUE_MODEL"] = "cheap"
+	env["BACKEND_BASELINE_CATALOGUE_MODEL"] = "cheap"
 	env["BACKEND_BASELINE_MAX_CALLS"] = "3"
 	env["BACKEND_BASELINE_RECONCILE"] = "0"
 	app, err = Load(lookup(env))
@@ -289,7 +289,7 @@ func TestSummaryNamesTheCatalogueModel(t *testing.T) {
 	if s := app.Summary(); !strings.Contains(s, "baseline {catalogue gpt-x, 16 calls / 2000000 bytes a run, reconcile 720h0m0s}") {
 		t.Errorf("Summary = %s", s)
 	}
-	env["BACKEND_CATALOGUE_MODEL"] = "cheap"
+	env["BACKEND_BASELINE_CATALOGUE_MODEL"] = "cheap"
 	if app, err = Load(lookup(env)); err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestSummaryHidesSecrets(t *testing.T) {
 	env := oidcEnv()
 	env["BACKEND_REPOS_DIR"] = "/repos"
 	const tokenKey = "c2VjcmV0LWtleS1zZWNyZXQta2V5LXNlY3JldC1rZXk="
-	env["BACKEND_SECRET_KEY"] = tokenKey
+	env["BACKEND_SOURCE_TOKEN_KEY"] = tokenKey
 	app, err := Load(lookup(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
