@@ -130,7 +130,7 @@ type Limits struct {
 // Sources is the clone feature: off when ReposDir is empty.
 type Sources struct {
 	// ReposDir is the base folder every clone lands under, as
-	// <ReposDir>/<project_key>/<slug>. "" switches the feature off: no
+	// <ReposDir>/p<project id>/r<repo id>. "" switches the feature off: no
 	// poller, the routes answer 404, the UI hides the entry.
 	ReposDir string
 	// SecretKey is BACKEND_SOURCE_TOKEN_KEY as given (base64 of 32 bytes), parsed

@@ -65,7 +65,7 @@ func TestSources_CreateListUpdateDelete(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("delete: %v %v", ok, err)
 	}
-	if n := count(t, s, "source_repos", "project_key = 'tools'"); n != 0 {
+	if n := count(t, s, "source_repos", "project_id = (SELECT project_id FROM project_names WHERE key = 'tools')"); n != 0 {
 		t.Fatalf("repos survived the cascade: %d", n)
 	}
 	if _, found, _ := s.SourceByKey(ctx, "tools"); found {
@@ -138,7 +138,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 	if err := s.CreateSource(ctx, bitbucketSource("SHOP")); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "https://forge.example.invalid/scm/shop/ui.git"}, {"api", "https://forge.example.invalid/scm/shop/api.git"}})
+	res, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "https://forge.example.invalid/scm/shop/ui.git"}, {Slug: "api", CloneURL: "https://forge.example.invalid/scm/shop/api.git"}})
 	if err != nil || res.Added != 2 || res.Missing != 0 {
 		t.Fatalf("first listing: %+v, %v", res, err)
 	}
@@ -147,7 +147,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 	}
 
 	// api vanishes, infra appears, ui's URL changes but its state stays.
-	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "https://forge.example.invalid/scm/shop/ui-2.git"}, {"infra", "https://forge.example.invalid/scm/shop/infra.git"}})
+	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "https://forge.example.invalid/scm/shop/ui-2.git"}, {Slug: "infra", CloneURL: "https://forge.example.invalid/scm/shop/infra.git"}})
 	if err != nil || res.Added != 1 || res.Missing != 1 {
 		t.Fatalf("second listing: %+v, %v", res, err)
 	}
@@ -166,7 +166,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Fatalf("jobs with a missing row: %d, want 2", len(jobs))
 	}
-	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "u"}, {"infra", "i"}, {"api", "a"}})
+	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "u"}, {Slug: "infra", CloneURL: "i"}, {Slug: "api", CloneURL: "a"}})
 	if err != nil || res.Added != 0 || res.Missing != 0 {
 		t.Fatalf("third listing: %+v, %v", res, err)
 	}
@@ -177,7 +177,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 		}
 	}
 	// RequestSync leaves a missing row alone.
-	if _, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "u"}}); err != nil {
+	if _, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "u"}}); err != nil {
 		t.Fatal(err)
 	}
 	n, _ := s.RequestSync(ctx, "SHOP", "")

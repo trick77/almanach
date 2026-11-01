@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -261,8 +262,12 @@ func TestMigrate_ConcurrentRunsApplyOnce(t *testing.T) {
 			t.Fatalf("concurrent migrate: %v", err)
 		}
 	}
-	if n := count(t, stores[0], "schema_migrations", ""); n != 1 {
-		t.Errorf("schema_migrations = %d rows, want the one file once", n)
+	files, err := fs.Glob(migrations(), "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, stores[0], "schema_migrations", ""); n != len(files) {
+		t.Errorf("schema_migrations = %d rows, want each of the %d files once", n, len(files))
 	}
 	for _, s := range stores {
 		if err := s.SchemaCurrent(ctx); err != nil {

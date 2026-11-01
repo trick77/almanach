@@ -5,8 +5,9 @@ import { Diagram } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { causeLabel, day, problemTone, shortDay } from "./format";
-import { notePathFor, repoPath } from "./routing";
+import { notePathFor, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
+import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Chip,
@@ -39,6 +40,7 @@ export function ProjectPage({ projectKey }: { projectKey: string }) {
   useEffect(() => {
     document.title = `${projectKey} ${S.common.sep} ${S.app}`;
   }, [projectKey]);
+  useCanonical(data ? projectPath(data.key) : null);
 
   return (
     <div className={page}>

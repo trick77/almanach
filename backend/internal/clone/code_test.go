@@ -53,8 +53,8 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
 			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", c.before, c.src)}
-			g.origins["/base/tools/cli"] = "https://x/cli.git"
-			g.heads["/base/tools/cli@main"] = c.head
+			g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+			g.heads[dirOf("tools", "cli")+"@main"] = c.head
 			if c.documented != "" {
 				// The last run is the documented one, or one still open.
 				s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, Commit: c.documented, State: store.RunDone, FinishedAt: c.finished}
@@ -125,8 +125,8 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 				s.documented = store.BaselineRun{ID: 1, Commit: c.documented, State: store.RunDone}
 			}
 			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
-			g.origins["/base/tools/cli"] = "https://x/cli.git"
-			g.heads["/base/tools/cli@main"] = "h1"
+			g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+			g.heads[dirOf("tools", "cli")+"@main"] = "h1"
 			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 				Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}, Now: func() time.Time { return now }})
 			if err := p.CycleOnce(context.Background()); err != nil {
@@ -168,7 +168,7 @@ func TestDescribe_OpenRunAndStoreFailures(t *testing.T) {
 		s, g := newFakeStore(), newFakeGit()
 		s.enqueueErr = err
 		s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
-		g.heads["/base/tools/cli@main"] = "h1"
+		g.heads[dirOf("tools", "cli")+"@main"] = "h1"
 		wakes := 0
 		p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Describe: Describe{Reconcile: time.Hour, Wake: func() { wakes++ }}})
@@ -179,8 +179,8 @@ func TestDescribe_OpenRunAndStoreFailures(t *testing.T) {
 	s, g := newFakeStore(), newFakeGit()
 	s.runErr = errors.New("db down")
 	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic, AutoDescribe: true})}
-	g.origins["/base/tools/cli"] = "https://x/cli.git"
-	g.heads["/base/tools/cli@main"] = "h1"
+	g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+	g.heads[dirOf("tools", "cli")+"@main"] = "h1"
 	p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Describe: Describe{Reconcile: time.Hour, Wake: func() {}}})
 	if err := p.CycleOnce(context.Background()); err != nil || len(s.enqueued) != 0 {
@@ -236,7 +236,8 @@ func TestCode_ReadsAClone(t *testing.T) {
 	first := commit()
 	write("main.go", "package main // two\n")
 	second := commit()
-	run(t, root, "clone", "-q", "--bare", work, filepath.Join(root, "tools", "cli"))
+	// Where the poller keeps tools/cli: its folder named by ids.
+	run(t, root, "clone", "-q", "--bare", work, filepath.Join(root, projectSeg(idOf("tools")), repoSeg(idOf("tools/cli"))))
 
 	client, err := gitrepo.New(gitBin, root, "")
 	if err != nil {

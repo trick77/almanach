@@ -3,8 +3,9 @@ import type { RepoDetail } from "./api";
 import { DescriptionView, SourceChip } from "./Description";
 import { NotesTable } from "./NotesTable";
 import { day } from "./format";
-import { projectPath } from "./routing";
+import { projectPath, repoPath } from "./routing";
 import { S } from "./strings";
+import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Crumbs,
@@ -33,6 +34,7 @@ export function RepoPage({
   useEffect(() => {
     document.title = `${slug} ${S.common.sep} ${projectKey} ${S.common.sep} ${S.app}`;
   }, [projectKey, slug]);
+  useCanonical(data ? repoPath(data.project_key, data.slug) : null);
 
   return (
     <div className={page}>

@@ -392,8 +392,12 @@ paths:
           $ref: "#/components/responses/NotFound"
     patch:
       tags: [sources]
-      summary: Change a source's host or token
-      description: Every field is optional; an omitted `token` keeps the stored one, an empty one clears it.
+      summary: Change a source's host or token, or rename its project
+      description: >-
+        Every field is optional; an omitted `token` keeps the stored one, an empty one clears it. `project_key`
+        renames the project, a change of case included: it keeps its pages, notes and clones, and the old key
+        stays a name of it (every route still answers under it, with the current key in the body). A key another
+        project ever had, in any case, is a 409.
       operationId: updateSource
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -416,6 +420,12 @@ paths:
           $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another project had this key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "415":
           $ref: "#/components/responses/NotJSON"
         "422":
@@ -498,6 +508,46 @@ paths:
           $ref: "#/components/responses/Invalid"
 
   /api/sources/{key}/repos/{slug}:
+    patch:
+      tags: [sources]
+      summary: Rename a hand-entered repository
+      description: >-
+        A new slug and, optionally, a new clone URL (the next cycle re-clones). The repository keeps its pages,
+        notes and runs; the old slug stays a name of it. A listed repository follows its name in Bitbucket and
+        answers 422.
+      operationId: renameSourceRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameSourceRepo"
+      responses:
+        "200":
+          description: The source as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another repository of the project had this slug, in any case, or a run of this repository is open.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/NotJSON"
+        "422":
+          $ref: "#/components/responses/Invalid"
     delete:
       tags: [sources]
       summary: Remove one repository and its clone
@@ -882,7 +932,7 @@ components:
 
     SourceRepo:
       type: object
-      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at, baseline]
+      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at, dir, baseline]
       properties:
         slug:
           type: string
@@ -891,6 +941,9 @@ components:
         origin:
           type: string
           enum: [listed, manual]
+        dir:
+          type: string
+          description: The clone's folder, named by the project's and the repository's ids, never by their names.
         branch:
           type: string
           description: Empty until resolved from the remote.
@@ -1006,6 +1059,9 @@ components:
     SourceAccess:
       type: object
       properties:
+        project_key:
+          type: string
+          description: Renames the project, a change of case included. Omitted or unchanged keeps it.
         host:
           type: string
         token:
@@ -1032,6 +1088,17 @@ components:
         branch:
           type: string
           description: Empty resolves the remote's default branch.
+
+    RenameSourceRepo:
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          description: The new slug, a change of case included.
+        clone_url:
+          type: string
+          description: https, no credentials. Empty keeps the stored one.
 
     Queued:
       type: object

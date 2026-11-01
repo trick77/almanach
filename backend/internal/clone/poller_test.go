@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"hash/crc32"
 	"io"
 	"log/slog"
 	"strings"
@@ -34,6 +35,8 @@ type fakeStore struct {
 	runErr     error
 	failed     int
 	docAsked   int
+	// conflicts is what ApplyListing reports left out.
+	conflicts []string
 }
 
 func newFakeStore() *fakeStore {
@@ -46,7 +49,7 @@ func (f *fakeStore) ApplyListing(_ context.Context, key string, l []store.Listed
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listed[key] = l
-	return store.ListingResult{Added: len(l)}, nil
+	return store.ListingResult{Added: len(l) - len(f.conflicts), Conflicts: f.conflicts}, nil
 }
 func (f *fakeStore) MarkSourceListed(_ context.Context, key, e string) error {
 	f.mu.Lock()
@@ -83,6 +86,20 @@ func (f *fakeStore) EnqueueRun(_ context.Context, key, slug, mode, trigger, base
 	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, mode, trigger, base, commit}, " "))
 	return int64(len(f.enqueued)), nil
 }
+func (f *fakeStore) RepoIDs(_ context.Context, key, slug string) (int64, int64, bool, error) {
+	return idOf(key), idOf(key + "/" + slug), true, nil
+}
+
+// idOf is the fake's id for a name: stable, so a test can say where a
+// clone lives without a store.
+func idOf(name string) int64 { return int64(crc32.ChecksumIEEE([]byte(name)) % 100000) }
+
+// dirOf is where the poller keeps key/slug's clone: by ids, under the
+// fake's root.
+func dirOf(key, slug string) string {
+	return "/base/" + projectSeg(idOf(key)) + "/" + repoSeg(idOf(key+"/"+slug))
+}
+
 func (f *fakeStore) LastRun(context.Context, string, string) (store.BaselineRun, int, bool, error) {
 	return f.last, f.failed, f.last.ID != 0, f.runErr
 }
@@ -108,10 +125,27 @@ type fakeGit struct {
 	calls    []string
 	access   []gitrepo.Access
 	onClone  func(dir string)
+	// legacy are clones in folders named by names ("/base/key/slug"), as
+	// before the ids; MoveLegacy moves them and records the move in moved.
+	legacy map[string]string
+	moved  []string
+}
+
+// MoveLegacy is gitrepo's: TRANSITIONAL(ids), goes with it.
+func (g *fakeGit) MoveLegacy(fromKey, fromSlug, toKey, toSlug string) (bool, error) {
+	from, to := "/base/"+fromKey+"/"+fromSlug, "/base/"+toKey+"/"+toSlug
+	origin, ok := g.legacy[from]
+	if !ok || g.origins[to] != "" {
+		return false, nil
+	}
+	delete(g.legacy, from)
+	g.origins[to] = origin
+	g.moved = append(g.moved, from+" → "+to)
+	return true, nil
 }
 
 func newFakeGit() *fakeGit {
-	return &fakeGit{origins: map[string]string{}, heads: map[string]string{}, fetchErr: map[string]error{}}
+	return &fakeGit{origins: map[string]string{}, heads: map[string]string{}, fetchErr: map[string]error{}, legacy: map[string]string{}}
 }
 
 func (g *fakeGit) Dir(key, slug string) (string, error) {
@@ -186,8 +220,9 @@ func poller(s Store, g Git, l Lister, k secret.Key) *Poller {
 }
 
 func job(key, slug, url, branch, head string, src store.ProjectSource) store.SyncJob {
-	src.ProjectKey = key
-	return store.SyncJob{Source: src, Repo: store.SourceRepo{ProjectKey: key, Slug: slug, CloneURL: url, Branch: branch, HeadCommit: head, State: store.RepoPending}}
+	src.ProjectKey, src.ProjectID = key, idOf(key)
+	return store.SyncJob{Source: src, Repo: store.SourceRepo{ProjectID: idOf(key), RepoID: idOf(key + "/" + slug), ProjectKey: key, Slug: slug,
+		CloneURL: url, Branch: branch, HeadCommit: head, State: store.RepoPending}}
 }
 
 func TestCycle_ClonesResolvesFetchesMarksReady(t *testing.T) {
@@ -195,7 +230,7 @@ func TestCycle_ClonesResolvesFetchesMarksReady(t *testing.T) {
 	sealed, _ := k.Seal("tok")
 	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic, TokenUser: "me", TokenEnc: sealed}
 	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "", "", src)}
-	g.heads["/base/tools/cli@main"] = "abc"
+	g.heads[dirOf("tools", "cli")+"@main"] = "abc"
 
 	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -203,12 +238,47 @@ func TestCycle_ClonesResolvesFetchesMarksReady(t *testing.T) {
 	if s.states["cli"] != store.RepoReady || s.branch["cli"] != "main" || s.heads["cli"] != "abc" {
 		t.Fatalf("row after cycle: state=%s branch=%s head=%s", s.states["cli"], s.branch["cli"], s.heads["cli"])
 	}
-	want := "clone /base/tools/cli,default-branch,fetch /base/tools/cli"
+	want := "clone " + dirOf("tools", "cli") + ",default-branch,fetch " + dirOf("tools", "cli")
 	if got := strings.Join(g.calls, ","); got != want {
 		t.Fatalf("git calls = %s, want %s", got, want)
 	}
 	if len(g.access) != 1 || g.access[0].Token != "tok" || g.access[0].Auth != store.TokenBasic || g.access[0].User != "me" {
 		t.Fatalf("access handed to git = %+v", g.access)
+	}
+}
+
+// TRANSITIONAL(ids): a clone from before the ids, in a folder named by its
+// names, is moved to its id folder and fetched there, not cloned again.
+// Remove with MoveLegacy.
+func TestCycle_MovesALegacyClone(t *testing.T) {
+	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
+	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
+	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "abc", src)}
+	g.legacy["/base/tools/cli"] = "https://x/cli.git"
+	g.heads[dirOf("tools", "cli")+"@main"] = "abc"
+	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.moved) != 1 || g.moved[0] != "/base/tools/cli → "+dirOf("tools", "cli") {
+		t.Fatalf("moved = %v", g.moved)
+	}
+	if got := strings.Join(g.calls, ","); got != "fetch "+dirOf("tools", "cli") {
+		t.Fatalf("git calls = %s, want the fetch only", got)
+	}
+}
+
+// A listed slug another repository had is left out by the store; the
+// source's error says which, so the source page shows it.
+func TestList_ReportsNameConflicts(t *testing.T) {
+	s, g, k := newFakeStore(), newFakeGit(), testKey(t)
+	s.conflicts = []string{"ui"}
+	l := &fakeLister{repos: []store.ListedRepo{{Slug: "ui", CloneURL: "https://x/ui.git", ForgeID: 12}}}
+	s.sources = []store.SourceRow{{ProjectSource: store.ProjectSource{ProjectKey: "SHOP", Kind: store.SourceBitbucket, Host: "https://x"}}}
+	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.listErr["SHOP"], "ui") {
+		t.Fatalf("listing error = %q, want the conflicting slug named", s.listErr["SHOP"])
 	}
 }
 
@@ -221,18 +291,18 @@ func TestCycle_ReclonesOnOriginMismatch_AndRecordsFailures(t *testing.T) {
 		job("tools", "gone", "https://x/gone.git", "develop", "", src),
 		job("tools", "fine", "https://x/fine.git", "main", "abc", src),
 	}
-	g.origins["/base/tools/moved"] = "https://x/old.git"
-	g.heads["/base/tools/moved@main"] = "new"
-	g.fetchErr["/base/tools/broken"] = errors.New("git fetch: exit status 128: fatal: unable to access")
-	g.origins["/base/tools/gone"] = "https://x/gone.git"
-	g.origins["/base/tools/fine"] = "https://x/fine.git"
-	g.heads["/base/tools/fine@main"] = "abc"
+	g.origins[dirOf("tools", "moved")] = "https://x/old.git"
+	g.heads[dirOf("tools", "moved")+"@main"] = "new"
+	g.fetchErr[dirOf("tools", "broken")] = errors.New("git fetch: exit status 128: fatal: unable to access")
+	g.origins[dirOf("tools", "gone")] = "https://x/gone.git"
+	g.origins[dirOf("tools", "fine")] = "https://x/fine.git"
+	g.heads[dirOf("tools", "fine")+"@main"] = "abc"
 
 	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	calls := strings.Join(g.calls, ",")
-	if !strings.Contains(calls, "remove /base/tools/moved,clone /base/tools/moved") {
+	if !strings.Contains(calls, "remove "+dirOf("tools", "moved")+",clone "+dirOf("tools", "moved")) {
 		t.Fatalf("mismatch did not re-clone: %s", calls)
 	}
 	if s.states["moved"] != store.RepoReady || s.heads["moved"] != "new" {
@@ -299,15 +369,15 @@ func TestRemove_SkipsTheRowInTheRunningCycle(t *testing.T) {
 	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
 	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
 	s.jobs = []store.SyncJob{job("tools", "a", "https://x/a.git", "main", "", src), job("tools", "b", "https://x/b.git", "main", "", src)}
-	g.heads["/base/tools/a@main"] = "aaa"
-	g.heads["/base/tools/b@main"] = "bbb"
+	g.heads[dirOf("tools", "a")+"@main"] = "aaa"
+	g.heads[dirOf("tools", "b")+"@main"] = "bbb"
 	p := poller(s, g, l, k)
 	// b is removed while the cycle works on a (inside the disk lock, as a
 	// real Remove would be once it got the lock): the cycle, which listed
 	// b before, must skip it rather than clone it back.
 	g.onClone = func(dir string) {
-		if strings.HasSuffix(dir, "/a") {
-			p.removed["tools/b"] = true
+		if dir == dirOf("tools", "a") {
+			p.removed[projectSeg(idOf("tools"))+"/"+repoSeg(idOf("tools/b"))] = true
 		}
 	}
 	if err := p.CycleOnce(context.Background()); err != nil {
@@ -316,14 +386,14 @@ func TestRemove_SkipsTheRowInTheRunningCycle(t *testing.T) {
 	if s.states["a"] != store.RepoReady {
 		t.Fatalf("a: %s", s.states["a"])
 	}
-	if _, touched := s.states["b"]; touched || strings.Contains(strings.Join(g.calls, ","), "/tools/b") {
+	if _, touched := s.states["b"]; touched || strings.Contains(strings.Join(g.calls, ","), dirOf("tools", "b")) {
 		t.Fatalf("b was synced after its removal: states=%v calls=%v", s.states, g.calls)
 	}
 	// Remove during a sync waits for the disk lock.
 	done := make(chan struct{})
 	p.disk.Lock()
 	go func() {
-		_ = p.Remove("tools", "a")
+		_ = p.Remove(idOf("tools"), idOf("tools/a"))
 		close(done)
 	}()
 	select {
@@ -333,7 +403,7 @@ func TestRemove_SkipsTheRowInTheRunningCycle(t *testing.T) {
 	}
 	p.disk.Unlock()
 	<-done
-	if !strings.Contains(strings.Join(g.calls, ","), "remove /base/tools/a") {
+	if !strings.Contains(strings.Join(g.calls, ","), "remove "+dirOf("tools", "a")) {
 		t.Fatalf("remove not forwarded: %v", g.calls)
 	}
 }
@@ -342,7 +412,7 @@ func TestStartNudgeStop(t *testing.T) {
 	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
 	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
 	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "", src)}
-	g.heads["/base/tools/cli@main"] = "abc"
+	g.heads[dirOf("tools", "cli")+"@main"] = "abc"
 	p := New(Deps{Store: s, Git: g, Lister: l, Key: k, FirstDelay: time.Hour, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	p.Start(context.Background())
 	p.Nudge()

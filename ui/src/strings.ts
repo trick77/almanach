@@ -219,7 +219,7 @@ export const S = {
       kind: "Art",
       slug: "Slug",
       slugHint:
-        "Wird der Ordnername unter dem Basisordner. Buchstaben, Ziffern, Punkt, Strich, Unterstrich, Tilde.",
+        "Buchstaben, Ziffern, Punkt, Strich, Unterstrich, Tilde. Lässt sich später umbenennen.",
       host: "Bitbucket-Host",
       hostHint:
         "Nur https. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen.",
@@ -271,6 +271,22 @@ export const S = {
         string
       >,
       remove: "Quelle entfernen",
+      rename: "Umbenennen",
+    },
+    renameForm: {
+      slug: "Neuer Slug",
+      hint: "Auch nur die Gross- und Kleinschreibung. Seiten, Notizen und Klone bleiben, der alte Slug führt weiter hierher. Ein Slug, den ein anderes Projekt je hatte, ist vergeben, in jeder Schreibweise.",
+      save: "Umbenennen",
+    },
+    renameRepoForm: {
+      title: (slug: string) => `${slug} umbenennen`,
+      slug: "Neuer Slug",
+      slugHint:
+        "Auch nur die Gross- und Kleinschreibung. Beschreibung, Notizen und Runs bleiben, der alte Slug führt weiter hierher. Ein Slug, den ein anderes Repository je hatte, ist vergeben.",
+      url: "Neue Clone-URL",
+      urlPlaceholder: "(bleibt)",
+      urlHint: "Nur https. Eine neue URL holt den Klon neu.",
+      save: "Umbenennen",
     },
     confirmRemove: (key: string, repos: number, dir: string) =>
       `Quelle ${key} entfernen? Löscht die Quelle, ihre ${repos} Repository-Einträge und den Ordner ${dir}. Beschreibungen aus Pull-Request-Notizen bleiben; sie hängen am Projekt, nicht an der Quelle.`,
@@ -311,11 +327,13 @@ export const S = {
       retry: "Erneut",
       remove: "Entfernen",
       removeClone: "Klon entfernen",
+      rename: "Umbenennen",
     },
     addForm: {
       title: "Repository hinzufügen",
       slug: "Slug",
-      slugHint: (dir: string) => `Der Ordnername unter ${dir}.`,
+      slugHint:
+        "Buchstaben, Ziffern, Punkt, Strich, Unterstrich. Lässt sich später umbenennen.",
       branch: "Branch",
       branchPlaceholder: "(Default-Branch des Remotes)",
       branchHint:

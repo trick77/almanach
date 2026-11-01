@@ -46,6 +46,8 @@ type fakeStore struct {
 	sourceRepos  map[string]bool
 	sourceErr    error
 	sourcedAsked []bool
+
+	renamed map[string]string
 }
 
 func newFakeStore() *fakeStore {
@@ -112,6 +114,23 @@ func (f *fakeStore) NoteByKey(_ context.Context, project, repo string, prID int)
 func (f *fakeStore) Problems(_ context.Context, _ string, days int) ([]store.ProblemArea, error) {
 	f.daysAsked = append(f.daysAsked, days)
 	return f.problems, f.problemErr
+}
+
+// ProjectKeyOf and RepoNamesOf follow renamed ("old key" → "new key",
+// "key/old slug" → "key/new slug"); a name not in it is current.
+func (f *fakeStore) ProjectKeyOf(_ context.Context, key string) (string, bool, error) {
+	if cur, ok := f.renamed[key]; ok {
+		return cur, true, nil
+	}
+	return key, true, nil
+}
+
+func (f *fakeStore) RepoNamesOf(_ context.Context, key, slug string) (string, string, bool, error) {
+	if cur, ok := f.renamed[key+"/"+slug]; ok {
+		k, s, _ := strings.Cut(cur, "/")
+		return k, s, true, nil
+	}
+	return key, slug, true, nil
 }
 
 func itoa(n int) string {
@@ -485,6 +504,23 @@ func TestRepo(t *testing.T) {
 	var desc map[string]json.RawMessage
 	if err := json.Unmarshal(body["description"], &desc); err != nil || field(t, desc, "summary") != "Repo." {
 		t.Errorf("description = %s", body["description"])
+	}
+}
+
+// A URL under an old key or slug finds the project or repository and
+// answers with its current names, which the UI puts in the address bar.
+func TestOldNamesAnswerWithCurrentOnes(t *testing.T) {
+	st := newFakeStore()
+	st.teams["OLD"] = "platform"
+	st.repos["OLD"] = []store.RepoRow{{Slug: "old"}}
+	st.renamed = map[string]string{"OLD": "NEW", "OLD/old": "NEW/new"}
+	h := handler(t, st, nil, config.AuthNone)
+	if code, body := do(t, h, "GET", "/api/projects/OLD", "", "", nil); code != 200 || field(t, body, "key") != "NEW" {
+		t.Errorf("project by its old key: %d %v", code, body)
+	}
+	code, body := do(t, h, "GET", "/api/projects/OLD/repos/old", "", "", nil)
+	if code != 200 || field(t, body, "project_key") != "NEW" || field(t, body, "slug") != "new" {
+		t.Errorf("repository by its old names: %d %v", code, body)
 	}
 }
 

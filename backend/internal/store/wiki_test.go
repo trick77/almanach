@@ -123,7 +123,7 @@ func TestInsertRevision_NumbersAndRepoints(t *testing.T) {
 	if string(got) != string(want) {
 		t.Errorf("statements round-trip:\n got %s\nwant %s", got, want)
 	}
-	if n := count(t, s, "revisions", "repo_slug = 'svc' AND scope = 'repository'"); n != 3 {
+	if n := count(t, s, "revisions", "repo_id = (SELECT id FROM repos WHERE slug = 'svc') AND scope = 'repository'"); n != 3 {
 		t.Errorf("revision rows = %d, want 3", n)
 	}
 	if n := count(t, s, "revisions", "revision = 1 AND llm_call_id = "+itoa(callID)); n != 1 {
@@ -149,7 +149,7 @@ func TestInsertRevision_NumbersAndRepoints(t *testing.T) {
 	}
 }
 
-// A project-scope revision stores NULL repo_slug and the page keys on the empty slug.
+// A project-scope revision stores NULL repo_id and the page keys on repo_id 0.
 func TestInsertRevision_ProjectScope(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -162,10 +162,10 @@ func TestInsertRevision_ProjectScope(t *testing.T) {
 			t.Fatalf("project revision number = %d, want %d", n, want)
 		}
 	}
-	if n := count(t, s, "revisions", "scope = 'project' AND repo_slug IS NULL"); n != 2 {
-		t.Errorf("project revisions with NULL repo_slug = %d, want 2", n)
+	if n := count(t, s, "revisions", "scope = 'project' AND repo_id IS NULL"); n != 2 {
+		t.Errorf("project revisions with NULL repo_id = %d, want 2", n)
 	}
-	if n := count(t, s, "pages", "scope = 'project' AND project_key = 'PRJ' AND repo_slug = ''"); n != 1 {
+	if n := count(t, s, "pages", "scope = 'project' AND project_id = (SELECT id FROM projects WHERE key = 'PRJ') AND repo_id = 0"); n != 1 {
 		t.Errorf("project page rows = %d, want 1", n)
 	}
 	p, ok, err := s.CurrentPage(ctx, ScopeProject, "PRJ", "")

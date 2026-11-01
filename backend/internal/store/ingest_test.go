@@ -37,19 +37,20 @@ func TestIngest_WritesEverything(t *testing.T) {
 			t.Errorf("%s: %d rows, want %d", tb, got[tb], w)
 		}
 	}
-	if n := count(t, s, "claims", "team = 'alpha' AND project_key = 'PRJ' AND repo_slug IS NULL"); n != 1 {
+	const prj, svc = "(SELECT id FROM projects WHERE key = 'PRJ')", "(SELECT id FROM repos WHERE slug = 'svc')"
+	if n := count(t, s, "claims", "team = 'alpha' AND project_id = "+prj+" AND repo_id IS NULL"); n != 1 {
 		t.Errorf("project claim rows = %d, want 1", n)
 	}
-	if n := count(t, s, "claims", "team = 'alpha' AND project_key = 'PRJ' AND repo_slug = 'svc'"); n != 1 {
+	if n := count(t, s, "claims", "team = 'alpha' AND project_id = "+prj+" AND repo_id = "+svc); n != 1 {
 		t.Errorf("repo claim rows = %d, want 1", n)
 	}
 	if n := count(t, s, "projects", "key = 'PRJ' AND team = 'alpha'"); n != 1 {
 		t.Errorf("project row = %d, want 1", n)
 	}
-	if n := count(t, s, "repos", "project_key = 'PRJ' AND slug = 'svc' AND team = 'alpha'"); n != 1 {
+	if n := count(t, s, "repos", "project_id = "+prj+" AND slug = 'svc' AND team = 'alpha'"); n != 1 {
 		t.Errorf("repo row = %d, want 1", n)
 	}
-	if n := count(t, s, "notes", "project_key = 'PRJ' AND repo_slug = 'svc' AND pr_id = 1 AND delivery_id = 'd-PRJ-svc-1' AND consolidated_at IS NULL"); n != 1 {
+	if n := count(t, s, "notes", "repo_id = "+svc+" AND pr_id = 1 AND delivery_id = 'd-PRJ-svc-1' AND consolidated_at IS NULL"); n != 1 {
 		t.Errorf("note row = %d, want 1", n)
 	}
 	if n := count(t, s, "note_calls", "delivery_id = 'd-PRJ-svc-1' AND pr_id = 1 AND rounds = 2 AND warnings = '[\"w1\"]'"); n != 1 {

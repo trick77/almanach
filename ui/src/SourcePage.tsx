@@ -18,8 +18,9 @@ import {
   stateTone,
   type Tone,
 } from "./format";
-import { navigateTo, sourcesPath } from "./routing";
+import { navigateTo, replaceTo, sourcePath, sourcesPath } from "./routing";
 import { S } from "./strings";
+import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Chip,
@@ -81,6 +82,7 @@ export function SourcePage({ projectKey }: { projectKey: string }) {
   useEffect(() => {
     document.title = `${projectKey} ${S.common.sep} ${S.sources.title} ${S.common.sep} ${S.app}`;
   }, [projectKey]);
+  useCanonical(data ? sourcePath(data.project_key) : null);
 
   return (
     <div className={page}>
@@ -103,12 +105,13 @@ export function SourcePage({ projectKey }: { projectKey: string }) {
   );
 }
 
-type Open = "none" | "access" | "add" | "remove";
+type Open = "none" | "access" | "add" | "rename" | "remove";
 
 function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const [open, setOpen] = useState<Open>("none");
   const [queued, setQueued] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [error, setError] = useState("");
   const isStatic = data.kind === "static";
   const ready = data.repos.filter((r) => r.state === "ready").length;
@@ -262,6 +265,13 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         </button>
         <button
           type="button"
+          className={btn}
+          onClick={() => setOpen(open === "rename" ? "none" : "rename")}
+        >
+          {S.sources.actions.rename}
+        </button>
+        <button
+          type="button"
           className={btnDanger}
           onClick={() => setOpen(open === "remove" ? "none" : "remove")}
         >
@@ -293,6 +303,17 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           onDone={() => {
             setOpen("none");
             reload();
+          }}
+          onCancel={() => setOpen("none")}
+        />
+      )}
+      {open === "rename" && (
+        <RenameForm
+          data={data}
+          onDone={(key) => {
+            setOpen("none");
+            if (key === data.project_key) reload();
+            else replaceTo(sourcePath(key));
           }}
           onCancel={() => setOpen("none")}
         />
@@ -353,13 +374,25 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
             )
           }
           removing={removing}
-          onAskRemove={setRemoving}
+          onAskRemove={(slug) => {
+            setRenaming(null);
+            setRemoving(slug);
+          }}
           onRemove={(slug) =>
             act(async () => {
               await send("DELETE", `${path}/repos/${encodeURIComponent(slug)}`);
               setRemoving(null);
             })
           }
+          renaming={renaming}
+          onAskRename={(slug) => {
+            setRemoving(null);
+            setRenaming(slug);
+          }}
+          onRenamed={() => {
+            setRenaming(null);
+            reload();
+          }}
         />
       )}
       {!isStatic && <Empty>{S.sources.listedOnly}</Empty>}
@@ -374,6 +407,9 @@ function ReposTable({
   removing,
   onAskRemove,
   onRemove,
+  renaming,
+  onAskRename,
+  onRenamed,
 }: {
   data: SourceDetail;
   onSync: (slug: string) => void;
@@ -381,7 +417,13 @@ function ReposTable({
   removing: string | null;
   onAskRemove: (slug: string | null) => void;
   onRemove: (slug: string) => void;
+  renaming: string | null;
+  onAskRename: (slug: string | null) => void;
+  onRenamed: () => void;
 }) {
+  const removingDir =
+    data.repos.find((r) => r.slug === removing)?.dir ?? data.dir;
+  const renamingRepo = data.repos.find((r) => r.slug === renaming);
   const [hd0, hd1, hd2, hd3, hd4, hd5] = S.sources.repoHeaders;
   const rows = [...data.repos].sort((a, b) => a.slug.localeCompare(b.slug));
   return (
@@ -408,14 +450,23 @@ function ReposTable({
                 onSync={() => onSync(r.slug)}
                 onDescribe={(mode) => onDescribe(r.slug, mode)}
                 onAskRemove={() => onAskRemove(r.slug)}
+                onAskRename={() => onAskRename(r.slug)}
               />
             ))}
           </tbody>
         </table>
       </div>
+      {renamingRepo !== undefined && (
+        <RenameRepoForm
+          sourceKey={data.project_key}
+          repo={renamingRepo}
+          onDone={onRenamed}
+          onCancel={() => onAskRename(null)}
+        />
+      )}
       {removing !== null && (
         <Panel tone="danger">
-          {S.sources.confirmRemoveRepo(removing, `${data.dir}/${removing}`)}
+          {S.sources.confirmRemoveRepo(removing, removingDir)}
           <div className="mt-2.5 flex gap-2">
             <button
               type="button"
@@ -444,15 +495,19 @@ function RepoRow({
   onSync,
   onDescribe,
   onAskRemove,
+  onAskRename,
 }: {
   r: SourceRepo;
   isStatic: boolean;
   onSync: () => void;
   onDescribe: (mode: "reconcile" | "full") => Promise<void>;
   onAskRemove: () => void;
+  onAskRename: () => void;
 }) {
   const running = r.state === "pending" || r.state === "syncing";
   const removable = isStatic || r.state === "missing";
+  // A listed repository follows its name in Bitbucket.
+  const renamable = r.origin === "manual";
   const documented = r.baseline !== null && r.baseline.documented_commit !== "";
   const [sending, setSending] = useState(false);
   const noRun = sending || runOpen(r.baseline) || r.head_commit === "";
@@ -531,6 +586,16 @@ function RepoRow({
                 onClick={() => describe("full")}
               >
                 {S.baseline.actions.full}
+              </button>
+            )}
+            {renamable && (
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={runOpen(r.baseline)}
+                onClick={onAskRename}
+              >
+                {S.sources.repoActions.rename}
               </button>
             )}
             {removable && (
@@ -827,6 +892,167 @@ function AccessForm({
   );
 }
 
+/** RenameForm renames the source's project, a change of case included;
+ *  onDone gets the key as stored. */
+function RenameForm({
+  data,
+  onDone,
+  onCancel,
+}: {
+  data: SourceDetail;
+  onDone: (key: string) => void;
+  onCancel: () => void;
+}) {
+  const f = S.sources.renameForm;
+  const [key, setKey] = useState(data.project_key);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const to = key.trim();
+
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const stored = await send<SourceDetail>(
+        "PATCH",
+        `sources/${encodeURIComponent(data.project_key)}`,
+        { project_key: to },
+      );
+      onDone(stored?.project_key ?? to);
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.message : S.common.failed(S.sources.whatOne),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel>
+      <h3 className="mb-3 font-serif text-[17px] font-medium text-ink">
+        {S.sources.actions.rename}
+      </h3>
+      <label>
+        <span className={fieldLabel}>{f.slug}</span>
+        <input
+          className={input + " " + mono}
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+        />
+        <span className={fieldHint}>{f.hint}</span>
+      </label>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className={btnPrimary}
+          disabled={busy || to === "" || to === data.project_key}
+          onClick={submit}
+        >
+          {busy ? S.sources.form.saving : f.save}
+        </button>
+        <button type="button" className={btn} onClick={onCancel}>
+          {S.sources.form.cancel}
+        </button>
+        {error !== "" && (
+          <span role="alert" className="text-[13px] text-danger-ink">
+            {error}
+          </span>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+/** RenameRepoForm renames a hand-entered repository and, when a URL is
+ *  typed, gives it a new clone URL. */
+function RenameRepoForm({
+  sourceKey,
+  repo,
+  onDone,
+  onCancel,
+}: {
+  sourceKey: string;
+  repo: SourceRepo;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const f = S.sources.renameRepoForm;
+  const [slug, setSlug] = useState(repo.slug);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const to = slug.trim();
+
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await send(
+        "PATCH",
+        `sources/${encodeURIComponent(sourceKey)}/repos/${encodeURIComponent(repo.slug)}`,
+        { slug: to, clone_url: url.trim() },
+      );
+      onDone();
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.message : S.common.failed(S.sources.whatOne),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel>
+      <h3 className="mb-3 font-serif text-[17px] font-medium text-ink">
+        {f.title(repo.slug)}
+      </h3>
+      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+        <label>
+          <span className={fieldLabel}>{f.slug}</span>
+          <input
+            className={input + " " + mono}
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+          />
+          <span className={fieldHint}>{f.slugHint}</span>
+        </label>
+        <label>
+          <span className={fieldLabel}>{f.url}</span>
+          <input
+            className={input + " " + mono}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder={f.urlPlaceholder}
+          />
+          <span className={fieldHint}>{f.urlHint}</span>
+        </label>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className={btnPrimary}
+          disabled={
+            busy || to === "" || (to === repo.slug && url.trim() === "")
+          }
+          onClick={submit}
+        >
+          {busy ? S.sources.form.saving : f.save}
+        </button>
+        <button type="button" className={btn} onClick={onCancel}>
+          {S.sources.form.cancel}
+        </button>
+        {error !== "" && (
+          <span role="alert" className="text-[13px] text-danger-ink">
+            {error}
+          </span>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function AddRepoForm({
   data,
   onDone,
@@ -880,7 +1106,7 @@ function AddRepoForm({
             onChange={(e) => setSlug(e.target.value)}
             placeholder="acme-cli"
           />
-          <span className={fieldHint}>{f.slugHint(data.dir)}</span>
+          <span className={fieldHint}>{f.slugHint}</span>
         </label>
         <label>
           <span className={fieldLabel}>{f.branch}</span>

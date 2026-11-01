@@ -135,7 +135,7 @@ services:
       # The database alone: the file and its -wal, -shm. Never a shared
       # filesystem: SQLite in WAL needs the locks of one local disk.
       - data:/data
-      # Every source's clones, <project>/<slug>. Apart from the database: a
+      # Every source's clones, p<project id>/r<repo id>. Apart from the database: a
       # clone volume can be wiped and refilled from the forge, the data
       # volume cannot.
       - repos:/app/repos

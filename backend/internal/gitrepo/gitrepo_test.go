@@ -255,3 +255,43 @@ func TestRedact_RealisticGitErrorShapes(t *testing.T) {
 		t.Errorf("Redact changed a bare URL: %q", got)
 	}
 }
+
+// TRANSITIONAL(ids): a clone in a folder named by names moves to the one
+// named by ids, once; the emptied project folder goes, a folder with other
+// clones stays; nothing to move or a taken target is no move. Remove with
+// MoveLegacy.
+func TestMoveLegacy(t *testing.T) {
+	c := client(t)
+	for _, d := range []string{"tools/cli/objects", "tools/api/objects", "solo/one/objects"} {
+		if err := os.MkdirAll(filepath.Join(c.Root(), d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if moved, err := c.MoveLegacy("tools", "cli", "p1", "r1"); err != nil || !moved {
+		t.Fatalf("move tools/cli: %v %v", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(c.Root(), "p1", "r1", "objects")); err != nil {
+		t.Errorf("not at the id folder: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(c.Root(), "tools", "api")); err != nil {
+		t.Errorf("the other clone of the project went: %v", err)
+	}
+	if moved, err := c.MoveLegacy("tools", "cli", "p1", "r1"); err != nil || moved {
+		t.Errorf("second move: %v %v, want none", moved, err)
+	}
+	if err := os.MkdirAll(filepath.Join(c.Root(), "p2", "r2"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := c.MoveLegacy("tools", "api", "p2", "r2"); err != nil || moved {
+		t.Errorf("move onto a taken folder: %v %v, want none", moved, err)
+	}
+	if moved, err := c.MoveLegacy("solo", "one", "p3", "r3"); err != nil || !moved {
+		t.Fatalf("move solo/one: %v %v", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(c.Root(), "solo")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("emptied project folder stayed: %v", err)
+	}
+	if _, err := c.MoveLegacy("..", "x", "p4", "r4"); !errors.Is(err, ErrBadSegment) {
+		t.Errorf("bad segment: %v, want ErrBadSegment", err)
+	}
+}

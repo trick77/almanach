@@ -3,11 +3,13 @@ package clone
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/consolidate"
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/store"
 )
 
 // The clones as a baseline run reads them: every read under the poller's
@@ -42,7 +44,16 @@ var lockWait = 2 * time.Second
 // locked runs fn on the clone's folder under the disk lock, or answers
 // consolidate.ErrCloneBusy when the poller keeps it past lockWait.
 func (c *Code) locked(ctx context.Context, key, slug string, fn func(dir string) error) error {
-	dir, err := c.p.Git.Dir(key, slug)
+	// Any name the repository ever had finds its folder, named by ids: a
+	// run that pinned the old slug reads on after a rename.
+	pid, rid, ok, err := c.p.Store.RepoIDs(ctx, key, slug)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("repository %s/%s: %w", key, slug, store.ErrNoRepo)
+	}
+	dir, err := c.p.Dir(pid, rid)
 	if err != nil {
 		return err
 	}
