@@ -283,7 +283,8 @@ export const S = {
     listingFailed: "Listing fehlgeschlagen",
     listedAt: "gelistet",
     neverListed: "noch nie gelistet",
-    manual: "Repositories von Hand eingetragen",
+    // Beside the Von Hand chip, where a Bitbucket source names its host.
+    manual: "Per Clone-URL",
     counts: {
       ready: (n: number) => `${n} bereit`,
       active: (n: number) => `${n} läuft`,
@@ -315,7 +316,7 @@ export const S = {
         bitbucket:
           "Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und clont seine Repositories.",
         static:
-          "Nur nötig für private Repositories. Ein Token für das ganze Projekt: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read»; für Bitbucket ein HTTP-Access-Token mit Leserecht, gesendet als Bearer.",
+          "Nur nötig für private Repositories. Ein Token für das ganze Projekt: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read»; für Bitbucket ein HTTP-Access-Token mit Leserecht, dafür Bearer wählen.",
       } as Record<string, string>,
       tokenAs: "Token senden als",
       bearerHint:

@@ -262,9 +262,18 @@ describe("SourcesPage", () => {
     fireEvent.change(screen.getByPlaceholderText("SHOP"), {
       target: { value: "SHOP" },
     });
-    // Back to the single repository: its slug is the URL's again.
+    // A click on the selected kind keeps what was typed.
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("SHOP");
+    // Back to the single repository: its slug as it was, typed by hand too.
     fireEvent.click(screen.getByText(/^Einzelnes Repository/));
-    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop-api");
+    const slug = screen.getByPlaceholderText("acme-api");
+    expect(slug).toHaveValue("shop-api");
+    fireEvent.change(slug, { target: { value: "shop" } });
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("SHOP");
+    fireEvent.click(screen.getByText(/^Einzelnes Repository/));
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
   });
 
   it("creates a source on the configured host", async () => {
@@ -292,7 +301,7 @@ describe("SourcesPage", () => {
     const writes = serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
-    // No switch any more: a project of one repository is a project of one.
+    // No system switch: one repository alone is a project of one.
     expect(screen.queryByRole("switch")).toBeNull();
     const create = screen.getByText("Anlegen und synchronisieren");
     expect(create).toBeDisabled();
@@ -520,7 +529,7 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     fireEvent.click(await screen.findByText("Token"));
-    // A static folder's token hint: one token, the GitHub scopes.
+    // A hand-filled project's token hint: one token, the GitHub scopes.
     expect(
       screen.getByText(/gilt für jedes Repository darin/),
     ).toBeInTheDocument();

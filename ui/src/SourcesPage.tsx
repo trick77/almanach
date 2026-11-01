@@ -199,8 +199,9 @@ export function hostOf(url: string): string {
   }
 }
 
-/** authFor is a kind's usual token header: Bitbucket Data Center takes a
- *  bearer, GitHub basic. */
+/** authFor is the token header a kind starts on: a Bitbucket project's
+ *  bearer, a single repository's basic (GitHub's; a Bitbucket repository's
+ *  token picks bearer by hand, as its hint says). */
 function authFor(kind: SourceKind): TokenAuth {
   return kind === "bitbucket" ? "bearer" : "basic";
 }
@@ -219,7 +220,10 @@ function NewSourceForm({
 }) {
   // One repository by its clone URL comes first: the usual case.
   const [kind, setKind] = useState<SourceKind>("static");
+  // Each kind keeps its own name: a Bitbucket project's key, a single
+  // repository's slug. A switch never carries one into the other.
   const [key, setKey] = useState("");
+  const [slug, setSlug] = useState("");
   const [host, setHost] = useState(defaultHost);
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>(authFor(kind));
@@ -228,19 +232,18 @@ function NewSourceForm({
   // the URL until it is typed by hand.
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [keyTyped, setKeyTyped] = useState(false);
+  const [slugTyped, setSlugTyped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
   const isStatic = kind === "static";
 
-  // The slug is the kind's own: a repository's name never becomes a
-  // Bitbucket project key, nor a project key a repository's slug.
+  // The kind's own token header, only on a change: a click on the
+  // selected kind keeps a header picked by hand.
   const pickKind = (k: SourceKind) => {
+    if (k === kind) return;
     setKind(k);
     setAuth(authFor(k));
-    setKey(k === "static" ? slugFromURL(url) : "");
-    setKeyTyped(false);
   };
 
   const submit = async () => {
@@ -248,7 +251,7 @@ function NewSourceForm({
     setError("");
     try {
       const created = await send<SourceDetail>("POST", "sources", {
-        project_key: key.trim(),
+        project_key: isStatic ? slug.trim() : key.trim(),
         kind,
         host: kind === "bitbucket" ? host.trim() : "",
         token: token.trim(),
@@ -257,7 +260,7 @@ function NewSourceForm({
         // The first repository: its slug is the project's, empty is its
         // name from the URL (the server's rule too).
         ...(isStatic
-          ? { clone_url: url.trim(), slug: key.trim(), branch: branch.trim() }
+          ? { clone_url: url.trim(), slug: slug.trim(), branch: branch.trim() }
           : {}),
       });
       if (created) onDone(created);
@@ -309,7 +312,7 @@ function NewSourceForm({
                 value={url}
                 onChange={(e) => {
                   setUrl(e.target.value);
-                  if (!keyTyped) setKey(slugFromURL(e.target.value));
+                  if (!slugTyped) setSlug(slugFromURL(e.target.value));
                 }}
                 placeholder="https://github.com/acme/acme-api.git"
               />
@@ -319,10 +322,10 @@ function NewSourceForm({
               <span className={fieldLabel}>{f.slug}</span>
               <input
                 className={input + " " + mono}
-                value={key}
+                value={slug}
                 onChange={(e) => {
-                  setKey(e.target.value);
-                  setKeyTyped(e.target.value !== "");
+                  setSlug(e.target.value);
+                  setSlugTyped(e.target.value !== "");
                 }}
                 placeholder="acme-api"
               />
