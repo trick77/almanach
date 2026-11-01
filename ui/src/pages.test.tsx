@@ -214,7 +214,9 @@ describe("ProjectsPage", () => {
     expect(await screen.findByText("PAY")).toBeInTheDocument();
     expect(screen.getByText(/Revision 7/)).toBeInTheDocument();
     expect(screen.getByText("noch keine Beschreibung")).toBeInTheDocument();
-    expect(screen.getByText(/Letzter Merge nie/)).toBeInTheDocument();
+    expect(screen.getByText(/letzter Merge nie/)).toHaveClass(
+      "first-letter:uppercase",
+    );
     expect(screen.getByText("PAY").closest("a")?.getAttribute("href")).toBe(
       "/projekte/PAY",
     );

@@ -31,8 +31,6 @@ export const S = {
     firstDescription:
       "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Klon bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
-    // A line of its own on the card starts with a capital.
-    lastMergeLine: "Letzter Merge",
     problems: (n: number) =>
       n === 0
         ? "keine Problemzonen"
