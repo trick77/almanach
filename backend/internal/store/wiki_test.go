@@ -283,6 +283,20 @@ func TestSetRepoMap_InPlaceAndCarried(t *testing.T) {
 	if p := page(); p.RepoMapBasis != "b2" {
 		t.Errorf("basis after a refused write = %q", p.RepoMapBasis)
 	}
+	// None drawn: the basis set, the map SQL NULL, read back as no map (the
+	// JSON text null read as an empty map once).
+	r3 := enqueue(t, s, "PRJ", "svc")
+	r3.State = RunDone
+	if ok, err := s.SetRepoMap(ctx, "PRJ", "svc", nil, "b4", r3); err != nil || !ok {
+		t.Fatalf("SetRepoMap of none: ok=%v err=%v", ok, err)
+	}
+	if p := page(); p.RepoMap != nil || p.RepoMapBasis != "b4" {
+		t.Errorf("after none drawn: map %+v, basis %q; want no map, basis b4", p.RepoMap, p.RepoMapBasis)
+	}
+	var nulls int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM revisions WHERE repo_map_basis = 'b4' AND repo_map IS NULL`).Scan(&nulls); err != nil || nulls != 1 {
+		t.Errorf("none drawn stored as SQL NULL: %d rows, err %v", nulls, err)
+	}
 	// Another repository of the project carries nothing of svc's.
 	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "web", Summary: "w", SourcePR: "PRJ/web#1"}); err != nil {
 		t.Fatal(err)

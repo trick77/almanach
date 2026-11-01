@@ -416,18 +416,26 @@ export const S = {
     skipLine: (reason: string, names: string[], more: number) =>
       `${reason}: ${names.join(", ")}${more > 0 ? ` und ${more} weitere` : ""}`,
     // Why a part was left out, one line per reason in front of its parts;
-    // a code the worker adds without copy here fails the typecheck.
+    // a code the worker adds without copy here fails the typecheck. An
+    // error says so; a run's own budget is no error.
     skipReason: {
       gone: "Nicht mehr im Katalog",
-      calls: "Aufrufe aufgebraucht",
-      bytes: "Lesebudget überschritten",
-      ceiling: "Seite an der Obergrenze",
-      failed: "Modellaufruf fehlgeschlagen",
-      refused: "Antwort verworfen",
-      over_ceiling: "Über der Obergrenze verworfen",
+      calls: "Aufrufe des Laufs aufgebraucht",
+      bytes: "Lesebudget des Laufs überschritten",
+      // TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
+      ceiling: "An der früheren Seitengrenze",
+      failed: "Fehler: Modellaufruf fehlgeschlagen",
+      refused: "Fehler: Antwort regelwidrig, verworfen",
+      // TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
+      over_ceiling: "Über der früheren Seitengrenze verworfen",
       no_page: "Projekt ohne Seite",
       "": "Grund nicht erfasst",
     } satisfies Record<SkipReason, string>,
+    // Under the skipped parts: when they are read again, on its own (the
+    // poller, auto_retry: a day after the run, or the reconcile interval
+    // when shorter) or with the next run, sooner by the button.
+    retryAuto: "Wird von selbst erneut gelesen.",
+    retryManual: "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
     failedRun: "Beschreibung fehlgeschlagen:",
     upToDate:
       "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",

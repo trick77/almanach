@@ -520,9 +520,13 @@ function RepoRow({
   const documented = r.baseline !== null && r.baseline.documented_commit !== "";
   const [sending, setSending] = useState(false);
   const noRun = sending || runOpen(r.baseline) || r.head_commit === "";
-  // A reconcile of a head already documented would read nothing.
+  // A reconcile of a head already documented reads nothing, unless the
+  // last run skipped parts: those it reads again.
   const upToDate =
-    documented && r.baseline?.documented_commit === r.head_commit;
+    documented &&
+    r.baseline !== null &&
+    r.baseline.documented_commit === r.head_commit &&
+    !r.baseline.left_parts;
   const describe = async (mode: "reconcile" | "full") => {
     setSending(true);
     try {
@@ -723,13 +727,18 @@ function BaselineCell({ b }: { b: Baseline | null }) {
             )}
           </div>
         ))}
+      {b.left_parts && (
+        <div className="mt-0.5 max-w-[190px] text-[11.5px] text-faint">
+          {b.auto_retry ? S.baseline.retryAuto : S.baseline.retryManual}
+        </div>
+      )}
     </>
   );
 }
 
 /** maxSkipNames is how many names a reason's line shows before it counts
- *  the rest: a page at its ceiling skips every part left, and the cell is
- *  190px wide. */
+ *  the rest: a run whose calls ran out skips every part left, and the cell
+ *  is 190px wide. */
 const maxSkipNames = 3;
 
 /** reasonLabel words a skip code; one the bundle does not know yet (a

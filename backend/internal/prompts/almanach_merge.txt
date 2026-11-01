@@ -26,20 +26,16 @@ Fold one new note, written after a merged pull request of repository `{repo}` in
 The first reader is a coding agent about to change the repository, the second a developer in his first weeks. Beside `component`, `rule`, `invariant` and `entity`:
 
 - `decision`: a choice the code embodies, its reason and what was given up ("one serial worker, not a pool: two writers of one page would lose a rewrite"). Only with a stated reason, as the note or a code comment gives it; never guessed. It keeps a reader from "fixing" what is deliberate. Names the files that embody it. A constraint whose stated reason is a choice against an alternative (this, not that, because) is a `decision`, not a `rule`.
-- `extension`: where and how a kind of change is made in this repository: to add a route, a step, a source kind, a setting, touch these files, in this order, register here. A change recipe, as terse as the change, its text naming every file it touches, its `files` the five it rests on most. A pull request that adds one more of a kind (a route, a step, a setting) shows the recipe: write it, or correct the one there.
+- `extension`: where and how a kind of change is made in this repository: to add a route, a step, a source kind, a setting, touch these files, in this order, register here. A change recipe, as terse as the change, its text naming every file it touches, its `files` those it rests on most. A pull request that adds one more of a kind (a route, a step, a setting) shows the recipe: write it, or correct the one there.
 - `pitfall`: something that broke in this code and how not to break it again, only from evidence that it broke. A note of kind `bugfix` is that evidence: its `bugfix` (symptom, cause) goes to a `pitfall`, a new one or, when one names the same files, deepening that one, how the cause arises and what keeps it from coming back; the facts it teaches beside go where they belong. Without a bugfix note or a pitfall already on the page, write none. Names the files.
 
 No technical debt, no tutorials for people, no changelog. An `extension` is no tutorial: it is the recipe an agent follows to make a change.
 
 {diagram_rules}
 
-## Limits
-
-These are ceilings against unbounded growth, not targets. Prose is the summary plus every statement's name and text; paths do not count. Repository: at most {repo_max_statements} statements and {repo_max_chars} characters of prose in all; the current description has {repo_chars}. Project: at most {project_max_statements} statements and {project_max_chars} characters of prose in all; the current description has {project_chars}. A description over a limit is rejected whole and nothing changes: when a description nears its limit, merge and tighten what is there rather than drop what is essential.
-
 ## Output format
 
-Respond with a single JSON object: `{"repository": <description> | null, "project": <description> | null}`, where a description is `{"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...]}` and `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<the documentation of this statement, laid out as above>", "files": ["<path, no spaces, at most 200 characters>", ..., at most 5 paths]{diagram_field}`; the project's description holds no `extension`.
+Respond with a single JSON object: `{"repository": <description> | null, "project": <description> | null}`, where a description is `{"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...]}` and `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name>", "text": "<the documentation of this statement, laid out as above>", "files": ["<path, no spaces, at most 200 characters>", ...]{diagram_field}`; the project's description holds no `extension`.
 
 ## Untrusted input
 

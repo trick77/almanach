@@ -2,6 +2,7 @@ package clone
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/consolidate"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -133,6 +135,97 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 				t.Fatalf("queued %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// A done run at the head that skipped parts (a subject gone aside), or left
+// the repository page without a map drawn from its text (described before
+// maps existed), is retried a day after it ended: a reconcile at the same
+// commit, while fewer than three retries ran in a row, a retry of a failed
+// run included. A head that moved waits for the interval; with the
+// interval off (buttons only) nothing is queued.
+func TestDescribe_RetriesWhatADoneRunLeft(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	month := 30 * 24 * time.Hour
+	described := store.Page{Scope: store.ScopeRepository, Summary: "Ein Dienst."}
+	drawn := described
+	drawn.RepoMap = &diagram.Diagram{Kind: diagram.KindFlow}
+	drawn.RepoMapBasis = drawn.MapBasis()
+	stale := drawn
+	stale.Summary = "Ein Dienst, neu beschrieben."
+	failed := json.RawMessage(`{"format":2,"skipped":["A"],"why":{"A":"failed"}}`)
+	gone := json.RawMessage(`{"format":2,"skipped":["A"],"why":{"A":"gone"}}`)
+	noPage := json.RawMessage(`{"format":2,"steps":{"project":"no_page"}}`)
+	for name, c := range map[string]struct {
+		ago       time.Duration
+		skipped   int
+		plan      json.RawMessage
+		retried   int
+		page      store.Page
+		head      string
+		reconcile time.Duration
+		want      string
+	}{
+		"skipped parts":              {25 * time.Hour, 1, failed, 0, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"a plan from before reasons": {25 * time.Hour, 2, nil, 0, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"no map yet":                 {25 * time.Hour, 0, nil, 0, described, "d0", month, "tools cli reconcile retry d0 d0"},
+		"map from older text":        {25 * time.Hour, 0, nil, 0, stale, "d0", month, "tools cli reconcile retry d0 d0"},
+		"after a failed run's retry": {25 * time.Hour, 1, failed, 1, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"third retry":                {25 * time.Hour, 1, failed, 2, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"past the retries":           {25 * time.Hour, 1, failed, 3, drawn, "d0", month, ""},
+		"only a subject gone":        {25 * time.Hour, 1, gone, 0, drawn, "d0", month, ""},
+		"only a project left as is":  {25 * time.Hour, 1, noPage, 0, drawn, "d0", month, ""},
+		"head moved":                 {25 * time.Hour, 1, failed, 0, described, "h1", month, ""},
+		"buttons only":               {25 * time.Hour, 1, failed, 0, described, "d0", 0, ""},
+		"an hour ago":                {time.Hour, 1, failed, 0, described, "d0", month, ""},
+		"finished, map stands":       {25 * time.Hour, 0, nil, 0, drawn, "d0", month, ""},
+		"no page, nothing skipped":   {25 * time.Hour, 0, nil, 0, store.Page{}, "d0", month, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, g := newFakeStore(), newFakeGit()
+			s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, Trigger: store.TriggerManual, Commit: "d0", State: store.RunDone,
+				Skipped: c.skipped, Plan: c.plan, FinishedAt: ptr(now.Add(-c.ago))}
+			s.retried, s.page = c.retried, c.page
+			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
+			g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+			g.heads[dirOf("tools", "cli")+"@main"] = c.head
+			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}, Now: func() time.Time { return now }})
+			if err := p.CycleOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(s.enqueued, "|"); got != c.want {
+				t.Fatalf("queued %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A done run's page is read once, not every cycle: the verdict is kept for
+// that run and asked again only of a newer one.
+func TestDescribe_ReadsTheMapOncePerRun(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	drawn := store.Page{Scope: store.ScopeRepository, Summary: "Ein Dienst.", RepoMap: &diagram.Diagram{Kind: diagram.KindFlow}}
+	drawn.RepoMapBasis = drawn.MapBasis()
+	s, g := newFakeStore(), newFakeGit()
+	s.last = store.BaselineRun{ID: 2, Trigger: store.TriggerManual, Commit: "d0", State: store.RunDone, FinishedAt: ptr(now.Add(-48 * time.Hour))}
+	s.page = drawn
+	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
+	g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+	g.heads[dirOf("tools", "cli")+"@main"] = "d0"
+	p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Describe: Describe{Reconcile: 30 * 24 * time.Hour, Wake: func() {}}, Now: func() time.Time { return now }})
+	for range 3 {
+		if err := p.CycleOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.last.ID = 3
+	if err := p.CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.pageAsked != 2 || len(s.enqueued) != 0 {
+		t.Fatalf("page read %d times over two runs, queued %v; want twice, nothing", s.pageAsked, s.enqueued)
 	}
 }
 

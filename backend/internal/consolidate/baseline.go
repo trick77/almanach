@@ -2,8 +2,6 @@ package consolidate
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -505,7 +503,7 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 					w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
 					return errStop
 				}
-				if !ok || mapStands(repo) {
+				if !ok || repo.MapStands() {
 					return w.finish(ctx, r, plan)
 				}
 			}
@@ -535,8 +533,7 @@ func (w *Worker) readDocs(ctx context.Context, r *store.BaselineRun, files []bas
 
 // describeStep reads one part, the overview or a subject, and folds its
 // patch into the repository page. A failure of the call or a patch the
-// rules or the ceilings refuse skips the part; a page already at a ceiling
-// ends the reading before any call.
+// rules refuse skips the part, read again by the next run.
 func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	plan, err := decodePlan(r.Plan)
 	if err != nil {
@@ -580,12 +577,6 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	// A page already at a ceiling, a lowered one included, gets no call:
-	// a part could pay for an answer the ceiling then refuses, every part
-	// of every reconcile.
-	if prose(page.Summary, page.Statements) >= w.limits.RepoMaxChars || len(page.Statements) >= w.limits.RepoMaxStatements {
-		return w.endReading(ctx, r, &plan, baseline.SkipCeiling, "the page is at its ceiling")
-	}
 	// Only a step that will make a call asks; a held one has read no file.
 	newer, err := w.newerIDs(ctx, r, page.Statements, plan.CommittedAt)
 	if err != nil {
@@ -620,9 +611,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		problems = problemsFor(w.problems, read)
 	}
 	focus := w.focus(plan, page, newer)
-	left := plan.steps() - i - 1
-	b := stepBudget(w.limits, page, left, !subject)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, left, b, part, focus, renderFiles(read, bodies), renderProblems(problems), newer)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -637,12 +626,12 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if len(problems) == 0 {
 		res.Patch.Added = unbackedPitfalls(ctx, w.log, "baseline: "+name, res.Patch.Added)
 	}
-	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer, b)
+	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer)
 }
 
 // foldPatch applies a step's patch to the page under the rules of a fold
 // and writes the revision with the run's progress in one transaction.
-func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string, b budget) error {
+func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string) error {
 	// A code-backed statement the overview names is struck from its patch,
 	// not the patch refused: nearly every statement rests on code, and a
 	// refusal would throw away the summary over a confirmation.
@@ -685,9 +674,8 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if applied.Summary != nil {
 		summary = proseSummary(*applied.Summary)
 	}
-	// Checked travels by id, never by position (attach may leave a new
-	// statement out): a statement this step wrote or confirmed was read
-	// against the commit; an edit kept as stored over a field cap was not.
+	// Checked travels by id, never by position: a statement this step wrote
+	// or confirmed was read against the commit.
 	checked, stored := map[string]bool{}, map[string]bool{}
 	for i, s := range applied.Statements {
 		if s.ID != nil {
@@ -699,22 +687,19 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	}
 	for i := range statements {
 		id := statements[i].ID
-		if (!stored[id] || checked[id]) && !slices.Contains(leftOut.capKept, id) {
+		if !stored[id] || checked[id] {
 			statements[i].Checked = r.Commit
 		}
 	}
-	// A patch that takes the page over a ceiling from free room is rejected
-	// whole and the page stays; only this part is skipped. A page already
-	// at its ceiling never gets this far: describeStep ends the reading.
-	chars, capReason := check(summary, statements, w.limits.RepoMaxStatements, w.limits.RepoMaxChars)
-	if capReason != "" {
-		return w.skipPart(ctx, r, plan, baseline.SkipOverCeiling, "rewrite rejected, page unchanged: "+capReason)
+	// No ceiling: a description is documentation, never cut to a size
+	// (user, 2026-11-01). Only an empty summary is refused.
+	chars, reason := check(summary, statements)
+	if reason != "" {
+		return w.skipPart(ctx, r, plan, baseline.SkipRefused, "patch refused: "+reason)
 	}
-	// Measured on the fold's result, never enforced: the ceilings reject a
-	// rewrite whole, and a patch is never cut.
 	grown, added := growth(page, summary, statements)
-	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: page grew by %d chars of prose, budget %d; %s, budget %d; %d returned unchanged",
-		name, grown, b.chars, plural(added, "new statement"), b.statements, returnedUnchanged(page.Statements, patch)))
+	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: page grew by %d chars of prose; %s; %d returned unchanged",
+		name, grown, plural(added, "new statement"), returnedUnchanged(page.Statements, patch)))
 	logLeftOut(ctx, w.log, "baseline: "+name, leftOut)
 	if summary != page.Summary {
 		plan.SummaryChanged = true
@@ -1259,11 +1244,8 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 // so no file decides a drop: a PR-taught statement is never dropped here
 // (a note's fold, which carries what the PR taught, may rewrite it), its
 // drop left out and logged; an edit may change any statement's files.
-// When the new statements take the page over a ceiling, as many as fit are
-// kept in the order written and the rest left out, so a full page still
-// gets its summary, map, edits and drops, and a first page its first
-// statements; a first page is never written without any. The map never
-// sinks the description: see revisionMap. slugs are the project's source
+// The page has no ceiling. The map never sinks the description: see
+// revisionMap. slugs are the project's source
 // repositories.
 func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description, slugs []string) (*store.NewRevision, string, error) {
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
@@ -1297,61 +1279,21 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		w.log.WarnContext(ctx, "baseline: "+projectLabel+": drop of statements a pull request taught left out", slog.Any("ids", kept))
 	}
 	summary := proseSummary(d.Summary)
-	// A new statement over a field cap is left out before the ceilings:
-	// the search below needs a check only more statements fail, and one
-	// over a cap among the first ended it (an eval's first page went so).
-	added, overCap := withinFieldCaps(d.Added)
-	if len(page.Statements) == 0 && len(added) == 0 && len(overCap) > 0 {
-		return nil, "every statement over a field cap: " + strings.Join(overCap, ", "), nil
-	}
-	fold := func(added []inference.Statement) ([]store.Statement, leftOutParts, int, string, string) {
-		applied, reason := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: added, Drop: drop}, noTree)
-		if reason != "" {
-			return nil, leftOutParts{}, 0, reason, ""
-		}
-		statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits))
-		if reason != "" {
-			return nil, leftOutParts{}, 0, reason, ""
-		}
-		leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
-		chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
-		return statements, leftOut, chars, "", capReason
-	}
-	statements, leftOut, chars, reason, capReason := fold(added)
-	// Over a ceiling with new statements: as many as fit are kept, in the
-	// order written, the rest left out (user, 2026-10-31: a first page of
-	// 25 against 24 was refused whole). A page is never written without
-	// statements it had none of.
-	least := 0
-	if len(page.Statements) == 0 {
-		least = 1
-	}
-	// Fewest first: when even those break a ceiling, the summary or the
-	// edits do and no count of new statements helps. Then the most that
-	// fit, by halving: more new statements only ever grow the page.
-	fits := func(n int) bool {
-		_, _, _, re, ca := fold(added[:n])
-		return re == "" && ca == ""
-	}
-	if reason == "" && capReason != "" && least < len(added) && fits(least) {
-		lo, hi := least, len(added)-1
-		for lo < hi {
-			if mid := (lo + hi + 1) / 2; fits(mid) {
-				lo = mid
-			} else {
-				hi = mid - 1
-			}
-		}
-		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectLabel, plural(len(added)-lo, "new statement"), capReason))
-		statements, leftOut, chars, _, capReason = fold(added[:lo])
-	}
-	if reason == "" {
-		reason = capReason
-	}
+	applied, reason := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: d.Added, Drop: drop}, noTree)
 	if reason != "" {
 		return nil, reason, nil
 	}
-	leftOut.overCap = append(overCap, leftOut.overCap...)
+	statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits))
+	if reason != "" {
+		return nil, reason, nil
+	}
+	leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
+	// No ceiling: a description is documentation, never cut to a size
+	// (user, 2026-11-01). Only an empty summary is refused.
+	chars, reason := check(summary, statements)
+	if reason != "" {
+		return nil, reason, nil
+	}
 	logLeftOut(ctx, w.log, "baseline: "+projectLabel, leftOut)
 	drawn := w.revisionMap(ctx, page, d.Map, slugs)
 	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
@@ -1483,7 +1425,7 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		w.log.InfoContext(ctx, at+" skipped: no repository description to draw it from")
 		return w.finish(ctx, r, plan)
 	}
-	if mapStands(page) {
+	if page.MapStands() {
 		w.log.InfoContext(ctx, at+" skipped: drawn from the description as it stands, the stored one kept")
 		return w.finish(ctx, r, plan)
 	}
@@ -1499,8 +1441,9 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	keep := page.RepoMap
 	switch {
 	case res.Map == nil && keep == nil:
+		// Recorded with the basis like a map: the model is not asked again
+		// for the same text (a retry per run otherwise, forever).
 		w.log.InfoContext(ctx, at+": none drawn")
-		return w.finish(ctx, r, plan)
 	case res.Map == nil:
 		w.log.InfoContext(ctx, at+": no change")
 	default:
@@ -1524,7 +1467,7 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	if err := w.markDone(ctx, r, plan); err != nil {
 		return err
 	}
-	if _, err := w.base.Store.SetRepoMap(ctx, r.ProjectKey, r.Slug, keep, mapBasis(page), *r); err != nil {
+	if _, err := w.base.Store.SetRepoMap(ctx, r.ProjectKey, r.Slug, keep, page.MapBasis(), *r); err != nil {
 		w.log.WarnContext(ctx, "baseline: repository map write failed", logging.Err(err))
 		err = w.stepBusy(ctx, r, prev, repoMapName, err)
 		if err == nil || errors.Is(err, errStop) {
@@ -1537,32 +1480,6 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	}
 	w.stepWritten()
 	return nil
-}
-
-// mapStands reports whether a repository page's map was drawn from its
-// description as it stands: then a run has nothing new to draw from.
-func mapStands(p store.Page) bool {
-	return p.RepoMap != nil && p.RepoMapBasis == mapBasis(p)
-}
-
-// mapBasis is the description a repository map is drawn from, as a hash:
-// the summary and each statement's kind, name, text and files, never its
-// sources or last check, which change without the text.
-func mapBasis(p store.Page) string {
-	type part struct {
-		Kind, Name, Text string
-		Files            []string
-	}
-	parts := make([]part, 0, len(p.Statements))
-	for _, s := range p.Statements {
-		parts = append(parts, part{s.Kind, s.Name, s.Text, s.Files})
-	}
-	raw, _ := json.Marshal(struct {
-		Summary    string
-		Statements []part
-	}{p.Summary, parts})
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
 }
 
 // runSource is the source a run attaches: its commit, the commit's time and
@@ -1640,60 +1557,6 @@ func renderCatalogue(r store.BaselineRun, listing, docs, placing string, maxSubj
 	).Replace(prompts.Catalogue)
 }
 
-// The budget of a describe step: what it may add to the page, net. The
-// ceilings are for the whole page, so the room it has left is shared out
-// over this part and those after it, the overview weighing overviewShare,
-// the summary and what spans the repository being its to write.
-// minStepBudget lets a part whose share is small still add a paragraph,
-// never past the room the page has; a correction that adds nothing costs
-// nothing, so even a full page takes one. A step may add one statement
-// while the page is under its statement cap and has room for one
-// (minStatementChars); otherwise none.
-const (
-	minStepBudget     = 2000
-	minStatementChars = 300
-	overviewShare     = 2
-)
-
-// budget is what a step may add to the page at most: characters of prose
-// and new statements.
-type budget struct {
-	chars, statements int
-}
-
-// stepBudget gives this part its weighted share of the page's room under
-// each ceiling: weight overviewShare for the overview when parts follow it
-// (its extra share is theirs to give), else 1, over the weights of this
-// part and the left after it; at least the floor, never past the room.
-func stepBudget(l config.Limits, page store.Page, left int, overview bool) budget {
-	w := 1
-	if overview && left > 0 {
-		w = overviewShare
-	}
-	shares := left + w
-	chars := l.RepoMaxChars - prose(page.Summary, page.Statements)
-	room := l.RepoMaxStatements - len(page.Statements)
-	var b budget
-	if chars > 0 {
-		b.chars = min(max(w*chars/shares, minStepBudget), chars)
-	}
-	if room > 0 && chars >= minStatementChars {
-		b.statements = min(max(w*room/shares, 1), room)
-	}
-	return b
-}
-
-// allowance is the budget as the prompt says it, finishing "This part ...".
-func allowance(b budget) string {
-	switch {
-	case b.chars == 0:
-		return "may not grow the description or add a statement: correct, tighten or merge existing statements instead"
-	case b.statements == 0:
-		return fmt.Sprintf("may grow the description by at most about %d characters of prose but add no statement: deepen or merge existing ones instead", b.chars)
-	}
-	return fmt.Sprintf("may grow the description by at most about %d characters of prose and add at most %s", b.chars, plural(b.statements, "new statement"))
-}
-
 func plural(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
@@ -1701,8 +1564,8 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// growth is what a fold adds to the page, counted like the ceilings: the
-// prose after it less the prose before, and the statements new to it.
+// growth is what a fold adds to the page, for the log: the prose after it
+// less the prose before, and the statements new to it.
 func growth(page store.Page, summary string, statements []store.Statement) (chars, added int) {
 	had := make(map[string]bool, len(page.Statements))
 	for _, s := range page.Statements {
@@ -1795,14 +1658,12 @@ func renderProblems(problems []store.RepoProblem) string {
 	return b.String()
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps, left int, b budget, part, focus, files, problems string, newer map[string]string) string {
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems string, newer map[string]string) string {
 	return strings.NewReplacer(
 		"{problem_areas}", problems,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
-		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps), "{steps_left}", fmt.Sprint(left),
-		"{step_budget}", allowance(b), "{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
-		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements), "{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
-		"{statements}", fmt.Sprint(len(page.Statements)), "{repo_chars}", fmt.Sprint(prose(page.Summary, page.Statements)),
+		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps),
+		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
 		"{repo_description}", describeSourced(page, newer), "{files}", files, "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 	).Replace(prompts.Describe)
 }
@@ -1810,8 +1671,6 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, repoSlugs []string, l config.Limits) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
-		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements), "{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
-		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
 		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),

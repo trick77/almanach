@@ -296,7 +296,8 @@ func serve(log *slog.Logger) error {
 		worker.WithBaseline(consolidate.Baseline{Store: db, Code: clone.NewCode(poller, git), Catalogue: catalogue, Describer: llm, Limits: app.Baseline})
 		poller.Start(context.WithoutCancel(ctx))
 		// Removals go through the poller, under its disk lock.
-		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: poller, Key: key, DefaultHost: app.Sources.BitbucketHost}
+		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: poller, Key: key, DefaultHost: app.Sources.BitbucketHost,
+			Reconcile: app.Baseline.Reconcile}
 	}
 	worker.Start(context.WithoutCancel(ctx))
 
