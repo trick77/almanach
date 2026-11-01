@@ -1,7 +1,7 @@
 // The small shared vocabulary, after ../noergler's ui.tsx: class strings
 // hoisted to named consts where a component would add nothing, components
 // where there is behaviour or a shape worth a name.
-import type { CSSProperties, ReactNode } from "react";
+import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { codeSpans, paragraphs, type Tone } from "./format";
 import { S } from "./strings";
 import { onNav } from "./routing";
@@ -159,21 +159,31 @@ export function Prose({
     <div className={measure + " " + className}>
       {paragraphs(text).map((p, i) => (
         <p key={i} className="mb-3.5 last:mb-0">
-          {codeSpans(p).map((s, j) =>
-            s.code ? (
-              <code
-                key={j}
-                className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink"
-              >
-                {s.text}
-              </code>
-            ) : (
-              s.text
-            ),
-          )}
+          <Inline text={p} />
         </p>
       ))}
     </div>
+  );
+}
+
+/** Inline is a line of model text with its backtick-quoted identifiers in
+ *  the mono face (codeSpans): a paragraph of Prose, a statement's name. */
+export function Inline({ text }: { text: string }) {
+  return (
+    <>
+      {codeSpans(text).map((s, j) =>
+        s.code ? (
+          <code
+            key={j}
+            className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink"
+          >
+            {s.text}
+          </code>
+        ) : (
+          <Fragment key={j}>{s.text}</Fragment>
+        ),
+      )}
+    </>
   );
 }
 

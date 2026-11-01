@@ -75,6 +75,18 @@ describe("codeSpans", () => {
     expect(codeSpans("`a\nb`")).toEqual([{ text: "`a\nb`", code: false }]);
     expect(codeSpans("")).toEqual([]);
   });
+  it("closes a run with the same run, as lang.SwissSS does", () => {
+    expect(codeSpans("Die Option ``a`b`` setzt")).toEqual([
+      { text: "Die Option ", code: false },
+      { text: "a`b", code: true },
+      { text: " setzt", code: false },
+    ]);
+    // An unclosed run leaves the rest of its line text, a later pair too.
+    expect(codeSpans("x `` y `z`\n`w`")).toEqual([
+      { text: "x `` y `z`\n", code: false },
+      { text: "w", code: true },
+    ]);
+  });
 });
 
 describe("labels and tones", () => {

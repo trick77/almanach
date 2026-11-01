@@ -66,20 +66,41 @@ export function paragraphs(text: string): string[] {
  *  backticks. */
 export type Span = { text: string; code: boolean };
 
-/** codeSpans cuts a paragraph into prose and code: a backtick pair on one
- *  line around something that is not a backtick, the only markup the wiki
- *  takes. The model quotes paths and names that way; anything else stays
- *  text, and a lone backtick shows as itself. */
+/** codeSpans cuts a paragraph into prose and code, the only markup the
+ *  wiki takes: the way lang.SwissSS (swiss.go, swissLine) reads it, so
+ *  what it left unconverted is what shows as code. Line by line, a run of
+ *  backticks opens a span the next same run on that line closes; a run
+ *  never closed leaves the rest of its line text, itself included. */
 export function codeSpans(p: string): Span[] {
   const out: Span[] = [];
-  let last = 0;
-  for (const m of p.matchAll(/`([^`\n]+)`/g)) {
-    const at = m.index ?? 0;
-    if (at > last) out.push({ text: p.slice(last, at), code: false });
-    out.push({ text: m[1], code: true });
-    last = at + m[0].length;
+  const text = (t: string) => {
+    if (t === "") return;
+    const prev = out[out.length - 1];
+    if (prev !== undefined && !prev.code) prev.text += t;
+    else out.push({ text: t, code: false });
+  };
+  for (const [n, line] of p.split("\n").entries()) {
+    if (n > 0) text("\n");
+    let i = 0;
+    while (i < line.length) {
+      const open = line.indexOf("`", i);
+      if (open < 0) {
+        text(line.slice(i));
+        break;
+      }
+      text(line.slice(i, open));
+      let j = open;
+      while (line[j] === "`") j++;
+      const run = line.slice(open, j);
+      const close = line.indexOf(run, j);
+      if (close < 0) {
+        text(line.slice(open));
+        break;
+      }
+      out.push({ text: line.slice(j, close), code: true });
+      i = close + run.length;
+    }
   }
-  if (last < p.length) out.push({ text: p.slice(last), code: false });
   return out;
 }
 
