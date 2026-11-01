@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -68,21 +69,38 @@ const (
 	SkipNoPage Skip = "no_page"
 )
 
-// Skipped is one part a run left out, as the source page lists it.
-type Skipped struct {
+// SkippedPart is one part a run left out, as the source page lists it.
+type SkippedPart struct {
 	// Part: "overview", "subject" or "project".
-	Part string `json:"part"`
+	Part string
 	// Name is the subject's, "" for the overview and the project.
-	Name string `json:"name"`
+	Name string
 	// Reason is the Skip code, "" for a run from before it was kept.
-	Reason Skip `json:"reason"`
+	Reason Skip
+}
+
+// RunSkips is the parts a stored run plan left out. It decodes the two
+// fields alone, Plan's own tags: the subjects and their file lists are
+// the bulk of a plan, and the source page asks for every repository on
+// every poll.
+func RunSkips(raw json.RawMessage) ([]SkippedPart, error) {
+	var p struct {
+		Skipped []string        `json:"skipped"`
+		Why     map[string]Skip `json:"why"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+	}
+	return Plan{Skipped: p.Skipped, Why: p.Why}.SkippedParts(), nil
 }
 
 // SkippedParts is the plan's skipped parts in the order the run hit them.
-func (p Plan) SkippedParts() []Skipped {
-	out := make([]Skipped, 0, len(p.Skipped))
+func (p Plan) SkippedParts() []SkippedPart {
+	out := make([]SkippedPart, 0, len(p.Skipped))
 	for _, name := range p.Skipped {
-		s := Skipped{Part: "subject", Name: name, Reason: p.Why[name]}
+		s := SkippedPart{Part: "subject", Name: name, Reason: p.Why[name]}
 		switch name {
 		case OverviewPart:
 			s.Part, s.Name = "overview", ""

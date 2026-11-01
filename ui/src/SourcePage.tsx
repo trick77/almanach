@@ -4,6 +4,7 @@ import {
   send,
   type Baseline,
   type SkippedPart,
+  type SkipReason,
   type SourceDetail,
   type SourceRepo,
   type TokenAuth,
@@ -643,18 +644,27 @@ function BaselineCell({ b }: { b: Baseline | null }) {
             key={reason}
             className="mt-0.5 max-w-[190px] text-[11.5px] text-muted"
           >
-            {S.baseline.skipReason[reason] ?? reason}: {names.join(", ")}
+            {S.baseline.skipReason[reason]}: {shownNames(names)}
           </div>
         ))}
     </>
   );
 }
 
+/** maxSkipNames is how many names a reason's line shows before it counts
+ *  the rest: a page at its ceiling skips every part left, and the cell is
+ *  190px wide. */
+const maxSkipNames = 3;
+
+function shownNames(names: string[]): string {
+  if (names.length <= maxSkipNames) return names.join(", ");
+  return `${names.slice(0, maxSkipNames).join(", ")} ${S.baseline.moreParts(names.length - maxSkipNames)}`;
+}
+
 /** skipGroups is a run's skipped parts by reason, each reason once in the
- *  order the run first hit it: a page at its ceiling skips every part left,
- *  one line rather than one per part. */
-function skipGroups(parts: SkippedPart[]): [string, string[]][] {
-  const groups = new Map<string, string[]>();
+ *  order the run first hit it: one line per reason rather than per part. */
+function skipGroups(parts: SkippedPart[]): [SkipReason, string[]][] {
+  const groups = new Map<SkipReason, string[]>();
   for (const p of parts) {
     const name = p.part === "subject" ? p.name : S.baseline.skippedPart[p.part];
     groups.set(p.reason, [...(groups.get(p.reason) ?? []), name]);

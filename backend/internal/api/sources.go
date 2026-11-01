@@ -191,22 +191,22 @@ type sourceRepoBody struct {
 
 // baselineBody is what the source page shows of a repository's runs.
 type baselineBody struct {
-	RunID            int64              `json:"run_id"`
-	State            string             `json:"state"`
-	Mode             string             `json:"mode"`
-	Trigger          string             `json:"trigger"`
-	Commit           string             `json:"commit"`
-	Step             int                `json:"step"`
-	Steps            int                `json:"steps"`
-	Skipped          int                `json:"skipped"`
-	SkippedParts     []baseline.Skipped `json:"skipped_parts"`
-	CostUSD          string             `json:"cost_usd,omitempty"`
-	Error            string             `json:"error"`
-	QueuedAt         time.Time          `json:"queued_at"`
-	StartedAt        *time.Time         `json:"started_at"`
-	FinishedAt       *time.Time         `json:"finished_at"`
-	DocumentedCommit string             `json:"documented_commit"`
-	DocumentedAt     *time.Time         `json:"documented_at"`
+	RunID            int64             `json:"run_id"`
+	State            string            `json:"state"`
+	Mode             string            `json:"mode"`
+	Trigger          string            `json:"trigger"`
+	Commit           string            `json:"commit"`
+	Step             int               `json:"step"`
+	Steps            int               `json:"steps"`
+	Skipped          int               `json:"skipped"`
+	SkippedParts     []skippedPartBody `json:"skipped_parts"`
+	CostUSD          string            `json:"cost_usd,omitempty"`
+	Error            string            `json:"error"`
+	QueuedAt         time.Time         `json:"queued_at"`
+	StartedAt        *time.Time        `json:"started_at"`
+	FinishedAt       *time.Time        `json:"finished_at"`
+	DocumentedCommit string            `json:"documented_commit"`
+	DocumentedAt     *time.Time        `json:"documented_at"`
 }
 
 func baselineOf(rr store.RepoRuns) *baselineBody {
@@ -823,13 +823,24 @@ func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusAccepted, describedBody{Status: "queued", RunID: id, Mode: mode})
 }
 
+// skippedPartBody is one part a run left out (baseline.SkippedPart).
+type skippedPartBody struct {
+	Part   string `json:"part"`
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
 // skippedOf is the parts a run left out, named, from its plan. The plan is
 // the worker's own JSON; one that does not decode lists none, and the count
 // beside it still says how many.
-func skippedOf(raw json.RawMessage) []baseline.Skipped {
-	var p baseline.Plan
-	if len(raw) == 0 || json.Unmarshal(raw, &p) != nil {
-		return []baseline.Skipped{}
+func skippedOf(raw json.RawMessage) []skippedPartBody {
+	out := []skippedPartBody{}
+	parts, err := baseline.RunSkips(raw)
+	if err != nil {
+		return out
 	}
-	return p.SkippedParts()
+	for _, p := range parts {
+		out = append(out, skippedPartBody{Part: p.Part, Name: p.Name, Reason: string(p.Reason)})
+	}
+	return out
 }

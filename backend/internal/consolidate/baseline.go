@@ -427,8 +427,8 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	slices.Sort(plan.Changed)
 	// The overview reads the docs again when one changed or the last run's
 	// failed; the project step folds again when the last run's did not.
-	plan.Overview = slices.Contains(old.Skipped, overviewName)
-	plan.SummaryChanged = slices.Contains(old.Skipped, projectName)
+	plan.Overview = slices.Contains(old.Skipped, baseline.OverviewPart)
+	plan.SummaryChanged = slices.Contains(old.Skipped, baseline.ProjectPart)
 	for _, d := range baseline.Docs(files, baseline.DocsMaxBytes) {
 		if changed[d.Path] {
 			plan.Overview = true
@@ -531,7 +531,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	name := partName(plan, i)
 	var part, purpose string
 	var read []baseline.File
-	subject := name != overviewName
+	subject := name != baseline.OverviewPart
 	if !subject {
 		part, purpose, read = overviewPart, store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
 	} else {
@@ -567,7 +567,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return readErr(err)
 	}
-	if name == overviewName {
+	if name == baseline.OverviewPart {
 		newer = codeBacked(page.Statements, newer)
 	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
@@ -969,17 +969,10 @@ func (w *Worker) endReading(ctx context.Context, r *store.BaselineRun, plan *run
 	return w.save(ctx, *r)
 }
 
-// The overview and the project step by name in the plan's skipped list
-// (baseline.OverviewPart, baseline.ProjectPart).
-const (
-	overviewName = baseline.OverviewPart
-	projectName  = baseline.ProjectPart
-)
-
 func partName(plan runPlan, i int) string {
 	if plan.Overview {
 		if i == 0 {
-			return overviewName
+			return baseline.OverviewPart
 		}
 		i--
 	}
@@ -1213,7 +1206,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		return nil, "", errStop
 	}
 	answer := *d
-	answer.Statements, answer.Added = w.asNew(ctx, "baseline: "+projectName, page.Statements, d.Statements, d.Added)
+	answer.Statements, answer.Added = w.asNew(ctx, "baseline: "+baseline.ProjectPart, page.Statements, d.Statements, d.Added)
 	d = &answer
 	taught := map[string]bool{}
 	for _, s := range page.Statements {
@@ -1232,10 +1225,10 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		}
 	}
 	if len(unknown) > 0 {
-		w.log.WarnContext(ctx, "baseline: "+projectName+": unknown ids left out", slog.Any("ids", unknown))
+		w.log.WarnContext(ctx, "baseline: "+baseline.ProjectPart+": unknown ids left out", slog.Any("ids", unknown))
 	}
 	if len(kept) > 0 {
-		w.log.WarnContext(ctx, "baseline: "+projectName+": drop of statements a pull request taught left out", slog.Any("ids", kept))
+		w.log.WarnContext(ctx, "baseline: "+baseline.ProjectPart+": drop of statements a pull request taught left out", slog.Any("ids", kept))
 	}
 	summary := lang.SwissSS(strings.TrimSpace(d.Summary))
 	// A new statement over a field cap is left out before the ceilings:
@@ -1283,7 +1276,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 				hi = mid - 1
 			}
 		}
-		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", projectName, plural(len(added)-lo, "new statement"), capReason))
+		w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s: %s left out, the page at its ceiling (%s)", baseline.ProjectPart, plural(len(added)-lo, "new statement"), capReason))
 		statements, leftOut, chars, _, capReason = fold(added[:lo])
 	}
 	if reason == "" {
@@ -1293,7 +1286,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		return nil, reason, nil
 	}
 	leftOut.overCap = append(overCap, leftOut.overCap...)
-	logLeftOut(ctx, w.log, "baseline: "+projectName, leftOut)
+	logLeftOut(ctx, w.log, "baseline: "+baseline.ProjectPart, leftOut)
 	drawn := w.revisionMap(ctx, page, d.Map, slugs)
 	if summary == page.Summary && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
@@ -1314,7 +1307,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 // statement diagrams' caps); one that fails, or none returned, keeps the
 // stored map, with the reason logged: the map never costs the description.
 func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *diagram.Diagram, slugs []string) *diagram.Diagram {
-	at := "baseline: " + projectName + " map"
+	at := "baseline: " + baseline.ProjectPart + " map"
 	if !diagram.MapFits(len(slugs)) {
 		if proposed != nil || page.Map != nil {
 			w.log.InfoContext(ctx, fmt.Sprintf("%s: %d repositories, more than a map holds, none drawn", at, len(slugs)))
@@ -1362,7 +1355,7 @@ func (w *Worker) carriedMap(ctx context.Context, page store.Page, slugs []string
 func (w *Worker) withoutDeparted(ctx context.Context, m *diagram.Diagram, slugs []string) *diagram.Diagram {
 	trimmed, gone := baseline.DropDeparted(m, slugs)
 	if len(gone) > 0 {
-		w.log.InfoContext(ctx, "baseline: "+projectName+" map: no longer source repositories, left out: "+strings.Join(gone, ", "))
+		w.log.InfoContext(ctx, "baseline: "+baseline.ProjectPart+" map: no longer source repositories, left out: "+strings.Join(gone, ", "))
 	}
 	return trimmed
 }
@@ -1380,9 +1373,9 @@ func slugs(repos []store.RepoSummary) []string {
 // skipProject ends the run without its project step, counted as a skipped
 // part and named on the plan, so the next reconcile folds the project.
 func (w *Worker) skipProject(ctx context.Context, r *store.BaselineRun, plan runPlan, code baseline.Skip, why string) error {
-	w.log.WarnContext(ctx, "baseline: "+projectName+" skipped: "+why)
+	w.log.WarnContext(ctx, "baseline: "+baseline.ProjectPart+" skipped: "+why)
 	r.Skipped++
-	plan.Skip(projectName, code)
+	plan.Skip(baseline.ProjectPart, code)
 	return w.finish(ctx, r, plan)
 }
 

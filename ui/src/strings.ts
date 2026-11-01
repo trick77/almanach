@@ -2,6 +2,8 @@
 // never the sharp s), generic masculine. There is no second language: the
 // readers are German speaking, and the wiki itself is German.
 
+import type { SkippedPart, SkipReason } from "./api";
+
 export const S = {
   app: "Almanach",
   nav: {
@@ -354,11 +356,14 @@ export const S = {
       n === 1 ? "1 Thema übersprungen" : `${n} Themen übersprungen`,
     // A skipped part by name: a subject is its own, the overview and the
     // project step are these.
-    skippedPart: { overview: "Überblick", project: "Projekt" } as Record<
-      string,
-      string
-    >,
-    // Why a part was left out, one line per reason in front of its parts.
+    skippedPart: {
+      overview: "Überblick",
+      project: "Projekt",
+    } satisfies Record<Exclude<SkippedPart["part"], "subject">, string>,
+    // A reason's names past the first few, counted.
+    moreParts: (n: number) => `und ${n} weitere`,
+    // Why a part was left out, one line per reason in front of its parts;
+    // a code the worker adds without copy here fails the typecheck.
     skipReason: {
       gone: "Nicht mehr im Katalog",
       calls: "Aufrufe aufgebraucht",
@@ -369,7 +374,7 @@ export const S = {
       over_ceiling: "Über der Obergrenze verworfen",
       no_page: "Projekt ohne Seite",
       "": "Grund nicht erfasst",
-    } as Record<string, string>,
+    } satisfies Record<SkipReason, string>,
     failedRun: "Beschreibung fehlgeschlagen:",
     upToDate:
       "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",
