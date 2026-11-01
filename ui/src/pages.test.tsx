@@ -291,7 +291,7 @@ describe("ProjectsPage", () => {
     expect(tile.getAttribute("href")).toBe("/projekte/loom");
     expect(within(tile).getByText("Ein Recherche-Agent.")).toBeInTheDocument();
     expect(within(tile).getByText(/Revision 3/)).toBeInTheDocument();
-    expect(within(tile).getByText("llmwire/llmwire")).toBeInTheDocument();
+    expect(within(tile).getByText("llmwire")).toBeInTheDocument();
     // No headings splitting projects: one grid.
     expect(screen.queryByText("Einzelne Repositories")).toBeNull();
   });

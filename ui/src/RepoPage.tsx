@@ -312,7 +312,9 @@ function Body({ data }: { data: RepoDetail }) {
  *  repository is named with its project. */
 export function depGroups(data: RepoDetail): RailGroup[] {
   const name = (d: DependencyEnd) =>
-    d.project === data.project_key ? d.slug : `${d.project}/${d.slug}`;
+    d.project === data.project_key || d.project === d.slug
+      ? d.slug
+      : `${d.project}/${d.slug}`;
   const groups: RailGroup[] = [];
   if (data.uses.length > 0)
     groups.push({

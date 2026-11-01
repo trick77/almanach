@@ -436,7 +436,8 @@ function drawShared(
       ...map.nodes.filter((n) => !drawnAs.has(n.id)),
       ...repos.map((r) => ({
         id: sharedId(r),
-        label: `${r.project}/${r.slug}`,
+        // A project of one is named once.
+        label: r.project === r.slug ? r.slug : `${r.project}/${r.slug}`,
         shape: "pill" as const,
         zone: "shared",
       })),
