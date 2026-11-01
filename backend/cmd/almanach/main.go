@@ -99,7 +99,7 @@ func listenAddr() string {
 	if addr := strings.TrimSpace(os.Getenv("BACKEND_ADDR")); addr != "" {
 		return addr
 	}
-	return "0.0.0.0:8080"
+	return config.DefaultAddr
 }
 
 // startModel builds the client of one llmwire profile and runs its startup

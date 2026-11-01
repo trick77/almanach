@@ -310,6 +310,22 @@ func TestInvalidEnum(t *testing.T) {
 	}
 }
 
+// A variable an earlier release read is a fault naming its new name, never
+// ignored.
+func TestRenamedVariablesRefused(t *testing.T) {
+	for old, now := range map[string]string{
+		"ALMANACH_SECRET_KEY": "BACKEND_SOURCE_TOKEN_KEY",
+		"SERVER_HOST":         "BACKEND_ADDR",
+		"ALMANACH_MODEL":      "BACKEND_MODEL",
+	} {
+		env := minimal()
+		env[old] = "x"
+		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), old+" was renamed to "+now) {
+			t.Errorf("%s set: error = %v, want it named with %s", old, err, now)
+		}
+	}
+}
+
 func TestBadAddr(t *testing.T) {
 	for addr, want := range map[string]string{
 		"8080":         "want host:port",
@@ -317,6 +333,8 @@ func TestBadAddr(t *testing.T) {
 		"0.0.0.0:http": "the port must be 1 to 65535",
 		":0":           "the port must be 1 to 65535",
 		":70000":       "the port must be 1 to 65535",
+		":+80":         "the port must be 1 to 65535",
+		"0.0.0.0 :80":  "the host has whitespace",
 	} {
 		env := minimal()
 		env["BACKEND_ADDR"] = addr

@@ -5,6 +5,10 @@ reported together, and any one aborts startup. A variable set to blank
 counts as unset. `.env.example` is the working reference: a live line is
 required, a commented line is optional and shows its default.
 
+Every variable is `BACKEND_*`, named for the process, never the product.
+A name an earlier release read (`ALMANACH_*`, `SERVER_HOST`, `SERVER_PORT`)
+is a startup fault that names its replacement.
+
 ## Required
 
 | Variable | Meaning |

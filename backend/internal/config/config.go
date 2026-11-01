@@ -5,8 +5,10 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +55,47 @@ type OIDC struct {
 
 // minSessionSecret is kit's floor for the HMAC key.
 const minSessionSecret = 32
+
+// DefaultAddr is where serve listens, and the healthcheck probes, when
+// BACKEND_ADDR is unset.
+const DefaultAddr = "0.0.0.0:8080"
+
+// renamed is every variable an earlier release read, by the name that
+// replaced it. One still set is a startup fault naming the new one, never
+// ignored: a stale token key would break every private source unseen, a
+// loopback SERVER_HOST turn into a bind on every interface. LOG_LEVEL is
+// left out: too common a name to refuse.
+var renamed = map[string]string{ //nolint:gosec // variable names, no credentials
+	"ALMANACH_DB_PATH":                "BACKEND_DB_PATH",
+	"ALMANACH_TEAM_KEYS_PATH":         "BACKEND_TEAM_KEYS_PATH",
+	"ALMANACH_AUTH_MODE":              "BACKEND_AUTH_MODE",
+	"ALMANACH_OIDC_ISSUER":            "BACKEND_OIDC_ISSUER",
+	"ALMANACH_OIDC_CLIENT_ID":         "BACKEND_OIDC_CLIENT_ID",
+	"ALMANACH_OIDC_CLIENT_SECRET":     "BACKEND_OIDC_CLIENT_SECRET",
+	"ALMANACH_OIDC_REDIRECT_URL":      "BACKEND_OIDC_REDIRECT_URL",
+	"ALMANACH_SESSION_SECRET":         "BACKEND_SESSION_SECRET",
+	"ALMANACH_MODEL":                  "BACKEND_MODEL",
+	"ALMANACH_REPO_MAX_STATEMENTS":    "BACKEND_REPO_MAX_STATEMENTS",
+	"ALMANACH_PROJECT_MAX_STATEMENTS": "BACKEND_PROJECT_MAX_STATEMENTS",
+	"ALMANACH_REPO_MAX_CHARS":         "BACKEND_REPO_MAX_CHARS",
+	"ALMANACH_PROJECT_MAX_CHARS":      "BACKEND_PROJECT_MAX_CHARS",
+	"ALMANACH_DIAGRAM_MAX_NODES":      "BACKEND_DIAGRAM_MAX_NODES",
+	"ALMANACH_DIAGRAM_MAX_EDGES":      "BACKEND_DIAGRAM_MAX_EDGES",
+	"ALMANACH_PROBLEM_WINDOW_DAYS":    "BACKEND_PROBLEM_WINDOW_DAYS",
+	"ALMANACH_REPOS_DIR":              "BACKEND_REPOS_DIR",
+	"ALMANACH_SYNC_INTERVAL":          "BACKEND_SYNC_INTERVAL",
+	"ALMANACH_GIT_CA_FILE":            "BACKEND_GIT_CA_FILE",
+	"ALMANACH_BASELINE_MAX_CALLS":     "BACKEND_BASELINE_MAX_CALLS",
+	"ALMANACH_BASELINE_MAX_BYTES":     "BACKEND_BASELINE_MAX_BYTES",
+	"ALMANACH_BASELINE_RECONCILE":     "BACKEND_BASELINE_RECONCILE",
+	"ALMANACH_ENV":                    "BACKEND_ENV",
+	"ALMANACH_REASONING_EFFORT":       "BACKEND_MODEL_REASONING_EFFORT",
+	"ALMANACH_MAX_DIAGRAMS":           "BACKEND_DIAGRAM_MAX_PER_PAGE",
+	"ALMANACH_SECRET_KEY":             "BACKEND_SOURCE_TOKEN_KEY",
+	"ALMANACH_CATALOGUE_MODEL":        "BACKEND_BASELINE_CATALOGUE_MODEL",
+	"SERVER_HOST":                     "BACKEND_ADDR",
+	"SERVER_PORT":                     "BACKEND_ADDR",
+}
 
 // oidcVars is every variable oidc mode reads and none refuses.
 var oidcVars = []string{
@@ -150,7 +193,7 @@ func Load(lookup func(string) string) (*App, error) {
 	app := &App{
 		DBPath:          r.Required("BACKEND_DB_PATH"),
 		TeamKeysPath:    r.Required("BACKEND_TEAM_KEYS_PATH"),
-		Addr:            r.String("BACKEND_ADDR", "0.0.0.0:8080"),
+		Addr:            r.String("BACKEND_ADDR", DefaultAddr),
 		AuthMode:        AuthMode(strings.ToLower(r.Enum("BACKEND_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthOIDC)))),
 		Model:           r.Required("BACKEND_MODEL"),
 		ReasoningEffort: r.String("BACKEND_MODEL_REASONING_EFFORT", ""),
@@ -177,6 +220,11 @@ func Load(lookup func(string) string) (*App, error) {
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
 		LogLevel: r.String("BACKEND_LOG_LEVEL", "INFO"),
+	}
+	for _, old := range slices.Sorted(maps.Keys(renamed)) {
+		if strings.TrimSpace(lookup(old)) != "" {
+			r.Fail("%s was renamed to %s; rename it", old, renamed[old])
+		}
 	}
 	if why := badAddr(app.Addr); why != "" {
 		r.Fail("BACKEND_ADDR: %s, got %q", why, app.Addr)
@@ -214,11 +262,18 @@ func Load(lookup func(string) string) (*App, error) {
 }
 
 // badAddr is why addr is no host:port to listen on, "" when it is one. An
-// empty host listens on every interface.
+// empty host listens on every interface. Whether the host resolves is
+// listen's to find.
 func badAddr(addr string) string {
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "want host:port"
+	}
+	if strings.ContainsAny(host, " \t\n") {
+		return "the host has whitespace"
+	}
+	if strings.Trim(port, "0123456789") != "" {
+		return "the port must be 1 to 65535"
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 		return "the port must be 1 to 65535"
