@@ -171,8 +171,11 @@ export function Prose({
 
 /** Inline is a line of model text with its backtick-quoted identifiers in
  *  the mono face (codeSpans): a paragraph of Prose, a statement's name.
- *  bold reads **bold** as well (runs), for Doc's laid-out text only.
- *  query sets off a search's matches, in the code spans too. */
+ *  bold reads **bold** as well (runs), for Doc's laid-out text only; its
+ *  search marks are found on the runs' text as one (plain's, which the
+ *  search matched), so a match across a bold or code edge is set off in
+ *  each run it covers. query sets off a search's matches, in the code
+ *  spans too. */
 export function Inline({
   text,
   query = "",
@@ -185,15 +188,27 @@ export function Inline({
   const parts = bold
     ? runs(text)
     : codeSpans(text).map((s) => ({ ...s, bold: false }));
+  const hits = bold
+    ? matchRanges(parts.map((p) => p.text).join(""), query)
+    : [];
+  // Each run's offset in the runs' text as one.
+  const starts = parts.map((_, j) =>
+    parts.slice(0, j).reduce((n, p) => n + p.text.length, 0),
+  );
   return (
     <>
       {parts.map((s, j) => {
-        const run = s.code ? (
-          <code className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink">
-            <Marked text={s.text} query={query} />
-          </code>
+        const body = bold ? (
+          <Ranged text={s.text} from={starts[j]} hits={hits} />
         ) : (
           <Marked text={s.text} query={query} />
+        );
+        const run = s.code ? (
+          <code className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink">
+            {body}
+          </code>
+        ) : (
+          body
         );
         return s.bold ? (
           <strong key={j} className="font-semibold text-ink">
@@ -317,6 +332,44 @@ export function Marked({ text, query }: { text: string; query: string }) {
       )}
     </>
   );
+}
+
+/** matchRanges is every case-insensitive match of a search in a text, as
+ *  [start, end) offsets: Marked's pattern, for marks that cross runs. */
+function matchRanges(text: string, query: string): [number, number][] {
+  const q = query.trim();
+  if (q === "") return [];
+  const re = new RegExp(escapeRegExp(q), "gi");
+  return [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+}
+
+/** Ranged is a run of text that starts at offset from of its line, with
+ *  the parts the line's hits cover set off as Marked sets them off. */
+function Ranged({
+  text,
+  from,
+  hits,
+}: {
+  text: string;
+  from: number;
+  hits: [number, number][];
+}) {
+  const out: ReactNode[] = [];
+  let i = 0;
+  for (const [s, e] of hits) {
+    const a = Math.max(s - from, i);
+    const b = Math.min(e - from, text.length);
+    if (b <= a) continue;
+    if (a > i) out.push(text.slice(i, a));
+    out.push(
+      <mark key={a} className="rounded-[2px] bg-ochre-wash px-px text-ochre">
+        {text.slice(a, b)}
+      </mark>,
+    );
+    i = b;
+  }
+  if (i < text.length) out.push(text.slice(i));
+  return <>{out}</>;
 }
 
 function escapeRegExp(s: string): string {

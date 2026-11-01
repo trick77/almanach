@@ -191,30 +191,32 @@ func prose(s string, headings bool) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i, l := range lines {
 		t := strings.TrimLeft(l, " \t")
-		if layoutLine(t, headings) {
+		if _, ok := markup.StoredHeading(t); ok && headings {
 			lines[i] = t
 			continue
 		}
-		if blockStart(t) {
-			t = `\` + t
-		} else if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n <= 9 && n < len(t) &&
-			(t[n] == '.' || t[n] == ')') && markerEnds(t[n+1:]) {
-			t = t[:n] + `\` + t[n:]
+		// An item's text is text again: "- # x" or "1. > y" opens nothing
+		// inside the item either.
+		if marker, text, ok := markup.StoredItem(t); ok {
+			lines[i] = marker + escapeBlock(text)
+			continue
 		}
-		lines[i] = t
+		lines[i] = escapeBlock(t)
 	}
 	return strings.Join(lines, "\n")
 }
 
-// layoutLine reports whether a line, its indent dropped, is a block of the
-// stored layout: a list item exactly as markup.Normalize writes it, or a
-// sub-heading where headings is set.
-func layoutLine(t string, headings bool) bool {
-	if headings && strings.HasPrefix(t, markup.Heading) && strings.TrimSpace(t[len(markup.Heading):]) != "" {
-		return true
+// escapeBlock is a line, its indent dropped, with a backslash before the
+// marker of any block it would open.
+func escapeBlock(t string) string {
+	if blockStart(t) {
+		return `\` + t
 	}
-	item, ok := markup.ListItem(t)
-	return ok && item == t
+	if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n <= 9 && n < len(t) &&
+		(t[n] == '.' || t[n] == ')') && markerEnds(t[n+1:]) {
+		return t[:n] + `\` + t[n:]
+	}
+	return t
 }
 
 // blockStart reports whether a line, its indent dropped, opens a block

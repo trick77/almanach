@@ -653,6 +653,25 @@ func TestFoldIdenticalNoRevision(t *testing.T) {
 	}
 }
 
+// Text stored before the layout, an indent or a "* " item in it, returned
+// as it stands is no new revision: only its whitespace and marks would
+// change.
+func TestFoldLegacyTextEchoedNoRevision(t *testing.T) {
+	st := newFakeStore()
+	page := existingRepoPage()
+	page.Summary = "Der Dienst.\n\n\n  Speichert."
+	page.Statements[0].Text = "Nimmt an:\n* Bilder\n  * Texte"
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	m := &fakeMerger{result: okResult(&inference.Description{
+		Summary:    page.Summary,
+		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: page.Statements[0].Text, Files: []string{"internal/files/upload.go"}}},
+	}, nil)}
+	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 0 {
+		t.Errorf("revisions = %+v, want none for legacy text echoed", st.revisions)
+	}
+}
+
 func TestFoldProjectScope(t *testing.T) {
 	st := newFakeStore()
 	m := &fakeMerger{result: okResult(nil, &inference.Description{

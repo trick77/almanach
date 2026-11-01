@@ -424,7 +424,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		return nil
 	}
 	logLeftOut(ctx, w.log, "consolidate: "+scope, leftOut)
-	if summary == current.Summary && sameStatements(statements, current.Statements) {
+	if sameLaidOut(current.Summary, summary, false) && sameStatements(statements, current.Statements) {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description identical, no revision")
 		return nil
 	}
@@ -645,14 +645,22 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 
 // cleanStatement is a returned statement's kind, name, text and files as
 // attach stores them: trimmed, Swiss, empty paths dropped, the text in
-// the stored layout (markup.Normalize) before the Swiss rule reads it.
+// the stored layout (lang.Laid).
 func cleanStatement(p inference.Statement) store.Statement {
-	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Prose(markup.Normalize(p.Text, true)), Files: cleanFiles(p.Files)}
+	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Laid(p.Text, true), Files: cleanFiles(p.Files)}
 }
 
 // proseSummary is a returned summary as stored: the summary's layout, no
-// sub-heading (markup.Normalize), then trimmed and Swiss.
-func proseSummary(s string) string { return lang.Prose(markup.Normalize(s, false)) }
+// sub-heading (lang.Laid).
+func proseSummary(s string) string { return lang.Laid(s, false) }
+
+// sameLaidOut reports whether a stored text and a returned one read the
+// same: equal, or equal once the stored one is laid out as the returned
+// one was. Text stored before the layout was its whitespace or a "* "
+// item apart; returned as it stood, it is no new revision.
+func sameLaidOut(stored, returned string, headings bool) bool {
+	return stored == returned || markup.Normalize(stored, headings) == returned
+}
 
 // sameText reports whether a statement's new text says what its old one
 // did: umlauts spelled in (lang.SameButSpelling) or only laid out anew,
@@ -861,9 +869,11 @@ func fieldCap(s store.Statement) string {
 }
 
 // sameStatement compares what a reader sees of a statement: its id, kind,
-// name, text, files and diagram, not its sources or last check.
+// name, text (sameLaidOut either way round: a is the stored one or the
+// returned one), files and diagram, not its sources or last check.
 func sameStatement(a, b store.Statement) bool {
-	return a.ID == b.ID && a.Kind == b.Kind && a.Name == b.Name && a.Text == b.Text &&
+	return a.ID == b.ID && a.Kind == b.Kind && a.Name == b.Name &&
+		(sameLaidOut(a.Text, b.Text, true) || sameLaidOut(b.Text, a.Text, true)) &&
 		slices.Equal(a.Files, b.Files) && diagram.Equal(a.Diagram, b.Diagram)
 }
 

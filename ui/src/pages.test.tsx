@@ -14,7 +14,7 @@ import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
 import { statementMatches } from "./Description";
 import { armSignIn } from "./signin";
-import { Marked, matchesQuery } from "./ui";
+import { Doc, Marked, matchesQuery } from "./ui";
 import type {
   Me,
   NoteDetail,
@@ -349,30 +349,19 @@ describe("ProjectPage", () => {
     expect(within(desc).getByText("> kein Zitat").tagName).toBe("P");
   });
 
-  it("finds a statement by its words across its bold marks", async () => {
-    const d = project.description!;
-    serve({
-      "projects/PAY": {
-        ...project,
-        description: {
-          ...d,
-          statements: [
-            { ...d.statements[0], text: "Der **Mandant** kommt mit." },
-            ...d.statements.slice(1),
-          ],
-        },
-      },
-    });
-    render(<ProjectPage projectKey="PAY" />);
-    await openTab(/Beschreibung/);
-    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
-    expect(
-      statementMatches(
-        { ...d.statements[0], text: "Der **Mandant** kommt mit." },
-        "Mandant kommt",
-      ),
-    ).toBe(true);
-    expect(within(desc).getByText("Mandant").tagName).toBe("STRONG");
+  it("finds and marks a statement's words across its bold and code edges", () => {
+    const s = {
+      ...project.description!.statements[0],
+      text: "Der **Mandant** kommt aus `X-Tenant` mit.",
+    };
+    expect(statementMatches(s, "Mandant kommt")).toBe(true);
+    expect(statementMatches(s, "aus X-Ten")).toBe(true);
+    const { container } = render(
+      <Doc text={s.text} headings query="Mandant kommt" />,
+    );
+    const marks = [...container.querySelectorAll("mark")];
+    expect(marks.map((m) => m.textContent)).toEqual(["Mandant", " kommt"]);
+    expect(marks[0].closest("strong")).not.toBeNull();
   });
 
   it("opens the tab the address names", async () => {

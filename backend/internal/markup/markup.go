@@ -1,12 +1,13 @@
 // Package markup is the layout a statement's text and a page's summary
 // may carry: paragraphs, flat lists, **bold**, `code` spans and, in a
 // statement's text, one level of #### sub-heading. Normalize puts what a
-// model writes into that stored form before lang.Prose runs; anything
-// beyond the subset stays text. ui/src/format.ts blocks reads the same
+// model writes into that stored form, inside lang.Laid: after redaction,
+// before the Swiss rule. Anything beyond the subset stays text. ui/src/format.ts blocks reads the same
 // form, the Markdown export passes it through.
 package markup
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -34,10 +35,11 @@ func Normalize(s string, headings bool) string {
 		cur, list = nil, false
 	}
 	fence := ""
-	for _, raw := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i, raw := range lines {
 		line := strings.TrimSpace(raw)
 		if fence != "" {
-			if strings.HasPrefix(line, fence) && strings.Trim(line, fence[:1]) == "" {
+			if closesFence(line, fence) {
 				fence = ""
 				flush()
 				continue
@@ -48,8 +50,12 @@ func Normalize(s string, headings bool) string {
 			continue
 		}
 		if f := fenceOf(line); f != "" {
-			flush()
-			fence = f
+			// A fence never closed is no block: its line goes, the rest
+			// stays text, not one column of code to the end.
+			if slices.ContainsFunc(lines[i+1:], func(l string) bool { return closesFence(strings.TrimSpace(l), f) }) {
+				flush()
+				fence = f
+			}
 			continue
 		}
 		if line == "" {
@@ -111,17 +117,27 @@ func ordered(line string) (string, string, bool) {
 }
 
 // heading reports whether a line is a heading of any level and returns
-// its title: markers, a closing run of #s and the title's own ** dropped.
+// its title: markers, a closing run of #s after a blank (as CommonMark
+// reads one: "C#" keeps its #) and the title's own ** dropped.
 func heading(line string) (string, bool) {
 	n := len(line) - len(strings.TrimLeft(line, "#"))
 	if n == 0 || n > 6 || n >= len(line) || line[n] != ' ' {
 		return "", false
 	}
-	t := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(line[n:]), "#"))
+	t := strings.TrimSpace(line[n:])
+	if c := strings.TrimRight(t, "#"); c == "" || strings.HasSuffix(c, " ") {
+		t = strings.TrimSpace(c)
+	}
 	if strings.HasPrefix(t, "**") && strings.HasSuffix(t, "**") && len(t) > 4 {
 		t = strings.TrimSpace(t[2 : len(t)-2])
 	}
 	return t, t != ""
+}
+
+// closesFence reports whether a line, trimmed, closes an open fence: the
+// fence's characters alone, at least as many.
+func closesFence(line, fence string) bool {
+	return strings.HasPrefix(line, fence) && strings.Trim(line, fence[:1]) == ""
 }
 
 // fenceOf is the fence a line opens, "```" or "~~~", or "". A backtick
@@ -156,58 +172,94 @@ func codeSpan(line string) string {
 	return tick + line + tick
 }
 
-// Plain is stored text without its layout: the marks of headings and list
-// items and every ** gone, the words and code spans as they are.
+// StoredHeading reports whether a line, trimmed, is a sub-heading in the
+// stored form and returns its title.
+func StoredHeading(line string) (string, bool) {
+	t, ok := strings.CutPrefix(line, Heading)
+	t = strings.TrimSpace(t)
+	return t, ok && t != ""
+}
+
+// StoredItem reports whether a line, trimmed, is a list item in the stored
+// form exactly ("- text", "12. text") and returns its marker and text.
+func StoredItem(line string) (marker, text string, ok bool) {
+	item, ok := ListItem(line)
+	if !ok || item != line {
+		return "", "", false
+	}
+	if n, rest, ok := ordered(item); ok {
+		return n + ". ", rest, true
+	}
+	return "- ", item[2:], true
+}
+
+// Plain is stored text without its layout, as ui/src/format.ts plain has
+// it: the marks of a stored sub-heading and list item gone and every **
+// that pairs (bolds), the words and code spans as they are.
 func Plain(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		l = strings.TrimSpace(l)
-		if t, ok := heading(l); ok {
+		if t, ok := StoredHeading(l); ok {
 			l = t
-		} else if item, ok := ListItem(l); ok {
-			if _, rest, ok := ordered(item); ok {
-				l = rest
-			} else {
-				l = item[2:]
-			}
+		} else if _, t, ok := StoredItem(l); ok {
+			l = t
 		}
 		lines[i] = unbold(l)
 	}
 	return strings.Join(lines, "\n")
 }
 
-// unbold is a line without its **, those inside a code span kept.
+// unbold is a line without the ** that bold, as format.ts runs reads them:
+// one outside a code span pairs with the next such on the line when
+// something is between; an unpaired one stays.
 func unbold(l string) string {
 	if !strings.Contains(l, "**") {
 		return l
 	}
-	var b strings.Builder
+	var marks []int
 	for i := 0; i < len(l); {
 		if l[i] == '`' {
 			n := len(l[i:]) - len(strings.TrimLeft(l[i:], "`"))
 			if j := strings.Index(l[i+n:], l[i:i+n]); j >= 0 {
-				b.WriteString(l[i : i+n+j+n])
 				i += n + j + n
-				continue
+			} else {
+				i += n
 			}
-			b.WriteString(l[i : i+n])
-			i += n
 			continue
 		}
 		if strings.HasPrefix(l[i:], "**") {
+			marks = append(marks, i)
 			i += 2
 			continue
 		}
-		b.WriteByte(l[i])
 		i++
+	}
+	drop := map[int]bool{}
+	for k := 0; k+1 < len(marks); {
+		if marks[k+1] > marks[k]+2 {
+			drop[marks[k]], drop[marks[k+1]] = true, true
+			k += 2
+		} else {
+			k++
+		}
+	}
+	var b strings.Builder
+	for i := 0; i < len(l); i++ {
+		if drop[i] {
+			i++
+			continue
+		}
+		b.WriteByte(l[i])
 	}
 	return b.String()
 }
 
-// Words is what a text says, its layout and punctuation aside: its words
-// and its code spans whole, one space apart, a sub-heading's title left
-// out (it names a part, it teaches nothing). Two texts with the same words
-// differ only in how they are laid out.
+// Words is what a text says, its layout aside: its words, its symbols
+// (> is not <, -5 not 5) and its code spans whole, one space apart; a
+// sentence's . , ; : and a sub-heading's title left out (a list drops the
+// one, the other names a part and teaches nothing). Two texts with the
+// same words differ only in how they are laid out.
 func Words(s string) string {
 	var out []string
 	var word strings.Builder
@@ -219,7 +271,7 @@ func Words(s string) string {
 	}
 	var kept []string
 	for _, l := range strings.Split(s, "\n") {
-		if _, ok := heading(strings.TrimSpace(l)); !ok {
+		if _, ok := StoredHeading(strings.TrimSpace(l)); !ok {
 			kept = append(kept, l)
 		}
 	}
@@ -239,10 +291,14 @@ func Words(s string) string {
 			continue
 		}
 		r, size := utf8.DecodeRuneInString(p[i:])
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			word.WriteString(p[i : i+size])
-		} else {
+		case unicode.IsSpace(r) || strings.ContainsRune(".,;:", r):
 			end()
+		default:
+			end()
+			out = append(out, p[i:i+size])
 		}
 		i += size
 	}

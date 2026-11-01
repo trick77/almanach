@@ -199,6 +199,15 @@ func TestMarkdownEscapesModelText(t *testing.T) {
 	}
 }
 
+// A list item's text opens no block inside the item.
+func TestMarkdownEscapesItemText(t *testing.T) {
+	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt,
+		Statements: []store.Statement{{Kind: "rule", Name: "R", Text: "- # Titel\n- > Zitat\n1. ```go\n2. - -"}}}, true)
+	if want := "- \\# Titel\n- \\> Zitat\n1. \\```go\n2. \\- -\n"; !strings.Contains(md, want) {
+		t.Errorf("export lacks %q:\n%s", want, md)
+	}
+}
+
 // The export's kinds are the UI's: the same order as Description.tsx's
 // KINDS, each heading the label strings.ts gives the kind.
 func TestMarkdownKindsMatchTheUI(t *testing.T) {

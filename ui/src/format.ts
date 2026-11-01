@@ -78,10 +78,12 @@ const headingMark = "#### ";
 function listItem(
   line: string,
 ): { kind: "ul" | "ol"; n: number; text: string } | null {
-  if (line.startsWith("- ") && line.slice(2).trim() !== "")
-    return { kind: "ul", n: 0, text: line.slice(2).trim() };
-  const m = /^(\d{1,9})\. (.*\S.*)$/.exec(line);
-  return m ? { kind: "ol", n: Number(m[1]), text: m[2].trim() } : null;
+  // Exactly the stored form, as markup.StoredItem: one blank after the
+  // marker, the text starting right after it.
+  const u = /^- (\S.*)$/.exec(line);
+  if (u) return { kind: "ul", n: 0, text: u[1] };
+  const m = /^(\d{1,9})\. (\S.*)$/.exec(line);
+  return m ? { kind: "ol", n: Number(m[1]), text: m[2] } : null;
 }
 
 /** blocks reads Almanach's laid-out text, a statement's or a summary's,
@@ -137,19 +139,22 @@ export function blocks(text: string, headings: boolean): Block[] {
   return out;
 }
 
-/** plain is laid-out text without its marks, what a search reads: the
- *  heading and list markers and every ** outside a code span gone, as
- *  markup.Plain has it. */
+/** plain is laid-out text as Doc shows it, what a search reads, so a
+ *  statement kept is one with a mark: the heading and list markers gone
+ *  and the ** that pair, as markup.Plain has it, and the code spans'
+ *  backticks too, which Doc draws as the mono face. */
 export function plain(text: string): string {
   return text
     .split("\n")
     .map((raw) => {
       const line = raw.trim();
-      const body = line.startsWith(headingMark)
-        ? line.slice(headingMark.length)
-        : (listItem(line)?.text ?? line);
+      const body =
+        line.startsWith(headingMark) &&
+        line.slice(headingMark.length).trim() !== ""
+          ? line.slice(headingMark.length).trim()
+          : (listItem(line)?.text ?? line);
       return runs(body)
-        .map((r) => (r.code ? "`" + r.text + "`" : r.text))
+        .map((r) => r.text)
         .join("");
     })
     .join("\n");

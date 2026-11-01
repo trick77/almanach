@@ -4,6 +4,7 @@ package lang
 import (
 	"strings"
 
+	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/redact"
 )
 
@@ -12,6 +13,15 @@ import (
 // regexes), Swiss spelling. Deterministic, so an unchanged rewrite stays
 // unchanged.
 func Prose(s string) string { return SwissSS(redact.Text(strings.TrimSpace(s))) }
+
+// Laid is Prose for laid-out text, a statement's or a summary's: the
+// credential shapes replaced first, while the text is as the model wrote
+// it (a PEM block's header ends its line only there), then the stored
+// layout (markup.Normalize), then Swiss spelling, which so sees no line as
+// indented code.
+func Laid(s string, headings bool) string {
+	return SwissSS(markup.Normalize(redact.Text(strings.TrimSpace(s)), headings))
+}
 
 var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")
 

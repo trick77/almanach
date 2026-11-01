@@ -122,11 +122,25 @@ describe("runs", () => {
   });
 });
 
+// The cases of markup_test.go TestPlain: the same marks read, the code
+// spans' backticks dropped here (Doc draws them as mono, never as `).
 describe("plain", () => {
-  it("drops the layout's marks, code kept", () => {
-    expect(plain("#### Ablauf\n- **eins**\n12. zwei `a**b`")).toBe(
-      "Ablauf\neins\nzwei `a**b`",
+  it("drops the layout's marks, code's text kept", () => {
+    expect(plain("#### Ablauf\n\n- **eins**\n12. zwei `a**b`\nText.")).toBe(
+      "Ablauf\n\neins\nzwei a**b\nText.",
     );
+    expect(plain("## Zwei\n* Stern\n1) Klammer")).toBe(
+      "## Zwei\n* Stern\n1) Klammer",
+    );
+    expect(plain("a ** b\nleer **** hier\n**a\nb**")).toBe(
+      "a ** b\nleer **** hier\n**a\nb**",
+    );
+    expect(plain("**`strict`** gilt, **x")).toBe("strict gilt, **x");
+  });
+  it("reads only the stored item form, as markup.StoredItem", () => {
+    expect(blocks("-  zwei Blanks\n1.  auch", true)).toEqual([
+      { kind: "p", text: "-  zwei Blanks\n1.  auch" },
+    ]);
   });
 });
 

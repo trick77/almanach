@@ -651,8 +651,10 @@ func TestFirstSentence(t *testing.T) {
 func TestLead(t *testing.T) {
 	for in, want := range map[string]string{
 		"**Zweck**\n\nDer **Dienst** liest\nNotizen. Mehr.": "Der Dienst liest Notizen. Mehr.",
-		"- eins\n- zwei": "eins zwei",
-		"**Nur Titel**":  "",
+		"- **eins**\n- zwei": "eins",
+		"**Nur Titel**":      "",
+		// An opening that starts and ends in bold is text, not a heading.
+		"**Almanach** ist das Wiki, das **lebt**\n\nZweiter.": "Almanach ist das Wiki, das lebt",
 		"Eins.\n\nZwei.": "Eins.",
 		"`a**b` bleibt.": "`a**b` bleibt.",
 	} {

@@ -724,7 +724,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if err := encodeInto(r, *plan); err != nil {
 		return err
 	}
-	if summary == page.Summary && sameStatements(statements, page.Statements) && sameChecks(statements, page.Statements) {
+	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && sameChecks(statements, page.Statements) {
 		w.log.InfoContext(ctx, "baseline: "+name+": page identical, no revision")
 		return w.save(ctx, *r)
 	}
@@ -1354,7 +1354,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	leftOut.overCap = append(overCap, leftOut.overCap...)
 	logLeftOut(ctx, w.log, "baseline: "+projectLabel, leftOut)
 	drawn := w.revisionMap(ctx, page, d.Map, slugs)
-	if summary == page.Summary && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
+	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, "", nil
 	}
