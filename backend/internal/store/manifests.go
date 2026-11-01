@@ -287,7 +287,7 @@ func (s *Store) sourceSummaries(ctx context.Context, refs []RepoRef) (map[RepoRe
 		}
 		// TRANSITIONAL(layout): Remove when every page's current revision was
 		// written after the layout.
-		out[r] = lang.Relaid(sum, false)
+		out[r] = lang.Relaid(sum)
 	}
 	return out, rows.Err()
 }

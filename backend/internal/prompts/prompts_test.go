@@ -23,11 +23,18 @@ func TestPromptsStateTheSpelling(t *testing.T) {
 	}
 }
 
-// Every prompt that writes statement text states the one layout rule.
+// Every prompt that writes statement text and a summary states the one
+// layout rule and how the summary takes it; none bars the summary from it.
 func TestPromptsStateTheLayout(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project} {
 		if !strings.Contains(p, Layout) {
 			t.Errorf("%s prompt lacks the layout rule %q", name, Layout)
+		}
+		if !strings.Contains(p, SummaryLayout) {
+			t.Errorf("%s prompt lacks the summary layout %q", name, SummaryLayout)
+		}
+		if strings.Contains(p, "never in a summary") || strings.Contains(p, `"summary": "<prose>"`) {
+			t.Errorf("%s prompt still keeps the summary one block of prose", name)
 		}
 	}
 }

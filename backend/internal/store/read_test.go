@@ -121,14 +121,15 @@ func TestSourcedLists(t *testing.T) {
 	if _, err := s.InsertRevision(ctx, legacy); err != nil {
 		t.Fatal(err)
 	}
-	if sums, _ := s.RepoSummaries(ctx, "PRJ"); sums[1].Summary != "Der Dienst.\n\n- eins" {
+	const relaid = "#### Zweck\n\nDer Dienst.\n\n- eins"
+	if sums, _ := s.RepoSummaries(ctx, "PRJ"); sums[1].Summary != relaid {
 		t.Errorf("RepoSummaries relaid = %q", sums[1].Summary)
 	}
-	if rs, _ := s.Repos(ctx, "PRJ", true); rs[1].Summary != "Der Dienst.\n\n- eins" {
+	if rs, _ := s.Repos(ctx, "PRJ", true); rs[1].Summary != relaid {
 		t.Errorf("Repos relaid = %q", rs[1].Summary)
 	}
 	p, _, _ := s.CurrentPage(ctx, ScopeRepository, "PRJ", "web")
-	if p.Summary != "Der Dienst.\n\n- eins" || p.Statements[0].Text != "#### Regel\n\n- Grösse" {
+	if p.Summary != relaid || p.Statements[0].Text != "#### Regel\n\n- Grösse" {
 		t.Errorf("CurrentPage relaid = %q, %q", p.Summary, p.Statements[0].Text)
 	}
 	// What the revision holds stays beside it, for a map basis hashed before.

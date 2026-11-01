@@ -224,34 +224,35 @@ export function Inline({
 }
 
 /** Doc renders Almanach's laid-out text, a statement's or a summary's
- *  (blocks): paragraphs, flat lists, **bold**, code spans and, where
- *  headings is set, #### sub-headings; anything else as written. Held at
- *  measure, in the font size the caller's className sets. query sets off
- *  a search's matches in every block. */
+ *  (blocks): paragraphs, flat lists, **bold**, code spans and #### sub-
+ *  headings; anything else as written. Held at measure, in the font size
+ *  the caller's className sets. query sets off a search's matches in every
+ *  block. heading is the sub-headings' level, one under the text's own: a
+ *  statement's h5 under its h4 name, a summary's h3 under the page's h2. */
 export function Doc({
   text,
-  headings,
   className = "",
   query = "",
+  heading: H = "h5",
 }: {
   text: string;
-  headings: boolean;
   className?: string;
   query?: string;
+  heading?: "h3" | "h5";
 }) {
   const block = "mb-3.5 last:mb-0";
   return (
     <div className={measure + " " + className}>
-      {blocks(text, headings).map((b, i) => {
+      {blocks(text).map((b, i) => {
         switch (b.kind) {
           case "h":
             return (
-              <h5
+              <H
                 key={i}
                 className="mt-5 mb-1.5 font-sans text-[13.5px] font-semibold tracking-[.01em] text-ink first:mt-0"
               >
                 <Inline text={b.text} query={query} bold />
-              </h5>
+              </H>
             );
           case "ul":
           case "ol": {
@@ -290,8 +291,8 @@ export function Doc({
 }
 
 /** Summary is a description's or a note's prose in the serif, ../rongo's
- *  answer column. layout reads a description's summary as Doc does, no
- *  sub-heading; a note's stays Prose. */
+ *  answer column. layout reads a description's summary as Doc does a
+ *  statement's, sub-headings and all; a note's stays Prose. */
 export function Summary({
   text,
   query,
@@ -303,7 +304,7 @@ export function Summary({
 }) {
   const className = "font-serif text-[17px] leading-[1.6] text-ink-prose";
   return layout ? (
-    <Doc text={text} query={query} headings={false} className={className} />
+    <Doc text={text} query={query} className={className} heading="h3" />
   ) : (
     <Prose text={text} query={query} className={className} />
   );

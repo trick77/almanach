@@ -124,7 +124,7 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 		}
 		// TRANSITIONAL(layout): Remove when every page's current revision was
 		// written after the layout.
-		r.Summary = lang.Relaid(r.Summary, false)
+		r.Summary = lang.Relaid(r.Summary)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -159,7 +159,7 @@ func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]Repo
 		}
 		// TRANSITIONAL(layout): Remove when every page's current revision was
 		// written after the layout.
-		r.Summary = lang.Relaid(r.Summary, false)
+		r.Summary = lang.Relaid(r.Summary)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -194,7 +194,7 @@ func (s *Store) StandaloneRepos(ctx context.Context) (map[string][]RepoRow, erro
 		}
 		// TRANSITIONAL(layout): Remove when every page's current revision was
 		// written after the layout.
-		r.Summary = lang.Relaid(r.Summary, false)
+		r.Summary = lang.Relaid(r.Summary)
 		out[key] = append(out[key], r)
 	}
 	return out, rows.Err()

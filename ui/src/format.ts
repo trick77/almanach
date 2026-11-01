@@ -101,10 +101,10 @@ function listItem(
 /** blocks reads Almanach's laid-out text, a statement's or a summary's,
  *  as backend/internal/markup stores it: blocks a blank line apart, a "- "
  *  or "N. " line a list item (a line under one without a marker
- *  continues it), a "#### " line a sub-heading where headings is set (a
- *  statement's text), every other line paragraph text. Nothing else is
- *  markup: a quote, a table or a "* " line stays as written. */
-export function blocks(text: string, headings: boolean): Block[] {
+ *  continues it), a "#### " line a sub-heading, every other line
+ *  paragraph text. Nothing else is markup: a quote, a table or a "* "
+ *  line stays as written. */
+export function blocks(text: string): Block[] {
   const out: Block[] = [];
   let para: string[] = [];
   let list: Extract<Block, { kind: "ul" | "ol" }> | null = null;
@@ -128,7 +128,6 @@ export function blocks(text: string, headings: boolean): Block[] {
       if (listItem(line) === null) close();
     }
     if (
-      headings &&
       line.startsWith(headingMark) &&
       line.slice(headingMark.length).trim() !== ""
     ) {
@@ -161,11 +160,11 @@ export function blocks(text: string, headings: boolean): Block[] {
 
 /** plain is laid-out text as Doc shows it, what a search reads, so a
  *  statement kept is one with a mark: read by blocks itself (an item's
- *  continuation joined to it, a #### only where headings is set), each
- *  block's text as runs leaves it (the ** that pair and the code spans'
- *  backticks gone), one block a line. */
-export function plain(text: string, headings = true): string {
-  return blocks(text, headings)
+ *  continuation joined to it, a #### a title), each block's text as runs
+ *  leaves it (the ** that pair and the code spans' backticks gone), one
+ *  block a line. */
+export function plain(text: string): string {
+  return blocks(text)
     .flatMap((b) => (b.kind === "p" || b.kind === "h" ? [b.text] : b.items))
     .map((t) =>
       runs(t)
