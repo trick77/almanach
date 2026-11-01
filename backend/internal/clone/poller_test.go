@@ -20,6 +20,7 @@ type fakeStore struct {
 	mu      sync.Mutex
 	sources []store.SourceRow
 	jobs    []store.SyncJob
+	offJobs map[string][]store.SourceRepo
 	listed  map[string][]store.ListedRepo
 	listErr map[string]string
 	states  map[string]string
@@ -55,6 +56,18 @@ func (f *fakeStore) MarkSourceListed(_ context.Context, key, e string) error {
 	return nil
 }
 func (f *fakeStore) SyncJobs(context.Context) ([]store.SyncJob, error) { return f.jobs, nil }
+
+// SourceRepos is every row of the source: its jobs' and the rows no job
+// carries (missing ones), as the store answers it.
+func (f *fakeStore) SourceRepos(_ context.Context, key string) ([]store.SourceRepo, error) {
+	out := []store.SourceRepo{}
+	for _, j := range f.jobs {
+		if j.Source.ProjectKey == key {
+			out = append(out, j.Repo)
+		}
+	}
+	return append(out, f.offJobs[key]...), nil
+}
 func (f *fakeStore) MarkRepoSyncing(_ context.Context, _, slug string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -105,13 +118,16 @@ type fakeGit struct {
 	origins  map[string]string // dir → origin ("" = no checkout)
 	heads    map[string]string
 	fetchErr map[string]error
+	cloneErr map[string]error
 	calls    []string
 	access   []gitrepo.Access
+	accessBy map[string]gitrepo.Access
 	onClone  func(dir string)
 }
 
 func newFakeGit() *fakeGit {
-	return &fakeGit{origins: map[string]string{}, heads: map[string]string{}, fetchErr: map[string]error{}}
+	return &fakeGit{origins: map[string]string{}, heads: map[string]string{}, fetchErr: map[string]error{},
+		cloneErr: map[string]error{}, accessBy: map[string]gitrepo.Access{}}
 }
 
 func (g *fakeGit) Dir(key, slug string) (string, error) {
@@ -125,6 +141,10 @@ func (g *fakeGit) OriginURL(_ context.Context, dir string) (string, error) {
 }
 func (g *fakeGit) EnsureCloned(_ context.Context, dir, url string, a gitrepo.Access) error {
 	g.access = append(g.access, a)
+	g.accessBy[dir] = a
+	if err := g.cloneErr[dir]; err != nil {
+		return err
+	}
 	if g.origins[dir] == "" {
 		g.calls = append(g.calls, "clone "+dir)
 		g.origins[dir] = url
@@ -207,8 +227,64 @@ func TestCycle_ClonesResolvesFetchesMarksReady(t *testing.T) {
 	if got := strings.Join(g.calls, ","); got != want {
 		t.Fatalf("git calls = %s, want %s", got, want)
 	}
-	if len(g.access) != 1 || g.access[0].Token != "tok" || g.access[0].Auth != store.TokenBasic || g.access[0].User != "me" {
+	if len(g.access) != 1 || g.access[0].Token != "tok" || g.access[0].Auth != store.TokenBasic || g.access[0].User != "me" ||
+		g.access[0].Origin != "https://x" {
 		t.Fatalf("access handed to git = %+v", g.access)
+	}
+}
+
+// A token reaches one host. A static folder whose rows span several hosts
+// (from before the API kept them on one; a missing row counts, as in the
+// API) and a Bitbucket row off the source's host go anonymous: a public
+// repository still syncs, a private one fails naming why the token was
+// withheld. The source host on its default port is the same host.
+func TestCycle_TokenOnlyToItsOrigin(t *testing.T) {
+	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
+	sealed, _ := k.Seal("tok")
+	static := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic, TokenEnc: sealed}
+	bb := store.ProjectSource{Kind: store.SourceBitbucket, Host: "https://forge.example.invalid", TokenAuth: store.TokenBearer, TokenEnc: sealed}
+	anon := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
+	s.jobs = []store.SyncJob{
+		job("mixed", "pub", "https://github.com/acme/pub.git", "main", "", static),
+		job("mixed", "priv", "https://gitlab.com/acme/priv.git", "main", "", static),
+		job("hidden", "h", "https://github.com/acme/h.git", "main", "", static),
+		job("SHOP", "off", "https://elsewhere.example.invalid/scm/shop/off.git", "main", "", bb),
+		job("SHOP", "ui", "https://FORGE.example.invalid:443/scm/shop/ui.git", "main", "", bb),
+		job("open", "c", "https://github.com/acme/c.git", "main", "", anon),
+		job("open", "d", "https://gitlab.com/acme/d.git", "main", "", anon),
+	}
+	// hidden's other host is on a missing row, which no job carries.
+	s.offJobs = map[string][]store.SourceRepo{"hidden": {{ProjectKey: "hidden", Slug: "gone", CloneURL: "https://gitlab.com/acme/gone.git", State: store.RepoMissing}}}
+	authFailed := errors.New("git clone: exit status 128: fatal: could not read Username")
+	g.cloneErr["/base/mixed/priv"] = authFailed
+	g.cloneErr["/base/SHOP/off"] = authFailed
+	for _, dir := range []string{"/base/mixed/pub", "/base/hidden/h", "/base/SHOP/ui", "/base/open/c", "/base/open/d"} {
+		g.heads[dir+"@main"] = "abc"
+	}
+	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for slug, want := range map[string]string{
+		"priv": "token withheld: the folder's repositories are on several hosts (https://github.com, https://gitlab.com); git clone",
+		"off":  "token withheld: clone URL is on https://elsewhere.example.invalid, the source's token belongs to https://forge.example.invalid; git clone",
+	} {
+		if s.states[slug] != store.RepoFailed || !strings.Contains(s.errs[slug], want) {
+			t.Errorf("%s: %s %q, want failed with %q", slug, s.states[slug], s.errs[slug], want)
+		}
+	}
+	for _, slug := range []string{"pub", "h", "ui", "c", "d"} {
+		if s.states[slug] != store.RepoReady {
+			t.Errorf("%s: %s %q, want ready", slug, s.states[slug], s.errs[slug])
+		}
+	}
+	for dir, a := range g.accessBy {
+		withToken := dir == "/base/SHOP/ui"
+		if (a.Token != "") != withToken {
+			t.Errorf("%s: token handed to git = %v, want %v", dir, a.Token != "", withToken)
+		}
+	}
+	if a := g.accessBy["/base/SHOP/ui"]; a.Origin != "https://forge.example.invalid" {
+		t.Errorf("ui bound to %q", a.Origin)
 	}
 }
 
@@ -261,7 +337,7 @@ func TestCycle_ListsBitbucketSources(t *testing.T) {
 	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(l.seen) != 1 || l.seen[0].Token != "pat" || l.seen[0].Auth != store.TokenBearer {
+	if len(l.seen) != 1 || l.seen[0].Token != "pat" || l.seen[0].Auth != store.TokenBearer || l.seen[0].Origin != "https://forge.example.invalid" {
 		t.Fatalf("lister saw %+v, want one bearer call for SHOP only", l.seen)
 	}
 	if len(s.listed["SHOP"]) != 1 || s.listErr["SHOP"] != "" {

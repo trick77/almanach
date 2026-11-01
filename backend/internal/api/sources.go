@@ -327,6 +327,26 @@ func access(kind, tokenAuth, tokenUser string) (auth, user, problem string) {
 	return auth, user, ""
 }
 
+// tokenChange names the field of an update that gives a source a token to
+// send: a new one, or the auth or user of the stored one changed. "" for
+// none, a cleared token included.
+func tokenChange(src store.ProjectSource, setToken bool, sealed []byte, auth, user string) string {
+	switch {
+	case setToken:
+		if len(sealed) > 0 {
+			return "token"
+		}
+		return ""
+	case !src.HasToken():
+		return ""
+	case auth != src.TokenAuth:
+		return "token_auth"
+	case user != src.TokenUser:
+		return "token_user"
+	}
+	return ""
+}
+
 // seal encrypts a token for the store; without a key it names the variable.
 func (d Deps) seal(token string) ([]byte, string) {
 	if token == "" {
@@ -470,6 +490,22 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A token reaches one host. A static folder from before addRepo kept
+	// it on one may span several: no new token for it, and no new way to
+	// send a stored one (its token is withheld at the clone). Clearing one
+	// is never refused.
+	if field := tokenChange(src, setToken, sealed, auth, user); field != "" && src.Kind == store.SourceStatic {
+		repos, err := d.Sources.Store.SourceRepos(ctx, src.ProjectKey)
+		if err != nil {
+			httpx.ServerError(w, r, err, "source repos")
+			return
+		}
+		if hosts := store.Origins(repos); len(hosts) > 1 {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, field+": this folder spans several hosts ("+strings.Join(hosts, ", ")+
+				"); a token reaches one host only, remove the others first")
+			return
+		}
+	}
 	updated, err := d.Sources.Store.UpdateSourceAccess(ctx, src.ProjectKey, host, auth, user, sealed, setToken)
 	if err != nil {
 		httpx.ServerError(w, r, err, "update source")
@@ -599,9 +635,23 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "branch: not a branch name")
 		return
 	}
+	// One folder, one host, token or not (the store checks it with the
+	// insert): the token is sent on every clone of the folder, so a second
+	// host would be a second place it goes, and a token set later finds the
+	// folder already on one.
 	err := d.Sources.Store.AddSourceRepo(ctx, store.SourceRepo{ProjectKey: src.ProjectKey, Slug: in.Slug, CloneURL: in.CloneURL, Branch: in.Branch})
-	if errors.Is(err, store.ErrExists) {
+	var other *store.OtherHostError
+	switch {
+	case errors.Is(err, store.ErrExists):
 		httpx.WriteError(w, http.StatusConflict, "a repository with this slug exists")
+		return
+	case errors.As(err, &other) && len(other.Hosts) == 1:
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder's repositories are on "+other.Hosts[0]+
+			"; a folder holds one host, its token goes nowhere else")
+		return
+	case errors.As(err, &other):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder already spans several hosts ("+strings.Join(other.Hosts, ", ")+
+			"); a folder holds one host, remove the others first")
 		return
 	}
 	if err != nil {

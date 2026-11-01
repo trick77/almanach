@@ -32,7 +32,7 @@ func TestListRepos_PagesSkipsArchivedAndSendsAuth(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(srv.Client()).ListRepos(context.Background(), srv.URL+"/bb/", "SHOP", gitrepo.Access{Token: "tok", Auth: "bearer"})
+	got, err := New(srv.Client()).ListRepos(context.Background(), srv.URL+"/bb/", "SHOP", gitrepo.Access{Token: "tok", Auth: "bearer", Origin: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,24 @@ func TestListRepos_PagesSkipsArchivedAndSendsAuth(t *testing.T) {
 	}
 	if len(auths) != 2 || auths[0] != "Bearer tok" {
 		t.Fatalf("auth headers = %v", auths)
+	}
+}
+
+// The listing sends the token only to the access's origin: a host bound
+// elsewhere gets the request without it.
+func TestListRepos_NoTokenOffTheOrigin(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		fmt.Fprint(w, `{"values":[],"isLastPage":true}`)
+	}))
+	defer srv.Close()
+	a := gitrepo.Access{Token: "tok", Auth: "bearer", Origin: "https://forge.example.invalid"}
+	if _, err := New(srv.Client()).ListRepos(context.Background(), srv.URL, "SHOP", a); err != nil {
+		t.Fatal(err)
+	}
+	if auth != "" {
+		t.Fatalf("token sent off its origin: %q", auth)
 	}
 }
 
@@ -55,7 +73,7 @@ func TestListRepos_BasicAuthAndFailures(t *testing.T) {
 	}))
 	defer srv.Close()
 	l := New(srv.Client())
-	_, err := l.ListRepos(context.Background(), srv.URL, "SHOP", gitrepo.Access{Token: "tok", Auth: "basic", User: "me"})
+	_, err := l.ListRepos(context.Background(), srv.URL, "SHOP", gitrepo.Access{Token: "tok", Auth: "basic", User: "me", Origin: srv.URL})
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("401: err = %v", err)
 	}

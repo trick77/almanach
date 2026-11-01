@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/trick77/almanach/internal/urlorigin"
 )
 
 // The sources: what Almanach clones itself. Separate from the noergler-fed
@@ -223,13 +225,65 @@ func (s *Store) SourceRepos(ctx context.Context, key string) ([]SourceRepo, erro
 }
 
 // AddSourceRepo inserts a hand-entered repo as pending; ErrExists when the
-// slug is taken.
+// slug is taken, an *OtherHostError when the folder's rows are on another
+// host (OneHost). Check and insert are one IMMEDIATE transaction, so two
+// adds at once cannot leave the folder on two hosts.
 func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO source_repos (project_key, slug, clone_url, origin, branch, state, created_at)
-		VALUES (?, ?, ?, 'manual', NULLIF(?, ''), 'pending', ?)`,
-		r.ProjectKey, r.Slug, r.CloneURL, r.Branch, nowStamp())
-	return uniqueAsExists(err)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT clone_url FROM source_repos WHERE project_key = ?`, r.ProjectKey)
+		if err != nil {
+			return err
+		}
+		have := []SourceRepo{}
+		for rows.Next() {
+			var h SourceRepo
+			if err := rows.Scan(&h.CloneURL); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			have = append(have, h)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := OneHost(have, r.CloneURL); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO source_repos (project_key, slug, clone_url, origin, branch, state, created_at)
+			VALUES (?, ?, ?, 'manual', NULLIF(?, ''), 'pending', ?)`,
+			r.ProjectKey, r.Slug, r.CloneURL, r.Branch, nowStamp())
+		return uniqueAsExists(err)
+	})
+}
+
+// Origins is the hosts a source's rows are on (urlorigin), each once,
+// sorted. One definition for the API and the poller, over all the rows,
+// missing ones included, so the two never derive a folder's host apart.
+func Origins(repos []SourceRepo) []string {
+	urls := make([]string, 0, len(repos))
+	for _, r := range repos {
+		urls = append(urls, r.CloneURL)
+	}
+	return urlorigin.Distinct(urls)
+}
+
+// OtherHostError is a repository refused because its folder is on another
+// host, or already on several: Hosts are the folder's.
+type OtherHostError struct{ Hosts []string }
+
+func (e *OtherHostError) Error() string {
+	return "the folder is on " + strings.Join(e.Hosts, ", ")
+}
+
+// OneHost is nil when cloneURL may join a static folder holding have: the
+// folder is empty, or on one host and cloneURL on it.
+func OneHost(have []SourceRepo, cloneURL string) error {
+	hosts := Origins(have)
+	if len(hosts) == 0 || len(hosts) == 1 && urlorigin.Same(cloneURL, hosts[0]) {
+		return nil
+	}
+	return &OtherHostError{Hosts: hosts}
 }
 
 // DeleteSourceRepo removes one repo row. Reports whether there was one.
