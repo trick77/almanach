@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -153,6 +154,13 @@ func TestSources_ClonedElsewhere(t *testing.T) {
 func TestProject_Libraries(t *testing.T) {
 	st := depsStore()
 	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	// No map, no libraries: they are its zone.
+	if code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
+		t.Fatalf("apps without a map: %d %s, want no libraries", code, body["libraries"])
+	}
+	m := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "loom", Label: "loom", Shape: "step", Zone: "repositories"}},
+		Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}}}
+	st.pages[store.ScopeProject+"|apps|"] = store.Page{RevisionID: 1, Revision: 1, Summary: "Apps.", Map: m}
 	code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil)
 	if code != 200 {
 		t.Fatalf("project: %d", code)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/manifest"
 )
 
@@ -217,8 +218,14 @@ func (s *Store) Libraries(ctx context.Context, key, slug string) ([]Library, err
 	out := []Library{}
 	at := map[RepoRef]int{}
 	for _, e := range g.Edges {
-		mine := e.From.ProjectKey == key && (slug == "" && e.To.ProjectKey != key || e.From.Slug == slug)
-		if !mine {
+		if e.From.ProjectKey != key {
+			continue
+		}
+		if slug != "" && e.From.Slug != slug {
+			continue
+		}
+		if slug == "" && e.To.ProjectKey == key {
+			// A project's own repository is no library of it.
 			continue
 		}
 		i, ok := at[e.To]
@@ -229,14 +236,41 @@ func (s *Store) Libraries(ctx context.Context, key, slug string) ([]Library, err
 		}
 		out[i].UsedBy = append(out[i].UsedBy, e.From)
 	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	sums, err := s.sourceSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
-		p, ok, err := s.CurrentPage(ctx, ScopeRepository, out[i].ProjectKey, out[i].Slug)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out[i].Summary = p.Summary
-		}
+		out[i].Summary = sums[out[i].RepoRef]
 	}
 	return out, nil
+}
+
+// sourceSummaries is every source repository's current summary by name,
+// in one query, "" before its first description.
+func (s *Store) sourceSummaries(ctx context.Context) (map[RepoRef]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.key, r.slug, COALESCE(rv.summary, '')
+		  FROM source_repos sr JOIN repos r ON r.id = sr.repo_id JOIN projects p ON p.id = r.project_id
+		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
+		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[RepoRef]string{}
+	for rows.Next() {
+		var r RepoRef
+		var sum string
+		if err := rows.Scan(&r.ProjectKey, &r.Slug, &sum); err != nil {
+			return nil, err
+		}
+		// TRANSITIONAL(layout): Remove when every page's current revision was
+		// written after the layout.
+		out[r] = lang.Relaid(sum, false)
+	}
+	return out, rows.Err()
 }

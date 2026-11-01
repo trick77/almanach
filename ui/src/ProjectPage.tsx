@@ -358,27 +358,50 @@ const libId = (l: Library) => `library:${l.project}/${l.slug}`;
 /** withLibraries is the stored map with the libraries of other projects
  *  the project's repositories use, drawn by code, never by the model: a
  *  zone of their own, a node each, an edge from each user the map shows.
- *  A node the model drew for one anyway (outside the repositories, named
- *  by its slug) gives way to it, its edges moved over, so nothing is drawn
- *  twice. A map that would grow past what one drawing holds is shown as
- *  stored. */
+ *  A node the model drew for one anyway gives way to it, its edges moved
+ *  over, so nothing is drawn twice: an external node named by the
+ *  library's slug (by project/slug when two libraries share it) whose
+ *  every edge is a library use, nothing else. As many libraries as one
+ *  drawing holds, in the order given; with none of them fitting, the map
+ *  as stored. */
 export function withLibraries(map: FlowIR, libraries: Library[]): FlowIR {
-  if (libraries.length === 0) return map;
+  for (let n = libraries.length; n > 0; n--) {
+    const out = drawLibraries(map, libraries.slice(0, n));
+    if (fits(out)) return out;
+  }
+  return map;
+}
+
+/** libraryEdge says an edge the model drew is a use of a library: its
+ *  label starts with the map's `library` kind. */
+const libraryEdge = (e: FlowIR["edges"][number]) =>
+  e.label.trim().toLowerCase().startsWith("library");
+
+function drawLibraries(map: FlowIR, libraries: Library[]): FlowIR {
   const own = new Set(
     map.nodes.filter((n) => n.zone === "repositories").map((n) => n.id),
   );
-  // The model's node for a library, by its id or label, case aside.
+  const slugCount = new Map<string, number>();
+  for (const l of libraries) {
+    const s = l.slug.toLowerCase();
+    slugCount.set(s, (slugCount.get(s) ?? 0) + 1);
+  }
   const drawnAs = new Map<string, string>();
-  for (const l of libraries)
-    for (const n of map.nodes) {
-      if (n.zone === "repositories") continue;
-      const names = [n.id, n.label].map((s) => s.toLowerCase());
-      if (
-        names.includes(l.slug.toLowerCase()) ||
-        names.includes(`${l.project}/${l.slug}`.toLowerCase())
-      )
-        drawnAs.set(n.id, libId(l));
-    }
+  for (const n of map.nodes) {
+    if (n.zone !== "external") continue;
+    const touching = map.edges.filter((e) => e.from === n.id || e.to === n.id);
+    if (touching.length === 0 || !touching.every(libraryEdge)) continue;
+    const names = [n.id, n.label].map((s) => s.toLowerCase());
+    const l = libraries.find((l) => {
+      const full = `${l.project}/${l.slug}`.toLowerCase();
+      const slug = l.slug.toLowerCase();
+      return (
+        names.includes(full) ||
+        (slugCount.get(slug) === 1 && names.includes(slug))
+      );
+    });
+    if (l) drawnAs.set(n.id, libId(l));
+  }
   const to = (id: string) => drawnAs.get(id) ?? id;
   const edges: FlowIR["edges"] = [];
   const seen = new Set<string>();
@@ -395,11 +418,11 @@ export function withLibraries(map: FlowIR, libraries: Library[]): FlowIR {
         add({
           from: u.slug,
           to: libId(l),
-          label: "library",
+          label: S.diagram.libraryEdge,
           dashed: false,
           head: "end",
         });
-  const out: FlowIR = {
+  return {
     ...map,
     nodes: [
       ...map.nodes.filter((n) => !drawnAs.has(n.id)),
@@ -418,5 +441,4 @@ export function withLibraries(map: FlowIR, libraries: Library[]): FlowIR {
       { id: "libraries", title: "libraries" },
     ],
   };
-  return fits(out) ? out : map;
 }

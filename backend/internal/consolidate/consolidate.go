@@ -87,6 +87,11 @@ type Worker struct {
 	// for the whole run. nil until read.
 	problemsRun int64
 	problems    []store.RepoProblem
+	// libs is run libsRun's repository's libraries as its describe steps
+	// show them, read at its first: a library's summary changing mid-run
+	// waits for the next run, as every other input pinned at the start.
+	libsRun int64
+	libs    string
 	// busyRun and busyWrites count the step writes of one run a busy
 	// database refused in a row; a written step resets them. In memory:
 	// the row's attempts are the gateway's, reset by every answered call,

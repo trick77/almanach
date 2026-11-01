@@ -154,16 +154,13 @@ type libraryBody struct {
 	UsedBy  []repoRefBody `json:"used_by"`
 }
 
-// libraries is the project's libraries, none with the sources off or for
-// a project whose repositories stand alone (no system map to draw them
-// on).
+// libraries is the project's libraries for its map, none with the sources
+// off. The caller asks only with a map drawn (a standalone project has
+// none).
 func (d Deps) libraries(ctx context.Context, key string) ([]libraryBody, error) {
 	out := []libraryBody{}
 	if d.Sources == nil {
 		return out, nil
-	}
-	if alone, err := d.standalone(ctx, key); err != nil || alone {
-		return out, err
 	}
 	libs, err := d.Store.Libraries(ctx, key, "")
 	if err != nil {

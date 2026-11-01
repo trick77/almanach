@@ -129,6 +129,9 @@ export const S = {
       // Drawn by code from the manifests, never by the model.
       libraries: "Bibliotheken",
     } as Record<string, string>,
+    // The edge code draws from a repository to a library it uses: the
+    // map's own kind, as the model labels one.
+    libraryEdge: "library",
     // The dependency graph's zones by id, drawn by code.
     depZones: {
       users: "Nutzer",

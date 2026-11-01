@@ -600,6 +600,16 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if overview {
 		newer = codeBacked(page.Statements, newer)
 	}
+	// The libraries before the files: a store that does not answer costs no
+	// read of the clone. Once a run.
+	if w.libsRun != r.ID {
+		libs, err := w.base.Store.Libraries(ctx, r.ProjectKey, r.Slug)
+		if err != nil {
+			w.log.WarnContext(ctx, "baseline: libraries read failed, drain paused", logging.Err(err))
+			return errStop
+		}
+		w.libsRun, w.libs = r.ID, libraries(libs, false)
+	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
 		return readErr(err)
@@ -626,11 +636,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		problems = problemsFor(w.problems, read)
 	}
 	focus := w.focus(plan, page, newer)
-	libs, err := w.libraries(ctx, r, r.Slug)
-	if err != nil {
-		return err
-	}
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), libs, newer)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -1149,9 +1155,10 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 			return err
 		}
 	}
-	libs, err := w.libraries(ctx, r, "")
+	libs, err := w.base.Store.Libraries(ctx, r.ProjectKey, "")
 	if err != nil {
-		return err
+		w.log.WarnContext(ctx, "baseline: libraries read failed, drain paused", logging.Err(err))
+		return errStop
 	}
 	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), w.limits))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
@@ -1239,18 +1246,6 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 		return false, nil, err
 	}
 	return !diagram.MapFits(len(repos)), repos, nil
-}
-
-// libraries is the libraries the run's repository (slug set) or its
-// project uses, as a step's prompt shows them. A store that does not
-// answer pauses the drain: a step is not paid without its context.
-func (w *Worker) libraries(ctx context.Context, r *store.BaselineRun, slug string) (string, error) {
-	libs, err := w.base.Store.Libraries(ctx, r.ProjectKey, slug)
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: libraries read failed, drain paused", logging.Err(err))
-		return "", errStop
-	}
-	return libraries(libs, slug == ""), nil
 }
 
 // repoSummaries is the project's source repositories with their summaries.
@@ -1718,13 +1713,28 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 	).Replace(prompts.Describe)
 }
 
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others, libs string, repoSlugs []string, l config.Limits) string {
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, libs []store.Library, repoSlugs []string,
+	l config.Limits) string {
+	nodes, edges := mapRoom(libs, len(repoSlugs))
 	return strings.NewReplacer(
-		"{libraries}", libs, "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
+		"{libraries}", libraries(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
 		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
-		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),
+		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(nodes), "{map_max_edges}", fmt.Sprint(edges),
 	).Replace(prompts.Project)
+}
+
+// mapRoom is the nodes and edges the model may draw on the system map:
+// what one drawing holds less what code adds for the libraries (a node
+// each, an edge per user), so the map with them still fits; never fewer
+// than the repositories need, the UI then showing as many libraries as
+// fit.
+func mapRoom(libs []store.Library, repos int) (int, int) {
+	edges := diagram.DrawMaxEdges
+	for _, l := range libs {
+		edges -= len(l.UsedBy)
+	}
+	return max(diagram.DrawMaxNodes-len(libs), repos), max(edges, repos)
 }
 
 func renderRepoMap(r store.BaselineRun, page store.Page) string {

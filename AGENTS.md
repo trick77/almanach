@@ -69,6 +69,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
   Left part/no map at head: ≤3 auto retries, rule `LeftParts`. Folder `system` off (sources
   on only): no project call/page; on again = `project_due` fold; run checks: `projectStands`.
-- Deps: code's, never model's. Manifests depth ≤1, poller at head; edges joined at read, never
-  stored; ambiguous coord = no edge. One clone URL = one source row (`CloneKey`). Library
-  summaries = step context; map zone `libraries` UI-drawn, never stored or model's.
+- Deps code's: manifests depth ≤1, poller; edges joined at read, never stored; ambiguous = no
+  edge; 1 clone URL = 1 source row. Libs: step context; map zone UI-drawn, never stored.

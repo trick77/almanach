@@ -539,9 +539,13 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	out.Repos = repoBodies(repos)
-	if out.Libraries, err = d.libraries(ctx, key); err != nil {
-		httpx.ServerError(w, r, err, "libraries")
-		return
+	// The libraries are the map's zone: no map, none asked for.
+	out.Libraries = []libraryBody{}
+	if drawn != nil {
+		if out.Libraries, err = d.libraries(ctx, key); err != nil {
+			httpx.ServerError(w, r, err, "libraries")
+			return
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

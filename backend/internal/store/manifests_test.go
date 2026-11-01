@@ -319,9 +319,20 @@ func TestLibraries(t *testing.T) {
 	if err != nil || len(libs) != 2 || libs[0].Slug != "fetch" || libs[1].Slug != "wire" {
 		t.Fatalf("loom's libraries = %+v %v, want fetch and wire", libs, err)
 	}
+	// wire is described: its summary comes along.
+	pid, rid, _, _ := s.RepoIDs(ctx, "libs", "wire")
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO revisions (id, scope, project_id, repo_id, revision, summary, statements, chars, source_kind, source_commit, created_at)
+		VALUES (900, 'repository', ?, ?, 1, 'Ein Client.', '[]', 11, 'baseline', 'c0ffee', '2026-11-01T17:00:00.000000000Z')`, pid, rid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO pages (scope, project_id, repo_id, current_revision_id, updated_at)
+		VALUES ('repository', ?, ?, 900, '2026-11-01T17:00:00.000000000Z')`, pid, rid); err != nil {
+		t.Fatal(err)
+	}
 	libs, err = s.Libraries(ctx, "apps", "")
-	if err != nil || len(libs) != 1 || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 {
-		t.Fatalf("apps' libraries = %+v %v, want wire used by loom and rongo", libs, err)
+	if err != nil || len(libs) != 1 || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 || libs[0].Summary != "Ein Client." {
+		t.Fatalf("apps' libraries = %+v %v, want wire, described, used by loom and rongo", libs, err)
 	}
 	if libs, err := s.Libraries(ctx, "libs", "wire"); err != nil || len(libs) != 0 {
 		t.Fatalf("wire's libraries = %+v %v, want none", libs, err)

@@ -64,11 +64,45 @@ describe("withLibraries", () => {
     ).toHaveLength(1);
   });
 
-  it("shows the stored map when the libraries would not fit", () => {
+  it("draws as many libraries as one drawing holds", () => {
     const many = Array.from({ length: 20 }, (_, i) => ({
       ...llmwire,
       slug: `lib${i}`,
     }));
-    expect(withLibraries(map, many)).toBe(map);
+    // 2 edges stored, 2 per library within 24: eleven.
+    const ir = withLibraries(map, many);
+    expect(ir.nodes.filter((n) => n.zone === "libraries")).toHaveLength(11);
+    expect(ir.nodes.some((n) => n.id === "library:tools/lib10")).toBe(true);
+  });
+
+  it("leaves a node alone that is no library use", () => {
+    // An API gateway called over HTTP, a library slug "gateway" aside.
+    const gw: FlowIR = {
+      ...map,
+      nodes: [
+        ...map.nodes,
+        { id: "gateway", label: "gateway", shape: "pill", zone: "external" },
+      ],
+      edges: [
+        ...map.edges,
+        {
+          from: "rongo",
+          to: "gateway",
+          label: "HTTP",
+          dashed: false,
+          head: "end",
+        },
+      ],
+    };
+    const ir = withLibraries(gw, [{ ...llmwire, slug: "gateway" }]);
+    expect(ir.nodes.some((n) => n.id === "gateway")).toBe(true);
+    expect(ir.edges.some((e) => e.to === "gateway")).toBe(true);
+  });
+
+  it("matches a slug two libraries share only by project and slug", () => {
+    const two = [llmwire, { ...llmwire, project: "other" }];
+    const ir = withLibraries(map, two);
+    // "llmwire" alone names neither: the model's node stays.
+    expect(ir.nodes.some((n) => n.id === "wire")).toBe(true);
   });
 });

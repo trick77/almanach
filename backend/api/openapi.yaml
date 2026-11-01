@@ -2130,7 +2130,8 @@ components:
             Repositories of other projects this project's repositories use,
             by their manifests, each with its users here: the system map's
             libraries zone, drawn by the UI, never stored in the map. Empty
-            with the sources off and for repositories that stand alone.
+            with the sources off and whenever `map` is null (repositories
+            that stand alone have none).
           items:
             $ref: "#/components/schemas/Library"
         problems:
