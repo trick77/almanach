@@ -311,7 +311,8 @@ pitfalls, extensions, components, entities (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame; a statement's text and the summary
 go in in their stored layout (paragraphs, `- ` and `N. ` items, bold,
-code spans, a statement's `####` sub-headings under its `###` name),
+code spans, `####` sub-headings: a statement's under its `###` name, the
+summary's above the `##` kinds),
 each line's indent dropped and any other line that would read as
 structure (a heading, quote, fence, list, rule, underline, HTML) escaped
 with a backslash, and a fence or code span
@@ -1084,13 +1085,15 @@ so the choice is not undone as a cleanup.
   login is the backend's OIDC flow, the UI only gates on `/api/me`, names
   the reader and offers Abmelden in oidc mode. The wiki
   pages are read-only; the Quellen section configures the clones, and is
-  the only place a browser writes. Statement text and summaries carry a
+  the only place a browser writes. Statement text and summaries carry one
   layout for the human reader: paragraphs, flat lists, bold terms, code
-  spans and, in a statement, one sub-heading level. The backend
+  spans and one sub-heading level. A summary is never one block of prose:
+  the prompts put each part of its order under its own `####` heading, the
+  repositories' roles and a repository's main parts as a list. The backend
   (`lang.Laid`, `internal/markup`) puts what the model writes into that
   stored form after redaction (a key's PEM shape holds only as written)
-  and before the Swiss rule reads it: any heading level becomes `####`
-  (dropped in a summary), `*` bullets `-`, a closed fence code spans. The UI
+  and before the Swiss rule reads it: any heading level becomes `####`,
+  `*` bullets `-`, a closed fence code spans. The UI
   (`format.ts` `blocks`) reads only that form, so markup beyond it (a
   quote, a table, HTML) stays text and cannot change the page's shape.
   Every store read of a page's text and summary passes `lang.Relaid`, so

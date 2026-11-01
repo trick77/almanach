@@ -4,47 +4,46 @@ import "testing"
 
 func TestNormalize(t *testing.T) {
 	for _, c := range []struct {
-		name     string
-		in       string
-		headings bool
-		want     string
+		name string
+		in   string
+		want string
 	}{
-		{"paragraphs as written", "Erster Satz.\nZweite Zeile.\n\n\n  Zweiter Absatz.  ", true,
+		{"paragraphs as written", "Erster Satz.\nZweite Zeile.\n\n\n  Zweiter Absatz.  ",
 			"Erster Satz.\nZweite Zeile.\n\nZweiter Absatz."},
-		{"bullets of any marker", "Drei Fälle:\n* eins\n+ zwei\n  - drei", true,
+		{"bullets of any marker", "Drei Fälle:\n* eins\n+ zwei\n  - drei",
 			"Drei Fälle:\n\n- eins\n- zwei\n- drei"},
-		{"numbers with a dot", "1) erst\n2. dann", true, "1. erst\n2. dann"},
-		{"continuation joins its item", "- eins\n  weiter\n- zwei\n\nDanach.", true,
+		{"numbers with a dot", "1) erst\n2. dann", "1. erst\n2. dann"},
+		{"continuation joins its item", "- eins\n  weiter\n- zwei\n\nDanach.",
 			"- eins weiter\n- zwei\n\nDanach."},
-		{"heading any level in text", "Vorher.\n## Ablauf ##\nNachher.\n# **Fehler**", true,
+		{"heading any level in text", "Vorher.\n## Ablauf ##\nNachher.\n# **Fehler**",
 			"Vorher.\n\n#### Ablauf\n\nNachher.\n\n#### Fehler"},
-		{"a summary holds no heading", "### Zweck\nDas System.\n## Der **neue** Teil", false, "Das System."},
-		{"bold and code stay inline", "Die **eine** Regel: `strict`.", true, "Die **eine** Regel: `strict`."},
-		{"fence lines become code spans", "So:\n```sh\n# install\nmake `x`\n```\nFertig.", true,
+		{"a summary laid out as a statement", "### Zweck\nDas **System** für alle.\n## Rollen\n* `api`: Dienst\n* `ui`: Oberfläche",
+			"#### Zweck\n\nDas **System** für alle.\n\n#### Rollen\n\n- `api`: Dienst\n- `ui`: Oberfläche"},
+		{"bold and code stay inline", "Die **eine** Regel: `strict`.", "Die **eine** Regel: `strict`."},
+		{"fence lines become code spans", "So:\n```sh\n# install\nmake `x`\n```\nFertig.",
 			"So:\n\n`# install`\n`` make `x` ``\n\nFertig."},
-		{"no heading without a space", "#Tag und -5 Grad\n1.5 Sekunden", true, "#Tag und -5 Grad\n1.5 Sekunden"},
-		{"quote and table stay text", "> zitiert\n| a | b |", true, "> zitiert\n| a | b |"},
-		{"a bare marker is text", "-\n#", true, "-\n#"},
-		{"a title's own # stays", "## Warum C#\n### F# Interop ##", true, "#### Warum C#\n\n#### F# Interop"},
-		{"a fence never closed is no block", "Vorher.\n```\nText danach.\n- eins", true, "Vorher.\nText danach.\n\n- eins"},
-		{"a fence never closed keeps its line's text", "~~~ Achtung: nie zweimal\nDanach.", true, "Achtung: nie zweimal\nDanach."},
-		{"a fence never closed drops its word", "```go\nfoo()", true, "foo()"},
-		{"fences never closed, one after another", "~~~ ~~~ x y\nDanach.", true, "x y\nDanach."},
-		{"a summary only a heading keeps its title", "## Überblick", false, "Überblick"},
-		{"a text only a fence's word keeps it", "```yaml", true, "yaml"},
-		{"two bold runs in a title stay two", "## **Lesen** und **Schreiben**", true, "#### **Lesen** und **Schreiben**"},
-		{"a rule is no item, a block's end", "Eins.\n* * *\nZwei.\n- - -", true, "Eins.\n\nZwei."},
-		{"a blank line between items keeps one list", "- a\n\n- b\n\nDanach.", true, "- a\n- b\n\nDanach."},
-		{"an item that would read as a rule is text", "* --", true, "* --"},
-		{"a fence never closed keeps a word that is no language", "```Hinweis:\nText", true, "Hinweis:\nText"},
-		{"a summary heading only of a fence is gone", "## ```", false, ""},
+		{"no heading without a space", "#Tag und -5 Grad\n1.5 Sekunden", "#Tag und -5 Grad\n1.5 Sekunden"},
+		{"quote and table stay text", "> zitiert\n| a | b |", "> zitiert\n| a | b |"},
+		{"a bare marker is text", "-\n#", "-\n#"},
+		{"a title's own # stays", "## Warum C#\n### F# Interop ##", "#### Warum C#\n\n#### F# Interop"},
+		{"a fence never closed is no block", "Vorher.\n```\nText danach.\n- eins", "Vorher.\nText danach.\n\n- eins"},
+		{"a fence never closed keeps its line's text", "~~~ Achtung: nie zweimal\nDanach.", "Achtung: nie zweimal\nDanach."},
+		{"a fence never closed drops its word", "```go\nfoo()", "foo()"},
+		{"fences never closed, one after another", "~~~ ~~~ x y\nDanach.", "x y\nDanach."},
+		{"a text only a heading is that heading", "## Überblick", "#### Überblick"},
+		{"a text only a fence's word keeps it", "```yaml", "yaml"},
+		{"two bold runs in a title stay two", "## **Lesen** und **Schreiben**", "#### **Lesen** und **Schreiben**"},
+		{"a rule is no item, a block's end", "Eins.\n* * *\nZwei.\n- - -", "Eins.\n\nZwei."},
+		{"a blank line between items keeps one list", "- a\n\n- b\n\nDanach.", "- a\n- b\n\nDanach."},
+		{"an item that would read as a rule is text", "* --", "* --"},
+		{"a fence never closed keeps a word that is no language", "```Hinweis:\nText", "Hinweis:\nText"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := Normalize(c.in, c.headings)
+			got := Normalize(c.in)
 			if got != c.want {
 				t.Errorf("Normalize(%q) = %q, want %q", c.in, got, c.want)
 			}
-			if again := Normalize(got, c.headings); again != got {
+			if again := Normalize(got); again != got {
 				t.Errorf("Normalize not idempotent: %q became %q", got, again)
 			}
 		})
@@ -54,11 +53,11 @@ func TestNormalize(t *testing.T) {
 // A code line with a fence inside stays one code span, never a fence the
 // next Normalize opens.
 func TestNormalizeFenceInsideCode(t *testing.T) {
-	got := Normalize("```\nx ``` y\n```", true)
+	got := Normalize("```\nx ``` y\n```")
 	if want := "```` x ``` y ````"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	if again := Normalize(got, true); again != got {
+	if again := Normalize(got); again != got {
 		t.Fatalf("not idempotent: %q", again)
 	}
 }
@@ -66,7 +65,7 @@ func TestNormalizeFenceInsideCode(t *testing.T) {
 // A fence closes only with at least its own run: a ```` block quoting a
 // ``` one stays code to its end, its # and - lines no heading, no list.
 func TestNormalizeLongFence(t *testing.T) {
-	got := Normalize("````md\n```\n# Titel\n- x\n```\n````\nDanach.", true)
+	got := Normalize("````md\n```\n# Titel\n- x\n```\n````\nDanach.")
 	if want := "```` ``` ````\n`# Titel`\n`- x`\n```` ``` ````\n\nDanach."; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -128,12 +127,11 @@ func TestWords(t *testing.T) {
 func FuzzNormalizeIdempotent(f *testing.F) {
 	for _, s := range []string{"* --", "+ - -", "## ```", "## ~~~", "- a\n\n- b", "```\nx ``` y\n```", "~~~ ~~~ x", "## **a** b **c**",
 		"Fälle:\n* eins\n  weiter\n\n1) zwei", "```go\nfoo", "# Titel\n---\nText", "- # x\n> y", "````md\n```\n# x\n```\n````", "```Hinweis:\nText"} {
-		f.Add(s, true)
-		f.Add(s, false)
+		f.Add(s)
 	}
-	f.Fuzz(func(t *testing.T, s string, headings bool) {
-		once := Normalize(s, headings)
-		if twice := Normalize(once, headings); twice != once {
+	f.Fuzz(func(t *testing.T, s string) {
+		once := Normalize(s)
+		if twice := Normalize(once); twice != once {
 			t.Errorf("Normalize(%q) = %q, again %q", s, once, twice)
 		}
 	})

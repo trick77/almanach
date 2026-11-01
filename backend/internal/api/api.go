@@ -772,10 +772,17 @@ var abbreviations = map[string]bool{
 }
 
 // lead is a summary's opening as plain text, for a list: its first block
-// (a summary holds no heading, markup.Normalize drops one), the layout's
-// marks gone, its lines one line; of a list, its first item.
+// that is no sub-heading (a heading names a part, it opens nothing), the
+// layout's marks gone, its lines one line; of a list, its first item.
 func lead(s string) string {
-	b, _, _ := strings.Cut(strings.TrimSpace(s), "\n\n")
+	blocks := strings.Split(strings.TrimSpace(s), "\n\n")
+	b := blocks[0] // only headings: the first one's title
+	for _, blk := range blocks {
+		if _, h := markup.StoredHeading(strings.TrimSpace(blk)); !h {
+			b = blk
+			break
+		}
+	}
 	first, _, _ := strings.Cut(b, "\n")
 	if _, item, ok := markup.StoredItem(strings.TrimSpace(first)); ok {
 		return markup.Plain(item)

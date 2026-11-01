@@ -36,17 +36,17 @@ func TestProse(t *testing.T) {
 func TestLaidRedactsFirst(t *testing.T) {
 	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIEinventedAAAAAAAAAAAA\n-----END RSA PRIVATE KEY-----" // ship:allow-secret: invented fixture
 	for _, in := range []string{"Schlüssel:\n```\n" + pem + "\n```", "- Schlüssel\n" + pem} {
-		got := Laid(in, true)
+		got := Laid(in)
 		if strings.Contains(got, "MIIE") || !strings.Contains(got, "<redacted>") {
 			t.Errorf("Laid(%q) = %q, want the key redacted", in, got)
 		}
 	}
-	if got, want := Laid("## Grösse\n* **Maße**", true), "#### Grösse\n\n- **Masse**"; got != want {
+	if got, want := Laid("## Grösse\n* **Maße**"), "#### Grösse\n\n- **Masse**"; got != want {
 		t.Errorf("Laid = %q, want %q", got, want)
 	}
 	// A code line with ``` in it becomes a ```` span, which the Swiss rule
 	// reads as a span too, never as a fence that keeps every ß after it.
-	got := Laid("```\nx ``` y\n```\n\nDie Größe.", true)
+	got := Laid("```\nx ``` y\n```\n\nDie Größe.")
 	if want := "```` x ``` y ````\n\nDie Grösse."; got != want {
 		t.Errorf("Laid = %q, want %q", got, want)
 	}

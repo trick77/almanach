@@ -221,8 +221,8 @@ paths:
         and its diagram as a fenced JSON block. A kind without statements
         has no heading. Markdown is the frame; a statement's text and the
         summary go in as stored, in their layout (paragraphs, `- ` and
-        `N. ` list items, `**bold**`, code spans, a statement's `#### `
-        sub-headings), indents dropped and any other line that would read
+        `N. ` list items, `**bold**`, code spans, `#### ` sub-headings),
+        indents dropped and any other line that would read
         as a heading, quote, fence, list, rule, underline or HTML escaped
         with a backslash. A project
         without a revision yet answers 200 with its title and a line saying
@@ -1983,7 +1983,7 @@ components:
           type: integer
         summary:
           type: string
-          description: Laid out as a statement's text, without sub-headings.
+          description: Laid out as a statement's text, sub-headings included.
         statements:
           type: array
           items:

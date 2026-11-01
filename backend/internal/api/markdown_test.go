@@ -177,17 +177,17 @@ func TestMarkdownBearerInOIDC(t *testing.T) {
 }
 
 // Model text never becomes the export's structure beyond its stored layout:
-// a "- " or "N. " item and a statement's "#### " stay; a heading of another
-// level, a #### in a summary, a quote, fence, * item, 1) item or underline
+// a "- " or "N. " item and a "#### " (a statement's, a summary's) stay; a
+// heading of another level, a quote, fence, * item, 1) item or underline
 // line is escaped, a fence in a diagram label outlasted, a backtick in a
 // path kept inside its code span.
 func TestMarkdownEscapesModelText(t *testing.T) {
 	label := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "x ```` y < z", Shape: "step"}}}
-	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel\n#### Auch keiner\n- Punkt",
+	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel\n#### Ein Teil\n- Punkt",
 		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen",
 			Text:  "Satz.\n## Regeln\n#### Ablauf\n```\n> zitiert\n---\n\n    eingerückt\n***\n1. Punkt\n1) Klammer\n* Stern\n<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10",
 			Files: []string{"a`b.go"}, Diagram: label}}}, true)
-	for _, want := range []string{"\\# Kein Titel\n\\#### Auch keiner\n- Punkt\n", "### Zwei Zeilen\n",
+	for _, want := range []string{"\\# Kein Titel\n#### Ein Teil\n- Punkt\n", "### Zwei Zeilen\n",
 		"Satz.\n\\## Regeln\n#### Ablauf\n\\```\n\\> zitiert\n\\---\n\neingerückt\n\\***\n1. Punkt\n1\\) Klammer\n\\* Stern\n\\<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10\n",
 		"Dateien: `` a`b.go ``\n", "`````json\n", `"label": "x ` + "````" + ` y < z"`} {
 		if !strings.Contains(md, want) {

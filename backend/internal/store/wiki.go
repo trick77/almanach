@@ -294,11 +294,11 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	// revision was written after the layout.
 	stored := StoredText{Summary: p.Summary, Texts: make([]string, len(p.Statements))}
 	changed := false
-	p.Summary = lang.Relaid(p.Summary, false)
+	p.Summary = lang.Relaid(p.Summary)
 	changed = p.Summary != stored.Summary
 	for i := range p.Statements {
 		stored.Texts[i] = p.Statements[i].Text
-		p.Statements[i].Text = lang.Relaid(p.Statements[i].Text, true)
+		p.Statements[i].Text = lang.Relaid(p.Statements[i].Text)
 		changed = changed || p.Statements[i].Text != stored.Texts[i]
 	}
 	if changed {

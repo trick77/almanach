@@ -125,7 +125,7 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "Revision %d, Stand %s.\n\n", p.Revision, p.UpdatedAt.UTC().Format("2006-01-02"))
-	if s := prose(p.Summary, false); s != "" {
+	if s := prose(p.Summary); s != "" {
 		b.WriteString(s + "\n\n")
 	}
 	// The sentinel is no map: asked for, not drawn.
@@ -160,7 +160,7 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 }
 
 func writeStatement(b *strings.Builder, s store.Statement) {
-	fmt.Fprintf(b, "### %s\n\n%s\n\n", strings.Join(strings.Fields(s.Name), " "), prose(s.Text, true))
+	fmt.Fprintf(b, "### %s\n\n%s\n\n", strings.Join(strings.Fields(s.Name), " "), prose(s.Text))
 	if len(s.Files) > 0 {
 		files := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
@@ -203,18 +203,18 @@ func writeJSONBlock(b *strings.Builder, d *diagram.Diagram) {
 
 // prose is model-written text in its stored layout (package markup) and
 // nothing more, never the export's structure. Each line loses its indent
-// (no code block). A "- " or "N. " list item and, where headings is set (a
-// statement's text), a "#### " sub-heading under the ### statement name
-// stay as they are; any other line that would open a block as CommonMark
+// (no code block). A "- " or "N. " list item and a "#### " sub-heading (a
+// statement's under its ### name, a summary's above the ## kinds) stay as
+// they are; any other line that would open a block as CommonMark
 // reads it (a heading of another level, quote, fence, * or + item, rule,
 // underline or HTML) gets a backslash before the marker: a backslashed
 // ASCII punctuation mark reads as itself. Text that opens nothing, "-5" or
 // "1.5 Sekunden", stays as written, for the agent reads the raw file.
-func prose(s string, headings bool) string {
+func prose(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i, l := range lines {
 		t := strings.TrimLeft(l, " \t")
-		if _, ok := markup.StoredHeading(t); ok && headings {
+		if _, ok := markup.StoredHeading(t); ok {
 			lines[i] = t
 			continue
 		}

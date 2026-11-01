@@ -224,25 +224,23 @@ export function Inline({
 }
 
 /** Doc renders Almanach's laid-out text, a statement's or a summary's
- *  (blocks): paragraphs, flat lists, **bold**, code spans and, where
- *  headings is set, #### sub-headings; anything else as written. Held at
- *  measure, in the font size the caller's className sets. query sets off
- *  a search's matches in every block. */
+ *  (blocks): paragraphs, flat lists, **bold**, code spans and #### sub-
+ *  headings; anything else as written. Held at measure, in the font size
+ *  the caller's className sets. query sets off a search's matches in every
+ *  block. */
 export function Doc({
   text,
-  headings,
   className = "",
   query = "",
 }: {
   text: string;
-  headings: boolean;
   className?: string;
   query?: string;
 }) {
   const block = "mb-3.5 last:mb-0";
   return (
     <div className={measure + " " + className}>
-      {blocks(text, headings).map((b, i) => {
+      {blocks(text).map((b, i) => {
         switch (b.kind) {
           case "h":
             return (
@@ -290,8 +288,8 @@ export function Doc({
 }
 
 /** Summary is a description's or a note's prose in the serif, ../rongo's
- *  answer column. layout reads a description's summary as Doc does, no
- *  sub-heading; a note's stays Prose. */
+ *  answer column. layout reads a description's summary as Doc does a
+ *  statement's, sub-headings and all; a note's stays Prose. */
 export function Summary({
   text,
   query,
@@ -303,7 +301,7 @@ export function Summary({
 }) {
   const className = "font-serif text-[17px] leading-[1.6] text-ink-prose";
   return layout ? (
-    <Doc text={text} query={query} headings={false} className={className} />
+    <Doc text={text} query={query} className={className} />
   ) : (
     <Prose text={text} query={query} className={className} />
   );

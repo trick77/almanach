@@ -423,7 +423,8 @@ describe("ProjectPage", () => {
         ...project,
         description: {
           ...d,
-          summary: "Der **Kern** der Zahlungen.\n\n- Annahme\n- Abrechnung",
+          summary:
+            "#### Zweck\n\nDer **Kern** der Zahlungen.\n\n#### Rollen\n\n- Annahme\n- Abrechnung",
           statements: [
             {
               ...d.statements[0],
@@ -437,6 +438,8 @@ describe("ProjectPage", () => {
     render(<ProjectPage projectKey="PAY" />);
     await openTab(/Beschreibung/);
     const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
+    expect(within(desc).getByText("Zweck").tagName).toBe("H5");
+    expect(within(desc).getByText("Rollen").tagName).toBe("H5");
     expect(within(desc).getByText("Kern").tagName).toBe("STRONG");
     expect(within(desc).getByText("Abrechnung").tagName).toBe("LI");
     expect(within(desc).getByText("Ablauf").tagName).toBe("H5");
@@ -456,9 +459,7 @@ describe("ProjectPage", () => {
     };
     expect(statementMatches(s, "Mandant kommt")).toBe(true);
     expect(statementMatches(s, "aus X-Ten")).toBe(true);
-    const { container } = render(
-      <Doc text={s.text} headings query="Mandant kommt" />,
-    );
+    const { container } = render(<Doc text={s.text} query="Mandant kommt" />);
     const marks = [...container.querySelectorAll("mark")];
     expect(marks.map((m) => m.textContent)).toEqual(["Mandant", " kommt"]);
     expect(marks[0].closest("strong")).not.toBeNull();
