@@ -13,6 +13,10 @@ import type {
 // The repositories of a folder that is no system: one word for the list,
 // the project header and the source.
 const standaloneRepos = "Einzelne Repositories";
+// What "Bildet ein System" off means, on the source page and the create
+// form alike.
+const standsAlone =
+  "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln.";
 
 export const S = {
   app: "Almanach",
@@ -302,14 +306,11 @@ export const S = {
       off: "Aus",
       hintOn:
         "Almanach beschreibt die Repositories als ein System: eine Projektseite und eine Systemkarte, wie bei einem Bitbucket-Projekt.",
-      hintOff:
-        "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln. Eine frühere Projektseite bleibt gespeichert.",
+      hintOff: `${standsAlone} Eine frühere Projektseite bleibt gespeichert.`,
       meta: (system: boolean) => (system ? "Ein System" : standaloneRepos),
       // The create form's hint for off: a new folder has no page to keep.
-      createHintOff:
-        "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln. Für Repositories, die nichts miteinander zu tun haben, etwa Bibliotheken und Werkzeuge.",
-      createHint:
-        "Später auf der Seite der Quelle umschaltbar. Ein Bitbucket-Projekt ist immer ein System.",
+      createHintOff: `${standsAlone} Für Repositories, die nichts miteinander zu tun haben, etwa Bibliotheken und Werkzeuge.`,
+      createHint: "Später auf der Seite der Quelle umschaltbar.",
     },
     counts: {
       ready: (n: number) => `${n} bereit`,

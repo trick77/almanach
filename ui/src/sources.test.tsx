@@ -229,7 +229,6 @@ describe("SourcesPage", () => {
         token: "pat",
         token_auth: "bearer",
         token_user: "",
-        system: true,
       },
     });
     await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
@@ -275,7 +274,10 @@ describe("SourcesPage", () => {
     expect(
       screen.getByText(/eine Projektseite und eine Systemkarte/),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Aus"));
+    const toggle = screen.getByRole("switch", { name: "Bildet ein System" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(
       screen.getByText(/etwa Bibliotheken und Werkzeuge/),
     ).toBeInTheDocument();

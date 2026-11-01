@@ -10,6 +10,7 @@ import {
 } from "./api";
 import { dayTime } from "./format";
 import { navigateTo, sourcePath } from "./routing";
+import { SystemToggle } from "./SourcePage";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import {
@@ -217,7 +218,7 @@ function NewSourceForm({
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>("bearer");
   const [user, setUser] = useState("");
-  const [system, setSystem] = useState<"on" | "off">("on");
+  const [system, setSystem] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
@@ -239,8 +240,9 @@ function NewSourceForm({
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
-        // A Bitbucket project is always one; the API refuses false for it.
-        system: kind === "bitbucket" || system === "on",
+        // A static folder's choice only: a Bitbucket project takes the
+        // server's rule.
+        ...(kind === "static" ? { system } : {}),
       });
       if (created) onDone(created);
     } catch (e) {
@@ -295,17 +297,9 @@ function NewSourceForm({
         {kind === "static" && (
           <div className="sm:col-span-2">
             <span className={fieldLabel}>{sys.label}</span>
-            <Segmented
-              value={system}
-              onChange={setSystem}
-              options={[
-                { value: "on", label: sys.on },
-                { value: "off", label: sys.off },
-              ]}
-            />
+            <SystemToggle system={system} onSwitch={() => setSystem(!system)} />
             <span className={fieldHint}>
-              {system === "on" ? sys.hintOn : sys.createHintOff}{" "}
-              {sys.createHint}
+              {system ? sys.hintOn : sys.createHintOff} {sys.createHint}
             </span>
           </div>
         )}
