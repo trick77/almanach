@@ -305,7 +305,7 @@ describe("SourcePage baseline", () => {
         slug: "b",
         baseline: {
           ...run,
-          skipped: 6,
+          skipped: 8,
           skipped_parts: [
             { part: "overview" as const, name: "", reason: "ceiling" as const },
             {
@@ -319,6 +319,8 @@ describe("SourcePage baseline", () => {
               reason: "ceiling" as const,
             })),
             { part: "project" as const, name: "", reason: "failed" as const },
+            // A code this bundle does not know yet.
+            { part: "subject" as const, name: "E", reason: "timeout" as never },
           ],
         },
       },
@@ -337,7 +339,9 @@ describe("SourcePage baseline", () => {
     expect(await screen.findByText("Beschreibt 2/3")).toBeInTheDocument();
     expect(screen.getByText("Bei 7e1d9a0 · $0.812 bisher")).toBeInTheDocument();
     expect(screen.getByText("Teilweise")).toBeInTheDocument();
-    expect(screen.getByText(/6 Themen übersprungen/)).toBeInTheDocument();
+    // Each part once: the run counted 8 skips over 7 parts.
+    expect(screen.getByText(/7 Teile übersprungen/)).toBeInTheDocument();
+    expect(screen.getByText("Grund nicht erfasst: E")).toBeInTheDocument();
     // The skipped parts by reason, one line each, the run's order kept.
     expect(
       screen.getByText(

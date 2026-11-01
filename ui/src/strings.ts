@@ -352,16 +352,18 @@ export const S = {
     },
     at: (sha: string) => `Bei ${sha}`,
     soFar: "bisher",
+    // Parts, not topics: the overview and the project step count too.
     skipped: (n: number) =>
-      n === 1 ? "1 Thema übersprungen" : `${n} Themen übersprungen`,
+      n === 1 ? "1 Teil übersprungen" : `${n} Teile übersprungen`,
     // A skipped part by name: a subject is its own, the overview and the
     // project step are these.
     skippedPart: {
       overview: "Überblick",
       project: "Projekt",
     } satisfies Record<Exclude<SkippedPart["part"], "subject">, string>,
-    // A reason's names past the first few, counted.
-    moreParts: (n: number) => `und ${n} weitere`,
+    // One reason's line: its first names, the rest counted.
+    skipLine: (reason: string, names: string[], more: number) =>
+      `${reason}: ${names.join(", ")}${more > 0 ? ` und ${more} weitere` : ""}`,
     // Why a part was left out, one line per reason in front of its parts;
     // a code the worker adds without copy here fails the typecheck.
     skipReason: {

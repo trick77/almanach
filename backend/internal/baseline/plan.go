@@ -69,20 +69,28 @@ const (
 	SkipNoPage Skip = "no_page"
 )
 
+// Part is which kind of part a run skipped, as the source page names it.
+type Part string
+
+const (
+	PartOverview Part = "overview"
+	PartSubject  Part = "subject"
+	PartProject  Part = "project"
+)
+
 // SkippedPart is one part a run left out, as the source page lists it.
 type SkippedPart struct {
-	// Part: "overview", "subject" or "project".
-	Part string
+	Part Part
 	// Name is the subject's, "" for the overview and the project.
 	Name string
 	// Reason is the Skip code, "" for a run from before it was kept.
 	Reason Skip
 }
 
-// RunSkips is the parts a stored run plan left out. It decodes the two
-// fields alone, Plan's own tags: the subjects and their file lists are
-// the bulk of a plan, and the source page asks for every repository on
-// every poll.
+// RunSkips is the parts a stored run plan left out. It keeps the two
+// fields alone, by Plan's own tags (TestRunSkips_ReadsAStoredPlan holds
+// them together): the subjects are still scanned, never built, and the
+// source page asks for every repository on every poll.
 func RunSkips(raw json.RawMessage) ([]SkippedPart, error) {
 	var p struct {
 		Skipped []string        `json:"skipped"`
@@ -100,12 +108,12 @@ func RunSkips(raw json.RawMessage) ([]SkippedPart, error) {
 func (p Plan) SkippedParts() []SkippedPart {
 	out := make([]SkippedPart, 0, len(p.Skipped))
 	for _, name := range p.Skipped {
-		s := SkippedPart{Part: "subject", Name: name, Reason: p.Why[name]}
+		s := SkippedPart{Part: PartSubject, Name: name, Reason: p.Why[name]}
 		switch name {
 		case OverviewPart:
-			s.Part, s.Name = "overview", ""
+			s.Part, s.Name = PartOverview, ""
 		case ProjectPart:
-			s.Part, s.Name = "project", ""
+			s.Part, s.Name = PartProject, ""
 		}
 		out = append(out, s)
 	}
