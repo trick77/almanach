@@ -69,3 +69,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
   Left part/no map at head: ≤3 auto retries, rule `LeftParts`. Folder `system` off (sources
   on only): no project call/page; on again = `project_due` fold; run checks: `projectStands`.
+- Deps: code's, never model's. Manifests depth ≤1, poller at head; edges joined at read, never
+  stored; ambiguous coord = no edge. One clone URL = one source row (`CloneKey`).

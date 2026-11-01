@@ -292,7 +292,7 @@ func serve(log *slog.Logger) error {
 			return err
 		}
 		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: bitbucket.New(nil), Key: key, Interval: app.Sources.SyncInterval, Log: log,
-			Describe: clone.Describe{Reconcile: app.Baseline.Reconcile, Wake: worker.Wake}})
+			Describe: clone.Describe{Reconcile: app.Baseline.Reconcile, Wake: worker.Wake}, Manifests: clone.Manifests{Store: db, Reads: git}})
 		worker.WithBaseline(consolidate.Baseline{Store: db, Code: clone.NewCode(poller, git), Catalogue: catalogue, Describer: llm, Limits: app.Baseline})
 		poller.Start(context.WithoutCancel(ctx))
 		// Removals go through the poller, under its disk lock.

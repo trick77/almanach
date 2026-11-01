@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ProjectDetail, RepoDetail } from "./api";
+import type { DependencyEnd, ProjectDetail, RepoDetail } from "./api";
 import { DescriptionView, SourceChip, descriptionRail } from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
@@ -180,6 +180,7 @@ function Body({ data }: { data: RepoDetail }) {
         current: r.slug === data.slug,
       })),
     });
+  groups.push(...depGroups(data));
 
   return (
     <RailPage
@@ -272,6 +273,51 @@ function Body({ data }: { data: RepoDetail }) {
       </div>
     </RailPage>
   );
+}
+
+/** depGroups are the rail's dependency lists: what the repository uses,
+ *  with the version it names and who else uses each, and what uses it. A
+ *  version the other users do not name is marked. Another project's
+ *  repository is named with its project. */
+export function depGroups(data: RepoDetail): RailGroup[] {
+  const name = (d: DependencyEnd) =>
+    d.project === data.project_key ? d.slug : `${d.project}/${d.slug}`;
+  const groups: RailGroup[] = [];
+  if (data.uses.length > 0)
+    groups.push({
+      title: S.deps.uses,
+      links: data.uses.map((u) => {
+        const odd = u.also.some((o) => o.version !== u.version);
+        return {
+          label: name(u),
+          to: repoPath(u.project, u.slug),
+          current: false,
+          note: u.version || undefined,
+          odd,
+          noteTitle: odd ? S.deps.otherVersion : undefined,
+          sub:
+            u.also.length > 0
+              ? S.deps.also(u.also.map(name).join(", "))
+              : undefined,
+        };
+      }),
+    });
+  if (data.used_by.length > 0)
+    groups.push({
+      title: S.deps.usedBy,
+      links: data.used_by.map((u) => {
+        const odd = data.used_by.some((o) => o.version !== u.version);
+        return {
+          label: name(u),
+          to: repoPath(u.project, u.slug),
+          current: false,
+          note: u.version || undefined,
+          odd,
+          noteTitle: odd ? S.deps.otherVersion : undefined,
+        };
+      }),
+    });
+  return groups;
 }
 
 /** RepoMap is the repository from inside, its zones titled from strings.ts

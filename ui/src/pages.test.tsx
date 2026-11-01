@@ -109,6 +109,7 @@ const project: ProjectDetail = {
   map: null,
   map_expected: false,
   map_declined: false,
+  libraries: [],
   repos: [
     {
       slug: "pay-api",
@@ -174,6 +175,8 @@ const repo: RepoDetail = {
   ],
   notes: project.recent_notes,
   map: null,
+  uses: [],
+  used_by: [],
 };
 
 /** openTab switches a page to one of its tabs, as a reader does. */

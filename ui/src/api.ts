@@ -130,6 +130,8 @@ export interface ProjectDetail {
    *  and no run is promised to draw one. */
   map_declined: boolean;
   repos: Repo[];
+  /** Repositories of other projects this project's repositories use. */
+  libraries: Library[];
   problems: Problem[];
   problem_window_days: number;
   recent_notes: NoteSummary[];
@@ -157,6 +159,42 @@ export interface RepoDetail {
   /** The repository map, the repository from inside: zones entry, parts,
    *  stores and external. null before a baseline run drew one. */
   map: FlowIR | null;
+  /** The source repositories this one uses, by its manifests. */
+  uses: Use[];
+  /** The source repositories that use this one. */
+  used_by: DependencyEnd[];
+}
+
+/** One end of a dependency: version is what the user's manifest names, as
+ *  written, "" when none. */
+export interface DependencyEnd {
+  project: string;
+  slug: string;
+  version: string;
+}
+
+/** A library a repository uses, with the library's other users. */
+export interface Use extends DependencyEnd {
+  also: DependencyEnd[];
+}
+
+export interface Library {
+  project: string;
+  slug: string;
+  used_by: DependencyEnd[];
+}
+
+export interface RepoRef {
+  project: string;
+  slug: string;
+}
+
+/** GET /api/dependencies: joined from the manifests at read time. */
+export interface Dependencies {
+  repos: RepoRef[];
+  edges: { from: RepoRef; to: RepoRef; version: string; coords: string[] }[];
+  /** Coordinates several repositories provide: no edge to any of them. */
+  ambiguous: { coord: string; providers: RepoRef[] }[];
 }
 
 export interface Bugfix {

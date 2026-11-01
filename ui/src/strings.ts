@@ -20,8 +20,31 @@ export const S = {
     label: "Seiten",
     projects: "Projekte",
     sources: "Quellen",
+    deps: "Abhängigkeiten",
     queue: "Warteschlange",
     faq: "FAQ",
+  },
+  deps: {
+    title: "Abhängigkeiten",
+    what: "die Abhängigkeiten",
+    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json, im Wurzelverzeichnis oder eine Ebene darunter) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
+    disabled:
+      "Abhängigkeiten gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
+    empty:
+      "Noch keine Abhängigkeit: kein Repository der Quellen verwendet ein anderes, oder die Manifeste sind noch nicht gelesen.",
+    graph: "Graph",
+    tooLarge: (n: number) =>
+      `${n} Repositories sind zu viele für einen Graphen; die Tabelle zeigt alle.`,
+    libraries: "Bibliotheken",
+    headers: ["Bibliothek", "Verwendet von", "Version"],
+    ambiguous: "Mehrdeutig",
+    ambiguousHint:
+      "Diese Koordinaten liefern mehrere Repositories (ein Fork, eine Kopie). Almanach kann nicht wissen, welches gemeint ist, und zieht zu keinem eine Kante.",
+    uses: "Verwendet",
+    usedBy: "Verwendet von",
+    also: (names: string) => `auch ${names}`,
+    otherVersion: "Andere Version als bei den übrigen Nutzern",
+    noVersion: "–",
   },
   common: {
     loading: "Lädt …",
@@ -101,6 +124,11 @@ export const S = {
       repositories: "Repositories",
       stores: "Datenspeicher",
       external: "Externe Systeme",
+    } as Record<string, string>,
+    // The dependency graph's zones by id, drawn by code.
+    depZones: {
+      users: "Nutzer",
+      libraries: "Bibliotheken",
     } as Record<string, string>,
     // A repository map's zones by id, the same rule.
     repoZones: {

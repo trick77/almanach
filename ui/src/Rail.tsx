@@ -66,8 +66,21 @@ export interface RailItem {
 export interface RailGroup {
   title: ReactNode;
   items?: RailItem[];
-  /** links are pages, not sections: the project's other repositories. */
-  links?: { label: string; to: string; current: boolean }[];
+  /** links are pages, not sections: the project's other repositories, the
+   *  ones this repository uses or is used by. */
+  links?: RailLink[];
+}
+
+export interface RailLink {
+  label: string;
+  to: string;
+  current: boolean;
+  /** note sits on the right, like a count: a version. odd marks it. */
+  note?: string;
+  odd?: boolean;
+  noteTitle?: string;
+  /** sub is a line under the label: the library's other users. */
+  sub?: string;
 }
 
 /** Rail is the search and the sections. A section in the other tab
@@ -229,9 +242,30 @@ export function Rail({
                     : "border-transparent text-muted hover:text-ink")
                 }
               >
-                <span aria-current={l.current ? "page" : undefined}>
-                  {l.label}
+                <span className="flex items-baseline gap-2">
+                  <span
+                    className="min-w-0 truncate"
+                    aria-current={l.current ? "page" : undefined}
+                  >
+                    {l.label}
+                  </span>
+                  {l.note !== undefined && (
+                    <span
+                      className={
+                        "ml-auto shrink-0 text-[11.5px] tabular-nums " +
+                        (l.odd ? "text-ochre" : "text-faint")
+                      }
+                      title={l.noteTitle}
+                    >
+                      {l.note}
+                    </span>
+                  )}
                 </span>
+                {l.sub !== undefined && (
+                  <span className="block truncate font-sans text-[12px] text-faint">
+                    {l.sub}
+                  </span>
+                )}
               </Link>
             ))}
           </div>

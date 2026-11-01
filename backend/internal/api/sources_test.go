@@ -34,6 +34,9 @@ type fakeSources struct {
 	// rename must refuse.
 	ids   map[string]int64
 	taken map[string]bool
+	// cloned are clone URLs another source clones, by URL: an add or a
+	// rename onto one is refused.
+	cloned map[string]*store.ClonedElsewhereError
 }
 
 func newFakeSources() *fakeSources {
@@ -96,6 +99,9 @@ func (f *fakeSources) RenameProject(_ context.Context, key, to string) (int64, e
 	return f.ids[to], nil
 }
 func (f *fakeSources) RenameRepo(_ context.Context, key, slug, to, cloneURL string) error {
+	if e := f.cloned[cloneURL]; e != nil {
+		return e
+	}
 	if f.taken[key+"/"+to] {
 		return store.ErrNameTaken
 	}
@@ -163,6 +169,9 @@ func (f *fakeSources) AddSourceRepo(_ context.Context, r store.SourceRepo) error
 	// The store's order: the host first, then the slug's uniqueness.
 	if err := store.OneHost(f.repos[r.ProjectKey], r.CloneURL); err != nil {
 		return err
+	}
+	if e := f.cloned[r.CloneURL]; e != nil {
+		return e
 	}
 	if f.taken[r.ProjectKey+"/"+r.Slug] {
 		return store.ErrNameTaken
