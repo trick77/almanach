@@ -115,7 +115,7 @@ func TestGate(t *testing.T) {
 	if rec := serve(h, "/api/projects", ck); rec.Code != http.StatusOK || rec.Body.String() != "jan@example.com" {
 		t.Errorf("with a cookie = %d %q, want 200 and the reader", rec.Code, rec.Body.String())
 	}
-	for _, p := range []string{"/api/auth/login", "/api/auth/callback", "/webhooks/noergler", "/auth/ping", "/healthz", "/readyz", "/", "/projekte/PAY", "/apix"} {
+	for _, p := range []string{"/api/auth/login", "/api/auth/callback", "/webhooks/noergler", "/auth/ping", "/healthz", "/readyz", "/", "/projects/PAY", "/apix"} {
 		if rec := serve(h, p, nil); rec.Code != http.StatusOK {
 			t.Errorf("%s without a cookie = %d, want through", p, rec.Code)
 		}

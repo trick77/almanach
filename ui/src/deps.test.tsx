@@ -158,7 +158,7 @@ describe("DepsPage", () => {
         .getAllByText("llmwire")[0]
         .closest("a")
         ?.getAttribute("href"),
-    ).toBe("/projekte/tools/repos/llmwire");
+    ).toBe("/projects/tools/repos/llmwire");
     expect(screen.getByText("npm:shared")).toBeInTheDocument();
     expect(screen.getByText(/von zwei Quellen geclont/)).toBeInTheDocument();
   });
@@ -195,13 +195,13 @@ describe("RepoPage dependencies", () => {
     serve({ "projects/tools/repos/rongo": repo });
     render(<RepoPage projectKey="tools" slug="rongo" />);
     const link = await screen.findByRole("link", { name: /llmwire/ });
-    expect(link.getAttribute("href")).toBe("/projekte/tools/repos/llmwire");
+    expect(link.getAttribute("href")).toBe("/projects/tools/repos/llmwire");
     expect(within(link).getByText("auch loom")).toBeInTheDocument();
     const version = within(link).getByText("v0.1.6");
     expect(version.className).toMatch(/text-ochre/);
     expect(
       screen.getByRole("link", { name: "apps/chat" }).getAttribute("href"),
-    ).toBe("/projekte/apps/repos/chat");
+    ).toBe("/projects/apps/repos/chat");
   });
 
   it("has no lists for a repository without edges", () => {

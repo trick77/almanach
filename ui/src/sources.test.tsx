@@ -183,7 +183,7 @@ describe("SourcesPage", () => {
     expect(screen.getByText(dayTime(synced))).toBeInTheDocument();
     expect(screen.getByText("SHOP").closest("a")).toHaveAttribute(
       "href",
-      "/quellen/SHOP",
+      "/sources/SHOP",
     );
   });
 
@@ -229,7 +229,7 @@ describe("SourcesPage", () => {
         token_user: "",
       },
     });
-    await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
+    await waitFor(() => expect(window.location.pathname).toBe("/sources/neu"));
   });
 
   it("gives the token the selected kind's hint", async () => {
@@ -654,7 +654,7 @@ describe("SourcePage", () => {
 
   it("renames the source, a change of case included, and moves the address", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
-    window.history.replaceState({}, "", "/quellen/werkzeuge");
+    window.history.replaceState({}, "", "/sources/werkzeuge");
     render(<SourcePage projectKey="werkzeuge" />);
     await screen.findByText("acme-cli");
     const [open] = screen
@@ -681,7 +681,7 @@ describe("SourcePage", () => {
       ]),
     );
     await waitFor(() =>
-      expect(window.location.pathname).toBe("/quellen/Werkzeuge"),
+      expect(window.location.pathname).toBe("/sources/Werkzeuge"),
     );
   });
 
@@ -718,11 +718,11 @@ describe("SourcePage", () => {
 
   it("shows the current key in the address when opened under an old one", async () => {
     serve({ "sources/alt": detail });
-    window.history.replaceState({}, "", "/quellen/alt");
+    window.history.replaceState({}, "", "/sources/alt");
     render(<SourcePage projectKey="alt" />);
     await screen.findByText("acme-cli");
     await waitFor(() =>
-      expect(window.location.pathname).toBe("/quellen/werkzeuge"),
+      expect(window.location.pathname).toBe("/sources/werkzeuge"),
     );
   });
 

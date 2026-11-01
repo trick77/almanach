@@ -186,7 +186,7 @@ func TestSignInReturnsToTheDeepLink(t *testing.T) {
 	var buf bytes.Buffer
 	h := oidcHandler(t, &fakeOIDC{claims: auth.Claims{Subject: "sub-1"}}, testSessions(t), &buf)
 	for next, want := range map[string]string{
-		"/projekte/PAY/repos/api?x=1":   "/projekte/PAY/repos/api?x=1",
+		"/projects/PAY/repos/api?x=1":   "/projects/PAY/repos/api?x=1",
 		"//evil.example.com/":           "/",
 		"https://evil.example.com/":     "/",
 		"/\\evil.example.com":           "/",
