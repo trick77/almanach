@@ -99,9 +99,10 @@ OIDC variables in the container and runs `BACKEND_AUTH_MODE=none`. The
 dev `.env` needs the gateway and the model, nothing else. A variable
 exported in your shell beats both files.
 
-The database lives on the `data` volume (`/data/almanach.db`), the clones
-on the `repos` volume: two volumes, the database alone on its own. A
-backup is the data volume; the clones refill from the forge.
+The database lives in the host folder `data/` (`/data/almanach.db` in the
+container), the clones in `repos/`: two folders, the database alone in its
+own. A backup is `data/`; the clones refill from the forge. A fresh start:
+stack down, both folders emptied, up again.
 
 Open http://localhost:8081/quellen and add a Bitbucket project, or a
 static folder with its repositories entered by hand; each repository's

@@ -41,19 +41,19 @@
 #    internal CA goes there too, with BACKEND_GIT_CA_FILE=/conf/ca.pem in
 #    .env (the path inside the container, never the host's).
 #
-# 3. docker compose up -d: pulls the image if missing, migrate runs, then
+# 3. The database and the clones live in host folders beside this file,
+#    data/ and repos/, owned by the container's user. Create them first:
+#    a bind mount of a missing folder makes Docker create it owned by
+#    root, and migrate then cannot write the database.
+#
+#      mkdir -p data repos && sudo chown 65532:65532 data repos && chmod 700 data repos
+#
+#    A backup is data/; repos/ refills from the forge. A fresh start:
+#    stack down, both folders emptied, up again.
+#
+# 4. docker compose up -d: pulls the image if missing, migrate runs, then
 #    almanach. A new release: docker compose pull && docker compose up -d.
 #    In a checkout, docker compose up -d --build builds it instead.
-#
-# The database and the clones live on the named volumes data and repos,
-# which take uid 65532 from the image on first mount: nothing to chown. A
-# backup is the data volume; the clones refill from the forge. Volumes
-# made by an image that still ran as uid 1000 (0.1.2 and before) belong to
-# it, and migrate then fails on the database; hand them over once, the
-# stack down, outside compose (its cap_drop forbids a chown). The volume
-# names carry the project, the folder's name by default:
-#
-#      docker run --rm --user 0 --entrypoint chown -v almanach_data:/data -v almanach_repos:/app/repos ghcr.io/trick77/almanach:latest -R 65532:65532 /data /app/repos
 #
 # Needs Docker Compose 2.24.4 or later: older versions reject the long
 # env_file form (path/required) and the !override tag of compose.dev.yaml.
@@ -72,7 +72,7 @@ x-almanach: &almanach
 
 services:
   # Same as the init container in the deployment: migrations run before the
-  # service, never inside it. Same image, same data volume.
+  # service, never inside it. Same image, same data folder.
   migrate:
     <<: *almanach
     command: ["migrate"]
@@ -83,7 +83,7 @@ services:
       TMPDIR: /tmp
       BACKEND_LOG_LEVEL: INFO
     volumes:
-      - data:/data
+      - ./data:/data
 
   almanach:
     <<: *almanach
@@ -134,11 +134,11 @@ services:
     volumes:
       # The database alone: the file and its -wal, -shm. Never a shared
       # filesystem: SQLite in WAL needs the locks of one local disk.
-      - data:/data
-      # Every source's clones, p<project id>/r<repo id>. Apart from the database: a
-      # clone volume can be wiped and refilled from the forge, the data
-      # volume cannot.
-      - repos:/app/repos
+      - ./data:/data
+      # Every source's clones, p<project id>/r<repo id>. Apart from the
+      # database: the clones can be wiped and refilled from the forge, the
+      # database cannot.
+      - ./repos:/app/repos
       # The directory, not the file: a bind mount of a file missing on the
       # host makes Docker create a DIRECTORY at that path, and the keys file
       # then reads as "is a directory" forever. Mounting ./conf means a
@@ -162,10 +162,6 @@ services:
       traefik.http.routers.almanach.entrypoints: websecure
       traefik.http.routers.almanach.tls: "true"
       traefik.http.services.almanach.loadbalancer.server.port: "8080"
-
-volumes:
-  data:
-  repos:
 
 networks:
   # Created by the Traefik stack, not by this one.

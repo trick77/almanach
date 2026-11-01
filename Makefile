@@ -51,12 +51,14 @@ test:
 # The local stack: compose.yaml with compose.dev.yaml on top, on
 # 127.0.0.1:8081, no sign-in. compose.dev.env comes after .env, so its
 # stand-ins satisfy compose.yaml's checks; .env holds the gateway and the
-# model. dev-down keeps the volumes.
+# model. data/ and repos/ are created first, so Docker never creates them
+# owned by root; dev-down keeps them.
 DEV_COMPOSE = docker compose --env-file .env --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml
 
 .PHONY: dev dev-down
 dev:
 	@test -f .env || { echo "no .env: cp .env.example .env, then fill in the gateway and the model"; exit 1; }
+	mkdir -p data repos
 	$(DEV_COMPOSE) up --build
 
 dev-down:
