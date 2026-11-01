@@ -1,16 +1,15 @@
 package consolidate
 
 import (
-	"encoding/json"
-
 	"context"
+	"encoding/json"
 	"errors"
-	"github.com/trick77/almanach/internal/baseline"
-	"github.com/trick77/almanach/internal/gitrepo"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/trick77/almanach/internal/baseline"
+	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/store"
 )
