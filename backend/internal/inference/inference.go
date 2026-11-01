@@ -410,7 +410,7 @@ const MergeSchemaName = "almanach_merge"
 // The statement kinds. A repository page holds them all; a project page
 // all but extension, a change recipe inside one repository.
 var (
-	RepoKinds    = []string{"component", "rule", "invariant", "entity", "decision", "extension", "pitfall"}
+	RepoKinds    = []string{"component", "interface", "rule", "invariant", "entity", "decision", "extension", "pitfall"}
 	ProjectKinds = slices.DeleteFunc(slices.Clone(RepoKinds), func(k string) bool { return k == "extension" })
 )
 
