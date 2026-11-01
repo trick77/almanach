@@ -18,9 +18,11 @@ import {
 } from "./ui";
 
 /** The kinds in the order the Markdown export has them: what must not
- *  break and why first, the parts after. */
+ *  break and why first (a public interface is what others rely on not
+ *  breaking), the parts after. */
 const KINDS: Kind[] = [
   "invariant",
+  "interface",
   "rule",
   "decision",
   "pitfall",

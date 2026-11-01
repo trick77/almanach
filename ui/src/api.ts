@@ -34,9 +34,11 @@ export interface Source {
 }
 
 /** decision, extension and pitfall are for the agent changing the code;
- *  extension is a repository's alone, never on a project page. */
+ *  extension is a repository's alone, never on a project page. An
+ *  interface is one a component offers others, never the component. */
 export type Kind =
   | "component"
+  | "interface"
   | "rule"
   | "invariant"
   | "entity"

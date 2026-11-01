@@ -253,9 +253,15 @@ words). The repository summary keeps a fixed order: purpose and boundary,
 structure, key flows, and last and short, working on it (the gate and test
 commands, the conventions, what the repository's agent notes insist on).
 An agent jumps to the end, a newcomer reads from the top. Statements are
-of seven kinds:
+of eight kinds:
 
 - `component`, `entity`: the parts and the things the code works with.
+- `interface`: a public interface a component offers others (an HTTP API,
+  events, a library's exported API, a CLI), never the component itself:
+  who offers it, what it holds, its contract file where there is one, who
+  uses it and what counts as a breaking change. An important artifact of
+  its own, so it has its own section, after the invariants: it is what
+  others rely on not breaking.
 - `rule`, `invariant`: what the code enforces and what must always hold.
 - `decision`: a choice the code embodies, its reason and what was given
   up. Only with a stated reason (a PR's note, the docs, a code comment that
@@ -288,8 +294,8 @@ An agent reads files, not JSON. `GET /api/projects/{key}.md` and
 `GET /api/projects/{key}/repos/{slug}.md` answer the current revision as
 `text/markdown; charset=utf-8`: the title and revision, the summary, the
 project's system map as a fenced `json` block, then the statements
-grouped by kind in the order invariants, rules, decisions, pitfalls,
-extensions, components, entities (a kind without statements has no
+grouped by kind in the order invariants, interfaces, rules, decisions,
+pitfalls, extensions, components, entities (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame; a statement's text and the summary
 go in in their stored layout (paragraphs, `- ` and `N. ` items, bold,
@@ -1136,8 +1142,9 @@ things a change must not undo by accident.
 A rewrite the model returns passes all of these or is rejected whole, with
 the reason in the log and the page unchanged:
 
-- A statement's `kind` is one of `component`, `rule`, `invariant`,
-  `entity`, `decision`, `extension`, `pitfall`; on the project page not
+- A statement's `kind` is one of `component`, `interface`, `rule`,
+  `invariant`, `entity`, `decision`, `extension`, `pitfall`; on the
+  project page not
   `extension`. Any other kind rejects the rewrite.
 - `name` and `text` are trimmed and Swiss-spelled before anything is
   checked; an empty one rejects the rewrite.

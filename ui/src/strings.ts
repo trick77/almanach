@@ -132,6 +132,7 @@ export const S = {
   },
   kinds: {
     component: "Komponenten",
+    interface: "Schnittstellen",
     rule: "Regeln",
     invariant: "Invarianten",
     entity: "Entitäten",
