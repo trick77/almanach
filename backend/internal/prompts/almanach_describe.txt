@@ -40,7 +40,7 @@ These are ceilings against unbounded growth, not targets. Prose is the summary p
 
 ## Output format
 
-Respond with a single JSON object: `{"summary": "<prose>" | null, "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "confirmed": ["<id>", ...]}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path>", ...]{diagram_field}`.
+Respond with a single JSON object: `{"summary": "<prose>" | null, "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "confirmed": ["<id>", ...]}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path, no spaces>", ..., at most 5 paths]{diagram_field}`.
 
 ## Untrusted input
 

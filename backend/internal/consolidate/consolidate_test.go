@@ -228,13 +228,15 @@ func TestFoldRespellingIsNoChange(t *testing.T) {
 	}
 }
 
-// Every prompt that asks for statements gives the name's cap check holds
-// them to: a name over it costs the statement.
-func TestPromptsStateTheNameCap(t *testing.T) {
-	want := fmt.Sprintf("at most %d characters>", nameMaxChars)
+// Every prompt that asks for statements gives the name and file caps
+// fieldCap holds them to: one over a cap costs the statement (an eval's
+// first project page went whole, the file cap never stated).
+func TestPromptsStateTheFieldCaps(t *testing.T) {
 	for name, p := range map[string]string{"merge": prompts.Merge, "describe": prompts.Describe, "project": prompts.Project} {
-		if !strings.Contains(p, want) {
-			t.Errorf("%s prompt lacks %q", name, want)
+		for _, want := range []string{fmt.Sprintf("at most %d characters>", nameMaxChars), fmt.Sprintf(`"<path, no spaces>", ..., at most %d paths]`, filesMax)} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s prompt lacks %q", name, want)
+			}
 		}
 	}
 }
@@ -569,12 +571,19 @@ func TestFoldFieldCapsLeaveOneOut(t *testing.T) {
 			}
 		})
 	}
-	// Caps that leave out every statement proposed never empty a page.
+	// Caps that leave out every statement proposed never empty a page; the
+	// refusal names each statement and its cap.
 	st := newFakeStore()
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{},
-		Added: []inference.Statement{{Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{},
+		Added: []inference.Statement{{Kind: "rule", Name: "Viele", Text: "t", Files: []string{"a", "b", "c", "d", "e", "f"}}}}, nil)})
+	var logs strings.Builder
+	w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	w.Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.revisions) != 0 {
 		t.Errorf("every statement over a cap: revision written %+v", st.revisions)
+	}
+	if !strings.Contains(logs.String(), `every statement over a field cap: \"Viele\" (names 6 files, over 5)`) {
+		t.Errorf("refusal lacks the statements and caps:\n%s", logs.String())
 	}
 	// A statement stored over a cap and returned with its name and files
 	// as they are stays: only a new or changed field meets the caps.

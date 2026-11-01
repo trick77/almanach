@@ -632,9 +632,11 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			s.Sources = []store.Source{src}
 		}
 	}
-	// Caps that left out every statement proposed never empty a page.
+	// Caps that left out every statement proposed never empty a page. The
+	// refusal names them: logLeftOut never runs on a refused rewrite, and
+	// an eval's first project page went with no trace of which cap.
 	if len(proposed) > 0 && len(out) == 0 {
-		return nil, leftOutParts{}, "every statement over a field cap"
+		return nil, leftOutParts{}, "every statement over a field cap: " + strings.Join(leftOut.overCap, ", ")
 	}
 	return out, leftOut, ""
 }
