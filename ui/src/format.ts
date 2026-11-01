@@ -35,12 +35,23 @@ function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
-/** money shows a USD string as the API sends it (3 decimals, never a
- *  float) with the sign in front; absent means the gateway did not price
- *  the call. */
+/** money shows a USD string as the API sends it (3 decimals) at 2,
+ *  rounded half up on the digits, never through a float, with the sign in
+ *  front; absent means the gateway did not price the call. */
 export function money(usd: string | undefined | null): string {
   if (usd === undefined || usd === null || usd === "") return S.note.unpriced;
-  return `$${usd}`;
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(usd);
+  if (!m) return `$${usd}`;
+  const [, sign, whole, frac = ""] = m;
+  // The amount as an integer of its smallest unit, then of cents: digit
+  // strings stay exact well past any bill.
+  const scale = Math.max(frac.length, 2);
+  const units = Number(whole + frac.padEnd(scale, "0"));
+  const per = 10 ** (scale - 2);
+  const cents = Math.floor((units + Math.floor(per / 2)) / per);
+  const digits = String(cents).padStart(3, "0");
+  const shown = `${digits.slice(0, -2)}.${digits.slice(-2)}`;
+  return `${cents === 0 ? "" : sign}$${shown}`;
 }
 
 /** share is a percentage of a whole, rounded, or null without a whole. */

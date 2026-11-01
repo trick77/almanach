@@ -267,7 +267,7 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     expect(await screen.findByText("Beschrieben")).toBeInTheDocument();
-    expect(screen.getByText(/^Bei 5c3b2a1 · \$2\.418 · /)).toBeInTheDocument();
+    expect(screen.getByText(/^Bei 5c3b2a1 · \$2\.42 ·/)).toBeInTheDocument();
     expect(screen.getByText("Noch nicht")).toBeInTheDocument();
     expect(screen.getByText(/1 beschrieben/)).toBeInTheDocument();
     // The clone without a head cannot be described yet.
@@ -353,7 +353,7 @@ describe("SourcePage baseline", () => {
     serve({ "sources/werkzeuge": { ...detail, repos } });
     render(<SourcePage projectKey="werkzeuge" />);
     expect(await screen.findByText("Beschreibt 2/3")).toBeInTheDocument();
-    expect(screen.getByText("Bei 7e1d9a0 · $0.812 bisher")).toBeInTheDocument();
+    expect(screen.getByText("Bei 7e1d9a0 · $0.81 bisher")).toBeInTheDocument();
     expect(screen.getByText("Teilweise")).toBeInTheDocument();
     // Each part once: the run counted 8 skips over 7 parts.
     expect(screen.getByText(/7 Teile übersprungen/)).toBeInTheDocument();
@@ -517,7 +517,7 @@ describe("SourcePage", () => {
       screen.getByPlaceholderText("https://github.com/acme/acme-cli.git"),
       { target: { value: "http://x" } },
     );
-    fireEvent.click(screen.getByText("Hinzufügen und klonen"));
+    fireEvent.click(screen.getByText("Hinzufügen und clonen"));
     expect(
       await screen.findByText("clone_url: an https URL without credentials"),
     ).toBeInTheDocument();
