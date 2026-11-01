@@ -81,7 +81,7 @@ export function RepoPage({
         </div>
       </div>
     );
-  return <Body data={data} />;
+  return <Body data={data} single={single} />;
 }
 
 function RepoCrumbs({
@@ -110,7 +110,7 @@ function RepoCrumbs({
   );
 }
 
-function Body({ data }: { data: RepoDetail }) {
+function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useHashTab(TABS, DESCRIPTION);
   const [query, setQuery] = useState("");
@@ -123,7 +123,9 @@ function Body({ data }: { data: RepoDetail }) {
     (p) => p.repo_slug === data.slug,
   );
   // A project of one: its page is this one, at the project's path.
-  const single = project?.single ?? false;
+  // Known at once when the project page renders this one; else when the
+  // project detail lands.
+  const single = given || (project?.single ?? false);
   useCanonical(single ? projectPath(data.project_key) : null);
   const lastMerge = data.last_merge;
   const current = data.description?.revision ?? 0;

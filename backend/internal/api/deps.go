@@ -154,8 +154,8 @@ type sharedBody struct {
 	UsedBy  []repoRefBody `json:"used_by"`
 }
 
-// shared is the project's shared repositories for its map, none with the sources
-// off. The caller asks only with a map drawn (a standalone project has
+// shared is the project's shared repositories for its map, none with the
+// sources off. The caller asks only with a map drawn (a project of one has
 // none).
 func (d Deps) shared(ctx context.Context, key string) ([]sharedBody, error) {
 	out := []sharedBody{}

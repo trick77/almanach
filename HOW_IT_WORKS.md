@@ -1093,10 +1093,8 @@ so the choice is not undone as a cleanup.
   (dropped in a summary), `*` bullets `-`, a closed fence code spans. The UI
   (`format.ts` `blocks`) reads only that form, so markup beyond it (a
   quote, a table, HTML) stays text and cannot change the page's shape.
-  Every store read of a page's text and summary passes `lang.Relaid`, so
-  a revision written before the layout reads as a new one does, to the
-  UI, the export and the fold alike. A text only laid out anew says
-  nothing new and credits no source. Note text is noergler's and stays
+  Every revision is written in that form, so a read serves it as stored.
+  A text only laid out anew says nothing new and credits no source. Note text is noergler's and stays
   paragraphs.
 - **Almanach clones, noergler reviews.** noergler is the pull request
   agent; it never indexes a repository, that would make no sense for a

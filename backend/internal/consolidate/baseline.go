@@ -1220,19 +1220,24 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 // and a project with no page yet (its second repository just came) is
 // folded whatever a reconcile would skip.
 func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page) (bool, []store.RepoSummary, error) {
+	n, err := w.store.SourceRepoCount(ctx, r.ProjectKey)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project source read failed, drain paused", logging.Err(err))
+		return false, nil, errStop
+	}
+	if store.Single(n) {
+		w.log.InfoContext(ctx, "baseline: project step left out, a project of one")
+		return true, nil, nil
+	}
+	if page.RevisionID == 0 || r.Mode != store.RunReconcile || plan.SummaryChanged {
+		return false, nil, nil
+	}
+	if page.Map != nil {
+		return true, nil, nil
+	}
 	repos, err := w.repoSummaries(ctx, r)
 	if err != nil {
 		return false, nil, err
-	}
-	if len(repos) == 1 {
-		w.log.InfoContext(ctx, "baseline: project step left out, a project of one")
-		return true, repos, nil
-	}
-	if page.RevisionID == 0 || r.Mode != store.RunReconcile || plan.SummaryChanged {
-		return false, repos, nil
-	}
-	if page.Map != nil {
-		return true, repos, nil
 	}
 	return !diagram.MapFits(len(repos)), repos, nil
 }

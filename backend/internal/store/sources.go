@@ -171,17 +171,28 @@ func (s *Store) CreateSource(ctx context.Context, src ProjectSource) error {
 }
 
 // CreateSourceWith creates a static source and its first repository in one
-// transaction: either both are there, or neither, with AddSourceRepo's
-// errors for the repository.
+// transaction: either both are there, or neither. CreateSource's errors are
+// the source's; the repository's come as a *FirstRepoError around
+// AddSourceRepo's, so the caller names the slug, not the key.
 func (s *Store) CreateSourceWith(ctx context.Context, src ProjectSource, first SourceRepo) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		pid, err := createSource(ctx, tx, src)
 		if err != nil {
 			return err
 		}
-		return addSourceRepo(ctx, tx, pid, first)
+		if err := addSourceRepo(ctx, tx, pid, first); err != nil {
+			return &FirstRepoError{Err: err}
+		}
+		return nil
 	})
 }
+
+// FirstRepoError is CreateSourceWith's first repository refused; Err is
+// AddSourceRepo's error for it.
+type FirstRepoError struct{ Err error }
+
+func (e *FirstRepoError) Error() string { return "first repository: " + e.Err.Error() }
+func (e *FirstRepoError) Unwrap() error { return e.Err }
 
 func createSource(ctx context.Context, tx *sql.Tx, src ProjectSource) (int64, error) {
 	self, _, err := projectID(ctx, tx, src.ProjectKey)
@@ -244,9 +255,14 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 	return n == 1, err
 }
 
+// Single is the one rule of a project of one, for every caller (the API,
+// the fold, the run; SingleRepos says the same in SQL): a source with one
+// repository. Its repository's page is the project's, no project page, no
+// project step.
+func Single(sourceRepos int) bool { return sourceRepos == 1 }
+
 // SourceRepoCount is how many source repositories a project has, 0 for a
-// project without a source. One is a project of one: its repository's
-// page is the project's, no project page, no project step.
+// project without a source; Single says what one means.
 func (s *Store) SourceRepoCount(ctx context.Context, key string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_repos WHERE project_id = `+projectByName, key).Scan(&n)

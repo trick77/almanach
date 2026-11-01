@@ -209,12 +209,12 @@ func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
 	p.SkipStep(PartProject, SkipNoPage)
 	p.SkipSubject("Auth", SkipFailed)
 	p.SkipSubject("Auth", SkipCalls)
-	p.SkipStep(PartOverview, SkipCalls)
+	p.SkipStep(PartOverview, SkipBytes)
 	p.SkipStep(PartOverview, SkipCalls)
 	// The run's order, whatever order they were marked in: overview,
 	// subjects, project.
 	want := []SkippedPart{
-		{Part: "overview", Name: "", Reason: SkipCalls},
+		{Part: "overview", Name: "", Reason: SkipBytes},
 		{Part: "subject", Name: "Auth", Reason: SkipFailed},
 		{Part: "project", Name: "", Reason: SkipNoPage},
 	}

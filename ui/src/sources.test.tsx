@@ -273,16 +273,16 @@ describe("SourcesPage", () => {
     const create = screen.getByText("Anlegen und synchronisieren");
     expect(create).toBeDisabled();
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/ipverse/lens.git"),
-      { target: { value: "https://github.com/ipverse/lens-gateway.git" } },
+      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      { target: { value: "https://github.com/acme/acme-gateway.git" } },
     );
-    const slug = screen.getByPlaceholderText("lens") as HTMLInputElement;
-    expect(slug.value).toBe("lens-gateway");
+    const slug = screen.getByPlaceholderText("acme-api") as HTMLInputElement;
+    expect(slug.value).toBe("acme-gateway");
     // Typed by hand, the slug stays when the URL changes.
     fireEvent.change(slug, { target: { value: "gateway" } });
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/ipverse/lens.git"),
-      { target: { value: "https://github.com/ipverse/lens-gateway" } },
+      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      { target: { value: "https://github.com/acme/acme-gateway" } },
     );
     expect(slug.value).toBe("gateway");
     fireEvent.click(create);
@@ -290,7 +290,7 @@ describe("SourcesPage", () => {
     expect(writes[0]?.body).toMatchObject({
       project_key: "gateway",
       kind: "static",
-      clone_url: "https://github.com/ipverse/lens-gateway",
+      clone_url: "https://github.com/acme/acme-gateway",
       slug: "gateway",
     });
   });

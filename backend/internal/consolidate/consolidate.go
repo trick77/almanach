@@ -423,7 +423,7 @@ func (w *Worker) single(ctx context.Context, key string) (bool, error) {
 		return false, nil
 	}
 	n, err := w.store.SourceRepoCount(ctx, key)
-	return n == 1, err
+	return store.Single(n), err
 }
 
 // singleProject stands in the merge prompt for the project description of

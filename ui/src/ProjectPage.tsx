@@ -75,7 +75,7 @@ export function ProjectPage({ projectKey }: { projectKey: string }) {
       </div>
     );
   // A project of one: its repository's page is the project's.
-  if (data.single && data.repos.length === 1)
+  if (data.single && data.repos[0])
     return <RepoPage projectKey={data.key} slug={data.repos[0].slug} single />;
   return <Body data={data} />;
 }

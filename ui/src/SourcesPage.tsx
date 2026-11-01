@@ -300,7 +300,7 @@ function NewSourceForm({
                   setUrl(e.target.value);
                   if (!keyTyped) setKey(slugFromURL(e.target.value));
                 }}
-                placeholder="https://github.com/ipverse/lens.git"
+                placeholder="https://github.com/acme/acme-api.git"
               />
               <span className={fieldHint}>{f.firstRepoHint}</span>
             </label>
@@ -315,7 +315,7 @@ function NewSourceForm({
                   setKey(e.target.value);
                   setKeyTyped(e.target.value !== "");
                 }}
-                placeholder="lens"
+                placeholder="acme-api"
               />
               <span className={fieldHint}>{f.slugFromURL}</span>
             </label>

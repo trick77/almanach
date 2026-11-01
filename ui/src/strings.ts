@@ -65,7 +65,7 @@ export const S = {
     firstDescription:
       "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Clone bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
-    usedBy: (n: number) => `verwendet von ${n}`,
+    usedBy: (n: number) => `Verwendet von ${n}`,
     problems: (n: number) =>
       n === 0
         ? "keine Problemzonen"

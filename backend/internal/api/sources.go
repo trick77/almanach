@@ -440,7 +440,12 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	if first && in.ProjectKey == "" {
 		in.ProjectKey = in.Slug
 	}
+	// The kind first, then the URL, then what was derived from it: a 422
+	// names the field that is wrong, not one derived from it.
 	switch {
+	case in.Kind != store.SourceBitbucket && in.Kind != store.SourceStatic:
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "kind: bitbucket or static")
+		return
 	case first && in.Kind != store.SourceStatic:
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: a Bitbucket source lists its repositories itself")
 		return
@@ -455,9 +460,6 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		return
 	case !gitrepo.ValidSegment(in.ProjectKey):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
-		return
-	case in.Kind != store.SourceBitbucket && in.Kind != store.SourceStatic:
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "kind: bitbucket or static")
 		return
 	case in.Kind == store.SourceBitbucket && !gitrepo.ValidHost(in.Host):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an https URL is required for a Bitbucket source")
@@ -497,6 +499,20 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if clonedElsewhere(w, err) {
+			return
+		}
+		// The first repository's refusals are the slug's, as addRepo's.
+		var firstErr *store.FirstRepoError
+		if errors.As(err, &firstErr) {
+			switch {
+			case errors.Is(err, store.ErrExists):
+				httpx.WriteError(w, http.StatusConflict, "a repository with this slug exists")
+			case errors.Is(err, store.ErrNameTaken):
+				httpx.WriteError(w, http.StatusConflict, "slug: another repository had this slug")
+			case otherHost(w, err):
+			default:
+				httpx.ServerError(w, r, err, "create source")
+			}
 			return
 		}
 		if errors.Is(err, store.ErrExists) {
@@ -768,12 +784,13 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 	if in.Slug == "" {
 		in.Slug = store.SlugFromURL(in.CloneURL)
 	}
+	// The URL before the slug, which may be derived from it.
 	switch {
-	case !gitrepo.ValidSegment(in.Slug):
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "slug: letters, digits, dot, dash, underscore; not . or ..")
-		return
 	case !validCloneURL(in.CloneURL):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: an https URL without credentials")
+		return
+	case !gitrepo.ValidSegment(in.Slug):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "slug: letters, digits, dot, dash, underscore; not . or ..")
 		return
 	case strings.ContainsAny(in.Branch, " \t\n") || strings.HasPrefix(in.Branch, "-"):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "branch: not a branch name")

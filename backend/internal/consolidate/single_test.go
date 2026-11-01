@@ -18,6 +18,7 @@ import (
 func TestRun_SingleLeavesTheProjectOut(t *testing.T) {
 	x := newWorld(t, 16)
 	x.st.others = []store.RepoSummary{{Slug: "svc"}}
+	x.st.repoCount = map[string]int{"tools": 1}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}},

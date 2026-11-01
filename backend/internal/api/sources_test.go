@@ -135,13 +135,14 @@ func (f *fakeSources) CreateSource(_ context.Context, s store.ProjectSource) err
 // CreateSourceWith is CreateSource and AddSourceRepo together, neither
 // when either fails.
 func (f *fakeSources) CreateSourceWith(ctx context.Context, s store.ProjectSource, first store.SourceRepo) error {
-	if e := f.cloned[first.CloneURL]; e != nil {
-		return e
-	}
 	if err := f.CreateSource(ctx, s); err != nil {
 		return err
 	}
-	return f.AddSourceRepo(ctx, first)
+	if err := f.AddSourceRepo(ctx, first); err != nil {
+		delete(f.sources, s.ProjectKey)
+		return &store.FirstRepoError{Err: err}
+	}
+	return nil
 }
 func (f *fakeSources) UpdateSourceAccess(_ context.Context, key, host, auth, user string, enc []byte, set bool) (bool, error) {
 	s, ok := f.sources[key]

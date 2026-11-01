@@ -403,7 +403,7 @@ func (d Deps) single(ctx context.Context, key string) (bool, error) {
 		return false, nil
 	}
 	n, err := d.Store.SourceRepoCount(ctx, key)
-	return n == 1, err
+	return store.Single(n), err
 }
 
 // repoBodies is a project's repositories as the wire lists them.

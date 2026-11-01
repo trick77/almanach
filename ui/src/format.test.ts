@@ -223,11 +223,11 @@ describe("labels and tones", () => {
 
 describe("slugFromURL", () => {
   it("is the repository's name, as the backend derives it", () => {
-    expect(slugFromURL("https://github.com/ipverse/lens-gateway.git")).toBe(
-      "lens-gateway",
+    expect(slugFromURL("https://github.com/acme/acme-gateway.git")).toBe(
+      "acme-gateway",
     );
-    expect(slugFromURL("https://github.com/ipverse/lens-gateway/")).toBe(
-      "lens-gateway",
+    expect(slugFromURL("https://github.com/acme/acme-gateway/")).toBe(
+      "acme-gateway",
     );
     expect(slugFromURL(" https://forge.example/scm/abc/Def ")).toBe("Def");
     expect(slugFromURL("https://forge.example")).toBe("");
