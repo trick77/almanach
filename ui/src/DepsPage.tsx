@@ -3,6 +3,7 @@ import type { Dependencies, RepoRef, Sources } from "./api";
 import { Diagram, titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
 import { repoPath } from "./routing";
+import { refName } from "./format";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import {
@@ -29,7 +30,7 @@ const refId = (r: RepoRef) => `${r.project}/${r.slug}`;
  *  repository of the graph is one project's, else project/slug. */
 export function repoNamer(d: Dependencies): (r: RepoRef) => string {
   const one = new Set(d.repos.map((r) => r.project)).size <= 1;
-  return (r) => (one ? r.slug : refId(r));
+  return (r) => (one ? r.slug : refName(r.project, r.slug));
 }
 
 /** versionMax is the most of a version an edge label shows: a git URL or a
@@ -45,7 +46,7 @@ export function shortVersion(v: string): string {
 }
 
 /** depGraph is the graph as a flow, left to right: a repository something
- *  uses stands among the libraries, the rest among the users; an edge per
+ *  is used stands among the shared ones, the rest among the users; an edge per
  *  use, labelled with the version the user names. Only repositories with
  *  an edge are drawn. Built by code from the graph the store joined, not
  *  a model's: no validation to pass, every label escaped by the drawing
@@ -63,13 +64,13 @@ export function depGraph(d: Dependencies): FlowIR {
     direction: "LR",
     zones: [
       { id: "users", title: "users" },
-      { id: "libraries", title: "libraries" },
+      { id: "shared", title: "shared" },
     ],
     nodes: [...nodes.entries()].map(([id, r]) => ({
       id,
       label: name(r),
       shape: "pill",
-      zone: used.has(id) ? "libraries" : "users",
+      zone: used.has(id) ? "shared" : "users",
     })),
     edges: d.edges.map((e) => ({
       from: refId(e.from),
@@ -81,16 +82,16 @@ export function depGraph(d: Dependencies): FlowIR {
   };
 }
 
-/** Library is one row of the table: a used repository and its users, each
+/** SharedRow is one row of the table: a used repository and its users, each
  *  with the version it names; odd marks a version the others do not name. */
-interface LibraryRow {
+interface SharedRow {
   lib: RepoRef;
   users: { ref: RepoRef; version: string; odd: boolean }[];
 }
 
-/** libraryRows is every used repository, in the graph's order. */
-export function libraryRows(d: Dependencies): LibraryRow[] {
-  const rows = new Map<string, LibraryRow>();
+/** sharedRows is every used repository, in the graph's order. */
+export function sharedRows(d: Dependencies): SharedRow[] {
+  const rows = new Map<string, SharedRow>();
   for (const e of d.edges) {
     const id = refId(e.to);
     if (!rows.has(id)) rows.set(id, { lib: e.to, users: [] });
@@ -103,7 +104,7 @@ export function libraryRows(d: Dependencies): LibraryRow[] {
   return [...rows.values()];
 }
 
-/** oddVersions marks, among the versions one library's users name, those
+/** oddVersions marks, among the versions one repository's users name, those
  *  apart from the rest: all the same, none; otherwise every version fewer
  *  users name than the most common one, and on a tie for most common,
  *  every one, since none is the rule. A user naming no version ("", a
@@ -149,7 +150,7 @@ export function DepsPage() {
 function DepsBody({ data }: { data: Dependencies }) {
   const name = repoNamer(data);
   const ir = titledZones(depGraph(data), S.diagram.depZones);
-  const rows = libraryRows(data);
+  const rows = sharedRows(data);
   const [hd0, hd1, hd2] = S.deps.headers;
   return (
     <>
@@ -170,7 +171,7 @@ function DepsBody({ data }: { data: Dependencies }) {
               {S.deps.tooLarge(ir.nodes.length)}
             </p>
           )}
-          <div className={eyebrow}>{S.deps.libraries}</div>
+          <div className={eyebrow}>{S.deps.shared}</div>
           <div className={tableBox}>
             <table className={table}>
               <thead>

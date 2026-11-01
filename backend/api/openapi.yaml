@@ -215,7 +215,7 @@ paths:
       description: |
         The current revision as one Markdown file, for a coding agent to
         pull into its context: the title and revision, the summary under
-        `## Überblick`, the system map as a fenced JSON block, then the
+        `## Überblick`, the architecture overview as a fenced JSON block, then the
         statements grouped by
         kind in the order invariants, interfaces, rules, decisions,
         pitfalls, extensions, components, entities, each with its files and PR keys
@@ -228,7 +228,8 @@ paths:
         as a heading, quote, fence, list, rule, underline or HTML escaped
         with a backslash. A project
         without a revision yet answers 200 with its title and a line saying
-        so; one whose repositories stand alone has no page and answers 404.
+        so; a project of one (one source repository) answers its
+        repository's export.
         A key that itself ends in `.md` and is listed keeps its JSON
         route; its export is `{key}.md.md`. In oidc mode a team bearer opens
         this route (and the repository's export) read-only, GET and HEAD,
@@ -931,16 +932,13 @@ components:
 
     SourceSummary:
       type: object
-      required: [project_key, kind, system, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_synced_at, last_error, created_at, updated_at]
+      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_synced_at, last_error, created_at, updated_at]
       properties:
         project_key:
           type: string
         kind:
           type: string
           enum: [bitbucket, static]
-        system:
-          type: boolean
-          description: The repositories form one system (a project page, a system map); false when each stands alone. Always true for Bitbucket.
         host:
           type: string
           description: The Bitbucket base URL; empty for a static source.
@@ -981,15 +979,13 @@ components:
 
     SourceDetail:
       type: object
-      required: [project_key, kind, system, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
+      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
       properties:
         project_key:
           type: string
         kind:
           type: string
           enum: [bitbucket, static]
-        system:
-          type: boolean
         host:
           type: string
         has_token:
@@ -1206,7 +1202,7 @@ components:
                 enum: [done, skipped, current, todo]
               skip:
                 type: string
-                enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
+                enum: ["", gone, calls, bytes, failed, refused, no_page]
               calls:
                 type: integer
               failed:
@@ -1325,8 +1321,8 @@ components:
                 description: The subject's name, empty for the overview and the project.
               reason:
                 type: string
-                enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
-                description: Why it was left out; empty for a run from before reasons were kept. ceiling and over_ceiling only on runs from before pages lost their ceiling.
+                enum: ["", gone, calls, bytes, failed, refused, no_page]
+                description: Why it was left out; empty for a run from before reasons were kept.
         cost_usd:
           type: string
           description: What the gateway priced of the run's calls, 3 decimals; omitted when it priced none.
@@ -1376,11 +1372,14 @@ components:
 
     NewSource:
       type: object
-      required: [project_key, kind]
+      required: [kind]
       properties:
         project_key:
           type: string
-          description: One path segment, Bitbucket's charset; becomes the folder name.
+          description: >-
+            One path segment, Bitbucket's charset. Required, but for a static
+            folder created with its first repository: empty is then the
+            repository's slug.
         kind:
           type: string
           enum: [bitbucket, static]
@@ -1394,9 +1393,19 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
-        system:
-          type: boolean
-          description: Absent is true. Only a static folder may be false.
+        clone_url:
+          type: string
+          description: >-
+            A static folder's first repository, created with it in one
+            transaction (https, no credentials). A Bitbucket source lists its
+            repositories itself: a 422. Another source cloning the URL already
+            is a 409.
+        slug:
+          type: string
+          description: The first repository's slug; empty is its name from clone_url (the last path segment, `.git` dropped).
+        branch:
+          type: string
+          description: The first repository's branch; empty resolves the remote's default.
 
     SourceAccess:
       type: object
@@ -1414,16 +1423,14 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
-        system:
-          type: boolean
-          description: Switches a static folder between one system and repositories that stand alone. A change comes alone in its PATCH, an unchanged value is no switch; false for a Bitbucket source is a 422. Back on, the next run folds the project page.
 
     NewSourceRepo:
       type: object
-      required: [slug, clone_url]
+      required: [clone_url]
       properties:
         slug:
           type: string
+          description: Empty is the repository's name from clone_url (the last path segment, `.git` dropped).
         clone_url:
           type: string
           description: https, no credentials, on the host of the source's other repositories.
@@ -1702,7 +1709,7 @@ components:
 
     Project:
       type: object
-      required: [key, team, repos, notes, revision, last_merge, system, repositories]
+      required: [key, team, repos, notes, revision, last_merge, repo]
       properties:
         key:
           type: string
@@ -1718,14 +1725,14 @@ components:
         last_merge:
           type: [string, "null"]
           format: date-time
-        system:
-          type: boolean
-          description: False when the repositories stand alone; they are then listed in repositories, and the project has no page.
-        repositories:
-          type: array
-          description: A standalone project's repositories, empty for a system.
-          items:
-            $ref: "#/components/schemas/Repo"
+        repo:
+          description: >-
+            The repository of a project of one (a source with one
+            repository): its page is the project's. Null for every other
+            project, and with the sources off.
+          oneOf:
+            - $ref: "#/components/schemas/Repo"
+            - type: "null"
 
     Source:
       type: object
@@ -2088,22 +2095,25 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, system, description, map, map_expected, map_declined, repos, libraries, problems, problem_window_days, recent_notes]
+      required: [key, team, single, description, map, map_expected, map_declined, repos, shared, problems, problem_window_days, recent_notes]
       properties:
         key:
           type: string
         team:
           type: string
-        system:
+        single:
           type: boolean
-          description: False when the repositories stand alone; description and map are then null and no map is expected.
+          description: >-
+            A project of one (its source holds one repository): its
+            repository's page is the project's; description and map are then
+            null and no map is expected.
         description:
           oneOf:
             - $ref: "#/components/schemas/Description"
             - type: "null"
         map:
           description: >-
-            The system map of the current project revision: a flow whose
+            The architecture overview of the current project revision: a flow whose
             zones are clients, repositories, stores and external, a
             repository node's id its slug. Null for a project too large for
             one, and before a baseline project
@@ -2115,8 +2125,8 @@ components:
           type: boolean
           description: >-
             A baseline run will draw a map: the sources are on, the project
-            has a source repository, and not more of them than one map
-            holds.
+            has more than one source repository, and not more of them than
+            one map holds.
         map_declined:
           type: boolean
           description: >-
@@ -2126,16 +2136,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Repo"
-        libraries:
+        shared:
           type: array
           description: >-
-            Repositories of other projects this project's repositories use,
-            by their manifests, each with its users here: the system map's
-            libraries zone, drawn by the UI, never stored in the map. Empty
-            with the sources off and whenever `map` is null (repositories
-            that stand alone have none).
+            Repositories of other projects this project's repositories depend
+            on, by their manifests (a build dependency, whatever they are),
+            each with its users here: the architecture overview's shared
+            zone, drawn by the UI, never stored in the map. Empty with the
+            sources off and whenever `map` is null.
           items:
-            $ref: "#/components/schemas/Library"
+            $ref: "#/components/schemas/SharedRepo"
         problems:
           type: array
           items:
@@ -2240,11 +2250,11 @@ components:
           description: The version this repository names, as written; empty when none.
         also:
           type: array
-          description: The library's other users, each with the version it names.
+          description: Its other users, each with the version it names.
           items:
             $ref: "#/components/schemas/DependencyEnd"
 
-    Library:
+    SharedRepo:
       type: object
       required: [project, slug, used_by]
       properties:

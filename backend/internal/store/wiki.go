@@ -7,13 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
-	"github.com/trick77/almanach/internal/lang"
-	"github.com/trick77/almanach/internal/markup"
 )
 
 // Scopes of a description.
@@ -102,20 +98,6 @@ type Page struct {
 	// "" before any answer. A basis that no longer matches the page's text
 	// is a map due again.
 	RepoMapBasis string
-	// Stored is the summary and texts as the revision holds them, set only
-	// when the read laid them out anew (lang.Relaid): a map basis hashed
-	// from them before the layout still matches.
-	// TRANSITIONAL(layout): Remove when every page's current revision was
-	// written after the layout.
-	Stored *StoredText
-}
-
-// StoredText is a page's summary and statement texts as stored, before a
-// read laid them out.
-// TRANSITIONAL(layout): Remove with Page.Stored.
-type StoredText struct {
-	Summary string
-	Texts   []string
 }
 
 // MapStands reports whether the map step answered for a repository page's
@@ -123,62 +105,7 @@ type StoredText struct {
 // for this text is not asked again until it changes): then a run has
 // nothing new to draw from.
 func (p Page) MapStands() bool {
-	if p.RepoMapBasis == "" {
-		return false
-	}
-	if p.RepoMapBasis == p.MapBasis() {
-		return true
-	}
-	// A basis hashed while a summary's headings were dropped is of the
-	// summary without them; that a read keeps them now is no reason for a
-	// paid redraw either.
-	// TRANSITIONAL(summary-headings): Remove when every repository page's
-	// map basis was hashed after summaries kept their headings.
-	if headless := p; headless.Summary != "" {
-		headless.Summary = withoutHeadings(p.Summary)
-		if headless.Summary != p.Summary && p.RepoMapBasis == headless.MapBasis() {
-			return true
-		}
-	}
-	// A basis hashed before the layout is of the text as stored; a read
-	// that only laid it out anew is no reason for a paid redraw.
-	// TRANSITIONAL(layout): Remove with Page.Stored.
-	if p.Stored == nil {
-		return false
-	}
-	raw := p
-	raw.Summary = p.Stored.Summary
-	raw.Statements = slices.Clone(p.Statements)
-	for i := range raw.Statements {
-		raw.Statements[i].Text = p.Stored.Texts[i]
-	}
-	return p.RepoMapBasis == raw.MapBasis()
-}
-
-// withoutHeadings is a stored summary as the read laid it out while a
-// summary held no heading: its #### blocks gone, two lists they parted one.
-// Only headings: as it is, for that read kept their titles as this one does.
-// TRANSITIONAL(summary-headings): Remove with MapStands' headless basis.
-func withoutHeadings(s string) string {
-	var kept []string
-	lastList := false
-	for _, b := range strings.Split(s, "\n\n") {
-		if _, h := markup.StoredHeading(b); h {
-			continue
-		}
-		first, _, _ := strings.Cut(b, "\n")
-		_, _, list := markup.StoredItem(first)
-		if list && lastList {
-			kept[len(kept)-1] += "\n" + b
-			continue
-		}
-		kept = append(kept, b)
-		lastList = list
-	}
-	if len(kept) == 0 {
-		return s
-	}
-	return strings.Join(kept, "\n\n")
+	return p.RepoMapBasis != "" && p.RepoMapBasis == p.MapBasis()
 }
 
 // MapBasis is the description a repository map is drawn from, as a hash:
@@ -325,23 +252,6 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	}
 	if p.Statements == nil {
 		p.Statements = []Statement{}
-	}
-	// Read laid out (lang.Relaid): a revision written before the layout
-	// reads as one written now, wherever the page goes; what it holds is
-	// kept beside it when that differs (Page.Stored).
-	// TRANSITIONAL(layout): Remove the relaying when every page's current
-	// revision was written after the layout.
-	stored := StoredText{Summary: p.Summary, Texts: make([]string, len(p.Statements))}
-	changed := false
-	p.Summary = lang.Relaid(p.Summary)
-	changed = p.Summary != stored.Summary
-	for i := range p.Statements {
-		stored.Texts[i] = p.Statements[i].Text
-		p.Statements[i].Text = lang.Relaid(p.Statements[i].Text)
-		changed = changed || p.Statements[i].Text != stored.Texts[i]
-	}
-	if changed {
-		p.Stored = &stored
 	}
 	if p.Map, err = diagramOf(drawn); err != nil {
 		return Page{}, false, err

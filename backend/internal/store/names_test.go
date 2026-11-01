@@ -3,141 +3,8 @@ package store
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"testing"
-	"testing/fstest"
-
-	"github.com/trick77/ship/kit/migrate"
 )
-
-// migratedFrom0001 is a store at 0001 filled by fill, then migrated to the
-// newest schema.
-func migratedFrom0001(t *testing.T, fill string) *Store {
-	t.Helper()
-	ctx := context.Background()
-	s := emptyStore(t)
-	first, err := fs.ReadFile(migrations(), "0001_init.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrate.Up(ctx, s.db, fstest.MapFS{"0001_init.sql": {Data: first}}, s.migrateOptions()); err != nil {
-		t.Fatalf("0001: %v", err)
-	}
-	if _, err := s.db.ExecContext(ctx, fill); err != nil {
-		t.Fatalf("fill 0001: %v", err)
-	}
-	if err := s.Migrate(ctx); err != nil {
-		t.Fatalf("migrate to ids: %v", err)
-	}
-	return s
-}
-
-const t0 = "2026-10-01T12:00:00.000000000Z"
-
-// Rows of every table keyed by names in 0001: a project noergler delivered
-// for (PRJ) with a source, a source-only project (SRC) with a listed clone
-// and runs, and a removed clone only the ledger knows (GONE/old).
-const fill0001 = `
-INSERT INTO teams (slug, first_seen, last_seen) VALUES ('alpha', '` + t0 + `', '` + t0 + `');
-INSERT INTO projects (key, team, first_seen, last_seen) VALUES ('PRJ', 'alpha', '` + t0 + `', '` + t0 + `');
-INSERT INTO repos (project_key, slug, team, first_seen, last_seen) VALUES ('PRJ', 'svc', 'alpha', '` + t0 + `', '` + t0 + `');
-INSERT INTO claims (team, project_key, repo_slug, seen_at) VALUES ('alpha', 'PRJ', NULL, '` + t0 + `'), ('alpha', 'PRJ', 'svc', '` + t0 + `');
-INSERT INTO deliveries (delivery_id, team, event_type, received_at, payload) VALUES ('d1', 'alpha', 'pr.merged', '` + t0 + `', '{}');
-INSERT INTO notes (project_key, repo_slug, pr_id, team, pr_key, pr_title, note, source_commit, merged_at, delivery_id, received_at, consolidated_at)
-VALUES ('PRJ', 'svc', 1, 'alpha', 'PRJ/svc#1', 'first', '{"summary":"x"}', 'abc', '` + t0 + `', 'd1', '` + t0 + `', '` + t0 + `');
-INSERT INTO note_calls (delivery_id, team, project_key, repo_slug, pr_id, outcome, cost_nano_usd, created_at)
-VALUES ('d1', 'alpha', 'PRJ', 'svc', 1, 'ok', 1500000, '` + t0 + `');
-INSERT INTO sources (project_key, kind, host, token_auth, created_at, updated_at) VALUES
-  ('PRJ', 'static', NULL, 'basic', '` + t0 + `', '` + t0 + `'),
-  ('SRC', 'bitbucket', 'https://forge.example.invalid', 'bearer', '` + t0 + `', '` + t0 + `');
-INSERT INTO source_repos (project_key, slug, clone_url, origin, head_commit, state, created_at) VALUES
-  ('PRJ', 'svc', 'https://forge.example.invalid/svc.git', 'manual', 'abc', 'ready', '` + t0 + `'),
-  ('SRC', 'api', 'https://forge.example.invalid/api.git', 'listed', 'c0ffee', 'ready', '` + t0 + `');
-INSERT INTO baseline_runs (id, project_key, slug, mode, trigger, "commit", state, queued_at, finished_at) VALUES
-  (5, 'SRC', 'api', 'full', 'manual', 'c0ffee', 'done', '` + t0 + `', '` + t0 + `'),
-  (7, 'SRC', 'api', 'full', 'manual', 'c0ffee', 'queued', '` + t0 + `', NULL);
-UPDATE sqlite_sequence SET seq = 9 WHERE name = 'baseline_runs';
-INSERT INTO llm_calls (id, project_key, repo_slug, source_kind, source_pr_key, outcome, cost_nano_usd, created_at) VALUES
-  (1, 'PRJ', 'svc', 'pr', 'PRJ/svc#1', 'ok', 100, '` + t0 + `'),
-  (3, 'GONE', 'old', 'pr', 'GONE/old#4', 'ok', 300, '` + t0 + `');
-INSERT INTO llm_calls (id, project_key, repo_slug, source_kind, source_commit, purpose, baseline_run_id, outcome, cost_nano_usd, created_at)
-VALUES (2, 'SRC', 'api', 'baseline', 'c0ffee', 'overview', 5, 'ok', 200, '` + t0 + `');
-INSERT INTO revisions (id, scope, project_key, repo_slug, revision, summary, statements, chars, source_kind, source_pr_key, llm_call_id, created_at) VALUES
-  (1, 'repository', 'PRJ', 'svc', 1, 'svc page', '[{"id":"s1","kind":"rule","name":"n","text":"t","files":[],"sources":[{"kind":"pr","pr_key":"PRJ/svc#1"}]}]', 1, 'pr', 'PRJ/svc#1', 1, '` + t0 + `'),
-  (2, 'project', 'PRJ', NULL, 1, 'prj page', '[]', 1, 'pr', 'PRJ/svc#1', 1, '` + t0 + `');
-INSERT INTO revisions (id, scope, project_key, repo_slug, revision, summary, statements, chars, source_kind, source_commit, baseline_run_id, created_at)
-VALUES (3, 'repository', 'SRC', 'api', 1, 'api page', '[]', 1, 'baseline', 'c0ffee', 5, '` + t0 + `');
-INSERT INTO pages (scope, project_key, repo_slug, current_revision_id, updated_at) VALUES
-  ('repository', 'PRJ', 'svc', 1, '` + t0 + `'), ('project', 'PRJ', '', 2, '` + t0 + `'), ('repository', 'SRC', 'api', 3, '` + t0 + `');
-`
-
-// 0002 carries every row over onto ids: pages, notes, calls, costs, runs
-// and clones read the same through the store, the run counter keeps
-// counting, and nothing dangles.
-func TestMigrate0002_CarriesEverythingOver(t *testing.T) {
-	s := migratedFrom0001(t, fill0001)
-	ctx := context.Background()
-
-	for _, c := range []struct{ scope, key, slug, summary string }{
-		{ScopeRepository, "PRJ", "svc", "svc page"}, {ScopeProject, "PRJ", "", "prj page"}, {ScopeRepository, "SRC", "api", "api page"},
-	} {
-		p, ok, err := s.CurrentPage(ctx, c.scope, c.key, c.slug)
-		if err != nil || !ok || p.Summary != c.summary || p.ProjectKey != c.key || p.RepoSlug != c.slug {
-			t.Errorf("page %s %s/%s: %+v ok=%v err=%v", c.scope, c.key, c.slug, p, ok, err)
-		}
-	}
-	p, _, _ := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc")
-	if len(p.Statements) != 1 || len(p.Statements[0].Sources) != 1 || p.Statements[0].Sources[0].PRKey != "PRJ/svc#1" {
-		t.Errorf("statements not carried byte for byte: %+v", p.Statements)
-	}
-	d, ok, err := s.NoteByKey(ctx, "PRJ", "svc", 1)
-	if err != nil || !ok || d.PRKey != "PRJ/svc#1" || d.Call == nil || *d.Call.CostNanoUSD != 1_500_000 || d.ConsolidatedAt == nil {
-		t.Errorf("note: %+v ok=%v err=%v", d, ok, err)
-	}
-
-	noergler, err := s.Projects(ctx, false)
-	if err != nil || len(noergler) != 1 || noergler[0].Key != "PRJ" || noergler[0].Repos != 1 || noergler[0].Notes != 1 {
-		t.Errorf("noergler's projects: %+v %v", noergler, err)
-	}
-	sourced, err := s.Projects(ctx, true)
-	if err != nil || len(sourced) != 2 || sourced[0].Key != "PRJ" || sourced[1].Key != "SRC" || sourced[1].Team != "" {
-		t.Errorf("sourced projects: %+v %v", sourced, err)
-	}
-
-	repos, err := s.SourceRepos(ctx, "SRC")
-	if err != nil || len(repos) != 1 || repos[0].Slug != "api" || repos[0].State != RepoReady || repos[0].HeadCommit != "c0ffee" {
-		t.Errorf("source repos: %+v %v", repos, err)
-	}
-	last, _, ok, err := s.LastRun(ctx, "SRC", "api")
-	if err != nil || !ok || last.ID != 7 || !last.Open() {
-		t.Errorf("last run: %+v ok=%v err=%v", last, ok, err)
-	}
-	runs, err := s.SourceRuns(ctx, "SRC")
-	if err != nil || runs["api"].Documented != "c0ffee" || runs["api"].Last.ID != 7 {
-		t.Errorf("source runs: %+v %v", runs, err)
-	}
-	if _, err := s.EnqueueRun(ctx, "SRC", "api", RunFull, TriggerManual, "", "c0ffee"); !errors.Is(err, ErrExists) {
-		t.Errorf("second open run: %v, want ErrExists", err)
-	}
-	id, err := s.EnqueueRun(ctx, "PRJ", "svc", RunFull, TriggerManual, "", "abc")
-	if err != nil || id != 10 {
-		t.Errorf("next run id = %d, %v; want 10 (never reused past the old counter)", id, err)
-	}
-
-	if n := count(t, s, "llm_calls", ""); n != 3 {
-		t.Errorf("llm_calls = %d, want 3 (the removed clone's too)", n)
-	}
-	if n := count(t, s, "repos", "slug = 'old'"); n != 1 {
-		t.Errorf("the removed clone's repository = %d, want 1", n)
-	}
-	if n := count(t, s, "claims", ""); n != 2 {
-		t.Errorf("claims = %d, want 2", n)
-	}
-	var problems int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&problems); err != nil || problems != 0 {
-		t.Errorf("foreign key check: %d rows, %v", problems, err)
-	}
-}
 
 // A change of case on a project's own key is a rename like any other:
 // afterwards a note delivered under the new spelling lands on the source
@@ -379,9 +246,8 @@ func TestRegistration_CaseVariantsAndClaims(t *testing.T) {
 	}
 }
 
-// TRANSITIONAL(ids): a repository listed before 0002 has no forge id; the
-// first listing that names it by its slug records it. Remove with the
-// backfill in listedRepo.
+// A repository without a forge id (a note brought it first) takes the one
+// the first listing that names it by its slug gives.
 func TestApplyListing_BackfillsForgeIDBySlug(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

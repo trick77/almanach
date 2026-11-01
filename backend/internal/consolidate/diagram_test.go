@@ -391,7 +391,7 @@ func TestRun_QuietReconcileDrawsAMissingMap(t *testing.T) {
 		repo := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
 		repo.RepoMapBasis = repo.MapBasis()
 		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = repo
-		x.st.others = []store.RepoSummary{{Slug: "svc"}}
+		x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 		x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 		x.queue(store.RunReconcile, older40)
 		x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
@@ -421,7 +421,7 @@ func TestRun_NullKeepsTheDiagram(t *testing.T) {
 		Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Dienst", Text: "Alt.", Files: []string{"README.md"}, Sources: src, Diagram: seq("ruft")}}}
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Map: drawnMap("svc"),
 		Statements: []store.Statement{{ID: "s1", Kind: "entity", Name: "Werkzeug", Text: "Alt.", Files: []string{}, Sources: src, Diagram: seq("liest")}}}
-	x.st.others = []store.RepoSummary{{Slug: "svc"}}
+	x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
 	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst, neu."),
@@ -455,7 +455,7 @@ func TestRun_InvalidDiagramCostsOnlyItself(t *testing.T) {
 		Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Dienst", Text: "Alt.", Files: []string{"README.md"}, Sources: src, Diagram: seq("ruft")}}}
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Map: drawnMap("svc"),
 		Statements: []store.Statement{{ID: "s1", Kind: "entity", Name: "Werkzeug", Text: "Alt.", Files: []string{}, Sources: src, Checked: older40, Diagram: seq("liest")}}}
-	x.st.others = []store.RepoSummary{{Slug: "svc"}}
+	x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
 	edit := stmt(ref("s1"), "component", "Dienst", "Neu.", "README.md")

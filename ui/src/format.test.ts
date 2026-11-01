@@ -13,7 +13,9 @@ import {
   problemTone,
   runs,
   share,
+  refName,
   shortDay,
+  slugFromURL,
 } from "./format";
 import { fmtInt } from "./strings";
 
@@ -212,5 +214,29 @@ describe("labels and tones", () => {
     expect(problemTone(1)).toBe("none");
     expect(problemTone(2)).toBe("warn");
     expect(problemTone(4)).toBe("fail");
+  });
+});
+
+describe("slugFromURL", () => {
+  it("is the repository's name, as the backend derives it", () => {
+    expect(slugFromURL("https://github.com/acme/acme-gateway.git")).toBe(
+      "acme-gateway",
+    );
+    expect(slugFromURL("https://github.com/acme/acme-gateway/")).toBe(
+      "acme-gateway",
+    );
+    expect(slugFromURL(" https://forge.example/scm/abc/Def ")).toBe("Def");
+    expect(slugFromURL("https://forge.example")).toBe("");
+    expect(slugFromURL("not a url")).toBe("");
+    // Decoded, as Go's url.Path is.
+    expect(slugFromURL("https://host.example/team/my%2Dapi.git")).toBe(
+      "my-api",
+    );
+  });
+
+  it("names a repository once when its project is named like it", () => {
+    expect(refName("llmwire", "llmwire")).toBe("llmwire");
+    expect(refName("SHOP", "shop")).toBe("shop");
+    expect(refName("acme", "portal")).toBe("acme/portal");
   });
 });

@@ -23,8 +23,8 @@ type depBody struct {
 	Version string `json:"version"`
 }
 
-// useBody is a library a repository uses: the version it names, and the
-// library's other users with theirs.
+// useBody is a repository another one depends on: the version it names,
+// and the other users with theirs.
 type useBody struct {
 	depBody
 	Also []depBody `json:"also"`
@@ -91,7 +91,7 @@ func (d Deps) dependencies(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// usesOf is what repo uses, each library with its other users, and what
+// usesOf is what repo uses, each with its other users, and what
 // uses repo.
 func usesOf(g store.Graph, repo store.RepoRef) (uses []useBody, usedBy []depBody) {
 	uses, usedBy = []useBody{}, []depBody{}
@@ -146,28 +146,28 @@ func markdownDeps(uses []useBody, usedBy []depBody) string {
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
-// libraryBody is a repository of another project the project's
+// sharedBody is a repository of another project the project's
 // repositories use, and which of them do.
-type libraryBody struct {
+type sharedBody struct {
 	Project string        `json:"project"`
 	Slug    string        `json:"slug"`
 	UsedBy  []repoRefBody `json:"used_by"`
 }
 
-// libraries is the project's libraries for its map, none with the sources
-// off. The caller asks only with a map drawn (a standalone project has
+// shared is the project's shared repositories for its map, none with the
+// sources off. The caller asks only with a map drawn (a project of one has
 // none).
-func (d Deps) libraries(ctx context.Context, key string) ([]libraryBody, error) {
-	out := []libraryBody{}
+func (d Deps) shared(ctx context.Context, key string) ([]sharedBody, error) {
+	out := []sharedBody{}
 	if d.Sources == nil {
 		return out, nil
 	}
-	libs, err := d.Store.Libraries(ctx, key, "")
+	libs, err := d.Store.Shared(ctx, key, "")
 	if err != nil {
 		return nil, err
 	}
 	for _, l := range libs {
-		b := libraryBody{Project: l.ProjectKey, Slug: l.Slug, UsedBy: make([]repoRefBody, 0, len(l.UsedBy))}
+		b := sharedBody{Project: l.ProjectKey, Slug: l.Slug, UsedBy: make([]repoRefBody, 0, len(l.UsedBy))}
 		for _, u := range l.UsedBy {
 			b.UsedBy = append(b.UsedBy, refBody(u))
 		}

@@ -10,14 +10,6 @@ import type {
   WaitReason,
 } from "./api";
 
-// The repositories of a folder that is no system: one word for the list,
-// the project header and the source.
-const standaloneRepos = "Einzelne Repositories";
-// What "Bildet ein System" off means, on the source page and the create
-// form alike.
-const standsAlone =
-  "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln.";
-
 export const S = {
   app: "Almanach",
   nav: {
@@ -39,8 +31,8 @@ export const S = {
     graph: "Graph",
     tooLarge: (n: number) =>
       `${n} Repositories sind zu viele für einen Graphen; die Tabelle zeigt alle.`,
-    libraries: "Bibliotheken",
-    headers: ["Bibliothek", "Verwendet von", "Version"],
+    shared: "Geteilte Repositories",
+    headers: ["Repository", "Verwendet von", "Version"],
     ambiguous: "Mehrdeutig",
     ambiguousHint:
       "Diese Koordinaten liefern mehrere Repositories (ein Fork, eine Kopie). Almanach kann nicht wissen, welches gemeint ist, und zieht zu keinem eine Kante.",
@@ -73,10 +65,7 @@ export const S = {
     firstDescription:
       "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Clone bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
-    systems: "Systeme",
-    systemsAside: "Repositories, die zusammen ein System bilden",
-    standalone: standaloneRepos,
-    standaloneAside: "jedes steht für sich, ohne Projektseite",
+    usedBy: (n: number) => `Verwendet von ${n}`,
     problems: (n: number) =>
       n === 0
         ? "keine Problemzonen"
@@ -91,9 +80,6 @@ export const S = {
     noDescriptionHint:
       "Die erste Beschreibung entsteht, wenn Almanach ein Repository dieses Projekts aus dem Code beschreibt oder ein Pull Request gemergt wird.",
     descriptionRevision: (n: number) => `Beschreibung Revision ${n}`,
-    standalone: standaloneRepos,
-    standaloneHint:
-      "Die Repositories dieses Ordners stehen für sich: jedes hat seine eigene Seite, das Projekt keine.",
     repos: "Repositories",
     repoHeaders: ["Repository", "Beschreibung", "Notizen", "Letzter Merge"],
     noRepos: "Noch kein Repository.",
@@ -112,16 +98,16 @@ export const S = {
     rootArea: "(Wurzel)",
     recentNotes: "Letzte Notizen",
     noNotes: "Noch keine Notiz.",
-    map: "Systemkarte",
+    map: "Architekturübersicht",
     noMap:
-      "Noch keine Systemkarte: sie entsteht beim nächsten Run, der dieses Projekt aus dem Code beschreibt.",
+      "Noch keine Architekturübersicht: sie entsteht beim nächsten Run, der dieses Projekt aus dem Code beschreibt.",
   },
   diagram: {
     titles: {
       flow: "Ablaufdiagramm",
       sequence: "Sequenzdiagramm",
       er: "Datenmodell",
-      map: "Systemkarte",
+      map: "Architekturübersicht",
       repoMap: "Aufbau",
     },
     // The map's zones by id: the backend allows these four and no other.
@@ -130,16 +116,16 @@ export const S = {
       repositories: "Repositories",
       stores: "Datenspeicher",
       external: "Externe Systeme",
-      // Drawn by code from the manifests, never by the model.
-      libraries: "Bibliotheken",
+      // Drawn by code from the manifests, never by the model: repositories
+      // of other projects this one depends on, whatever they are.
+      shared: "Geteilte Repositories",
     } as Record<string, string>,
-    // The edge code draws from a repository to a library it uses: the
-    // map's own kind, as the model labels one.
-    libraryEdge: "library",
+    // The edge code draws from a repository to one it depends on.
+    sharedEdge: "Abhängigkeit",
     // The dependency graph's zones by id, drawn by code.
     depZones: {
       users: "Nutzer",
-      libraries: "Bibliotheken",
+      shared: "Verwendet",
     } as Record<string, string>,
     // A repository map's zones by id, the same rule.
     repoZones: {
@@ -178,6 +164,7 @@ export const S = {
   repo: {
     what: "das Repository",
     project: "Projekt",
+    single: "Projekt aus einem Repository",
     map: "Aufbau",
     revisions: "Revisionen",
     revisionFrom: "aus",
@@ -298,20 +285,6 @@ export const S = {
     listedAt: "gelistet",
     neverListed: "noch nie gelistet",
     manual: "Repositories von Hand eingetragen",
-    // A static folder's switch: one system with a project page, or
-    // repositories that each stand alone.
-    system: {
-      label: "Bildet ein System",
-      on: "An",
-      off: "Aus",
-      hintOn:
-        "Almanach beschreibt die Repositories als ein System: eine Projektseite und eine Systemkarte, wie bei einem Bitbucket-Projekt.",
-      hintOff: `${standsAlone} Eine frühere Projektseite bleibt gespeichert.`,
-      meta: (system: boolean) => (system ? "Ein System" : standaloneRepos),
-      // The create form's hint: for off, a new folder has no page to keep.
-      createHint: (system: boolean) =>
-        `${system ? S.sources.system.hintOn : `${standsAlone} Für Repositories, die nichts miteinander zu tun haben, etwa Bibliotheken und Werkzeuge.`} Später auf der Seite der Quelle umschaltbar.`,
-    },
     counts: {
       ready: (n: number) => `${n} bereit`,
       active: (n: number) => `${n} läuft`,
@@ -325,6 +298,14 @@ export const S = {
       slug: "Slug",
       slugHint:
         "Buchstaben, Ziffern, Punkt, Strich, Unterstrich, Tilde. Lässt sich später umbenennen.",
+      // A static folder's first repository, created with it.
+      firstRepo: "Clone-URL des ersten Repositories",
+      firstRepoHint:
+        "Weitere Repositories kommen auf der Seite der Quelle dazu. Ein Projekt aus einem Repository hat keine eigene Projektseite: die Seite des Repositories ist die des Projekts.",
+      slugFromURL:
+        "Füllt sich beim Einfügen der URL mit dem Namen des Repositories; von Hand geändert, bleibt er. Leer: der Name aus der URL.",
+      branch: "Branch",
+      branchPlaceholder: "Default-Branch des Remotes",
       host: "Bitbucket-Host",
       hostHint:
         "Nur https. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen.",
@@ -494,12 +475,8 @@ export const S = {
       gone: "Nicht mehr im Katalog",
       calls: "Aufrufe des Laufs aufgebraucht",
       bytes: "Lesebudget des Laufs überschritten",
-      // TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
-      ceiling: "An der früheren Seitengrenze",
       failed: "Fehler: Modellaufruf fehlgeschlagen",
       refused: "Fehler: Antwort regelwidrig, verworfen",
-      // TRANSITIONAL(ceilings): Remove when no stored run plan carries it.
-      over_ceiling: "Über der früheren Seitengrenze verworfen",
       no_page: "Projekt ohne Seite",
       "": "Grund nicht erfasst",
     } satisfies Record<SkipReason, string>,

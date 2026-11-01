@@ -4,7 +4,7 @@ import type { Dependencies, RepoDetail } from "./api";
 import {
   DepsPage,
   depGraph,
-  libraryRows,
+  sharedRows,
   oddVersions,
   repoNamer,
   shortVersion,
@@ -87,14 +87,14 @@ const repo: RepoDetail = {
 };
 
 describe("dependency graph", () => {
-  it("draws users left, libraries right, one edge per use", () => {
+  it("draws users left, shared repositories right, one edge per use", () => {
     const ir = depGraph(graph);
     expect(ir.direction).toBe("LR");
     const zone = Object.fromEntries(ir.nodes.map((n) => [n.label, n.zone]));
     expect(zone).toEqual({
       loom: "users",
-      llmwire: "libraries",
-      webfetch: "libraries",
+      llmwire: "shared",
+      webfetch: "shared",
       rongo: "users",
     });
     expect(ir.edges.map((e) => e.label)).toEqual([
@@ -111,7 +111,7 @@ describe("dependency graph", () => {
   });
 
   it("marks the versions the other users do not name", () => {
-    const rows = libraryRows(graph);
+    const rows = sharedRows(graph);
     expect(rows.map((r) => r.lib.slug)).toEqual(["llmwire", "webfetch"]);
     expect(rows[0].users.map((u) => [u.ref.slug, u.odd])).toEqual([
       ["loom", true],
@@ -141,7 +141,7 @@ describe("dependency graph", () => {
 });
 
 describe("DepsPage", () => {
-  it("lists the libraries with their users and the ambiguous ones", async () => {
+  it("lists the shared repositories with their users and the ambiguous ones", async () => {
     serve({
       dependencies: graph,
       sources: { enabled: true, sources: [], default_host: "" },

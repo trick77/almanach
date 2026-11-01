@@ -15,7 +15,7 @@ import {
   type RailGroup,
   type RailItem,
 } from "./Rail";
-import { day } from "./format";
+import { day, refName } from "./format";
 import { projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
@@ -47,12 +47,16 @@ const ids = {
   revisions: "revisionen",
 };
 
+/** RepoPage is a repository's page; single when it is a project of one's,
+ *  shown at the project's path: the repository's page is the project's. */
 export function RepoPage({
   projectKey,
   slug,
+  single = false,
 }: {
   projectKey: string;
   slug: string;
+  single?: boolean;
 }) {
   const { data, failed } = useFetch<RepoDetail>(
     `projects/${encodeURIComponent(projectKey)}/repos/${encodeURIComponent(slug)}`,
@@ -60,18 +64,24 @@ export function RepoPage({
   useEffect(() => {
     document.title = `${slug} ${S.common.sep} ${projectKey} ${S.common.sep} ${S.app}`;
   }, [projectKey, slug]);
-  useCanonical(data ? repoPath(data.project_key, data.slug) : null);
+  useCanonical(
+    data
+      ? single
+        ? projectPath(data.project_key)
+        : repoPath(data.project_key, data.slug)
+      : null,
+  );
 
   if (failed || data === null)
     return (
       <div className={page}>
         <div className={column}>
-          <RepoCrumbs projectKey={projectKey} slug={slug} />
+          <RepoCrumbs projectKey={projectKey} slug={single ? "" : slug} />
           {failed ? <Failed what={S.repo.what} /> : <Skeleton />}
         </div>
       </div>
     );
-  return <Body data={data} />;
+  return <Body data={data} single={single} />;
 }
 
 function RepoCrumbs({
@@ -81,18 +91,26 @@ function RepoCrumbs({
   projectKey: string;
   slug: string;
 }) {
+  // A project of one's page is its repository's: no third crumb.
   return (
     <Crumbs
-      items={[
-        { label: S.project.breadcrumbRoot, to: "/" },
-        { label: projectKey, to: projectPath(projectKey) },
-        { label: slug },
-      ]}
+      items={
+        slug === ""
+          ? [
+              { label: S.project.breadcrumbRoot, to: "/" },
+              { label: projectKey },
+            ]
+          : [
+              { label: S.project.breadcrumbRoot, to: "/" },
+              { label: projectKey, to: projectPath(projectKey) },
+              { label: slug },
+            ]
+      }
     />
   );
 }
 
-function Body({ data }: { data: RepoDetail }) {
+function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useHashTab(TABS, DESCRIPTION);
   const [query, setQuery] = useState("");
@@ -104,6 +122,11 @@ function Body({ data }: { data: RepoDetail }) {
   const problems = (project?.problems ?? []).filter(
     (p) => p.repo_slug === data.slug,
   );
+  // A project of one: its page is this one, at the project's path.
+  // Known at once when the project page renders this one; else when the
+  // project detail lands.
+  const single = given || (project?.single ?? false);
+  useCanonical(single ? projectPath(data.project_key) : null);
   const lastMerge = data.last_merge;
   const current = data.description?.revision ?? 0;
 
@@ -162,7 +185,7 @@ function Body({ data }: { data: RepoDetail }) {
       ],
     },
   ];
-  if (project && project.repos.length > 0)
+  if (project && project.repos.length > 1)
     groups.push({
       title: (
         <>
@@ -199,17 +222,26 @@ function Body({ data }: { data: RepoDetail }) {
       }
     >
       <div className={stickyCrumbs}>
-        <RepoCrumbs projectKey={data.project_key} slug={data.slug} />
+        <RepoCrumbs
+          projectKey={data.project_key}
+          slug={single ? "" : data.slug}
+        />
       </div>
       <h2 className={h2}>{data.slug}</h2>
       <p className={meta}>
-        {S.repo.project}{" "}
-        <Link
-          to={projectPath(data.project_key)}
-          className="text-ink-dim hover:text-ink"
-        >
-          {data.project_key}
-        </Link>
+        {single ? (
+          S.repo.single
+        ) : (
+          <>
+            {S.repo.project}{" "}
+            <Link
+              to={projectPath(data.project_key)}
+              className="text-ink-dim hover:text-ink"
+            >
+              {data.project_key}
+            </Link>
+          </>
+        )}
         <Sep />
         {S.projects.notes(data.notes_total)}
         <Sep />
@@ -282,7 +314,7 @@ function Body({ data }: { data: RepoDetail }) {
  *  repository is named with its project. */
 export function depGroups(data: RepoDetail): RailGroup[] {
   const name = (d: DependencyEnd) =>
-    d.project === data.project_key ? d.slug : `${d.project}/${d.slug}`;
+    d.project === data.project_key ? d.slug : refName(d.project, d.slug);
   const groups: RailGroup[] = [];
   if (data.uses.length > 0)
     groups.push({

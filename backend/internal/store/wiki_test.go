@@ -3,13 +3,10 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
-	"github.com/trick77/ship/kit/migrate"
 )
 
 // The queue hands out the oldest unconsolidated note; marking it takes it
@@ -318,91 +315,7 @@ func TestSetRepoMap_InPlaceAndCarried(t *testing.T) {
 	}
 }
 
-// 0004 over a database holding 0001's rows (0002, 0003 between): revisions gain repo_map NULL,
-// the ledger keeps its rows and ids and takes the map step's purpose.
-func TestMigrate_RepoMapOverExistingRows(t *testing.T) {
-	s := emptyStore(t)
-	ctx := context.Background()
-	first, err := fs.ReadFile(migrations(), "0001_init.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrate.Up(ctx, s.db, fstest.MapFS{"0001_init.sql": {Data: first}}, s.migrateOptions()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO revisions (scope, project_key, repo_slug, revision, summary, statements, chars, source_pr_key, created_at)
-		VALUES ('repository', 'PRJ', 'svc', 1, 'r', '[]', 1, 'PRJ/svc#1', '2026-10-01T12:00:00.000000000Z')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO pages (scope, project_key, repo_slug, current_revision_id, updated_at)
-		VALUES ('repository', 'PRJ', 'svc', 1, '2026-10-01T12:00:00.000000000Z')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO llm_calls (id, project_key, repo_slug, source_kind, source_commit, purpose, outcome, created_at)
-		VALUES (41, 'PRJ', 'svc', 'baseline', 'abc', 'project', 'ok', '2026-10-01T12:00:00.000000000Z')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Migrate(ctx); err != nil {
-		t.Fatalf("0004 over 0001's rows: %v", err)
-	}
-	p, ok, err := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc")
-	if err != nil || !ok || p.RepoMap != nil || p.RepoMapBasis != "" || p.Summary != "r" {
-		t.Fatalf("page after 0004 = %+v, ok=%v, err=%v", p, ok, err)
-	}
-	if n := count(t, s, "llm_calls", "id = 41 AND purpose = 'project'"); n != 1 {
-		t.Errorf("ledger row kept = %d, want 1", n)
-	}
-	id, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "abc", Purpose: PurposeRepoMap, Outcome: "ok"})
-	if err != nil || id != 42 {
-		t.Errorf("map step's ledger row: id %d, err %v, want 42", id, err)
-	}
-	if n := count(t, s, "sqlite_master", "type = 'index' AND name = 'llm_calls_run_idx'"); n != 1 {
-		t.Errorf("ledger index after the rebuild = %d, want 1", n)
-	}
-}
-
 func itoa(v int64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
-}
-
-// A basis hashed from text stored before the layout stands when a read
-// only laid that text out anew; a real change still makes the map due.
-// TRANSITIONAL(layout): Remove with Page.Stored.
-func TestMapStandsOverRelaidText(t *testing.T) {
-	stored := Page{Summary: "Ein Dienst.\n\n\n  Mehr.", Statements: []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "* eins"}}}
-	read := stored
-	read.RepoMapBasis = stored.MapBasis()
-	read.Summary, read.Statements = "Ein Dienst.\n\nMehr.", []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "- eins"}}
-	if read.MapStands() {
-		t.Fatal("without what was stored, a relaid page's old basis cannot stand")
-	}
-	read.Stored = &StoredText{Summary: stored.Summary, Texts: []string{"* eins"}}
-	if !read.MapStands() {
-		t.Error("a map over text only laid out anew is due again")
-	}
-	read.Statements[0].Name = "S"
-	if read.MapStands() {
-		t.Error("a renamed statement left the map standing")
-	}
-}
-
-// A basis hashed while a summary's headings were dropped stands when a read
-// keeps them now; a changed word still makes the map due.
-// TRANSITIONAL(summary-headings): Remove with withoutHeadings.
-func TestMapStandsOverSummaryHeadings(t *testing.T) {
-	old := Page{Summary: "Der Dienst.\n\n- eins\n- zwei", Statements: []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "Text."}}}
-	read := old
-	read.RepoMapBasis = old.MapBasis()
-	read.Summary = "#### Zweck\n\nDer Dienst.\n\n#### Teile\n\n- eins\n\n#### Mehr\n\n- zwei"
-	if !read.MapStands() {
-		t.Error("a summary read with its headings made the map due again")
-	}
-	read.Summary = "#### Zweck\n\nDer Dienst neu.\n\n- eins\n- zwei"
-	if read.MapStands() {
-		t.Error("a changed summary left the map standing")
-	}
-	if got := withoutHeadings("#### Nur\n\n#### Titel"); got != "#### Nur\n\n#### Titel" {
-		t.Errorf("only headings = %q, want it as it is", got)
-	}
 }

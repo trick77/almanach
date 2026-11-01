@@ -23,17 +23,6 @@ func Laid(s string) string {
 	return SwissSS(markup.Normalize(redact.Text(strings.TrimSpace(s))))
 }
 
-// Relaid is stored text as Laid stores text now, redaction aside (what is
-// stored was redacted): every read of a page's text and summary passes
-// it, so text stored before the layout ("* " items, "## " lines, a ß an
-// older fence rule kept) reads as new text does, to the UI, the export
-// and the fold's comparisons alike. Of Laid's output it is that output.
-// TRANSITIONAL(layout): Remove when every page's current revision was
-// written after the layout.
-func Relaid(s string) string {
-	return SwissSS(markup.Normalize(s))
-}
-
 var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")
 
 // SameButSpelling reports whether a and b say the same, umlauts written

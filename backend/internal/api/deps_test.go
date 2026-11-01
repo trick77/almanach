@@ -35,7 +35,7 @@ func depsStore() *fakeStore {
 	st.repos["apps"] = []store.RepoRow{{Slug: "fetch"}, {Slug: "loom"}, {Slug: "rongo"}}
 	st.repos["libs"] = []store.RepoRow{{Slug: "wire"}}
 	g := depsGraph()
-	st.libs = map[string][]store.Library{"apps": {{RepoRef: g.Edges[1].To, UsedBy: []store.RepoRef{g.Edges[1].From, g.Edges[2].From}}}}
+	st.libs = map[string][]store.SharedRepo{"apps": {{RepoRef: g.Edges[1].To, UsedBy: []store.RepoRef{g.Edges[1].From, g.Edges[2].From}}}}
 	return st
 }
 
@@ -157,8 +157,8 @@ func TestProject_Libraries(t *testing.T) {
 	st := depsStore()
 	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
 	// No map, no libraries: they are its zone.
-	if code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
-		t.Fatalf("apps without a map: %d %s, want no libraries", code, body["libraries"])
+	if code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["shared"]) != "[]" {
+		t.Fatalf("apps without a map: %d %s, want no libraries", code, body["shared"])
 	}
 	m := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "loom", Label: "loom", Shape: "step", Zone: "repositories"}},
 		Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}}}
@@ -167,21 +167,21 @@ func TestProject_Libraries(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("project: %d", code)
 	}
-	var libs []libraryBody
-	if err := json.Unmarshal(body["libraries"], &libs); err != nil || len(libs) != 1 {
-		t.Fatalf("libraries: %v %s", err, body["libraries"])
+	var libs []sharedBody
+	if err := json.Unmarshal(body["shared"], &libs); err != nil || len(libs) != 1 {
+		t.Fatalf("libraries: %v %s", err, body["shared"])
 	}
 	if libs[0].Project != "libs" || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 {
 		t.Fatalf("libraries = %+v, want libs/wire used by loom and rongo", libs)
 	}
-	if code, body = do(t, h, http.MethodGet, "/api/projects/libs", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
-		t.Fatalf("libs' libraries: %d %s, want none", code, body["libraries"])
+	if code, body = do(t, h, http.MethodGet, "/api/projects/libs", "", "", nil); code != 200 || string(body["shared"]) != "[]" {
+		t.Fatalf("libs' libraries: %d %s, want none", code, body["shared"])
 	}
-	st.standalone = map[string]bool{"apps": true}
-	if code, body = do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
-		t.Fatalf("standalone apps' libraries: %d %s, want none", code, body["libraries"])
+	st.single = map[string]store.RepoRow{"apps": {Slug: "loom"}}
+	if code, body = do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["shared"]) != "[]" {
+		t.Fatalf("apps of one: libraries %d %s, want none", code, body["shared"])
 	}
-	st.standalone = nil
+	st.single = nil
 	st.graphErr = errors.New("database is locked")
 	if code, _ := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 500 {
 		t.Fatalf("failing store: %d, want 500", code)

@@ -48,32 +48,33 @@ type fakeStore struct {
 	sourcedAsked []bool
 
 	renamed map[string]string
-	// standalone are the projects whose repositories stand alone.
-	standalone map[string]bool
+	// single are the projects of one, by key: their one repository.
+	single map[string]store.RepoRow
 	// graph is what Dependencies answers; graphErr fails it.
 	graph    store.Graph
 	graphErr error
 	// libs is what Libraries answers, by project key.
-	libs map[string][]store.Library
+	libs map[string][]store.SharedRepo
 }
 
 func (f *fakeStore) Dependencies(context.Context) (store.Graph, error) { return f.graph, f.graphErr }
 
 // Libraries answers libs by project key; graphErr fails it.
-func (f *fakeStore) Libraries(_ context.Context, key, _ string) ([]store.Library, error) {
+func (f *fakeStore) Shared(_ context.Context, key, _ string) ([]store.SharedRepo, error) {
 	return f.libs[key], f.graphErr
 }
 
-func (f *fakeStore) ProjectSystemOf(_ context.Context, key string) (store.ProjectSystem, error) {
-	return store.ProjectSystem{Standalone: f.standalone[key]}, nil
+func (f *fakeStore) SourceRepoCount(_ context.Context, key string) (int, error) {
+	if _, ok := f.single[key]; ok {
+		return 1, nil
+	}
+	return len(f.repos[key]), nil
 }
 
-func (f *fakeStore) StandaloneRepos(context.Context) (map[string][]store.RepoRow, error) {
-	out := map[string][]store.RepoRow{}
-	for key, alone := range f.standalone {
-		if alone {
-			out[key] = f.repos[key]
-		}
+func (f *fakeStore) SingleRepos(context.Context) (map[string]store.RepoRow, error) {
+	out := map[string]store.RepoRow{}
+	for k, r := range f.single {
+		out[k] = r
 	}
 	return out, nil
 }

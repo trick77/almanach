@@ -332,3 +332,36 @@ export function bytes(n: number): string {
 export function shortSHA(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
+
+/** slugFromURL is the repository's name in a clone URL: its last path
+ *  segment without a trailing slash or ".git", as the backend derives it
+ *  (store.SlugFromURL); "" when the URL has none. */
+export function slugFromURL(url: string): string {
+  let path: string;
+  try {
+    path = new URL(url.trim()).pathname;
+  } catch {
+    return "";
+  }
+  path = path
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
+  // Decoded, as Go's url.Path is: my%2Dapi is my-api.
+  try {
+    return decodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+  } catch {
+    return "";
+  }
+}
+
+/** refName is a repository as the pages name it beside other projects':
+ *  project/slug, or the slug alone when the project is named like it (a
+ *  project of one, made from its repository, mostly is): llmwire, not
+ *  llmwire/llmwire. The one rule for the cards, the rail, the map and
+ *  the graph. */
+export function refName(project: string, slug: string): string {
+  return project.toLowerCase() === slug.toLowerCase()
+    ? slug
+    : `${project}/${slug}`;
+}

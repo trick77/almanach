@@ -122,9 +122,8 @@ func TestWords(t *testing.T) {
 	}
 }
 
-// Normalize of its own output is that output: Relaid reads every stored
-// text through it, and a second pass that changed a text would lose an
-// item or write a revision per fold.
+// Normalize of its own output is that output: a second pass that changed
+// a stored text would lose an item or write a revision per fold.
 func FuzzNormalizeIdempotent(f *testing.F) {
 	for _, s := range []string{"* --", "+ - -", "## ```", "## ~~~", "- a\n\n- b", "```\nx ``` y\n```", "~~~ ~~~ x", "## **a** b **c**",
 		"Fälle:\n* eins\n  weiter\n\n1) zwei", "```go\nfoo", "# Titel\n---\nText", "- # x\n> y", "````md\n```\n# x\n```\n````", "```Hinweis:\nText"} {

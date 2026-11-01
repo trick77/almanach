@@ -131,6 +131,19 @@ func (f *fakeSources) CreateSource(_ context.Context, s store.ProjectSource) err
 	f.sources[s.ProjectKey] = s
 	return nil
 }
+
+// CreateSourceWith is CreateSource and AddSourceRepo together, neither
+// when either fails.
+func (f *fakeSources) CreateSourceWith(ctx context.Context, s store.ProjectSource, first store.SourceRepo) error {
+	if err := f.CreateSource(ctx, s); err != nil {
+		return err
+	}
+	if err := f.AddSourceRepo(ctx, first); err != nil {
+		delete(f.sources, s.ProjectKey)
+		return &store.FirstRepoError{Err: err}
+	}
+	return nil
+}
 func (f *fakeSources) UpdateSourceAccess(_ context.Context, key, host, auth, user string, enc []byte, set bool) (bool, error) {
 	s, ok := f.sources[key]
 	if !ok {
@@ -140,15 +153,6 @@ func (f *fakeSources) UpdateSourceAccess(_ context.Context, key, host, auth, use
 	if set {
 		s.TokenEnc = enc
 	}
-	f.sources[key] = s
-	return true, nil
-}
-func (f *fakeSources) SetSourceStandalone(_ context.Context, key string, standalone bool) (bool, error) {
-	s, ok := f.sources[key]
-	if !ok || s.Standalone == standalone {
-		return false, nil
-	}
-	s.Standalone = standalone
 	f.sources[key] = s
 	return true, nil
 }
@@ -253,17 +257,6 @@ func (c *fakeCheckouts) Remove(projectID, repoID int64) error {
 }
 func (c *fakeCheckouts) RemoveProject(projectID int64) error {
 	c.removed = append(c.removed, fmt.Sprintf("p%d", projectID))
-	return nil
-}
-
-// RemoveLegacy and RemoveLegacyProject: TRANSITIONAL(ids), go with the
-// poller's.
-func (c *fakeCheckouts) RemoveLegacy(key, slug string) error {
-	c.removed = append(c.removed, "legacy "+key+"/"+slug)
-	return nil
-}
-func (c *fakeCheckouts) RemoveLegacyProject(key string) error {
-	c.removed = append(c.removed, "legacy "+key)
 	return nil
 }
 
@@ -554,9 +547,8 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	if code, _ := do(t, h, http.MethodGet, "/api/sources/tools", "", "", nil); code != 404 {
 		t.Fatal("deleted source still served")
 	}
-	// Folders by ids: the repository's, then the project's; each with the
-	// folder named by names a clone from before the ids may still sit in.
-	if want := fmt.Sprintf("p%d/r%d,legacy tools/cli,p%d,legacy tools", fs.id("tools"), fs.id("tools/cli"), fs.id("tools")); strings.Join(checkouts.removed, ",") != want {
+	// Folders by ids: the repository's, then the project's.
+	if want := fmt.Sprintf("p%d/r%d,p%d", fs.id("tools"), fs.id("tools/cli"), fs.id("tools")); strings.Join(checkouts.removed, ",") != want {
 		t.Fatalf("checkouts removed = %v", checkouts.removed)
 	}
 }
@@ -614,8 +606,9 @@ func TestSources_StaticFolderHoldsOneHost(t *testing.T) {
 	}
 }
 
-// A map is expected with the sources on, for a project with a source
-// repository and no more of them than one map holds.
+// A map is expected with the sources on, for a project of more than one
+// source repository and no more of them than one map holds; a project of
+// one has no project page and so no map.
 func TestProject_MapExpected(t *testing.T) {
 	st := newFakeStore()
 	st.teams["PLAT"] = ""
@@ -628,8 +621,12 @@ func TestProject_MapExpected(t *testing.T) {
 		t.Errorf("no source repository: map_expected = %s", got)
 	}
 	st.repos["PLAT"] = []store.RepoRow{{Slug: "files"}}
+	if got := expected(); got != "false" {
+		t.Errorf("a project of one: map_expected = %s", got)
+	}
+	st.repos["PLAT"] = []store.RepoRow{{Slug: "files"}, {Slug: "portal"}}
 	if got := expected(); got != "true" {
-		t.Errorf("one source repository: map_expected = %s", got)
+		t.Errorf("two source repositories: map_expected = %s", got)
 	}
 	// The sentinel: asked for, none accepted. No map, declined, still
 	// expected.

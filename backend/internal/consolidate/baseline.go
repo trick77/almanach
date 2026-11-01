@@ -40,8 +40,7 @@ type RunStore interface {
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
-	Libraries(ctx context.Context, key, slug string) ([]store.Library, error)
-	ProjectFolded(ctx context.Context, key string) error
+	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 }
 
@@ -601,15 +600,15 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if overview {
 		newer = codeBacked(page.Statements, newer)
 	}
-	// The libraries before the files: a store that does not answer costs no
+	// The shared repositories before the files: a store that does not answer costs no
 	// read of the clone. Once a run.
 	if w.libsRun != r.ID {
-		libs, err := w.base.Store.Libraries(ctx, r.ProjectKey, r.Slug)
+		libs, err := w.base.Store.Shared(ctx, r.ProjectKey, r.Slug)
 		if err != nil {
-			w.log.WarnContext(ctx, "baseline: libraries read failed, drain paused", logging.Err(err))
+			w.log.WarnContext(ctx, "baseline: shared repositories read failed, drain paused", logging.Err(err))
 			return errStop
 		}
-		w.libsRun, w.libs = r.ID, libraries(libs, false)
+		w.libsRun, w.libs = r.ID, sharedRepos(libs, false)
 	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
@@ -1156,9 +1155,9 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 			return err
 		}
 	}
-	libs, err := w.base.Store.Libraries(ctx, r.ProjectKey, "")
+	libs, err := w.base.Store.Shared(ctx, r.ProjectKey, "")
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: libraries read failed, drain paused", logging.Err(err))
+		w.log.WarnContext(ctx, "baseline: shared repositories read failed, drain paused", logging.Err(err))
 		return errStop
 	}
 	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), w.limits))
@@ -1168,11 +1167,6 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	if !okCall {
 		return w.skipProject(ctx, r, plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
-	}
-	// An answer, whatever it says, is the fold a folder that became a system
-	// again was due; failing to clear the mark costs one more fold, no more.
-	if err := w.base.Store.ProjectFolded(ctx, r.ProjectKey); err != nil {
-		w.log.WarnContext(ctx, "baseline: project due mark not cleared", logging.Err(err))
 	}
 	var rev *store.NewRevision
 	if res.Description == nil {
@@ -1222,22 +1216,35 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 // sentinel says a step asked and none was accepted, and only a run that
 // folds the project anyway asks again. page is the project page the caller
 // read; the repositories, when it had to read them, come back for reuse.
-// The one place a run decides on the project: a folder whose repositories
-// stand alone has none to write (no call, nothing skipped), and one that
-// became a system again is folded whatever a reconcile would skip, so the
-// page it kept catches up.
+// The one place a run decides on the project: a project of one has none to
+// write (no call, nothing skipped; its repository's page is the project's),
+// and a project with no page yet (its second repository just came) is
+// folded whatever a reconcile would skip.
 func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page) (bool, []store.RepoSummary, error) {
-	ps, err := w.store.ProjectSystemOf(ctx, r.ProjectKey)
+	n, err := w.store.SourceRepoCount(ctx, r.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: project source read failed, drain paused", logging.Err(err))
 		return false, nil, errStop
 	}
-	if ps.Standalone {
-		w.log.InfoContext(ctx, "baseline: project step left out, the repositories stand alone")
+	if store.Single(n) {
+		w.log.InfoContext(ctx, "baseline: project step left out, a project of one")
 		return true, nil, nil
 	}
-	if ps.Due || r.Mode != store.RunReconcile || plan.SummaryChanged {
+	if page.RevisionID == 0 || r.Mode != store.RunReconcile || plan.SummaryChanged {
 		return false, nil, nil
+	}
+	// A repository added after the page was written: the page has never
+	// seen it (a project that grows past one, or grows back to more after
+	// standing as one with its old page kept), whatever a reconcile reads.
+	rows, err := w.base.Store.SourceRepos(ctx, r.ProjectKey)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
+		return false, nil, errStop
+	}
+	for _, row := range rows {
+		if row.CreatedAt.After(page.UpdatedAt) {
+			return false, nil, nil
+		}
 	}
 	if page.Map != nil {
 		return true, nil, nil
@@ -1706,7 +1713,7 @@ func renderProblems(problems []store.RepoProblem) string {
 func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs string,
 	newer map[string]string) string {
 	return strings.NewReplacer(
-		"{problem_areas}", problems, "{libraries}", libs,
+		"{problem_areas}", problems, "{shared}", libs,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps),
 		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
@@ -1714,11 +1721,11 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 	).Replace(prompts.Describe)
 }
 
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, libs []store.Library, repoSlugs []string,
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, libs []store.SharedRepo, repoSlugs []string,
 	l config.Limits) string {
 	nodes, edges := mapRoom(libs, len(repoSlugs))
 	return strings.NewReplacer(
-		"{libraries}", libraries(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
+		"{shared}", sharedRepos(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
 		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(nodes), "{map_max_edges}", fmt.Sprint(edges),
@@ -1726,11 +1733,11 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 }
 
 // mapRoom is the nodes and edges the model may draw on the system map:
-// what one drawing holds less what code adds for the libraries (a node
-// each, an edge per user), so the map with them still fits; never fewer
-// than the repositories need, the UI then showing as many libraries as
+// what one drawing holds less what code adds for the shared repositories (a
+// node each, an edge per user), so the map with them still fits; never fewer
+// than the repositories need, the UI then showing as many of them as
 // fit.
-func mapRoom(libs []store.Library, repos int) (int, int) {
+func mapRoom(libs []store.SharedRepo, repos int) (int, int) {
 	edges := diagram.DrawMaxEdges
 	for _, l := range libs {
 		edges -= len(l.UsedBy)
@@ -1792,11 +1799,11 @@ func otherRepos(repos []store.RepoSummary, self string) string {
 	return fitSummaries(repos, self, baseline.ProjectReposMaxBytes, "Also in the project, without a summary here")
 }
 
-// libraries is the summaries of the source repositories a repository, or
-// a project's repositories, use (store.Libraries), named project/slug, each
-// with its users when they are a project's; fitted to LibrariesMaxBytes
+// sharedRepos is the summaries of the source repositories a repository, or
+// a project's repositories, depend on (store.Shared), named project/slug,
+// each with its users when they are a project's; fitted to SharedMaxBytes
 // like otherRepos. A prompt's input, never stored text.
-func libraries(libs []store.Library, users bool) string {
+func sharedRepos(libs []store.SharedRepo, users bool) string {
 	repos := make([]store.RepoSummary, 0, len(libs))
 	for _, l := range libs {
 		name := l.ProjectKey + "/" + l.Slug
@@ -1809,10 +1816,10 @@ func libraries(libs []store.Library, users bool) string {
 		}
 		repos = append(repos, store.RepoSummary{Slug: name, Summary: l.Summary})
 	}
-	return fitSummaries(repos, "", baseline.LibrariesMaxBytes, "Also used, without a summary here")
+	return fitSummaries(repos, "", baseline.SharedMaxBytes, "Also depended on, without a summary here")
 }
 
-// fitSummaries is otherRepos' and libraries' fitting: every summary but
+// fitSummaries is otherRepos' and sharedRepos' fitting: every summary but
 // self's within max bytes, the rest named after also.
 func fitSummaries(repos []store.RepoSummary, self string, max int, also string) string {
 	var others []store.RepoSummary

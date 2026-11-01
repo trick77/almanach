@@ -8,7 +8,7 @@ import {
   type Sources,
   type TokenAuth,
 } from "./api";
-import { dayTime } from "./format";
+import { dayTime, slugFromURL } from "./format";
 import { navigateTo, sourcePath } from "./routing";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
@@ -21,7 +21,6 @@ import {
   Pill,
   Segmented,
   Skeleton,
-  SystemToggle,
   btn,
   btnPrimary,
   column,
@@ -218,16 +217,19 @@ function NewSourceForm({
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>("bearer");
   const [user, setUser] = useState("");
-  const [system, setSystem] = useState(true);
+  // A static folder comes with its first repository; the slug follows the
+  // URL until it is typed by hand.
+  const [url, setUrl] = useState("");
+  const [branch, setBranch] = useState("");
+  const [keyTyped, setKeyTyped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
-  const sys = S.sources.system;
+  const isStatic = kind === "static";
 
   const pickKind = (k: SourceKind) => {
     setKind(k);
     setAuth(k === "bitbucket" ? "bearer" : "basic");
-    setSystem(true);
   };
 
   const submit = async () => {
@@ -241,9 +243,11 @@ function NewSourceForm({
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
-        // A static folder's choice only: a Bitbucket project takes the
-        // server's rule.
-        ...(kind === "static" ? { system } : {}),
+        // The first repository: its slug is the folder's, empty is its
+        // name from the URL (the server's rule too).
+        ...(isStatic
+          ? { clone_url: url.trim(), slug: key.trim(), branch: branch.trim() }
+          : {}),
       });
       if (created) onDone(created);
     } catch (e) {
@@ -273,16 +277,61 @@ function NewSourceForm({
           />
           <span className={fieldHint}>{S.sources.kindHint[kind]}</span>
         </div>
-        <label>
-          <span className={fieldLabel}>{f.slug}</span>
-          <input
-            className={input + " " + mono}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder="SHOP"
-          />
-          <span className={fieldHint}>{f.slugHint}</span>
-        </label>
+        {!isStatic && (
+          <label>
+            <span className={fieldLabel}>{f.slug}</span>
+            <input
+              className={input + " " + mono}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder="SHOP"
+            />
+            <span className={fieldHint}>{f.slugHint}</span>
+          </label>
+        )}
+        {isStatic && (
+          <>
+            <label className="sm:col-span-2">
+              <span className={fieldLabel}>{f.firstRepo}</span>
+              <input
+                className={input + " " + mono}
+                value={url}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  if (!keyTyped) setKey(slugFromURL(e.target.value));
+                }}
+                placeholder="https://github.com/acme/acme-api.git"
+              />
+              <span className={fieldHint}>{f.firstRepoHint}</span>
+            </label>
+            <label>
+              <span className={fieldLabel}>
+                {f.slug} <span className="text-faint">{f.optional}</span>
+              </span>
+              <input
+                className={input + " " + mono}
+                value={key}
+                onChange={(e) => {
+                  setKey(e.target.value);
+                  setKeyTyped(e.target.value !== "");
+                }}
+                placeholder="acme-api"
+              />
+              <span className={fieldHint}>{f.slugFromURL}</span>
+            </label>
+            <label>
+              <span className={fieldLabel}>
+                {f.branch} <span className="text-faint">{f.optional}</span>
+              </span>
+              <input
+                className={input + " " + mono}
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                placeholder={f.branchPlaceholder}
+              />
+            </label>
+          </>
+        )}
         {kind === "bitbucket" && (
           <label className="sm:col-span-2">
             <span className={fieldLabel}>{f.host}</span>
@@ -294,20 +343,6 @@ function NewSourceForm({
             />
             <span className={fieldHint}>{f.hostHint}</span>
           </label>
-        )}
-        {kind === "static" && (
-          <div className="sm:col-span-2">
-            <span className={fieldLabel}>{sys.label}</span>
-            <SystemToggle
-              system={system}
-              onSwitch={() => setSystem((s) => !s)}
-              describedBy="new-system-hint"
-              disabled={busy}
-            />
-            <span id="new-system-hint" className={fieldHint}>
-              {sys.createHint(system)}
-            </span>
-          </div>
         )}
         <label className="sm:col-span-2">
           <span className={fieldLabel}>
@@ -356,7 +391,7 @@ function NewSourceForm({
         <button
           type="button"
           className={btnPrimary}
-          disabled={busy || key.trim() === ""}
+          disabled={busy || (isStatic ? url.trim() === "" : key.trim() === "")}
           onClick={submit}
         >
           {busy ? f.saving : f.create}

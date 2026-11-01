@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlowIR } from "./diagramIR";
-import { withLibraries } from "./ProjectPage";
+import { withShared } from "./ProjectPage";
 
 const map: FlowIR = {
   kind: "flow",
@@ -31,19 +31,19 @@ const llmwire = {
   ],
 };
 
-describe("withLibraries", () => {
+describe("withShared", () => {
   it("leaves a map without libraries as stored", () => {
-    expect(withLibraries(map, [])).toBe(map);
+    expect(withShared(map, [])).toBe(map);
   });
 
   it("draws each library in its own zone, an edge from each user", () => {
-    const ir = withLibraries(map, [llmwire]);
-    const lib = ir.nodes.find((n) => n.zone === "libraries");
+    const ir = withShared(map, [llmwire]);
+    const lib = ir.nodes.find((n) => n.zone === "shared");
     expect(lib).toEqual({
-      id: "library:tools/llmwire",
+      id: "shared:tools/llmwire",
       label: "tools/llmwire",
       shape: "pill",
-      zone: "libraries",
+      zone: "shared",
     });
     expect(ir.edges.filter((e) => e.to === lib!.id).map((e) => e.from)).toEqual(
       ["loom", "rongo"],
@@ -51,16 +51,16 @@ describe("withLibraries", () => {
     expect(ir.zones.map((z) => z.id)).toEqual([
       "clients",
       "repositories",
-      "libraries",
+      "shared",
     ]);
   });
 
   it("puts the library in place of the node the model drew for it", () => {
-    const ir = withLibraries(map, [llmwire]);
+    const ir = withShared(map, [llmwire]);
     expect(ir.nodes.some((n) => n.id === "wire")).toBe(false);
     // loom's edge moved over, not doubled.
     expect(
-      ir.edges.filter((e) => e.from === "loom" && e.to.startsWith("library")),
+      ir.edges.filter((e) => e.from === "loom" && e.to.startsWith("shared")),
     ).toHaveLength(1);
   });
 
@@ -70,9 +70,9 @@ describe("withLibraries", () => {
       slug: `lib${i}`,
     }));
     // 2 edges stored, 2 per library within 24: eleven.
-    const ir = withLibraries(map, many);
-    expect(ir.nodes.filter((n) => n.zone === "libraries")).toHaveLength(11);
-    expect(ir.nodes.some((n) => n.id === "library:tools/lib10")).toBe(true);
+    const ir = withShared(map, many);
+    expect(ir.nodes.filter((n) => n.zone === "shared")).toHaveLength(11);
+    expect(ir.nodes.some((n) => n.id === "shared:tools/lib10")).toBe(true);
   });
 
   it("leaves a node alone that is no library use", () => {
@@ -94,14 +94,14 @@ describe("withLibraries", () => {
         },
       ],
     };
-    const ir = withLibraries(gw, [{ ...llmwire, slug: "gateway" }]);
+    const ir = withShared(gw, [{ ...llmwire, slug: "gateway" }]);
     expect(ir.nodes.some((n) => n.id === "gateway")).toBe(true);
     expect(ir.edges.some((e) => e.to === "gateway")).toBe(true);
   });
 
   it("matches a slug two libraries share only by project and slug", () => {
     const two = [llmwire, { ...llmwire, project: "other" }];
-    const ir = withLibraries(map, two);
+    const ir = withShared(map, two);
     // "llmwire" alone names neither: the model's node stays.
     expect(ir.nodes.some((n) => n.id === "wire")).toBe(true);
   });
@@ -112,8 +112,8 @@ describe("withLibraries", () => {
       ...Array.from({ length: 20 }, (_, i) => ({ ...llmwire, slug: `x${i}` })),
       { ...llmwire, project: "other" },
     ];
-    const ir = withLibraries(map, many);
-    expect(ir.nodes.some((n) => n.id === "library:other/llmwire")).toBe(false);
+    const ir = withShared(map, many);
+    expect(ir.nodes.some((n) => n.id === "shared:other/llmwire")).toBe(false);
     expect(ir.nodes.some((n) => n.id === "wire")).toBe(true);
   });
 
@@ -131,8 +131,8 @@ describe("withLibraries", () => {
         },
       ],
     };
-    const ir = withLibraries(back, [llmwire]);
-    const lib = "library:tools/llmwire";
+    const ir = withShared(back, [llmwire]);
+    const lib = "shared:tools/llmwire";
     expect(
       ir.edges.filter(
         (e) =>
@@ -143,7 +143,7 @@ describe("withLibraries", () => {
   });
 
   it("leaves out a library whose users the map does not show", () => {
-    const ir = withLibraries(map, [
+    const ir = withShared(map, [
       { ...llmwire, used_by: [{ project: "apps", slug: "newer" }] },
     ]);
     expect(ir).toBe(map);

@@ -58,13 +58,25 @@ func (d Deps) projectMarkdown(w http.ResponseWriter, r *http.Request, key string
 		httpx.WriteError(w, http.StatusNotFound, "unknown project")
 		return
 	}
-	alone, err := d.standalone(ctx, key)
+	alone, err := d.single(ctx, key)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project source")
 		return
 	}
 	if alone {
-		httpx.WriteError(w, http.StatusNotFound, "no project page: the repositories stand alone, export each repository")
+		// A project of one: its repository's export is the project's.
+		repos, err := d.Store.Repos(ctx, key, true)
+		if err != nil {
+			httpx.ServerError(w, r, err, "repos")
+			return
+		}
+		if len(repos) == 1 {
+			d.repoMarkdown(w, r, key, repos[0].Slug)
+			return
+		}
+		// Its repositories changed between the two reads: no page to serve,
+		// never the project page it no longer has.
+		httpx.WriteError(w, http.StatusNotFound, "no project page: a project of one, export its repository")
 		return
 	}
 	page, found, err := d.Store.CurrentPage(ctx, store.ScopeProject, key, "")

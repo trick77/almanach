@@ -113,29 +113,6 @@ func TestSourcedLists(t *testing.T) {
 	if want := []RepoSummary{{"svc", ""}, {"web", "Absatz eins.\n\nAbsatz zwei."}}; err != nil || !reflect.DeepEqual(sums, want) {
 		t.Errorf("RepoSummaries = %+v %v, want %+v", sums, err, want)
 	}
-	// TRANSITIONAL(layout): Remove with lang.Relaid.
-	// A revision written before the layout reads laid out (lang.Relaid),
-	// on every read of it.
-	legacy := NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "web", Summary: "## Zweck\nDer Dienst.\n* eins",
-		Statements: []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "## Regel\n  * Größe"}}, SourcePR: "PRJ/web#2"}
-	if _, err := s.InsertRevision(ctx, legacy); err != nil {
-		t.Fatal(err)
-	}
-	const relaid = "#### Zweck\n\nDer Dienst.\n\n- eins"
-	if sums, _ := s.RepoSummaries(ctx, "PRJ"); sums[1].Summary != relaid {
-		t.Errorf("RepoSummaries relaid = %q", sums[1].Summary)
-	}
-	if rs, _ := s.Repos(ctx, "PRJ", true); rs[1].Summary != relaid {
-		t.Errorf("Repos relaid = %q", rs[1].Summary)
-	}
-	p, _, _ := s.CurrentPage(ctx, ScopeRepository, "PRJ", "web")
-	if p.Summary != relaid || p.Statements[0].Text != "#### Regel\n\n- Grösse" {
-		t.Errorf("CurrentPage relaid = %q, %q", p.Summary, p.Statements[0].Text)
-	}
-	// What the revision holds stays beside it, for a map basis hashed before.
-	if p.Stored == nil || p.Stored.Summary != legacy.Summary || !reflect.DeepEqual(p.Stored.Texts, []string{"## Regel\n  * Größe"}) {
-		t.Errorf("CurrentPage stored = %+v", p.Stored)
-	}
 	if team, ok, err := s.ProjectExists(ctx, "tools", true); err != nil || !ok || team != "" {
 		t.Errorf("ProjectExists(tools) = %q %v %v", team, ok, err)
 	}
