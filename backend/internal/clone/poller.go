@@ -12,12 +12,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
+	"github.com/trick77/almanach/internal/urlorigin"
 )
 
 // FirstDelay is the wait before the first cycle: short, so a fresh
@@ -31,6 +33,7 @@ type Store interface {
 	ApplyListing(ctx context.Context, key string, listed []store.ListedRepo) (store.ListingResult, error)
 	MarkSourceListed(ctx context.Context, key, errText string) error
 	SyncJobs(ctx context.Context) ([]store.SyncJob, error)
+	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	MarkRepoSyncing(ctx context.Context, key, slug string) error
 	MarkRepoReady(ctx context.Context, key, slug, branch, head string) error
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
@@ -261,7 +264,10 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		return err
 	}
 	p.Log.Info("sync cycle started", "sources", len(sources), "repositories", len(jobs))
-	bound := origins(jobs)
+	bound, err := p.bindings(ctx, jobs)
+	if err != nil {
+		return err
+	}
 	var synced, unchanged, failed int
 	for _, j := range jobs {
 		if ctx.Err() != nil {
@@ -412,7 +418,7 @@ func (p *Poller) logRunCheck(err error, key, slug string) {
 
 // list reconciles one Bitbucket source's repositories with the API.
 func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
-	a, err := p.access(s, gitrepo.Origin(s.Host))
+	a, err := p.access(s, urlorigin.Of(s.Host))
 	if err == nil {
 		var listed []store.ListedRepo
 		listed, err = p.Lister.ListRepos(ctx, s.Host, s.ProjectKey, a)
@@ -455,45 +461,67 @@ func (p *Poller) access(s store.ProjectSource, origin string) (gitrepo.Access, e
 	return a, nil
 }
 
-// origins is the one origin each source's token may reach: a Bitbucket
-// source's host; a static folder's single host, read off its rows (all of
-// them: a hand-entered row is never missing), "" when they span several.
-// The API keeps a folder on one host; rows from before that rule may not
-// be, and their token then goes nowhere rather than to a guess.
-func origins(jobs []store.SyncJob) map[string]string {
-	out := map[string]string{}
-	mixed := map[string]bool{}
+// binding is where a source's token may go: origin, "" for nowhere, and
+// the folder's hosts when a static one spans several.
+type binding struct {
+	origin string
+	hosts  []string
+}
+
+// bindings is each token-bearing source's binding for the cycle: a
+// Bitbucket source's host; a static folder's single host, by the API's
+// definition over all its rows (store.Origins), none when they span
+// several. The API keeps a folder on one host; rows from before that rule
+// may not be, and their token then goes nowhere rather than to a guess.
+func (p *Poller) bindings(ctx context.Context, jobs []store.SyncJob) (map[string]binding, error) {
+	out := map[string]binding{}
 	for _, j := range jobs {
 		key := j.Source.ProjectKey
+		if _, done := out[key]; done || !j.Source.HasToken() {
+			continue
+		}
 		if j.Source.Kind != store.SourceStatic {
-			out[key] = gitrepo.Origin(j.Source.Host)
+			out[key] = binding{origin: urlorigin.Of(j.Source.Host)}
 			continue
 		}
-		o := gitrepo.Origin(j.Repo.CloneURL)
-		if seen, ok := out[key]; mixed[key] || (ok && seen != o) {
-			out[key], mixed[key] = "", true
-			continue
+		repos, err := p.Store.SourceRepos(ctx, key)
+		if err != nil {
+			return nil, err
 		}
-		out[key] = o
+		hosts := store.Origins(repos)
+		if len(hosts) == 1 {
+			out[key] = binding{origin: hosts[0]}
+		} else {
+			out[key] = binding{hosts: hosts}
+		}
 	}
-	return out
+	return out, nil
 }
 
 // sync is one repository's cycle: origin check, clone, branch, fetch,
-// head. Reports the head and whether it moved. A token bound to another
-// origin than the clone URL's fails the repository before git runs: an
-// anonymous attempt would only end in git's auth error, naming nothing.
-func (p *Poller) sync(ctx context.Context, j store.SyncJob, bound string) (string, bool, error) {
+// head. Reports the head and whether it moved. A clone URL off the token's
+// binding goes anonymous, so a public repository still syncs; a failure
+// then carries why the token was withheld, not git's bare auth error.
+func (p *Poller) sync(ctx context.Context, j store.SyncJob, b binding) (string, bool, error) {
 	key, slug := j.Source.ProjectKey, j.Repo.Slug
-	a, err := p.access(j.Source, bound)
+	a, err := p.access(j.Source, b.origin)
 	if err != nil {
 		return "", false, err
 	}
-	if a.Token != "" && !gitrepo.SameOrigin(j.Repo.CloneURL, bound) {
-		if bound == "" {
-			return "", false, errors.New("the folder's repositories are on more than one host; its token goes to none of them until they share one")
+	withheld := ""
+	if a.Token != "" && !urlorigin.Same(j.Repo.CloneURL, b.origin) {
+		withheld = "token withheld: clone URL is on " + urlorigin.Of(j.Repo.CloneURL) + ", the source's token belongs to " + b.origin
+		if b.origin == "" {
+			withheld = "token withheld: the folder's repositories are on several hosts (" + strings.Join(b.hosts, ", ") + ")"
 		}
-		return "", false, fmt.Errorf("clone URL is on %s, the source's token belongs to %s; not sent there", gitrepo.Origin(j.Repo.CloneURL), bound)
+		a.Token = ""
+		p.Log.Warn("token_withheld", "project", key, "repo", slug, "reason", withheld)
+	}
+	because := func(err error) error {
+		if withheld == "" {
+			return err
+		}
+		return fmt.Errorf("%s; %w", withheld, err)
 	}
 	dir, err := p.Git.Dir(key, slug)
 	if err != nil {
@@ -515,18 +543,18 @@ func (p *Poller) sync(ctx context.Context, j store.SyncJob, bound string) (strin
 		}
 	}
 	if err := p.Git.EnsureCloned(ctx, dir, j.Repo.CloneURL, a); err != nil {
-		return "", false, err
+		return "", false, because(err)
 	}
 	branch := j.Repo.Branch
 	if branch == "" {
 		branch, err = p.Git.DefaultBranch(ctx, j.Repo.CloneURL, a)
 		if err != nil {
-			return "", false, err
+			return "", false, because(err)
 		}
 		p.Log.Info("branch resolved from the remote", "project", key, "repo", slug, "branch", branch)
 	}
 	if err := p.Git.Fetch(ctx, dir, j.Repo.CloneURL, a); err != nil {
-		return "", false, err
+		return "", false, because(err)
 	}
 	head, err := p.Git.HeadSHA(ctx, dir, branch)
 	if err != nil {

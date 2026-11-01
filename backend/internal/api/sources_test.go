@@ -81,6 +81,10 @@ func (f *fakeSources) SourceRepos(_ context.Context, key string) ([]store.Source
 	return f.repos[key], nil
 }
 func (f *fakeSources) AddSourceRepo(_ context.Context, r store.SourceRepo) error {
+	// The store's order: the host first, then the slug's uniqueness.
+	if err := store.OneHost(f.repos[r.ProjectKey], r.CloneURL); err != nil {
+		return err
+	}
 	for _, have := range f.repos[r.ProjectKey] {
 		if have.Slug == r.Slug {
 			return store.ErrExists
@@ -400,23 +404,34 @@ func TestSources_StaticFolderHoldsOneHost(t *testing.T) {
 			t.Errorf("%s: %d %v, want 422 naming clone_url and the folder's host", off, code, body)
 		}
 	}
-	if len(fs.repos["tools"]) != 2 {
+	if code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos", "", `{"slug":"d","clone_url":"https://github.com:443/acme/d.git"}`, jsonHdr); code != 201 {
+		t.Fatalf("same host on its default port: %d %v", code, body)
+	}
+	if len(fs.repos["tools"]) != 3 {
 		t.Fatalf("rows after the refusals: %v", fs.repos["tools"])
 	}
 	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"token":"pat"}`, jsonHdr); code != 200 || string(body["has_token"]) != "true" {
 		t.Fatalf("token on a one-host folder: %d %v", code, body)
 	}
 
-	// A folder from before the rule, on two hosts: no token for it.
-	fs.repos["tools"] = append(fs.repos["tools"], store.SourceRepo{ProjectKey: "tools", Slug: "c", CloneURL: "https://gitlab.com/acme/c.git"})
-	code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"token":"other"}`, jsonHdr)
-	if code != 422 || !strings.HasPrefix(field(t, body, "error"), "token:") || !strings.Contains(field(t, body, "error"), "https://gitlab.com") {
-		t.Fatalf("token on a mixed folder: %d %v", code, body)
+	// A folder from before the rule, on two hosts (a missing row counts):
+	// an add names both hosts, and no new token or new way to send the
+	// stored one.
+	fs.repos["tools"] = append(fs.repos["tools"], store.SourceRepo{ProjectKey: "tools", Slug: "c", CloneURL: "https://gitlab.com/acme/c.git", State: store.RepoMissing})
+	code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos", "", `{"slug":"e","clone_url":"https://github.com/acme/e.git"}`, jsonHdr)
+	if msg := field(t, body, "error"); code != 422 || !strings.Contains(msg, "several hosts (https://github.com, https://gitlab.com)") {
+		t.Fatalf("add to a mixed folder: %d %v", code, body)
+	}
+	for patch, name := range map[string]string{`{"token":"other"}`: "token:", `{"token_user":"me"}`: "token_user:", `{"token_auth":"bearer"}`: "token_auth:"} {
+		code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", patch, jsonHdr)
+		if msg := field(t, body, "error"); code != 422 || !strings.HasPrefix(msg, name) || !strings.Contains(msg, "https://gitlab.com") {
+			t.Errorf("%s on a mixed folder with a token: %d %v, want 422 naming %s", patch, code, body, name)
+		}
 	}
 	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"token":""}`, jsonHdr); code != 200 || string(body["has_token"]) != "false" {
 		t.Fatalf("clearing the token of a mixed folder: %d %v", code, body)
 	}
-	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"auto_describe":false}`, jsonHdr); code != 200 {
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"token_user":"me","auto_describe":false}`, jsonHdr); code != 200 {
 		t.Fatalf("a change without a token on a mixed folder: %d %v", code, body)
 	}
 }

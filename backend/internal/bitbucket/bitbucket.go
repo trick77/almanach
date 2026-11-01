@@ -109,7 +109,7 @@ func (l *Lister) page(ctx context.Context, base *url.URL, project string, a gitr
 		return page{}, err
 	}
 	req.Header.Set("Accept", "application/json")
-	if h := a.Authorization(); h != "" {
+	if h := a.Authorization(u.String()); h != "" {
 		req.Header.Set("Authorization", h)
 	}
 	resp, err := l.client.Do(req)

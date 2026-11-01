@@ -394,8 +394,9 @@ paths:
       tags: [sources]
       summary: Change a source's host or token
       description: >-
-        Every field is optional; an omitted `token` keeps the stored one, an empty one clears it. A token for a
-        static source whose repositories span more than one host is a 422: a token reaches one host only.
+        Every field is optional; an omitted `token` keeps the stored one, an empty one clears it. A token reaches
+        one host only: on a static source whose repositories span more than one host, a new token, or a changed
+        `token_auth` or `token_user` with a token stored, is a 422 naming the field and the hosts; clearing is not.
       operationId: updateSource
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -467,7 +468,8 @@ paths:
       summary: Add a repository to a static source
       description: >-
         A Bitbucket source lists its repositories itself and answers 422. A static source holds one host: a
-        `clone_url` on another scheme, host or port than its repositories' is a 422.
+        `clone_url` on another scheme, host or port than its repositories' (the default port aside) is a 422,
+        and so is any on a source that already spans several, which the message lists.
       operationId: addSourceRepo
       parameters:
         - $ref: "#/components/parameters/projectKey"

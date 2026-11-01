@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,43 @@ func TestSources_CreateListUpdateDelete(t *testing.T) {
 	}
 	if _, found, _ := s.SourceByKey(ctx, "tools"); found {
 		t.Fatal("deleted source still found")
+	}
+}
+
+// A folder holds one host: the add checks the rows in its own write
+// transaction, the default port and case aside; a folder already on two
+// names both.
+func TestAddSourceRepo_OneHost(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.CreateSource(ctx, staticSource("tools")); err != nil {
+		t.Fatal(err)
+	}
+	add := func(slug, url string) error {
+		return s.AddSourceRepo(ctx, SourceRepo{ProjectKey: "tools", Slug: slug, CloneURL: url})
+	}
+	if err := add("a", "https://forge.example.invalid/a.git"); err != nil {
+		t.Fatal(err)
+	}
+	if err := add("b", "https://FORGE.example.invalid:443/b.git"); err != nil {
+		t.Fatalf("same host, default port: %v", err)
+	}
+	var other *OtherHostError
+	if err := add("c", "https://other.example.invalid/c.git"); !errors.As(err, &other) || strings.Join(other.Hosts, ",") != "https://forge.example.invalid" {
+		t.Fatalf("other host: %v", err)
+	}
+	if n := count(t, s, "source_repos", "project_key = 'tools'"); n != 2 {
+		t.Fatalf("rows after the refusal: %d", n)
+	}
+	// A folder from before the rule, on two hosts: every add is refused,
+	// both hosts named.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO source_repos (project_key, slug, clone_url, origin, state, created_at)
+		VALUES ('tools', 'old', 'https://other.example.invalid/old.git', 'manual', 'missing', ?)`, nowStamp()); err != nil {
+		t.Fatal(err)
+	}
+	err := add("d", "https://forge.example.invalid/d.git")
+	if !errors.As(err, &other) || strings.Join(other.Hosts, ",") != "https://forge.example.invalid,https://other.example.invalid" {
+		t.Fatalf("mixed folder: %v", err)
 	}
 }
 

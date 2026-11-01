@@ -417,13 +417,19 @@ any repository size, and every rule here was paid for there.
   or a row, the belt to that brace. A cancelled command is given ten
   seconds for its helpers before its pipes are cut, so a shutdown cannot
   hang on `git-remote-https`.
-- A token reaches one host: scheme and host of a URL, case aside, port
-  kept. A Bitbucket source's is its host; a static folder holds one host,
-  checked when a repository is added, token or not, and a token is refused
-  for a folder from before that rule that spans several. At the clone the
-  header goes only to a URL on that host; a repository elsewhere (a listed
-  clone URL off the Bitbucket host, a mixed folder) fails on its row with
-  the reason, and git is not asked.
+- A token reaches one host: a URL's origin as a browser writes it (scheme
+  and host, case aside, the default port dropped; one normaliser, the auth
+  gate's too). A Bitbucket source's is its host; a static folder holds one
+  host, checked with the insert in one write transaction when a repository
+  is added, token or not. A folder from before that rule that spans
+  several gets no new token, and no change of a stored one's auth or user.
+  The header value comes from one function, given the target URL, so
+  neither git nor the Bitbucket listing can send it elsewhere. A
+  repository off its source's host (a listed clone URL off the Bitbucket
+  host, any repository of a mixed folder) syncs without the token: a
+  public one keeps working, a failing one names why the token was
+  withheld. API and poller derive a folder's host from the same rows, all
+  of them.
 - The origin URL is the identity, the directory name a label: a clone
   whose origin differs from the row's clone URL is removed and cloned
   again, so a corrected URL never serves the old code under the new name.

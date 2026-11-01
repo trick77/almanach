@@ -245,6 +245,9 @@ func TestAccess_TokenStaysOnItsOrigin(t *testing.T) {
 	if env := gh.env("https://jan@github.com/acme/repo.git"); env == nil {
 		t.Error("userinfo is no part of the origin: no header")
 	}
+	if env := gh.env("https://github.com:443/acme/repo.git"); env == nil {
+		t.Error("the default port is the same origin: no header")
+	}
 	for _, off := range []string{
 		"https://gitlab.com/acme/repo.git",
 		"https://github.com.evil.example/acme/repo.git",
@@ -260,20 +263,20 @@ func TestAccess_TokenStaysOnItsOrigin(t *testing.T) {
 	}
 }
 
-func TestOrigin(t *testing.T) {
-	for raw, want := range map[string]string{
-		"https://GitHub.com/acme/repo.git":  "https://github.com",
-		"https://u@forge.example:8443/x":    "https://forge.example:8443",
-		"https://bitbucket.example/context": "https://bitbucket.example",
-		"/local/path.git":                   "",
-		"":                                  "",
-	} {
-		if got := Origin(raw); got != want {
-			t.Errorf("Origin(%q) = %q, want %q", raw, got, want)
+// Authorization, the one source of the header value, refuses a target off
+// the origin too: the Bitbucket listing gets "" for one, as git does.
+func TestAccess_AuthorizationBoundToOrigin(t *testing.T) {
+	bb := Access{Token: "pat", Auth: "bearer", Origin: "https://forge.example.invalid:443"}
+	if got := bb.Authorization("https://FORGE.example.invalid/rest/api/1.0/projects/SHOP/repos"); got != "Bearer pat" {
+		t.Errorf("on the origin: %q", got)
+	}
+	for _, off := range []string{"https://elsewhere.example.invalid/rest", "https://forge.example.invalid:8443/rest", "", "/rest"} {
+		if got := bb.Authorization(off); got != "" {
+			t.Errorf("Authorization(%q) = %q, want none", off, got)
 		}
 	}
-	if SameOrigin("", "") {
-		t.Error(`SameOrigin("", "") = true`)
+	if got := (Access{Token: "pat", Auth: "bearer"}).Authorization("https://forge.example.invalid/rest"); got != "" {
+		t.Errorf("no origin: %q, want none", got)
 	}
 }
 

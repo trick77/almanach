@@ -3,13 +3,13 @@ package auth
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"strings"
 
 	kitauth "github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 
 	"github.com/trick77/almanach/internal/authroute"
+	"github.com/trick77/almanach/internal/urlorigin"
 )
 
 // The two /api routes a browser reaches before it has a session.
@@ -48,7 +48,7 @@ const (
 // repository of its own.
 func Gate(sessions *kitauth.Sessions, redirectURL string, bearer func(*http.Request) bool) func(http.Handler) http.Handler {
 	cop := http.NewCrossOriginProtection()
-	if o := origin(redirectURL); o != "" {
+	if o := urlorigin.Of(redirectURL); o != "" {
 		if err := cop.AddTrustedOrigin(o); err != nil {
 			panic("auth: redirect URL origin " + o + ": " + err.Error()) // config checked the URL
 		}
@@ -137,22 +137,4 @@ func unsafe(method string) bool {
 		return true
 	}
 	return false
-}
-
-// origin is scheme://host of s as a browser writes it in Origin: lower
-// case, the scheme's default port dropped (:443 for https, :80 for http);
-// "" when s has no scheme or host.
-func origin(s string) string {
-	u, err := url.Parse(s)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	scheme, host := strings.ToLower(u.Scheme), strings.ToLower(u.Host)
-	if p := u.Port(); (scheme == "https" && p == "443") || (scheme == "http" && p == "80") {
-		host = strings.ToLower(u.Hostname())
-		if strings.Contains(host, ":") {
-			host = "[" + host + "]"
-		}
-	}
-	return scheme + "://" + host
 }

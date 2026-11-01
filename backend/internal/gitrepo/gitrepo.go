@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/trick77/almanach/internal/urlorigin"
 )
 
 // ErrBranchGone is a configured branch the remote no longer has. Named so
@@ -44,9 +46,9 @@ const waitDelay = 10 * time.Second
 // (Authorization: Basic of User and Token; User defaults to x-access-token,
 // which GitHub ignores and Bitbucket DC checks). Either way a header, never
 // a URL: a URL is persisted by git, printed in its errors and shown in the
-// process list. Origin is the one scheme://host the token may reach (see
-// Origin): a token travels only to a URL on it, never to another host, and
-// not at all when Origin is "".
+// process list. Origin is the one scheme://host the token may reach
+// (urlorigin): a token travels only to a URL on it, never to another host,
+// and not at all when Origin is "".
 type Access struct {
 	Token  string
 	Auth   string
@@ -319,7 +321,8 @@ func exitCode(err error) int {
 // Nothing for an anonymous remote, a non-http one or one off the access's
 // origin: the token stays home rather than reach a host it was not made for.
 func (a Access) env(cloneURL string) []string {
-	if a.Token == "" || !isHTTPURL(cloneURL) || !SameOrigin(cloneURL, a.Origin) {
+	h := a.Authorization(cloneURL)
+	if h == "" || !isHTTPURL(cloneURL) {
 		return nil
 	}
 	n, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
@@ -327,15 +330,17 @@ func (a Access) env(cloneURL string) []string {
 	return []string{
 		"GIT_CONFIG_COUNT=" + strconv.Itoa(n+1),
 		"GIT_CONFIG_KEY_" + i + "=http.extraHeader",
-		"GIT_CONFIG_VALUE_" + i + "=Authorization: " + a.Authorization(),
+		"GIT_CONFIG_VALUE_" + i + "=Authorization: " + h,
 	}
 }
 
-// Authorization is the header value the token travels as, for git and for
-// the Bitbucket listing alike, so the two cannot disagree: "Bearer <token>"
-// or "Basic <base64 user:token>". "" without a token.
-func (a Access) Authorization() string {
-	if a.Token == "" {
+// Authorization is the header value the token travels as to target, for git
+// and for the Bitbucket listing alike, so the two cannot disagree and
+// neither can send it elsewhere: "Bearer <token>" or "Basic <base64
+// user:token>". "" without a token or when target is off the access's
+// origin (urlorigin: case aside, default port dropped).
+func (a Access) Authorization(target string) string {
+	if a.Token == "" || !urlorigin.Same(target, a.Origin) {
 		return ""
 	}
 	if a.Auth == "basic" {
@@ -346,22 +351,6 @@ func (a Access) Authorization() string {
 		return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+a.Token))
 	}
 	return "Bearer " + a.Token
-}
-
-// Origin is a URL's scheme://host, lower case, the port kept; "" when it
-// does not parse or names no host. The unit a token is bound to.
-func Origin(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	return strings.ToLower(u.Scheme + "://" + u.Host)
-}
-
-// SameOrigin reports whether a and b are on one origin; "" matches nothing.
-func SameOrigin(a, b string) bool {
-	oa := Origin(a)
-	return oa != "" && oa == Origin(b)
 }
 
 func isHTTPURL(raw string) bool {
