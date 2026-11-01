@@ -21,6 +21,7 @@ import {
   Pill,
   Segmented,
   Skeleton,
+  SystemToggle,
   btn,
   btnPrimary,
   column,
@@ -217,13 +218,16 @@ function NewSourceForm({
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>("bearer");
   const [user, setUser] = useState("");
+  const [system, setSystem] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
+  const sys = S.sources.system;
 
   const pickKind = (k: SourceKind) => {
     setKind(k);
     setAuth(k === "bitbucket" ? "bearer" : "basic");
+    setSystem(true);
   };
 
   const submit = async () => {
@@ -237,6 +241,9 @@ function NewSourceForm({
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
+        // A static folder's choice only: a Bitbucket project takes the
+        // server's rule.
+        ...(kind === "static" ? { system } : {}),
       });
       if (created) onDone(created);
     } catch (e) {
@@ -287,6 +294,20 @@ function NewSourceForm({
             />
             <span className={fieldHint}>{f.hostHint}</span>
           </label>
+        )}
+        {kind === "static" && (
+          <div className="sm:col-span-2">
+            <span className={fieldLabel}>{sys.label}</span>
+            <SystemToggle
+              system={system}
+              onSwitch={() => setSystem((s) => !s)}
+              describedBy="new-system-hint"
+              disabled={busy}
+            />
+            <span id="new-system-hint" className={fieldHint}>
+              {sys.createHint(system)}
+            </span>
+          </div>
         )}
         <label className="sm:col-span-2">
           <span className={fieldLabel}>

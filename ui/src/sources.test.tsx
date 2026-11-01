@@ -262,6 +262,40 @@ describe("SourcesPage", () => {
     await waitFor(() => expect(writes).toHaveLength(1));
     const body = writes[0]?.body as { host: string };
     expect(body.host).toBe("https://forge.example.invalid");
+    // A Bitbucket project takes the server's rule: no system sent.
+    expect(body).not.toHaveProperty("system");
+  });
+
+  it("creates a static folder whose repositories stand alone", async () => {
+    const writes = serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    // A Bitbucket project is always a system: no choice offered.
+    expect(screen.queryByText("Bildet ein System")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    expect(
+      screen.getByText(/eine Projektseite und eine Systemkarte/),
+    ).toBeInTheDocument();
+    const toggle = screen.getByRole("switch", { name: "Bildet ein System" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    // Another kind and back: the default again, as with the token's.
+    fireEvent.click(screen.getByText("Bitbucket-Projekt"));
+    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    const again = screen.getByRole("switch", { name: "Bildet ein System" });
+    expect(again).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(again);
+    expect(
+      screen.getByText(/etwa Bibliotheken und Werkzeuge/),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
+      target: { value: "tools" },
+    });
+    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    const body = writes[0]?.body as { kind: string; system: boolean };
+    expect(body).toMatchObject({ kind: "static", system: false });
   });
 });
 

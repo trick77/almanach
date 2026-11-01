@@ -491,7 +491,8 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
-	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(), "user", d.user(r))
+	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "system", !src.Standalone, "has_token", src.HasToken(),
+		"user", d.user(r))
 	d.Sources.Poller.Nudge()
 	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
 	if err != nil {

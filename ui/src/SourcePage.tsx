@@ -34,6 +34,7 @@ import {
   Segmented,
   Sep,
   Skeleton,
+  SystemToggle,
   Tile,
   Tiles,
   btn,
@@ -435,34 +436,15 @@ function SystemSwitch({
         {S.sources.system.label}
       </span>
       <div className="min-w-0">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={system}
-          aria-label={S.sources.system.label}
-          onClick={onSwitch}
-          className="inline-flex items-center gap-2 text-[14px] text-ink"
+        <SystemToggle
+          system={system}
+          onSwitch={onSwitch}
+          describedBy="system-hint"
+        />
+        <p
+          id="system-hint"
+          className={"mt-1 text-[12.5px] text-faint " + measure}
         >
-          <span
-            className={
-              "relative h-[19px] w-[34px] rounded-full border transition-colors " +
-              (system
-                ? "border-accent bg-accent-dim"
-                : "border-elevated-border bg-elevated")
-            }
-          >
-            <span
-              className={
-                "absolute top-[2px] h-[13px] w-[13px] rounded-full transition-[left] " +
-                (system
-                  ? "left-[17px] bg-accent-strong"
-                  : "left-[2px] bg-muted")
-              }
-            />
-          </span>
-          {system ? S.sources.system.on : S.sources.system.off}
-        </button>
-        <p className={"mt-1 text-[12.5px] text-faint " + measure}>
           {system ? S.sources.system.hintOn : S.sources.system.hintOff}
         </p>
       </div>
