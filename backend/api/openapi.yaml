@@ -226,7 +226,8 @@ paths:
         as a heading, quote, fence, list, rule, underline or HTML escaped
         with a backslash. A project
         without a revision yet answers 200 with its title and a line saying
-        so. A key that itself ends in `.md` and is listed keeps its JSON
+        so; one whose repositories stand alone has no page and answers 404.
+        A key that itself ends in `.md` and is listed keeps its JSON
         route; its export is `{key}.md.md`. In oidc mode a team bearer opens
         this route (and the repository's export) read-only, GET and HEAD,
         and is always served the export; nothing else under `/api`.
@@ -897,13 +898,16 @@ components:
 
     SourceSummary:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_synced_at, last_error, created_at, updated_at]
+      required: [project_key, kind, system, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_synced_at, last_error, created_at, updated_at]
       properties:
         project_key:
           type: string
         kind:
           type: string
           enum: [bitbucket, static]
+        system:
+          type: boolean
+          description: The repositories form one system (a project page, a system map); false when each stands alone. Always true for Bitbucket.
         host:
           type: string
           description: The Bitbucket base URL; empty for a static source.
@@ -944,13 +948,15 @@ components:
 
     SourceDetail:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
+      required: [project_key, kind, system, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
       properties:
         project_key:
           type: string
         kind:
           type: string
           enum: [bitbucket, static]
+        system:
+          type: boolean
         host:
           type: string
         has_token:
@@ -1355,6 +1361,9 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
+        system:
+          type: boolean
+          description: Absent is true. Only a static folder may be false.
 
     SourceAccess:
       type: object
@@ -1372,6 +1381,9 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
+        system:
+          type: boolean
+          description: Switches a static folder between one system and repositories that stand alone. Comes alone in its PATCH; false for a Bitbucket source is a 422.
 
     NewSourceRepo:
       type: object
@@ -1657,7 +1669,7 @@ components:
 
     Project:
       type: object
-      required: [key, team, repos, notes, revision, last_merge]
+      required: [key, team, repos, notes, revision, last_merge, system, repositories]
       properties:
         key:
           type: string
@@ -1673,6 +1685,14 @@ components:
         last_merge:
           type: [string, "null"]
           format: date-time
+        system:
+          type: boolean
+          description: False when the repositories stand alone; they are then listed in repositories, and the project has no page.
+        repositories:
+          type: array
+          description: A standalone project's repositories, empty for a system.
+          items:
+            $ref: "#/components/schemas/Repo"
 
     Source:
       type: object
@@ -2033,12 +2053,15 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, description, map, map_expected, map_declined, repos, problems, problem_window_days, recent_notes]
+      required: [key, team, system, description, map, map_expected, map_declined, repos, problems, problem_window_days, recent_notes]
       properties:
         key:
           type: string
         team:
           type: string
+        system:
+          type: boolean
+          description: False when the repositories stand alone; description and map are then null and no map is expected.
         description:
           oneOf:
             - $ref: "#/components/schemas/Description"

@@ -29,6 +29,9 @@ type ProjectRow struct {
 	Notes     int
 	Revision  int
 	LastMerge *time.Time
+	// Standalone: its source says the repositories stand alone; the wiki
+	// lists them one by one, no project page.
+	Standalone bool
 }
 
 // What the wiki lists. With the sources on (sourced), a project is a source
@@ -62,7 +65,8 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 		       (SELECT COUNT(*) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
 		       COALESCE((SELECT rv.revision FROM pages pg JOIN revisions rv ON rv.id = pg.current_revision_id
 		                  WHERE pg.scope = 'project' AND pg.project_id = p.id AND pg.repo_id = 0), 0),
-		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id)
+		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
+		       EXISTS (SELECT 1 FROM sources s WHERE s.project_id = p.id AND s.standalone)
 		  FROM `+projectsFrom(sourced)+` p ORDER BY p.key`)
 	if err != nil {
 		return nil, err
@@ -71,7 +75,7 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 	out := []ProjectRow{}
 	for rows.Next() {
 		var r ProjectRow
-		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, timeOrNil(&r.LastMerge)); err != nil {
+		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, timeOrNil(&r.LastMerge), &r.Standalone); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

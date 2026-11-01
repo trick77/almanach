@@ -40,6 +40,7 @@ type Store interface {
 	Ingest(ctx context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	Projects(ctx context.Context, sourced bool) ([]store.ProjectRow, error)
+	ProjectStandalone(ctx context.Context, key string) (bool, error)
 	ProjectExists(ctx context.Context, key string, sourced bool) (string, bool, error)
 	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
 	RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error)
@@ -279,6 +280,11 @@ type projectBody struct {
 	Notes     int        `json:"notes"`
 	Revision  int        `json:"revision"`
 	LastMerge *time.Time `json:"last_merge"`
+	// System: the repositories form one system with a project page; false
+	// when they stand alone, listed one by one in Repositories.
+	System bool `json:"system"`
+	// Repositories is a standalone project's repositories, empty for a system.
+	Repositories []repoBody `json:"repositories"`
 }
 
 type projectsBody struct {
@@ -295,7 +301,17 @@ func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 	}
 	out := projectsBody{Projects: make([]projectBody, 0, len(rows))}
 	for _, p := range rows {
-		out.Projects = append(out.Projects, projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision, LastMerge: p.LastMerge})
+		body := projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision, LastMerge: p.LastMerge,
+			System: !p.Standalone, Repositories: []repoBody{}}
+		if p.Standalone {
+			repos, err := d.Store.Repos(ctx, p.Key, d.Sources != nil)
+			if err != nil {
+				httpx.ServerError(w, r, err, "repos")
+				return
+			}
+			body.Repositories = repoBodies(repos)
+		}
+		out.Projects = append(out.Projects, body)
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -374,6 +390,15 @@ type repoBody struct {
 	LastMerge *time.Time `json:"last_merge"`
 }
 
+// repoBodies is a project's repositories as the wire lists them.
+func repoBodies(repos []store.RepoRow) []repoBody {
+	out := make([]repoBody, 0, len(repos))
+	for _, rp := range repos {
+		out = append(out, repoBody{Slug: rp.Slug, Revision: rp.Revision, Summary: firstSentence(lead(rp.Summary)), Notes: rp.Notes, LastMerge: rp.LastMerge})
+	}
+	return out
+}
+
 type noteBody struct {
 	PRID        int       `json:"pr_id"`
 	PRKey       string    `json:"pr_key"`
@@ -401,8 +426,11 @@ type problemBody struct {
 }
 
 type projectDetailBody struct {
-	Key         string           `json:"key"`
-	Team        string           `json:"team"`
+	Key  string `json:"key"`
+	Team string `json:"team"`
+	// System: false when the repositories stand alone; description and map
+	// are then null and none is expected.
+	System      bool             `json:"system"`
 	Description *descriptionBody `json:"description"`
 	// Map is the system map of the current project revision, null before
 	// a baseline project step drew one.
@@ -447,6 +475,11 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "project key")
 		return
 	}
+	alone, err := d.Store.ProjectStandalone(ctx, key)
+	if err != nil {
+		httpx.ServerError(w, r, err, "project source")
+		return
+	}
 	page, found, err := d.Store.CurrentPage(ctx, store.ScopeProject, key, "")
 	if err != nil {
 		httpx.ServerError(w, r, err, "project page")
@@ -474,12 +507,15 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	if declined {
 		drawn = nil
 	}
-	out := projectDetailBody{Key: key, Team: team, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
-		MapDeclined: declined, ProblemDays: d.ProblemWindow,
-		Repos: make([]repoBody, 0, len(repos)), Problems: problemBodies(problems), Notes: noteBodies(notes)}
-	for _, rp := range repos {
-		out.Repos = append(out.Repos, repoBody{Slug: rp.Slug, Revision: rp.Revision, Summary: firstSentence(lead(rp.Summary)), Notes: rp.Notes, LastMerge: rp.LastMerge})
+	// Repositories that stand alone have no project page: one written
+	// while they were a system stays in the store, not on the wire.
+	if alone {
+		found, drawn, mapExpected, declined = false, nil, false, false
 	}
+	out := projectDetailBody{Key: key, Team: team, System: !alone, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
+		MapDeclined: declined, ProblemDays: d.ProblemWindow,
+		Problems: problemBodies(problems), Notes: noteBodies(notes)}
+	out.Repos = repoBodies(repos)
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 

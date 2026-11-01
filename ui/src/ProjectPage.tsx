@@ -28,6 +28,7 @@ import {
   column,
   eyebrow,
   h2,
+  lede,
   meta,
   page,
   table,
@@ -145,7 +146,8 @@ function Body({ data }: { data: ProjectDetail }) {
         },
       ],
     },
-    { title: S.tabs.description, items: desc.items },
+    // Repositories that stand alone have no description to search.
+    ...(data.system ? [{ title: S.tabs.description, items: desc.items }] : []),
   ];
 
   return (
@@ -178,29 +180,36 @@ function Body({ data }: { data: ProjectDetail }) {
         <Sep />
         {S.projects.notes(notes)}
         <Sep />
-        {data.description
-          ? S.project.descriptionRevision(data.description.revision)
-          : S.projects.noDescription}
+        {!data.system
+          ? S.project.standalone
+          : data.description
+            ? S.project.descriptionRevision(data.description.revision)
+            : S.projects.noDescription}
         <Sep />
         {S.projects.lastMerge}{" "}
         {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
 
+      {!data.system && <p className={lede}>{S.project.standaloneHint}</p>}
       <Tabs
         tabs={[
           { id: OVERVIEW, label: S.tabs.overview },
-          {
-            id: DESCRIPTION,
-            label: S.tabs.description,
-            count: data.description?.statements.length,
-          },
+          ...(data.system
+            ? [
+                {
+                  id: DESCRIPTION,
+                  label: S.tabs.description,
+                  count: data.description?.statements.length,
+                },
+              ]
+            : []),
         ]}
         value={tab}
         onChange={openTab}
       />
 
       <div role="tabpanel" aria-label={tabLabel(tab)}>
-        {tab === OVERVIEW ? (
+        {tab === OVERVIEW || !data.system ? (
           <Overview data={data} showMap={showMap} />
         ) : (
           <DescriptionView

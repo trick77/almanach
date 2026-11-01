@@ -48,6 +48,14 @@ type fakeStore struct {
 	// page and the revisions written in the test: what NextStatementID
 	// reads off the revisions table.
 	history map[string][]string
+	// standalone are the projects whose repositories stand alone; standaloneErr
+	// fails the read.
+	standalone    map[string]bool
+	standaloneErr error
+}
+
+func (f *fakeStore) ProjectStandalone(_ context.Context, key string) (bool, error) {
+	return f.standalone[key], f.standaloneErr
 }
 
 func (f *fakeStore) NextStatementID(_ context.Context, scope, project, repo string) (int, error) {

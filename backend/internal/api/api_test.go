@@ -48,6 +48,12 @@ type fakeStore struct {
 	sourcedAsked []bool
 
 	renamed map[string]string
+	// standalone are the projects whose repositories stand alone.
+	standalone map[string]bool
+}
+
+func (f *fakeStore) ProjectStandalone(_ context.Context, key string) (bool, error) {
+	return f.standalone[key], nil
 }
 
 func newFakeStore() *fakeStore {

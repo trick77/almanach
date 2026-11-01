@@ -14,6 +14,11 @@ export interface Project {
   notes: number;
   revision: number;
   last_merge: string | null;
+  /** False when the repositories stand alone: no project page, they are
+   *  listed one by one in repositories. */
+  system: boolean;
+  /** A standalone project's repositories, empty for a system. */
+  repositories: Repo[];
 }
 
 export interface Projects {
@@ -108,6 +113,9 @@ export interface Problem {
 export interface ProjectDetail {
   key: string;
   team: string;
+  /** False when the repositories stand alone: description and map are
+   *  null and none is expected. */
+  system: boolean;
   description: Description | null;
   /** The system map: zones clients, repositories, stores and external; a
    *  repository node's id is its slug. null before the first baseline
@@ -216,6 +224,8 @@ export type RepoState = "pending" | "syncing" | "ready" | "failed" | "missing";
 export interface SourceSummary {
   project_key: string;
   kind: SourceKind;
+  /** The repositories form one system; false when each stands alone. */
+  system: boolean;
   host: string;
   has_token: boolean;
   token_auth: TokenAuth;
@@ -319,6 +329,7 @@ export interface Baseline {
 export interface SourceDetail {
   project_key: string;
   kind: SourceKind;
+  system: boolean;
   host: string;
   has_token: boolean;
   token_auth: TokenAuth;

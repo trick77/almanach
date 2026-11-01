@@ -57,6 +57,10 @@ type ProjectSource struct {
 	UpdatedAt    time.Time
 	LastListedAt *time.Time
 	LastError    string
+	// Standalone: the repositories each stand for themselves, no project
+	// page, no system map. False (every source by default) is one system.
+	// A Bitbucket project is always one.
+	Standalone bool
 }
 
 // HasToken reports whether a credential is stored.
@@ -100,11 +104,11 @@ const sourcesFrom = `sources s JOIN projects p ON p.id = s.project_id`
 // sourceColumns are a source's columns over sourcesFrom in the order
 // sourceDest scans them.
 const sourceColumns = `s.project_id, p.key, s.kind, COALESCE(s.host, ''), s.token_auth, s.token_user, s.token_enc,
-	s.created_at, s.updated_at, s.last_listed_at, s.last_error`
+	s.created_at, s.updated_at, s.last_listed_at, s.last_error, s.standalone`
 
 func sourceDest(src *ProjectSource) []any {
 	return []any{&src.ProjectID, &src.ProjectKey, &src.Kind, &src.Host, &src.TokenAuth, &src.TokenUser, &src.TokenEnc,
-		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError}
+		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError, &src.Standalone}
 }
 
 // projectByName and repoByName are a project and a repository by any name
@@ -183,9 +187,9 @@ func (s *Store) CreateSource(ctx context.Context, src ProjectSource) error {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO sources (project_id, kind, host, token_auth, token_user, token_enc, created_at, updated_at)
-			VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?7)`,
-			pid, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), nowStamp())
+			INSERT INTO sources (project_id, kind, host, token_auth, token_user, token_enc, created_at, updated_at, standalone)
+			VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?7, ?8)`,
+			pid, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), nowStamp(), src.Standalone)
 		return uniqueAsExists(err)
 	})
 }
@@ -224,6 +228,23 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 		       token_enc = CASE WHEN ? THEN ? ELSE token_enc END, updated_at = ?
 		 WHERE project_id = `+projectByName, host, tokenAuth, tokenUser, setToken, nilIfEmpty(tokenEnc), nowStamp(), key))
 	return n == 1, err
+}
+
+// SetSourceStandalone sets whether a source's repositories stand alone.
+// Reports whether the source exists.
+func (s *Store) SetSourceStandalone(ctx context.Context, key string, standalone bool) (bool, error) {
+	n, err := affected(s.db.ExecContext(ctx, `UPDATE sources SET standalone = ?, updated_at = ? WHERE project_id = `+projectByName,
+		standalone, nowStamp(), key))
+	return n == 1, err
+}
+
+// ProjectStandalone reports whether a project's repositories stand alone:
+// its source says so. A project without a source is a system.
+func (s *Store) ProjectStandalone(ctx context.Context, key string) (bool, error) {
+	var alone bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sources WHERE standalone AND project_id = `+projectByName+`)`,
+		key).Scan(&alone)
+	return alone, err
 }
 
 // IsSourceRepo reports whether (key, slug) is a source repository: the

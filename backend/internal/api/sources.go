@@ -31,6 +31,7 @@ type SourceStore interface {
 	SourceByKey(ctx context.Context, key string) (store.ProjectSource, bool, error)
 	CreateSource(ctx context.Context, src store.ProjectSource) error
 	UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, tokenUser string, tokenEnc []byte, setToken bool) (bool, error)
+	SetSourceStandalone(ctx context.Context, key string, standalone bool) (bool, error)
 	DeleteSource(ctx context.Context, key string) (bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	AddSourceRepo(ctx context.Context, r store.SourceRepo) error
@@ -145,8 +146,11 @@ func jsonBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 }
 
 type sourceSummaryBody struct {
-	ProjectKey   string     `json:"project_key"`
-	Kind         string     `json:"kind"`
+	ProjectKey string `json:"project_key"`
+	Kind       string `json:"kind"`
+	// System: the repositories form one system (a project page, a system
+	// map); false when each stands for itself. Always true for Bitbucket.
+	System       bool       `json:"system"`
 	Host         string     `json:"host"`
 	HasToken     bool       `json:"has_token"`
 	TokenAuth    string     `json:"token_auth"`
@@ -183,7 +187,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, s := range rows {
-		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, Host: s.Host, HasToken: s.HasToken(),
+		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, System: !s.Standalone, Host: s.Host, HasToken: s.HasToken(),
 			TokenAuth: s.TokenAuth, TokenUser: s.TokenUser, Repos: s.Repos, Ready: s.Ready, Active: s.Active, Failed: s.Failed, Missing: s.Missing,
 			LastListedAt: s.LastListedAt, LastSyncedAt: s.LastSyncedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
 	}
@@ -265,6 +269,7 @@ func inMapStep(r store.BaselineRun) bool {
 type sourceDetailBody struct {
 	ProjectKey   string           `json:"project_key"`
 	Kind         string           `json:"kind"`
+	System       bool             `json:"system"`
 	Host         string           `json:"host"`
 	HasToken     bool             `json:"has_token"`
 	TokenAuth    string           `json:"token_auth"`
@@ -287,7 +292,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 	if err != nil {
 		return sourceDetailBody{}, err
 	}
-	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
+	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, System: !src.Standalone, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
 		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError,
 		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos))}
 	if dir, err := d.Sources.Git.ProjectDir(src.ProjectID); err == nil {
@@ -356,6 +361,8 @@ type createSourceBody struct {
 	Token      string `json:"token"`
 	TokenAuth  string `json:"token_auth"`
 	TokenUser  string `json:"token_user"`
+	// System, absent: true. Only a static folder may be false.
+	System *bool `json:"system"`
 }
 
 // validCloneURL is https with a host and no credentials: the token travels
@@ -444,6 +451,9 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	case in.Kind == store.SourceStatic && in.Host != "":
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: a static source has none")
 		return
+	case in.Kind == store.SourceBitbucket && in.System != nil && !*in.System:
+		httpx.WriteError(w, http.StatusUnprocessableEntity, systemBitbucket)
+		return
 	}
 	auth, user, problem := access(in.Kind, in.TokenAuth, in.TokenUser)
 	if problem != "" {
@@ -467,7 +477,8 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
 		return
 	}
-	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed}
+	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed,
+		Standalone: in.System != nil && !*in.System}
 	if err := d.Sources.Store.CreateSource(ctx, src); err != nil {
 		if errors.Is(err, store.ErrExists) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
@@ -506,6 +517,9 @@ type updateSourceBody struct {
 	Token      *string `json:"token"`
 	TokenAuth  *string `json:"token_auth"`
 	TokenUser  *string `json:"token_user"`
+	// System switches a static folder between one system and repositories
+	// that stand alone; alone in its PATCH, like a rename.
+	System *bool `json:"system"`
 }
 
 func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
@@ -526,6 +540,10 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	// no rename.
 	if in.ProjectKey != nil && strings.TrimSpace(*in.ProjectKey) != src.ProjectKey {
 		d.renameSource(w, r, src, in)
+		return
+	}
+	if in.System != nil {
+		d.switchSystem(w, r, src, in)
 		return
 	}
 	host, tokenAuth, tokenUser := src.Host, src.TokenAuth, src.TokenUser
@@ -597,7 +615,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 // is never given away.
 func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
 	ctx := r.Context()
-	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil {
+	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil || in.System != nil {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a rename comes alone, the other fields in their own PATCH")
 		return
 	}
@@ -618,6 +636,40 @@ func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.Pro
 	d.Log.InfoContext(ctx, "project_renamed", "project", to, "from", src.ProjectKey, "user", d.user(r))
 	d.Sources.Poller.Nudge()
 	d.writeSource(w, r, to, http.StatusOK)
+}
+
+// systemBitbucket is the 422 of a Bitbucket source asked to stand alone.
+const systemBitbucket = "system: a Bitbucket project is always one system"
+
+// switchSystem sets whether a static folder's repositories form one system.
+// Off, no run writes the project page any more and the wiki shows each
+// repository alone; the page stays in the store with its history. On, the
+// next run of a repository folds it again. Alone in its PATCH, like a
+// rename.
+func (d Deps) switchSystem(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
+	ctx := r.Context()
+	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "system: comes alone, the other fields in their own PATCH")
+		return
+	}
+	system := *in.System
+	if src.Kind == store.SourceBitbucket && !system {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, systemBitbucket)
+		return
+	}
+	updated, err := d.Sources.Store.SetSourceStandalone(ctx, src.ProjectKey, !system)
+	if err != nil {
+		httpx.ServerError(w, r, err, "update source")
+		return
+	}
+	if !updated {
+		httpx.WriteError(w, http.StatusNotFound, "unknown source")
+		return
+	}
+	if system == src.Standalone {
+		d.Log.InfoContext(ctx, "source_system_switched", "project", src.ProjectKey, "system", system, "user", d.user(r))
+	}
+	d.writeSource(w, r, src.ProjectKey, http.StatusOK)
 }
 
 // writeSource answers with the source as stored.

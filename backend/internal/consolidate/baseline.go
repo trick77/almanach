@@ -1114,6 +1114,17 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if plan.ProjectDone {
 		return w.repoMapStep(ctx, r, plan)
 	}
+	// A folder whose repositories stand alone has no system to write: no
+	// call, no page, nothing skipped (a reconcile has nothing to read again).
+	alone, err := w.store.ProjectStandalone(ctx, r.ProjectKey)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project source read failed, drain paused", logging.Err(err))
+		return errStop
+	}
+	if alone {
+		w.log.InfoContext(ctx, "baseline: project step left out, the repositories stand alone")
+		return w.projectOver(ctx, r, plan)
+	}
 	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
