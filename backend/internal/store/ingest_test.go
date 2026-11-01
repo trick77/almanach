@@ -38,10 +38,10 @@ func TestIngest_WritesEverything(t *testing.T) {
 		}
 	}
 	const prj, svc = "(SELECT id FROM projects WHERE key = 'PRJ')", "(SELECT id FROM repos WHERE slug = 'svc')"
-	if n := count(t, s, "claims", "team = 'alpha' AND project_id = "+prj+" AND repo_id IS NULL"); n != 1 {
+	if n := count(t, s, "claims", "team = 'alpha' AND project_key = 'PRJ' AND repo_slug IS NULL"); n != 1 {
 		t.Errorf("project claim rows = %d, want 1", n)
 	}
-	if n := count(t, s, "claims", "team = 'alpha' AND project_id = "+prj+" AND repo_id = "+svc); n != 1 {
+	if n := count(t, s, "claims", "team = 'alpha' AND project_key = 'PRJ' AND repo_slug = 'svc'"); n != 1 {
 		t.Errorf("repo claim rows = %d, want 1", n)
 	}
 	if n := count(t, s, "projects", "key = 'PRJ' AND team = 'alpha'"); n != 1 {

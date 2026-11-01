@@ -388,27 +388,28 @@ func (s *Store) Problems(ctx context.Context, project string, days int) ([]Probl
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH fixes AS (
-		    SELECT r.slug AS repo_slug, COALESCE(n.bugfix_area, '') AS area, COALESCE(n.bugfix_component, '') AS component,
+		    SELECT n.repo_id, COALESCE(n.bugfix_area, '') AS area, COALESCE(n.bugfix_component, '') AS component,
 		           COALESCE(n.bugfix ->> '$.cause_kind', 'other') AS cause, n.merged_at, n.pr_key, n.issues_posted,
 		           n.suggestions_posted
 		      FROM notes n JOIN repos r ON r.id = n.repo_id
 		     WHERE r.project_id = ? AND n.change_kind = 'bugfix' AND n.merged_at >= ?
 		),
 		causes AS (
-		    SELECT repo_slug, area, cause, COUNT(*) AS n,
-		           ROW_NUMBER() OVER (PARTITION BY repo_slug, area ORDER BY COUNT(*) DESC, cause) AS rn
-		      FROM fixes GROUP BY repo_slug, area, cause
+		    SELECT repo_id, area, cause, COUNT(*) AS n,
+		           ROW_NUMBER() OVER (PARTITION BY repo_id, area ORDER BY COUNT(*) DESC, cause) AS rn
+		      FROM fixes GROUP BY repo_id, area, cause
 		),
 		latest AS (
-		    SELECT repo_slug, area, component, pr_key, merged_at,
-		           ROW_NUMBER() OVER (PARTITION BY repo_slug, area ORDER BY merged_at DESC) AS rn
+		    SELECT repo_id, area, component, pr_key, merged_at,
+		           ROW_NUMBER() OVER (PARTITION BY repo_id, area ORDER BY merged_at DESC) AS rn
 		      FROM fixes
 		)
-		SELECT f.repo_slug, f.area, l.component, COUNT(*), c.cause, c.n, SUM(f.issues_posted), SUM(f.suggestions_posted), l.pr_key, l.merged_at
+		SELECT r.slug, f.area, l.component, COUNT(*), c.cause, c.n, SUM(f.issues_posted), SUM(f.suggestions_posted), l.pr_key, l.merged_at
 		  FROM fixes f
-		  JOIN causes c ON c.repo_slug = f.repo_slug AND c.area = f.area AND c.rn = 1
-		  JOIN latest l ON l.repo_slug = f.repo_slug AND l.area = f.area AND l.rn = 1
-		 GROUP BY f.repo_slug, f.area, l.component, c.cause, c.n, l.pr_key, l.merged_at
+		  JOIN causes c ON c.repo_id = f.repo_id AND c.area = f.area AND c.rn = 1
+		  JOIN latest l ON l.repo_id = f.repo_id AND l.area = f.area AND l.rn = 1
+		  JOIN repos r ON r.id = f.repo_id
+		 GROUP BY f.repo_id, f.area, l.component, c.cause, c.n, l.pr_key, l.merged_at
 		 ORDER BY COUNT(*) DESC, l.merged_at DESC`, pid, since)
 	if err != nil {
 		return nil, err

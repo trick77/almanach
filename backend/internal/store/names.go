@@ -57,32 +57,71 @@ func repoID(ctx context.Context, q rowQuerier, key, slug string) (int64, bool, e
 }
 
 // ensureProject is the project a key names, registered when no project
-// ever had it.
+// ever had it. A key another project had in another case is that project:
+// a name in any case belongs to one project, so the new spelling becomes a
+// name of it instead of a second project.
 func ensureProject(ctx context.Context, q querier, key string) (int64, error) {
 	id, ok, err := projectID(ctx, q, key)
 	if err != nil || ok {
 		return id, err
 	}
-	if err := q.QueryRowContext(ctx, `INSERT INTO projects (key) VALUES (?) RETURNING id`, key).Scan(&id); err != nil {
+	rows, err := q.QueryContext(ctx, `SELECT key, project_id FROM project_names`)
+	if err != nil {
 		return 0, err
+	}
+	if id, ok, err = ownerInAnyCase(rows, key); err != nil {
+		return 0, err
+	}
+	if !ok {
+		if err := q.QueryRowContext(ctx, `INSERT INTO projects (key) VALUES (?) RETURNING id`, key).Scan(&id); err != nil {
+			return 0, err
+		}
 	}
 	_, err = q.ExecContext(ctx, `INSERT INTO project_names (key, project_id) VALUES (?, ?)`, key, id)
 	return id, err
 }
 
 // ensureRepo is the repository a slug names in the project, registered
-// when no repository of the project ever had it.
+// when no repository of the project ever had it; a slug another repository
+// had in another case is that repository, as for projects.
 func ensureRepo(ctx context.Context, q querier, projectID int64, slug string) (int64, error) {
 	var id int64
 	err := q.QueryRowContext(ctx, `SELECT repo_id FROM repo_names WHERE project_id = ? AND slug = ?`, projectID, slug).Scan(&id)
 	if err == nil || !errors.Is(err, sql.ErrNoRows) {
 		return id, err
 	}
-	if err := q.QueryRowContext(ctx, `INSERT INTO repos (project_id, slug) VALUES (?, ?) RETURNING id`, projectID, slug).Scan(&id); err != nil {
+	rows, err := q.QueryContext(ctx, `SELECT slug, repo_id FROM repo_names WHERE project_id = ?`, projectID)
+	if err != nil {
 		return 0, err
+	}
+	id, ok, err := ownerInAnyCase(rows, slug)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		if err := q.QueryRowContext(ctx, `INSERT INTO repos (project_id, slug) VALUES (?, ?) RETURNING id`, projectID, slug).Scan(&id); err != nil {
+			return 0, err
+		}
 	}
 	_, err = q.ExecContext(ctx, `INSERT INTO repo_names (project_id, slug, repo_id) VALUES (?, ?, ?)`, projectID, slug, id)
 	return id, err
+}
+
+// ownerInAnyCase is the owner of name in a (name, owner) list, matched in
+// any case, folded in Go (SQLite's lower() folds ASCII only).
+func ownerInAnyCase(rows *sql.Rows, name string) (int64, bool, error) {
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var known string
+		var owner int64
+		if err := rows.Scan(&known, &owner); err != nil {
+			return 0, false, err
+		}
+		if strings.EqualFold(known, name) {
+			return owner, true, nil
+		}
+	}
+	return 0, false, rows.Err()
 }
 
 // RepoIDs resolves a repository by any of its names to its project's and

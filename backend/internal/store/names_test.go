@@ -301,6 +301,76 @@ func TestApplyListing_FollowsRenameByForgeID(t *testing.T) {
 	}
 }
 
+// A repository deleted in Bitbucket and created again under its slug (a new
+// forge id) is the same repository here, as a hand-entered slug added again:
+// it takes the new id instead of being left out for good.
+func TestApplyListing_SlugTakenAgainInBitbucket(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.CreateSource(ctx, bitbucketSource("SHOP")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "svc", CloneURL: "u", ForgeID: 10}}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "svc", CloneURL: "u2", ForgeID: 42}})
+	if err != nil || res.Added != 0 || res.Missing != 0 || len(res.Conflicts) != 0 {
+		t.Fatalf("listing with svc under a new id: %+v %v", res, err)
+	}
+	if n := count(t, s, "repos", "slug = 'svc' AND forge_id = 42"); n != 1 {
+		t.Errorf("svc did not take the new forge id")
+	}
+}
+
+// A repository renamed in Bitbucket onto a slug another repository had is
+// left out of the rename, but not marked missing: Bitbucket still lists it.
+func TestApplyListing_RenameOntoAnothersSlugStaysListed(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.CreateSource(ctx, bitbucketSource("SHOP")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "old", CloneURL: "u", ForgeID: 7}, {Slug: "new", CloneURL: "n", ForgeID: 8}}); err != nil {
+		t.Fatal(err)
+	}
+	// new (8) is deleted in Bitbucket, old (7) renamed onto its slug.
+	res, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "new", CloneURL: "u", ForgeID: 7}})
+	if err != nil || len(res.Conflicts) != 1 || res.Missing != 1 {
+		t.Fatalf("listing: %+v %v; want one conflict, only the deleted one missing", res, err)
+	}
+	r, ok, _ := s.SourceRepoByName(ctx, "SHOP", "old")
+	if !ok || r.Slug != "old" || r.State == RepoMissing {
+		t.Errorf("old after the refused rename: %+v %v", r, ok)
+	}
+}
+
+// A note or a revision under a key in another case lands on the project
+// that has it: a name in any case belongs to one project. A claim
+// registers nothing.
+func TestRegistration_CaseVariantsAndClaims(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("ACME", "svc", 1))
+	n := noteFor("acme", "SVC", 2)
+	ok, err := s.Ingest(ctx, deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: "OTHER", RepoSlug: "x"}, {ProjectKey: "OTHER"}})
+	if err != nil || !ok {
+		t.Fatalf("ingest: %v %v", ok, err)
+	}
+	if got := count(t, s, "projects", ""); got != 1 {
+		t.Errorf("projects = %d, want 1 (acme is ACME, a claim registers nothing)", got)
+	}
+	if got := count(t, s, "repos", ""); got != 1 {
+		t.Errorf("repos = %d, want 1 (SVC is svc)", got)
+	}
+	notes, err := s.Notes(ctx, "ACME", "svc", 10)
+	if err != nil || len(notes) != 2 {
+		t.Errorf("notes of ACME/svc: %+v %v; want both", notes, err)
+	}
+	if got := count(t, s, "claims", "project_key = 'OTHER'"); got != 2 {
+		t.Errorf("claims kept as sent = %d, want 2", got)
+	}
+}
+
 // TRANSITIONAL(ids): a repository listed before 0002 has no forge id; the
 // first listing that names it by its slug records it. Remove with the
 // backfill in listedRepo.

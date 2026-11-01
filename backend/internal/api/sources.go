@@ -52,6 +52,12 @@ type Checkouts interface {
 	ProjectDir(projectID int64) (string, error)
 	Remove(projectID, repoID int64) error
 	RemoveProject(projectID int64) error
+	// TRANSITIONAL(ids): a clone from before the ids that no sync has moved
+	// yet (a missing repository is never synced) still sits in a folder
+	// named by names; a removal takes it too. Remove when every instance
+	// has synced once on a release with ids.
+	RemoveLegacy(key, slug string) error
+	RemoveLegacyProject(key string) error
 }
 
 // SourcesDeps is the clone feature as the routes see it; nil in Deps means
@@ -410,6 +416,10 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
 			return
 		}
+		if errors.Is(err, store.ErrNameTaken) {
+			httpx.WriteError(w, http.StatusConflict, "project_key: another project had this key")
+			return
+		}
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
@@ -457,6 +467,10 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	if !jsonBody(w, r, &in) {
 		return
 	}
+	if in.ProjectKey != nil {
+		d.renameSource(w, r, src, in)
+		return
+	}
 	host, tokenAuth, tokenUser := src.Host, src.TokenAuth, src.TokenUser
 	if in.Host != nil {
 		host = strings.TrimRight(strings.TrimSpace(*in.Host), "/")
@@ -489,29 +503,6 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	renamedTo := ""
-	if in.ProjectKey != nil {
-		to := strings.TrimSpace(*in.ProjectKey)
-		if !gitrepo.ValidSegment(to) {
-			httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
-			return
-		}
-		if to != src.ProjectKey {
-			// The project keeps its id, pages, notes and clones; the old key
-			// stays a name of it. A key another project ever had, in any
-			// case, is never given away.
-			if _, err := d.Sources.Store.RenameProject(ctx, src.ProjectKey, to); err != nil {
-				if errors.Is(err, store.ErrNameTaken) {
-					httpx.WriteError(w, http.StatusConflict, "project_key: another project had this key")
-					return
-				}
-				httpx.ServerError(w, r, err, "rename project")
-				return
-			}
-			d.Log.InfoContext(ctx, "project_renamed", "project", to, "from", src.ProjectKey, "user", d.user(r))
-			renamedTo, src.ProjectKey = to, to
-		}
-	}
 	updated, err := d.Sources.Store.UpdateSourceAccess(ctx, src.ProjectKey, host, auth, user, sealed, setToken)
 	if err != nil {
 		httpx.ServerError(w, r, err, "update source")
@@ -527,9 +518,47 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	d.Log.InfoContext(ctx, "source_updated", "project", src.ProjectKey, "token_changed", setToken, "renamed", renamedTo != "", "user", d.user(r))
+	d.Log.InfoContext(ctx, "source_updated", "project", src.ProjectKey, "token_changed", setToken, "user", d.user(r))
 	d.Sources.Poller.Nudge()
-	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
+	d.writeSource(w, r, src.ProjectKey, http.StatusOK)
+}
+
+// renameSource renames the source's project, a change of case included: the
+// project keeps its id, pages, notes and clones, and the old key stays a
+// name of it. Alone in its PATCH, so a request is the rename or the access
+// change, never half of both. A key another project ever had, in any case,
+// is never given away.
+func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
+	ctx := r.Context()
+	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil || in.AutoDescribe != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a rename comes alone, the other fields in their own PATCH")
+		return
+	}
+	to := strings.TrimSpace(*in.ProjectKey)
+	if !gitrepo.ValidSegment(to) {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
+		return
+	}
+	if to != src.ProjectKey {
+		_, err := d.Sources.Store.RenameProject(ctx, src.ProjectKey, to)
+		switch {
+		case errors.Is(err, store.ErrNameTaken):
+			httpx.WriteError(w, http.StatusConflict, "project_key: another project had this key")
+			return
+		case err != nil:
+			httpx.ServerError(w, r, err, "rename project")
+			return
+		}
+		d.Log.InfoContext(ctx, "project_renamed", "project", to, "from", src.ProjectKey, "user", d.user(r))
+		d.Sources.Poller.Nudge()
+	}
+	d.writeSource(w, r, to, http.StatusOK)
+}
+
+// writeSource answers with the source as stored.
+func (d Deps) writeSource(w http.ResponseWriter, r *http.Request, key string, status int) {
+	ctx := r.Context()
+	stored, found, err := d.Sources.Store.SourceByKey(ctx, key)
 	if err != nil {
 		httpx.ServerError(w, r, err, "source")
 		return
@@ -543,7 +572,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "source repos")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, status, out)
 }
 
 // deleteSource removes the folder first, then the rows: a folder left
@@ -560,6 +589,11 @@ func (d Deps) deleteSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Sources.Git.RemoveProject(src.ProjectID); err != nil {
+		httpx.ServerError(w, r, err, "remove clones")
+		return
+	}
+	// TRANSITIONAL(ids): goes with Checkouts.RemoveLegacyProject.
+	if err := d.Sources.Git.RemoveLegacyProject(src.ProjectKey); err != nil {
 		httpx.ServerError(w, r, err, "remove clones")
 		return
 	}
@@ -655,6 +689,14 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusConflict, "a repository with this slug exists")
 		return
 	}
+	if errors.Is(err, store.ErrNameTaken) {
+		httpx.WriteError(w, http.StatusConflict, "slug: another repository had this slug")
+		return
+	}
+	if errors.Is(err, store.ErrNoProject) {
+		httpx.WriteError(w, http.StatusNotFound, "unknown source")
+		return
+	}
 	if err != nil {
 		httpx.ServerError(w, r, err, "add repo")
 		return
@@ -685,6 +727,11 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	// The clone first, then the row (deleteSource's reason).
 	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
+		httpx.ServerError(w, r, err, "remove clone")
+		return
+	}
+	// TRANSITIONAL(ids): goes with Checkouts.RemoveLegacy.
+	if err := d.Sources.Git.RemoveLegacy(src.ProjectKey, rp.Slug); err != nil {
 		httpx.ServerError(w, r, err, "remove clone")
 		return
 	}

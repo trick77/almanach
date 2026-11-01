@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -164,6 +165,36 @@ func (p *Poller) RemoveProject(projectID int64) error {
 	defer p.disk.Unlock()
 	p.removed[projectSeg(projectID)] = true
 	return p.Git.RemoveProject(projectSeg(projectID))
+}
+
+// idSeg is a folder name the ids use (p12, r7): a legacy removal never
+// touches one, whatever a project key or slug happened to be called.
+var idSeg = regexp.MustCompile(`^[pr][0-9]+$`)
+
+// RemoveLegacy deletes key/slug's clone in the folder named by names, under
+// the disk lock, unless the folder could be an id folder.
+//
+// TRANSITIONAL(ids): a clone from before the ids that no sync moved (a
+// missing repository is never synced). Remove when every instance has
+// synced once on a release with ids.
+func (p *Poller) RemoveLegacy(key, slug string) error {
+	if idSeg.MatchString(key) {
+		return nil
+	}
+	p.disk.Lock()
+	defer p.disk.Unlock()
+	return p.Git.Remove(key, slug)
+}
+
+// RemoveLegacyProject is RemoveLegacy for a whole project folder named by
+// its key. TRANSITIONAL(ids), goes with RemoveLegacy.
+func (p *Poller) RemoveLegacyProject(key string) error {
+	if idSeg.MatchString(key) {
+		return nil
+	}
+	p.disk.Lock()
+	defer p.disk.Unlock()
+	return p.Git.RemoveProject(key)
 }
 
 // cutIf cancels the sync in flight when it is one of the removal's.

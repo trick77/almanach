@@ -267,6 +267,22 @@ func TestCycle_MovesALegacyClone(t *testing.T) {
 	}
 }
 
+// TRANSITIONAL(ids): a removal also takes the clone a sync never moved out
+// of its folder named by names, never an id folder. Remove with
+// RemoveLegacy.
+func TestRemoveLegacy(t *testing.T) {
+	g := newFakeGit()
+	p := poller(newFakeStore(), g, &fakeLister{}, testKey(t))
+	for _, err := range []error{p.RemoveLegacy("tools", "cli"), p.RemoveLegacyProject("tools"), p.RemoveLegacy("p3", "r4"), p.RemoveLegacyProject("p3")} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.Join(g.calls, ","); got != "remove /base/tools/cli,remove-project /base/tools" {
+		t.Fatalf("git calls = %s", got)
+	}
+}
+
 // A listed slug another repository had is left out by the store; the
 // source's error says which, so the source page shows it.
 func TestList_ReportsNameConflicts(t *testing.T) {

@@ -119,6 +119,9 @@ func (f *fakeSources) CreateSource(_ context.Context, s store.ProjectSource) err
 	if _, ok := f.sources[s.ProjectKey]; ok {
 		return store.ErrExists
 	}
+	if f.taken[s.ProjectKey] {
+		return store.ErrNameTaken
+	}
 	f.sources[s.ProjectKey] = s
 	return nil
 }
@@ -148,6 +151,9 @@ func (f *fakeSources) SourceRepos(_ context.Context, key string) ([]store.Source
 	return out, nil
 }
 func (f *fakeSources) AddSourceRepo(_ context.Context, r store.SourceRepo) error {
+	if f.taken[r.ProjectKey+"/"+r.Slug] {
+		return store.ErrNameTaken
+	}
 	for _, have := range f.repos[r.ProjectKey] {
 		if have.Slug == r.Slug {
 			return store.ErrExists
@@ -233,6 +239,17 @@ func (c *fakeCheckouts) Remove(projectID, repoID int64) error {
 }
 func (c *fakeCheckouts) RemoveProject(projectID int64) error {
 	c.removed = append(c.removed, fmt.Sprintf("p%d", projectID))
+	return nil
+}
+
+// RemoveLegacy and RemoveLegacyProject: TRANSITIONAL(ids), go with the
+// poller's.
+func (c *fakeCheckouts) RemoveLegacy(key, slug string) error {
+	c.removed = append(c.removed, "legacy "+key+"/"+slug)
+	return nil
+}
+func (c *fakeCheckouts) RemoveLegacyProject(key string) error {
+	c.removed = append(c.removed, "legacy "+key)
 	return nil
 }
 
@@ -365,6 +382,21 @@ func TestSources_Rename(t *testing.T) {
 	}
 	if code, _ := do(t, h, http.MethodPatch, "/api/sources/acme", "", `{"project_key":"a b"}`, jsonHdr); code != 422 {
 		t.Errorf("rename to a bad key: %d", code)
+	}
+	// A rename comes alone: never half a rename, half an access change.
+	if code, _ := do(t, h, http.MethodPatch, "/api/sources/acme", "", `{"project_key":"ACME2","auto_describe":false}`, jsonHdr); code != 422 {
+		t.Errorf("rename with another field: %d, want 422", code)
+	}
+	if _, ok := fs.sources["acme"]; !ok {
+		t.Fatal("a refused rename renamed")
+	}
+	// A key or slug another had is a 409 on create, not a 500.
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"taken","kind":"static"}`, jsonHdr); code != 409 {
+		t.Errorf("new source under a taken key: %d, want 409", code)
+	}
+	fs.taken["acme/gone"] = true
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/acme/repos", "", `{"slug":"gone","clone_url":"https://forge.example.invalid/gone.git"}`, jsonHdr); code != 409 {
+		t.Errorf("new repo under a taken slug: %d, want 409", code)
 	}
 
 	nudges := nudger.nudges
@@ -503,8 +535,9 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	if code, _ := do(t, h, http.MethodGet, "/api/sources/tools", "", "", nil); code != 404 {
 		t.Fatal("deleted source still served")
 	}
-	// Folders by ids: the repository's, then the project's.
-	if want := fmt.Sprintf("p%d/r%d,p%d", fs.id("tools"), fs.id("tools/cli"), fs.id("tools")); strings.Join(checkouts.removed, ",") != want {
+	// Folders by ids: the repository's, then the project's; each with the
+	// folder named by names a clone from before the ids may still sit in.
+	if want := fmt.Sprintf("p%d/r%d,legacy tools/cli,p%d,legacy tools", fs.id("tools"), fs.id("tools/cli"), fs.id("tools")); strings.Join(checkouts.removed, ",") != want {
 		t.Fatalf("checkouts removed = %v", checkouts.removed)
 	}
 }

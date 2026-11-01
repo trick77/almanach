@@ -34,7 +34,6 @@ SELECT k.key, p.team, p.first_seen, p.last_seen
         UNION SELECT project_key FROM source_repos
         UNION SELECT project_key FROM baseline_runs
         UNION SELECT project_key FROM repos
-        UNION SELECT project_key FROM claims
         UNION SELECT project_key FROM notes
         UNION SELECT project_key FROM note_calls
         UNION SELECT project_key FROM revisions
@@ -72,7 +71,6 @@ SELECT p.id, k.slug, r.team, r.first_seen, r.last_seen
   FROM (SELECT project_key, slug FROM repos
         UNION SELECT project_key, slug FROM source_repos
         UNION SELECT project_key, slug FROM baseline_runs
-        UNION SELECT project_key, repo_slug FROM claims WHERE repo_slug IS NOT NULL
         UNION SELECT project_key, repo_slug FROM notes
         UNION SELECT project_key, repo_slug FROM note_calls
         UNION SELECT project_key, repo_slug FROM revisions WHERE repo_slug IS NOT NULL
@@ -99,16 +97,9 @@ SELECT p.key AS project_key, r.slug, r.id AS repo_id, p.id AS project_id
   FROM repos_new r JOIN projects_new p ON p.id = r.project_id;
 CREATE UNIQUE INDEX temp.repo_map_idx ON repo_map (project_key, slug);
 
-CREATE TABLE claims_new (
-    team TEXT NOT NULL REFERENCES teams(slug),
-    project_id INTEGER NOT NULL REFERENCES projects_new(id),
-    repo_id INTEGER REFERENCES repos_new(id),
-    seen_at TEXT NOT NULL CHECK (seen_at GLOB '????-??-??T??:??:??.?????????Z')
-);
-INSERT INTO claims_new (team, project_id, repo_id, seen_at)
-SELECT c.team, p.id, m.repo_id, c.seen_at
-  FROM claims c JOIN projects_new p ON p.key = c.project_key
-  LEFT JOIN repo_map m ON m.project_key = c.project_key AND m.slug = c.repo_slug;
+-- claims stay as they are: noergler's names as it sent them, like the
+-- deliveries, never joined on. Kept by name, a claim of a repository
+-- Almanach has not met registers nothing.
 
 CREATE TABLE notes_new (
     repo_id INTEGER NOT NULL REFERENCES repos_new(id),
@@ -348,7 +339,6 @@ SELECT 'baseline_runs_new', seq FROM sqlite_sequence
 -- Every row carried over, or the migration fails: a row whose names found
 -- no id would otherwise vanish without a word.
 CREATE TEMP TABLE carried (what TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));
-INSERT INTO carried VALUES ('claims', (SELECT COUNT(*) FROM claims) = (SELECT COUNT(*) FROM claims_new));
 INSERT INTO carried VALUES ('notes', (SELECT COUNT(*) FROM notes) = (SELECT COUNT(*) FROM notes_new));
 INSERT INTO carried VALUES ('note_calls', (SELECT COUNT(*) FROM note_calls) = (SELECT COUNT(*) FROM note_calls_new));
 INSERT INTO carried VALUES ('revisions', (SELECT COUNT(*) FROM revisions) = (SELECT COUNT(*) FROM revisions_new));
@@ -371,13 +361,11 @@ DROP TABLE revisions;
 DROP TABLE llm_calls;
 DROP TABLE note_calls;
 DROP TABLE notes;
-DROP TABLE claims;
 DROP TABLE repos;
 DROP TABLE projects;
 
 ALTER TABLE projects_new RENAME TO projects;
 ALTER TABLE repos_new RENAME TO repos;
-ALTER TABLE claims_new RENAME TO claims;
 ALTER TABLE notes_new RENAME TO notes;
 ALTER TABLE note_calls_new RENAME TO note_calls;
 ALTER TABLE revisions_new RENAME TO revisions;
@@ -388,8 +376,6 @@ ALTER TABLE source_repos_new RENAME TO source_repos;
 ALTER TABLE baseline_runs_new RENAME TO baseline_runs;
 
 CREATE INDEX repos_project_idx ON repos (project_id);
-CREATE UNIQUE INDEX claims_repo_idx ON claims (team, project_id, repo_id) WHERE repo_id IS NOT NULL;
-CREATE UNIQUE INDEX claims_project_idx ON claims (team, project_id) WHERE repo_id IS NULL;
 CREATE INDEX notes_queue_idx ON notes (received_at) WHERE consolidated_at IS NULL;
 CREATE INDEX notes_repo_idx ON notes (repo_id, merged_at DESC);
 CREATE INDEX note_calls_team_idx ON note_calls (team, created_at);

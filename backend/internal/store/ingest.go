@@ -130,21 +130,16 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 		rid, n.Team, now); err != nil {
 		return false, err
 	}
+	// Claims are kept as noergler sent them, names and all, never joined
+	// on: a claim of a repository Almanach has not met registers nothing
+	// (a registered name would block the rename that later brings it).
 	for _, c := range claims {
-		cpid, err := ensureProject(ctx, tx, c.ProjectKey)
-		if err != nil {
-			return false, err
-		}
-		var crid *int64
+		var repo *string
 		if c.RepoSlug != "" {
-			id, err := ensureRepo(ctx, tx, cpid, c.RepoSlug)
-			if err != nil {
-				return false, err
-			}
-			crid = &id
+			repo = &c.RepoSlug
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO claims (team, project_id, repo_id, seen_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-			n.Team, cpid, crid, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO claims (team, project_key, repo_slug, seen_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+			n.Team, c.ProjectKey, repo, now); err != nil {
 			return false, err
 		}
 	}

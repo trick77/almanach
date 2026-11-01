@@ -312,7 +312,7 @@ func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
 		if !ok {
 			return ErrNoProject
 		}
-		rid, err := claimSlug(ctx, tx, pid, r.Slug)
+		rid, _, err := claimSlug(ctx, tx, pid, r.Slug)
 		if err != nil {
 			return err
 		}
@@ -325,27 +325,33 @@ func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
 }
 
 // claimSlug is the repository a new source repository's slug names: the one
-// that had it exactly, else a new one. ErrNameTaken when another repository
-// of the project had it in another case.
-func claimSlug(ctx context.Context, tx *sql.Tx, pid int64, slug string) (int64, error) {
+// that had it exactly (taking the slug back as its current one when it had
+// moved on and is no source repository now), else a new one, created true.
+// ErrNameTaken when another repository of the project had it in another
+// case.
+func claimSlug(ctx context.Context, tx *sql.Tx, pid int64, slug string) (int64, bool, error) {
 	var self int64
 	err := tx.QueryRowContext(ctx, `SELECT repo_id FROM repo_names WHERE project_id = ? AND slug = ?`, pid, slug).Scan(&self)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
+		return 0, false, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT slug, repo_id FROM repo_names WHERE project_id = ?`, pid)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if taken, err := takenByOther(rows, slug, self); err != nil {
-		return 0, err
+		return 0, false, err
 	} else if taken {
-		return 0, ErrNameTaken
+		return 0, false, ErrNameTaken
 	}
-	if self != 0 {
-		return self, nil
+	if self == 0 {
+		rid, err := ensureRepo(ctx, tx, pid, slug)
+		return rid, true, err
 	}
-	return ensureRepo(ctx, tx, pid, slug)
+	_, err = tx.ExecContext(ctx, `
+		UPDATE repos SET slug = ? WHERE id = ? AND slug <> ?
+		   AND NOT EXISTS (SELECT 1 FROM source_repos WHERE repo_id = ?)`, slug, self, slug, self)
+	return self, false, err
 }
 
 // DeleteSourceRepo removes one repo row; the repository and its pages stay.
@@ -394,10 +400,21 @@ func (s *Store) ApplyListing(ctx context.Context, key string, listed []ListedRep
 		}
 		now := nowStamp()
 		seen := make([]int64, 0, len(listed))
+		forges := make(map[int64]bool, len(listed))
 		for _, l := range listed {
-			rid, renamed, err := listedRepo(ctx, tx, pid, l)
+			if l.ForgeID != 0 {
+				forges[l.ForgeID] = true
+			}
+		}
+		for _, l := range listed {
+			rid, renamed, err := listedRepo(ctx, tx, pid, l, forges)
 			if errors.Is(err, ErrNameTaken) {
 				res.Conflicts = append(res.Conflicts, l.Slug)
+				if rid != 0 {
+					// Known by its forge id, only its new slug is
+					// another's: still in Bitbucket, never missing.
+					seen = append(seen, rid)
+				}
 				continue
 			}
 			if err != nil {
@@ -446,8 +463,10 @@ func (s *Store) ApplyListing(ctx context.Context, key string, listed []ListedRep
 
 // listedRepo is the repository a listed entry is: by forge id (renamed when
 // its slug moved on), else by slug, else new. ErrNameTaken when the slug is
-// another repository's, in any case.
-func listedRepo(ctx context.Context, tx *sql.Tx, pid int64, l ListedRepo) (int64, bool, error) {
+// another repository's, in any case; the rid is then set when the entry is
+// a known repository whose new slug is the taken one. forges are the forge
+// ids the whole listing names.
+func listedRepo(ctx context.Context, tx *sql.Tx, pid int64, l ListedRepo, forges map[int64]bool) (int64, bool, error) {
 	if l.ForgeID != 0 {
 		var rid int64
 		var slug string
@@ -461,7 +480,7 @@ func listedRepo(ctx context.Context, tx *sql.Tx, pid int64, l ListedRepo) (int64
 			return 0, false, err
 		}
 	}
-	rid, err := claimSlug(ctx, tx, pid, l.Slug)
+	rid, created, err := claimSlug(ctx, tx, pid, l.Slug)
 	if err != nil {
 		return 0, false, err
 	}
@@ -469,23 +488,38 @@ func listedRepo(ctx context.Context, tx *sql.Tx, pid int64, l ListedRepo) (int64
 		return rid, false, nil
 	}
 	var forge sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT forge_id FROM repos WHERE id = ?`, rid).Scan(&forge); err != nil {
+	var slug string
+	if err := tx.QueryRowContext(ctx, `SELECT forge_id, slug FROM repos WHERE id = ?`, rid).Scan(&forge, &slug); err != nil {
 		return 0, false, err
 	}
 	switch {
+	case created:
+		_, err := tx.ExecContext(ctx, `UPDATE repos SET forge_id = ? WHERE id = ?`, l.ForgeID, rid)
+		return rid, false, err
 	case !forge.Valid:
 		// TRANSITIONAL(ids): a repository from before 0002 has no forge id
 		// until a listing names it; its slug matches, so it takes the listed
 		// one. Remove when every listed repository on every instance has a
 		// forge_id (SELECT COUNT(*) FROM source_repos sr JOIN repos r ON
 		// r.id = sr.repo_id WHERE sr.origin = 'listed' AND r.forge_id IS NULL
-		// is 0); a new repository still takes its forge id below.
+		// is 0).
 		_, err := tx.ExecContext(ctx, `UPDATE repos SET forge_id = ? WHERE id = ?`, l.ForgeID, rid)
 		return rid, false, err
-	case forge.Int64 != l.ForgeID:
-		// The slug is a name of another repository Bitbucket knows by
-		// another id: never given to a second one.
+	case forge.Int64 != l.ForgeID && forges[forge.Int64]:
+		// The slug is a name of another repository Bitbucket still lists
+		// under its own id: never given to a second one.
 		return 0, false, ErrNameTaken
+	case forge.Int64 != l.ForgeID:
+		// The repository that had the slug is gone from Bitbucket and a new
+		// one took the slug there. Same name, same repository here, as a
+		// hand-entered slug added again: it takes the new id and, when it
+		// had moved on to another slug since, the listed one back.
+		if _, err := tx.ExecContext(ctx, `UPDATE repos SET forge_id = ? WHERE id = ?`, l.ForgeID, rid); err != nil {
+			return 0, false, err
+		}
+		if slug != l.Slug {
+			return rid, true, renameRepoTo(ctx, tx, pid, rid, l.Slug, "")
+		}
 	}
 	return rid, false, nil
 }

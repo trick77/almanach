@@ -335,6 +335,7 @@
   <span class="tag">D6 · Names that differ only by case · decided: A</span>
   <p>Today <code>ACME</code> and <code>acme</code> are two different projects. A source in one spelling while noergler delivers the other ignores every note.</p>
   <p><b>A (recommended): exact match, plus the rename.</b> Names are matched byte for byte, as today; a case mismatch is fixed by renaming once (figure 2), and <code>ProjectSpelledOtherwise</code> keeps refusing a new source in the other spelling. Cost: none beyond today; one rename per mismatch.</p>
+  <p><b>Built (review, 2026-11-01):</b> lookups match exactly; a registration (an accepted note, a revision) under a spelling another project or repository had in another case joins it as a further name instead of making a second one, so D5 holds without a rename. Claims are kept by name as noergler sent them and register nothing.</p>
   <p><b>B: match names case-insensitively.</b> A note under <code>acme</code> lands in the source <code>ACME</code> without any rename. Cost: case folding in Go on every lookup (SQLite's <code>lower()</code> folds ASCII only), a folded unique column per name table, and two spellings of one project in links and PR keys for good.</p>
 </div>
 

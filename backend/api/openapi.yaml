@@ -361,7 +361,7 @@ paths:
         "404":
           $ref: "#/components/responses/SourcesOff"
         "409":
-          description: A source with this key exists.
+          description: A source with this key exists, or another project had the key, in any case.
           content:
             application/json:
               schema:
@@ -397,7 +397,7 @@ paths:
         Every field is optional; an omitted `token` keeps the stored one, an empty one clears it. `project_key`
         renames the project, a change of case included: it keeps its pages, notes and clones, and the old key
         stays a name of it (every route still answers under it, with the current key in the body). A key another
-        project ever had, in any case, is a 409.
+        project ever had, in any case, is a 409. A rename comes alone: `project_key` with any other field is a 422.
       operationId: updateSource
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -497,7 +497,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: A repository with this slug exists.
+          description: A repository with this slug exists, or another repository of the project had the slug, in any case.
           content:
             application/json:
               schema:
