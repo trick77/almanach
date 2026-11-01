@@ -4,6 +4,7 @@ import App from "./App";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import type { Me, SourceDetail, Sources } from "./api";
+import { dayTime } from "./format";
 import { S } from "./strings";
 
 /** serve answers GET paths from a table and records every write. */
@@ -58,6 +59,7 @@ afterEach(() => {
 });
 
 const when = new Date(2026, 9, 30, 14, 2).toISOString();
+const synced = new Date(2026, 9, 31, 9, 5).toISOString();
 
 const sources: Sources = {
   enabled: true,
@@ -76,8 +78,8 @@ const sources: Sources = {
       failed: 0,
       missing: 0,
       last_listed_at: when,
+      last_synced_at: when,
       last_error: "",
-      auto_describe: true,
       created_at: when,
       updated_at: when,
     },
@@ -94,8 +96,8 @@ const sources: Sources = {
       failed: 1,
       missing: 0,
       last_listed_at: null,
+      last_synced_at: synced,
       last_error: "",
-      auto_describe: true,
       created_at: when,
       updated_at: when,
     },
@@ -113,7 +115,6 @@ const detail: SourceDetail = {
   disk_bytes: 1_400_000_000,
   last_listed_at: null,
   last_error: "",
-  auto_describe: true,
   created_at: when,
   updated_at: when,
   repos: [
@@ -137,6 +138,7 @@ const detail: SourceDetail = {
         step: 3,
         steps: 4,
         skipped: 0,
+        skipped_parts: [],
         cost_usd: "2.418",
         error: "",
         queued_at: when,
@@ -173,6 +175,9 @@ describe("SourcesPage", () => {
     expect(screen.getByText("7 bereit")).toBeInTheDocument();
     expect(screen.getByText("1 läuft")).toBeInTheDocument();
     expect(screen.getByText("1 fehlgeschlagen")).toBeInTheDocument();
+    // Last run: SHOP's listing, the static source's newest repo sync.
+    expect(screen.getByText(dayTime(when))).toBeInTheDocument();
+    expect(screen.getByText(dayTime(synced))).toBeInTheDocument();
     expect(screen.getByText("SHOP").closest("a")).toHaveAttribute(
       "href",
       "/quellen/SHOP",
@@ -218,7 +223,6 @@ describe("SourcesPage", () => {
         token: "pat",
         token_auth: "bearer",
         token_user: "",
-        auto_describe: true,
       },
     });
     await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
@@ -236,7 +240,7 @@ describe("SourcesPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("creates a source that describes nothing on its own, on the configured host", async () => {
+  it("creates a source on the configured host", async () => {
     const writes = serve({
       sources: { ...sources, default_host: "https://forge.example.invalid" },
     });
@@ -248,13 +252,9 @@ describe("SourcesPage", () => {
     expect(
       screen.getByPlaceholderText("https://bitbucket.example.invalid"),
     ).toHaveValue("https://forge.example.invalid");
-    const auto = screen.getByLabelText(/Automatisch beschreiben/);
-    expect(auto).toBeChecked();
-    fireEvent.click(auto);
     fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
     await waitFor(() => expect(writes).toHaveLength(1));
-    const body = writes[0]?.body as { auto_describe: boolean; host: string };
-    expect(body.auto_describe).toBe(false);
+    const body = writes[0]?.body as { host: string };
     expect(body.host).toBe("https://forge.example.invalid");
   });
 });
@@ -309,7 +309,30 @@ describe("SourcePage baseline", () => {
           cost_usd: "0.812",
         },
       },
-      { ...detail.repos[0], slug: "b", baseline: { ...run, skipped: 2 } },
+      {
+        ...detail.repos[0],
+        slug: "b",
+        baseline: {
+          ...run,
+          skipped: 8,
+          skipped_parts: [
+            { part: "overview" as const, name: "", reason: "ceiling" as const },
+            {
+              part: "subject" as const,
+              name: "Auth",
+              reason: "ceiling" as const,
+            },
+            ...["B", "C", "D"].map((name) => ({
+              part: "subject" as const,
+              name,
+              reason: "ceiling" as const,
+            })),
+            { part: "project" as const, name: "", reason: "failed" as const },
+            // A code this bundle does not know yet.
+            { part: "subject" as const, name: "E", reason: "timeout" as never },
+          ],
+        },
+      },
       {
         ...detail.repos[0],
         slug: "c",
@@ -325,7 +348,18 @@ describe("SourcePage baseline", () => {
     expect(await screen.findByText("Beschreibt 2/3")).toBeInTheDocument();
     expect(screen.getByText("Bei 7e1d9a0 · $0.812 bisher")).toBeInTheDocument();
     expect(screen.getByText("Teilweise")).toBeInTheDocument();
-    expect(screen.getByText(/2 Themen übersprungen/)).toBeInTheDocument();
+    // Each part once: the run counted 8 skips over 7 parts.
+    expect(screen.getByText(/7 Teile übersprungen/)).toBeInTheDocument();
+    expect(screen.getByText("Grund nicht erfasst: E")).toBeInTheDocument();
+    // The skipped parts by reason, one line each, the run's order kept.
+    expect(
+      screen.getByText(
+        "Seite an der Obergrenze: Überblick, Auth, B und 2 weitere",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Modellaufruf fehlgeschlagen: Projekt"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Beschreibung fehlgeschlagen: the catalogue failed/),
     ).toBeInTheDocument();
@@ -336,7 +370,7 @@ describe("SourcePage baseline", () => {
     expect(screen.getAllByText("Aktualisieren")[0]).toBeEnabled();
   });
 
-  it("turns the automatic runs off in the access form", async () => {
+  it("saves the access form without a switch for the runs", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     fireEvent.click(await screen.findByText("Token"));
@@ -345,13 +379,12 @@ describe("SourcePage baseline", () => {
       screen.getByText(/gilt für jedes Repository darin/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/listet das Projekt/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText(/Automatisch beschreiben/));
+    expect(screen.queryByText(/Automatisch/)).toBeNull();
     fireEvent.click(screen.getByText("Speichern"));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]?.body).toEqual({
       token_auth: "basic",
       token_user: "",
-      auto_describe: false,
     });
   });
 
@@ -369,7 +402,6 @@ describe("SourcePage baseline", () => {
       token: "ghp",
       token_auth: "basic",
       token_user: "",
-      auto_describe: true,
     });
   });
 });

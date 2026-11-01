@@ -60,7 +60,7 @@ func TestWiki_ListsSourcesWhenOn(t *testing.T) {
 
 func describeSources() *fakeSources {
 	fs := newFakeSources()
-	fs.sources["tools"] = store.ProjectSource{ProjectKey: "tools", Kind: store.SourceStatic, TokenAuth: store.TokenBasic, AutoDescribe: true}
+	fs.sources["tools"] = store.ProjectSource{ProjectKey: "tools", Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
 	fs.repos["tools"] = []store.SourceRepo{
 		{ProjectKey: "tools", Slug: "svc", HeadCommit: strings.Repeat("b", 40), State: store.RepoReady},
 		{ProjectKey: "tools", Slug: "fresh", State: store.RepoPending},
@@ -131,17 +131,18 @@ func TestDescribe_QueuesARunAndWakesTheWorker(t *testing.T) {
 	}
 }
 
-func TestSourceBody_BaselineAndAutoDescribe(t *testing.T) {
+func TestSourceBody_Baseline(t *testing.T) {
 	fs := describeSources()
 	cost := int64(2_418_000_000)
 	finished := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
 	fs.runs["svc"] = store.RepoRuns{
-		Last:     store.BaselineRun{ID: 7, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerFirstReady, State: store.RunDone, Commit: "c0ffee", Step: 5, Steps: 5, Skipped: 1, FinishedAt: &finished},
+		Last: store.BaselineRun{ID: 7, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerFirstReady, State: store.RunDone, Commit: "c0ffee", Step: 5, Steps: 5, Skipped: 1, FinishedAt: &finished,
+			Plan: json.RawMessage(`{"subjects":[],"skipped":["Auth"],"why":{"Auth":"calls"}}`)},
 		LastCost: &cost, Documented: "c0ffee", DocumentedAt: &finished,
 	}
 	h, _, _ := sourcesHandler(t, fs, false)
 	code, body := do(t, h, http.MethodGet, "/api/sources/tools", "", "", nil)
-	if code != 200 || string(body["auto_describe"]) != "true" {
+	if _, has := body["auto_describe"]; code != 200 || has {
 		t.Fatalf("GET: %d %v", code, body)
 	}
 	var repos []map[string]json.RawMessage
@@ -163,16 +164,10 @@ func TestSourceBody_BaselineAndAutoDescribe(t *testing.T) {
 		string(b["skipped"]) != "1" || field(t, b, "trigger") != "first_ready" || string(b["run_id"]) != "7" {
 		t.Errorf("baseline = %v", b)
 	}
+	if got := string(b["skipped_parts"]); got != `[{"part":"subject","name":"Auth","reason":"calls"}]` {
+		t.Errorf("skipped_parts = %s", got)
+	}
 
-	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"auto_describe":false}`, jsonHdr); code != 200 || string(body["auto_describe"]) != "false" {
-		t.Fatalf("PATCH auto_describe: %d %v", code, body)
-	}
-	if code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"other","kind":"static","auto_describe":false}`, jsonHdr); code != 201 || string(body["auto_describe"]) != "false" {
-		t.Fatalf("POST with auto_describe off: %d %v", code, body)
-	}
-	if code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"third","kind":"static"}`, jsonHdr); code != 201 || !fs.sources["third"].AutoDescribe {
-		t.Fatalf("POST without auto_describe: %d %v, want it on", code, body)
-	}
 	// A key noergler spells otherwise would have every note ignored.
 	fs.noerglerKeys = []string{"PLAT"}
 	if code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"plat","kind":"static"}`, jsonHdr); code != 422 ||
@@ -181,9 +176,6 @@ func TestSourceBody_BaselineAndAutoDescribe(t *testing.T) {
 	}
 	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"PLAT","kind":"static"}`, jsonHdr); code != 201 {
 		t.Fatalf("POST of noergler's spelling: %d", code)
-	}
-	if code, body := do(t, h, http.MethodGet, "/api/sources", "", "", nil); code != 200 || !strings.Contains(string(body["sources"]), `"auto_describe":false`) {
-		t.Fatalf("list: %d %v", code, body)
 	}
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -9,11 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/httpx"
+	"github.com/trick77/ship/kit/logging"
 )
 
 // The sources routes: the first writes beside the webhook. Gated like the
@@ -32,7 +35,6 @@ type SourceStore interface {
 	AddSourceRepo(ctx context.Context, r store.SourceRepo) error
 	DeleteSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RequestSync(ctx context.Context, key, slug string) (int, error)
-	SetAutoDescribe(ctx context.Context, key string, on bool) (bool, error)
 	ProjectSpelledOtherwise(ctx context.Context, key string) (string, bool, error)
 	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
@@ -151,8 +153,8 @@ type sourceSummaryBody struct {
 	Failed       int        `json:"failed"`
 	Missing      int        `json:"missing"`
 	LastListedAt *time.Time `json:"last_listed_at"`
+	LastSyncedAt *time.Time `json:"last_synced_at"`
 	LastError    string     `json:"last_error"`
-	AutoDescribe bool       `json:"auto_describe"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
@@ -179,7 +181,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 	for _, s := range rows {
 		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, Host: s.Host, HasToken: s.HasToken(),
 			TokenAuth: s.TokenAuth, TokenUser: s.TokenUser, Repos: s.Repos, Ready: s.Ready, Active: s.Active, Failed: s.Failed, Missing: s.Missing,
-			LastListedAt: s.LastListedAt, LastError: s.LastError, AutoDescribe: s.AutoDescribe, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
+			LastListedAt: s.LastListedAt, LastSyncedAt: s.LastSyncedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -203,28 +205,33 @@ type sourceRepoBody struct {
 
 // baselineBody is what the source page shows of a repository's runs.
 type baselineBody struct {
-	RunID            int64      `json:"run_id"`
-	State            string     `json:"state"`
-	Mode             string     `json:"mode"`
-	Trigger          string     `json:"trigger"`
-	Commit           string     `json:"commit"`
-	Step             int        `json:"step"`
-	Steps            int        `json:"steps"`
-	Skipped          int        `json:"skipped"`
-	CostUSD          string     `json:"cost_usd,omitempty"`
-	Error            string     `json:"error"`
-	QueuedAt         time.Time  `json:"queued_at"`
-	StartedAt        *time.Time `json:"started_at"`
-	FinishedAt       *time.Time `json:"finished_at"`
-	DocumentedCommit string     `json:"documented_commit"`
-	DocumentedAt     *time.Time `json:"documented_at"`
+	RunID            int64             `json:"run_id"`
+	State            string            `json:"state"`
+	Mode             string            `json:"mode"`
+	Trigger          string            `json:"trigger"`
+	Commit           string            `json:"commit"`
+	Step             int               `json:"step"`
+	Steps            int               `json:"steps"`
+	Skipped          int               `json:"skipped"`
+	SkippedParts     []skippedPartBody `json:"skipped_parts"`
+	CostUSD          string            `json:"cost_usd,omitempty"`
+	Error            string            `json:"error"`
+	QueuedAt         time.Time         `json:"queued_at"`
+	StartedAt        *time.Time        `json:"started_at"`
+	FinishedAt       *time.Time        `json:"finished_at"`
+	DocumentedCommit string            `json:"documented_commit"`
+	DocumentedAt     *time.Time        `json:"documented_at"`
 }
 
-func baselineOf(rr store.RepoRuns) *baselineBody {
+// baselineOf is a repository's newest run as the page shows it; err is a
+// plan that did not decode, its skipped parts left out, the body still
+// whole.
+func baselineOf(rr store.RepoRuns) (*baselineBody, error) {
 	r := rr.Last
+	parts, err := skippedOf(r.Plan)
 	return &baselineBody{RunID: r.ID, State: r.State, Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, Step: r.Step, Steps: r.Steps,
-		Skipped: r.Skipped, CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
-		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt}
+		Skipped: r.Skipped, SkippedParts: parts, CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt}, err
 }
 
 type sourceDetailBody struct {
@@ -238,7 +245,6 @@ type sourceDetailBody struct {
 	DiskBytes    int64            `json:"disk_bytes"`
 	LastListedAt *time.Time       `json:"last_listed_at"`
 	LastError    string           `json:"last_error"`
-	AutoDescribe bool             `json:"auto_describe"`
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`
 	Repos        []sourceRepoBody `json:"repos"`
@@ -254,7 +260,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 		return sourceDetailBody{}, err
 	}
 	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
-		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError, AutoDescribe: src.AutoDescribe,
+		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError,
 		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos))}
 	if dir, err := d.Sources.Git.ProjectDir(src.ProjectID); err == nil {
 		out.Dir, out.DiskBytes = dir, d.Sources.sizes.size(dir)
@@ -266,7 +272,11 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 			body.Dir = dir
 		}
 		if rr, ok := runs[rp.Slug]; ok {
-			body.Baseline = baselineOf(rr)
+			var err error
+			if body.Baseline, err = baselineOf(rr); err != nil {
+				d.Log.WarnContext(ctx, "source page: run plan does not decode, its skipped parts left out",
+					"repo", rp.Slug, "run_id", rr.Last.ID, logging.Err(err))
+			}
 		}
 		out.Repos = append(out.Repos, body)
 	}
@@ -316,8 +326,6 @@ type createSourceBody struct {
 	Token      string `json:"token"`
 	TokenAuth  string `json:"token_auth"`
 	TokenUser  string `json:"token_user"`
-	// AutoDescribe omitted is on, stored with the source in one write.
-	AutoDescribe *bool `json:"auto_describe"`
 }
 
 // validCloneURL is https with a host and no credentials: the token travels
@@ -345,6 +353,26 @@ func access(kind, tokenAuth, tokenUser string) (auth, user, problem string) {
 		return "", "", "token_user: bearer sends no username, drop it"
 	}
 	return auth, user, ""
+}
+
+// tokenChange names the field of an update that gives a source a token to
+// send: a new one, or the auth or user of the stored one changed. "" for
+// none, a cleared token included.
+func tokenChange(src store.ProjectSource, setToken bool, sealed []byte, auth, user string) string {
+	switch {
+	case setToken:
+		if len(sealed) > 0 {
+			return "token"
+		}
+		return ""
+	case !src.HasToken():
+		return ""
+	case auth != src.TokenAuth:
+		return "token_auth"
+	case user != src.TokenUser:
+		return "token_user"
+	}
+	return ""
 }
 
 // seal encrypts a token for the store; without a key it names the variable.
@@ -409,8 +437,7 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
 		return
 	}
-	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed,
-		AutoDescribe: in.AutoDescribe == nil || *in.AutoDescribe}
+	src := store.ProjectSource{ProjectKey: in.ProjectKey, Kind: in.Kind, Host: in.Host, TokenAuth: auth, TokenUser: user, TokenEnc: sealed}
 	if err := d.Sources.Store.CreateSource(ctx, src); err != nil {
 		if errors.Is(err, store.ErrExists) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
@@ -423,8 +450,7 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
-	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(),
-		"auto_describe", src.AutoDescribe, "user", d.user(r))
+	d.Log.InfoContext(ctx, "source_created", "project", src.ProjectKey, "kind", src.Kind, "has_token", src.HasToken(), "user", d.user(r))
 	d.Sources.Poller.Nudge()
 	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
 	if err != nil {
@@ -445,12 +471,11 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 
 type updateSourceBody struct {
 	// ProjectKey renames the project, a change of case included.
-	ProjectKey   *string `json:"project_key"`
-	Host         *string `json:"host"`
-	Token        *string `json:"token"`
-	TokenAuth    *string `json:"token_auth"`
-	TokenUser    *string `json:"token_user"`
-	AutoDescribe *bool   `json:"auto_describe"`
+	ProjectKey *string `json:"project_key"`
+	Host       *string `json:"host"`
+	Token      *string `json:"token"`
+	TokenAuth  *string `json:"token_auth"`
+	TokenUser  *string `json:"token_user"`
 }
 
 func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
@@ -505,6 +530,22 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A token reaches one host. A static folder from before addRepo kept
+	// it on one may span several: no new token for it, and no new way to
+	// send a stored one (its token is withheld at the clone). Clearing one
+	// is never refused.
+	if field := tokenChange(src, setToken, sealed, auth, user); field != "" && src.Kind == store.SourceStatic {
+		repos, err := d.Sources.Store.SourceRepos(ctx, src.ProjectKey)
+		if err != nil {
+			httpx.ServerError(w, r, err, "source repos")
+			return
+		}
+		if hosts := store.Origins(repos); len(hosts) > 1 {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, field+": this folder spans several hosts ("+strings.Join(hosts, ", ")+
+				"); a token reaches one host only, remove the others first")
+			return
+		}
+	}
 	updated, err := d.Sources.Store.UpdateSourceAccess(ctx, src.ProjectKey, host, auth, user, sealed, setToken)
 	if err != nil {
 		httpx.ServerError(w, r, err, "update source")
@@ -513,12 +554,6 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	if !updated {
 		httpx.WriteError(w, http.StatusNotFound, "unknown source")
 		return
-	}
-	if in.AutoDescribe != nil {
-		if _, err := d.Sources.Store.SetAutoDescribe(ctx, src.ProjectKey, *in.AutoDescribe); err != nil {
-			httpx.ServerError(w, r, err, "auto describe")
-			return
-		}
 	}
 	d.Log.InfoContext(ctx, "source_updated", "project", src.ProjectKey, "token_changed", setToken, "user", d.user(r))
 	d.Sources.Poller.Nudge()
@@ -532,7 +567,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 // is never given away.
 func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
 	ctx := r.Context()
-	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil || in.AutoDescribe != nil {
+	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a rename comes alone, the other fields in their own PATCH")
 		return
 	}
@@ -684,20 +719,24 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "branch: not a branch name")
 		return
 	}
+	// One folder, one host, token or not (the store checks it with the
+	// insert): the token is sent on every clone of the folder, so a second
+	// host would be a second place it goes, and a token set later finds the
+	// folder already on one.
 	err := d.Sources.Store.AddSourceRepo(ctx, store.SourceRepo{ProjectKey: src.ProjectKey, Slug: in.Slug, CloneURL: in.CloneURL, Branch: in.Branch})
-	if errors.Is(err, store.ErrExists) {
+	switch {
+	case errors.Is(err, store.ErrExists):
 		httpx.WriteError(w, http.StatusConflict, "a repository with this slug exists")
 		return
-	}
-	if errors.Is(err, store.ErrNameTaken) {
+	case otherHost(w, err):
+		return
+	case errors.Is(err, store.ErrNameTaken):
 		httpx.WriteError(w, http.StatusConflict, "slug: another repository had this slug")
 		return
-	}
-	if errors.Is(err, store.ErrNoProject) {
+	case errors.Is(err, store.ErrNoProject):
 		httpx.WriteError(w, http.StatusNotFound, "unknown source")
 		return
-	}
-	if err != nil {
+	case err != nil:
 		httpx.ServerError(w, r, err, "add repo")
 		return
 	}
@@ -709,6 +748,23 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+// otherHost writes the 422 of a clone URL off the folder's one host and
+// reports whether err was one.
+func otherHost(w http.ResponseWriter, err error) bool {
+	var other *store.OtherHostError
+	switch {
+	case errors.As(err, &other) && len(other.Hosts) == 1:
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder's repositories are on "+other.Hosts[0]+
+			"; a folder holds one host, its token goes nowhere else")
+	case errors.As(err, &other):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder already spans several hosts ("+strings.Join(other.Hosts, ", ")+
+			"); a folder holds one host, remove the others first")
+	default:
+		return false
+	}
+	return true
 }
 
 func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
@@ -789,6 +845,8 @@ func (d Deps) renameRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, store.ErrRunOpen):
 		httpx.WriteError(w, http.StatusConflict, "clone_url: a run of this repository is open, change the URL once it ends")
+		return
+	case otherHost(w, err):
 		return
 	case errors.Is(err, store.ErrNoRepo):
 		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
@@ -912,4 +970,26 @@ func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
 		d.Worker.Wake()
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, describedBody{Status: "queued", RunID: id, Mode: mode})
+}
+
+// skippedPartBody is one part a run left out (baseline.SkippedPart).
+type skippedPartBody struct {
+	Part   string `json:"part"`
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// skippedOf is the parts a run left out, named, from its plan. The plan is
+// the worker's own JSON; one that does not decode lists none (the caller
+// logs it), and the count beside it still says how many.
+func skippedOf(raw json.RawMessage) ([]skippedPartBody, error) {
+	out := []skippedPartBody{}
+	parts, err := baseline.RunSkips(raw)
+	if err != nil {
+		return out, err
+	}
+	for _, p := range parts {
+		out = append(out, skippedPartBody{Part: string(p.Part), Name: p.Name, Reason: string(p.Reason)})
+	}
+	return out, nil
 }

@@ -1,7 +1,9 @@
 package baseline
 
 import (
+	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -28,10 +30,108 @@ func (s Subject) Bytes() int64 {
 
 // Plan is a run's catalogue: the subjects in the order the steps read them.
 // Skipped names the subjects the run could not fold (a ceiling, a failed
-// call), so the next reconcile reads them again.
+// call), so the next reconcile reads them again; Why is each one's Skip
+// code, the first that hit it. A run from before Why has names alone.
 type Plan struct {
-	Subjects []Subject `json:"subjects"`
-	Skipped  []string  `json:"skipped,omitempty"`
+	Subjects []Subject       `json:"subjects"`
+	Skipped  []string        `json:"skipped,omitempty"`
+	Why      map[string]Skip `json:"why,omitempty"`
+}
+
+// The overview and the project step by name in Skipped, beside the
+// subjects: the next reconcile reads the docs again, or folds the project
+// again, when the last run could not.
+const (
+	OverviewPart = "the overview"
+	ProjectPart  = "the project"
+)
+
+// Skip is why a run left a part out, a code the page words; the log line
+// carries the detail.
+type Skip string
+
+const (
+	// SkipGone is when the subject left the catalogue mid-run.
+	SkipGone Skip = "gone"
+	// SkipCalls is when the run's calls were spent.
+	SkipCalls Skip = "calls"
+	// SkipBytes is when the part would take the run over its byte budget.
+	SkipBytes Skip = "bytes"
+	// SkipCeiling is when the page was at a ceiling before the call.
+	SkipCeiling Skip = "ceiling"
+	// SkipFailed is when the model call failed.
+	SkipFailed Skip = "failed"
+	// SkipRefused is when the answer broke a fold rule and was thrown away.
+	SkipRefused Skip = "refused"
+	// SkipOverCeiling is when the rewrite would take the page over a ceiling.
+	SkipOverCeiling Skip = "over_ceiling"
+	// SkipNoPage is when the model asked no change of a project that has no
+	// page yet.
+	SkipNoPage Skip = "no_page"
+)
+
+// Part is which kind of part a run skipped, as the source page names it.
+type Part string
+
+// The parts: the docs read first, a catalogue subject, the project step.
+const (
+	PartOverview Part = "overview"
+	PartSubject  Part = "subject"
+	PartProject  Part = "project"
+)
+
+// SkippedPart is one part a run left out, as the source page lists it.
+type SkippedPart struct {
+	Part Part
+	// Name is the subject's, "" for the overview and the project.
+	Name string
+	// Reason is the Skip code, "" for a run from before it was kept.
+	Reason Skip
+}
+
+// RunSkips is the parts a stored run plan left out. It keeps the two
+// fields alone, by Plan's own tags (TestRunSkips_ReadsAStoredPlan holds
+// them together): the subjects are still scanned, never built, and the
+// source page asks for every repository on every poll.
+func RunSkips(raw json.RawMessage) ([]SkippedPart, error) {
+	var p struct {
+		Skipped []string        `json:"skipped"`
+		Why     map[string]Skip `json:"why"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+	}
+	return Plan{Skipped: p.Skipped, Why: p.Why}.SkippedParts(), nil
+}
+
+// SkippedParts is the plan's skipped parts in the order the run hit them.
+func (p Plan) SkippedParts() []SkippedPart {
+	out := make([]SkippedPart, 0, len(p.Skipped))
+	for _, name := range p.Skipped {
+		s := SkippedPart{Part: PartSubject, Name: name, Reason: p.Why[name]}
+		switch name {
+		case OverviewPart:
+			s.Part, s.Name = PartOverview, ""
+		case ProjectPart:
+			s.Part, s.Name = PartProject, ""
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// Skip names a part skipped for why, once: the first reason stays.
+func (p *Plan) Skip(name string, why Skip) {
+	if slices.Contains(p.Skipped, name) {
+		return
+	}
+	p.Skipped = append(p.Skipped, name)
+	if p.Why == nil {
+		p.Why = map[string]Skip{}
+	}
+	p.Why[name] = why
 }
 
 // Bytes is the file content of every subject.

@@ -10,7 +10,6 @@ import {
 } from "./api";
 import { dayTime } from "./format";
 import { navigateTo, sourcePath } from "./routing";
-import { AutoDescribeField } from "./SourcePage";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import {
@@ -136,19 +135,20 @@ function SourcesTable({ sources }: { sources: SourceSummary[] }) {
               <td className={td}>
                 <StatePills s={s} />
               </td>
-              <td className={tdNum}>
-                {s.last_listed_at === null
-                  ? s.kind === "bitbucket"
-                    ? S.common.never
-                    : ""
-                  : dayTime(s.last_listed_at)}
-              </td>
+              <td className={tdNum}>{lastRun(s)}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+/** lastRun is a Bitbucket source's last listing; a static one is never
+ *  listed, so its run is the newest sync of its repositories. */
+function lastRun(s: SourceSummary): string {
+  const at = s.kind === "bitbucket" ? s.last_listed_at : s.last_synced_at;
+  return at === null ? S.common.never : dayTime(at);
 }
 
 /** StatePills is a source's repositories counted by state, the zero
@@ -217,7 +217,6 @@ function NewSourceForm({
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>("bearer");
   const [user, setUser] = useState("");
-  const [auto, setAuto] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
@@ -238,7 +237,6 @@ function NewSourceForm({
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
-        auto_describe: auto,
       });
       if (created) onDone(created);
     } catch (e) {
@@ -332,7 +330,6 @@ function NewSourceForm({
             <span className={fieldHint}>{f.userHint}</span>
           </label>
         )}
-        <AutoDescribeField value={auto} onChange={setAuto} />
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button

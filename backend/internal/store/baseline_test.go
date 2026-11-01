@@ -367,28 +367,11 @@ func TestInsertLLMCall_KindsAndPurposes(t *testing.T) {
 	}
 }
 
-// The switch defaults on, is read with every source and turns off; a
-// source repository is known as one.
-func TestAutoDescribeAndIsSourceRepo(t *testing.T) {
+// A source repository is known as one.
+func TestIsSourceRepo(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	sourceRepo(t, s, "tools", "svc")
-	src, _, _ := s.SourceByKey(ctx, "tools")
-	if !src.AutoDescribe {
-		t.Fatal("auto_describe defaults off, want on")
-	}
-	if ok, err := s.SetAutoDescribe(ctx, "tools", false); err != nil || !ok {
-		t.Fatalf("SetAutoDescribe: ok=%v err=%v", ok, err)
-	}
-	if ok, err := s.SetAutoDescribe(ctx, "nope", false); err != nil || ok {
-		t.Fatalf("SetAutoDescribe of an unknown source: ok=%v err=%v", ok, err)
-	}
-	rows, _ := s.Sources(ctx)
-	jobs, _ := s.SyncJobs(ctx)
-	src, _, _ = s.SourceByKey(ctx, "tools")
-	if src.AutoDescribe || rows[0].AutoDescribe || jobs[0].Source.AutoDescribe {
-		t.Fatalf("after turning off: byKey=%v list=%v job=%v", src.AutoDescribe, rows[0].AutoDescribe, jobs[0].Source.AutoDescribe)
-	}
 	for _, c := range []struct {
 		key, slug string
 		want      bool
@@ -399,19 +382,10 @@ func TestAutoDescribeAndIsSourceRepo(t *testing.T) {
 	}
 }
 
-// A source is created with its switch in one write; a key noergler spells
-// otherwise is found.
-func TestCreateSource_AutoDescribeAndSpelling(t *testing.T) {
+// A key noergler spells otherwise is found.
+func TestProjectSpelledOtherwise(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	src := staticSource("quiet")
-	src.AutoDescribe = false
-	if err := s.CreateSource(ctx, src); err != nil {
-		t.Fatal(err)
-	}
-	if got, _, _ := s.SourceByKey(ctx, "quiet"); got.AutoDescribe {
-		t.Fatal("created with auto_describe off, read back on")
-	}
 	ingest(t, s, noteFor("PRJ", "svc", 1))
 	if known, ok, err := s.ProjectSpelledOtherwise(ctx, "prj"); err != nil || !ok || known != "PRJ" {
 		t.Errorf("ProjectSpelledOtherwise(prj) = %q %v %v", known, ok, err)

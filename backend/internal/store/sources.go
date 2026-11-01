@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/trick77/almanach/internal/urlorigin"
 )
 
 // The sources: what Almanach clones itself. A source hangs off its project,
@@ -55,9 +57,6 @@ type ProjectSource struct {
 	UpdatedAt    time.Time
 	LastListedAt *time.Time
 	LastError    string
-	// AutoDescribe: runs start on their own (a clone's first ready, the
-	// monthly reconcile); off, only the buttons start one.
-	AutoDescribe bool
 }
 
 // HasToken reports whether a credential is stored.
@@ -71,6 +70,10 @@ type SourceRow struct {
 	Active  int // pending or syncing
 	Failed  int
 	Missing int
+	// LastSyncedAt is the newest sync of any of its repositories, nil
+	// before the first: a static source is never listed, so this is its
+	// last run.
+	LastSyncedAt *time.Time
 }
 
 // SourceRepo is one clone. ProjectID and RepoID are its ids, ProjectKey and
@@ -97,11 +100,11 @@ const sourcesFrom = `sources s JOIN projects p ON p.id = s.project_id`
 // sourceColumns are a source's columns over sourcesFrom in the order
 // sourceDest scans them.
 const sourceColumns = `s.project_id, p.key, s.kind, COALESCE(s.host, ''), s.token_auth, s.token_user, s.token_enc,
-	s.created_at, s.updated_at, s.last_listed_at, s.last_error, s.auto_describe`
+	s.created_at, s.updated_at, s.last_listed_at, s.last_error`
 
 func sourceDest(src *ProjectSource) []any {
 	return []any{&src.ProjectID, &src.ProjectKey, &src.Kind, &src.Host, &src.TokenAuth, &src.TokenUser, &src.TokenEnc,
-		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError, &src.AutoDescribe}
+		timeAt(&src.CreatedAt), timeAt(&src.UpdatedAt), timeOrNil(&src.LastListedAt), &src.LastError}
 }
 
 // projectByName and repoByName are a project and a repository by any name
@@ -120,7 +123,8 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 		       COUNT(r.repo_id) FILTER (WHERE r.state = 'ready'),
 		       COUNT(r.repo_id) FILTER (WHERE r.state IN ('pending', 'syncing')),
 		       COUNT(r.repo_id) FILTER (WHERE r.state = 'failed'),
-		       COUNT(r.repo_id) FILTER (WHERE r.state = 'missing')
+		       COUNT(r.repo_id) FILTER (WHERE r.state = 'missing'),
+		       MAX(r.last_synced_at)
 		  FROM `+sourcesFrom+` LEFT JOIN source_repos r ON r.project_id = s.project_id
 		 GROUP BY s.project_id ORDER BY p.key`)
 	if err != nil {
@@ -130,7 +134,8 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 	out := []SourceRow{}
 	for rows.Next() {
 		var r SourceRow
-		if err := rows.Scan(append(sourceDest(&r.ProjectSource), &r.Repos, &r.Ready, &r.Active, &r.Failed, &r.Missing)...); err != nil {
+		if err := rows.Scan(append(sourceDest(&r.ProjectSource), &r.Repos, &r.Ready, &r.Active, &r.Failed, &r.Missing,
+			timeOrNil(&r.LastSyncedAt))...); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -153,8 +158,8 @@ func (s *Store) SourceByKey(ctx context.Context, key string) (ProjectSource, boo
 	return src, true, nil
 }
 
-// CreateSource inserts a source with its auto_describe as given, in one
-// transaction. A key a project had before finds that project again (its
+// CreateSource inserts a source in one transaction. A key a project had
+// before finds that project again (its
 // pages with it), else a project is registered. ErrExists when the project
 // has a source, ErrNameTaken when another project had the key in another
 // case.
@@ -178,9 +183,9 @@ func (s *Store) CreateSource(ctx context.Context, src ProjectSource) error {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO sources (project_id, kind, host, token_auth, token_user, token_enc, auto_describe, created_at, updated_at)
-			VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?8, ?8)`,
-			pid, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), src.AutoDescribe, nowStamp())
+			INSERT INTO sources (project_id, kind, host, token_auth, token_user, token_enc, created_at, updated_at)
+			VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?7)`,
+			pid, src.Kind, src.Host, src.TokenAuth, src.TokenUser, nilIfEmpty(src.TokenEnc), nowStamp())
 		return uniqueAsExists(err)
 	})
 }
@@ -218,14 +223,6 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 		UPDATE sources SET host = NULLIF(?, ''), token_auth = ?, token_user = ?,
 		       token_enc = CASE WHEN ? THEN ? ELSE token_enc END, updated_at = ?
 		 WHERE project_id = `+projectByName, host, tokenAuth, tokenUser, setToken, nilIfEmpty(tokenEnc), nowStamp(), key))
-	return n == 1, err
-}
-
-// SetAutoDescribe turns a source's automatic runs on or off. Reports
-// whether the source exists.
-func (s *Store) SetAutoDescribe(ctx context.Context, key string, on bool) (bool, error) {
-	n, err := affected(s.db.ExecContext(ctx, `UPDATE sources SET auto_describe = ?, updated_at = ? WHERE project_id = `+projectByName,
-		on, nowStamp(), key))
 	return n == 1, err
 }
 
@@ -301,10 +298,65 @@ func (s *Store) SourceRepoByName(ctx context.Context, key, slug string) (SourceR
 	return r, err == nil, err
 }
 
+// oneHostIn is OneHost over the project's rows but the one of except (0:
+// none), read in the caller's transaction, so a check and its write cannot
+// leave the folder on two hosts.
+func oneHostIn(ctx context.Context, tx *sql.Tx, pid, except int64, cloneURL string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT clone_url FROM source_repos WHERE project_id = ? AND repo_id <> ?`, pid, except)
+	if err != nil {
+		return err
+	}
+	have := []SourceRepo{}
+	for rows.Next() {
+		var h SourceRepo
+		if err := rows.Scan(&h.CloneURL); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		have = append(have, h)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	return OneHost(have, cloneURL)
+}
+
+// Origins is the hosts a source's rows are on (urlorigin), each once,
+// sorted. One definition for the API and the poller, over all the rows,
+// missing ones included, so the two never derive a folder's host apart.
+func Origins(repos []SourceRepo) []string {
+	urls := make([]string, 0, len(repos))
+	for _, r := range repos {
+		urls = append(urls, r.CloneURL)
+	}
+	return urlorigin.Distinct(urls)
+}
+
+// OtherHostError is a repository refused because its folder is on another
+// host, or already on several: Hosts are the folder's.
+type OtherHostError struct{ Hosts []string }
+
+func (e *OtherHostError) Error() string {
+	return "the folder is on " + strings.Join(e.Hosts, ", ")
+}
+
+// OneHost is nil when cloneURL may join a static folder holding have: the
+// folder is empty, or on one host and cloneURL on it.
+func OneHost(have []SourceRepo, cloneURL string) error {
+	hosts := Origins(have)
+	if len(hosts) == 0 || len(hosts) == 1 && urlorigin.Same(cloneURL, hosts[0]) {
+		return nil
+	}
+	return &OtherHostError{Hosts: hosts}
+}
+
 // AddSourceRepo inserts a hand-entered repo as pending. A slug the project
 // had before finds that repository again (its pages with it); ErrExists
 // when it is a source repository already, ErrNameTaken when another
-// repository of the project had the slug in another case.
+// repository of the project had the slug in another case, an
+// *OtherHostError when the folder's rows are on another host (OneHost).
+// Checks and insert are one IMMEDIATE transaction, so two adds at once
+// cannot leave the folder on two hosts.
 func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		pid, ok, err := projectID(ctx, tx, r.ProjectKey)
@@ -313,6 +365,9 @@ func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
 		}
 		if !ok {
 			return ErrNoProject
+		}
+		if err := oneHostIn(ctx, tx, pid, 0, r.CloneURL); err != nil {
+			return err
 		}
 		rid, _, err := claimSlug(ctx, tx, pid, r.Slug)
 		if err != nil {

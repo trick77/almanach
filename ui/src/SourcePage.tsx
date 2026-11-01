@@ -3,6 +3,8 @@ import {
   ApiError,
   send,
   type Baseline,
+  type SkippedPart,
+  type SkipReason,
   type SourceDetail,
   type SourceRepo,
   type TokenAuth,
@@ -43,6 +45,7 @@ import {
   fieldLabel,
   h2,
   input,
+  measure,
   meta,
   mono,
   page,
@@ -280,7 +283,10 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         {error !== "" && (
           <span
             role="alert"
-            className="self-center text-[13px] text-danger-ink"
+            className={
+              "min-w-0 self-center text-[13px] text-danger-ink wrap-break-word " +
+              measure
+            }
           >
             {error}
           </span>
@@ -636,31 +642,6 @@ function RepoRow({
   );
 }
 
-/** AutoDescribeField is the source's switch for runs that start on their
- *  own, in the create form and the access form alike. */
-export function AutoDescribeField({
-  value,
-  onChange,
-}: {
-  value: boolean;
-  onChange: (on: boolean) => void;
-}) {
-  return (
-    <label className="flex items-start gap-2.5 sm:col-span-2">
-      <input
-        type="checkbox"
-        className="mt-1 accent-accent"
-        checked={value}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span>
-        <span className={fieldLabel}>{S.baseline.auto}</span>
-        <span className={fieldHint}>{S.baseline.autoHint}</span>
-      </span>
-    </label>
-  );
-}
-
 /** baselineState is a run's state as the column shows it: done with
  *  skipped parts is partial. */
 function baselineState(b: Baseline): { label: string; tone: Tone } {
@@ -708,7 +689,10 @@ function BaselineCell({ b }: { b: Baseline | null }) {
         : money(b.cost_usd)
       : "",
     !open && b.finished_at !== null ? day(b.finished_at) : "",
-    b.state === "done" && b.skipped > 0 ? S.baseline.skipped(b.skipped) : "",
+    // The parts, each once; a run from before they were named has its count.
+    b.state === "done" && b.skipped > 0
+      ? S.baseline.skipped(b.skipped_parts.length || b.skipped)
+      : "",
   ].filter((s) => s !== "");
   return (
     <>
@@ -720,8 +704,51 @@ function BaselineCell({ b }: { b: Baseline | null }) {
           {parts.join(` ${S.common.sep} `)}
         </div>
       )}
+      {b.state === "done" &&
+        skipGroups(b.skipped_parts).map(([reason, names]) => (
+          <div
+            key={reason}
+            className="mt-0.5 max-w-[190px] text-[11.5px] text-muted"
+          >
+            {S.baseline.skipLine(
+              reasonLabel(reason),
+              names.slice(0, maxSkipNames),
+              names.length - maxSkipNames,
+            )}
+          </div>
+        ))}
     </>
   );
+}
+
+/** maxSkipNames is how many names a reason's line shows before it counts
+ *  the rest: a page at its ceiling skips every part left, and the cell is
+ *  190px wide. */
+const maxSkipNames = 3;
+
+/** reasonLabel words a skip code; one the bundle does not know yet (a
+ *  server newer than the page) reads as an unrecorded reason. */
+function reasonLabel(reason: string): string {
+  const known: Partial<Record<string, string>> = S.baseline.skipReason;
+  return known[reason] ?? S.baseline.skipReason[""];
+}
+
+/** partName is a skipped part's name: a subject's own, the overview or
+ *  the project step in German, an unknown kind as sent. */
+function partName(p: SkippedPart): string {
+  if (p.part === "subject") return p.name;
+  const known: Partial<Record<string, string>> = S.baseline.skippedPart;
+  return known[p.part] ?? p.part;
+}
+
+/** skipGroups is a run's skipped parts by reason, each reason once in the
+ *  order the run first hit it: one line per reason rather than per part. */
+function skipGroups(parts: SkippedPart[]): [SkipReason, string[]][] {
+  const groups = new Map<SkipReason, string[]>();
+  for (const p of parts) {
+    groups.set(p.reason, [...(groups.get(p.reason) ?? []), partName(p)]);
+  }
+  return [...groups];
 }
 
 /** AccessForm edits the host (Bitbucket) and the token: an omitted token
@@ -746,7 +773,6 @@ function AccessForm({
     data.has_token ? "keep" : "replace",
   );
   const [token, setToken] = useState("");
-  const [auto, setAuto] = useState(data.auto_describe);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -754,10 +780,9 @@ function AccessForm({
     setBusy(true);
     setError("");
     try {
-      const body: Record<string, string | boolean> = {
+      const body: Record<string, string> = {
         token_auth: auth,
         token_user: auth === "basic" ? user.trim() : "",
-        auto_describe: auto,
       };
       if (data.kind === "bitbucket") body.host = host.trim();
       // An empty replacement keeps the stored token: only Löschen clears.
@@ -866,7 +891,6 @@ function AccessForm({
             </>
           )}
         </div>
-        <AutoDescribeField value={auto} onChange={setAuto} />
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button

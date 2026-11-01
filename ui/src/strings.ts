@@ -2,6 +2,8 @@
 // never the sharp s), generic masculine. There is no second language: the
 // readers are German speaking, and the wiki itself is German.
 
+import type { SkippedPart, SkipReason } from "./api";
+
 export const S = {
   app: "Almanach",
   nav: {
@@ -368,8 +370,31 @@ export const S = {
     },
     at: (sha: string) => `Bei ${sha}`,
     soFar: "bisher",
+    // Parts, not topics: the overview and the project step count too.
     skipped: (n: number) =>
-      n === 1 ? "1 Thema übersprungen" : `${n} Themen übersprungen`,
+      n === 1 ? "1 Teil übersprungen" : `${n} Teile übersprungen`,
+    // A skipped part by name: a subject is its own, the overview and the
+    // project step are these.
+    skippedPart: {
+      overview: "Überblick",
+      project: "Projekt",
+    } satisfies Record<Exclude<SkippedPart["part"], "subject">, string>,
+    // One reason's line: its first names, the rest counted.
+    skipLine: (reason: string, names: string[], more: number) =>
+      `${reason}: ${names.join(", ")}${more > 0 ? ` und ${more} weitere` : ""}`,
+    // Why a part was left out, one line per reason in front of its parts;
+    // a code the worker adds without copy here fails the typecheck.
+    skipReason: {
+      gone: "Nicht mehr im Katalog",
+      calls: "Aufrufe aufgebraucht",
+      bytes: "Lesebudget überschritten",
+      ceiling: "Seite an der Obergrenze",
+      failed: "Modellaufruf fehlgeschlagen",
+      refused: "Antwort verworfen",
+      over_ceiling: "Über der Obergrenze verworfen",
+      no_page: "Projekt ohne Seite",
+      "": "Grund nicht erfasst",
+    } satisfies Record<SkipReason, string>,
     failedRun: "Beschreibung fehlgeschlagen:",
     upToDate:
       "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",
@@ -379,9 +404,6 @@ export const S = {
       reconcile: "Aktualisieren",
       full: "Neu beschreiben",
     },
-    auto: "Automatisch beschreiben",
-    autoHint:
-      "Ein Repository beim ersten Klon, danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Buttons, für alle Repositories dieser Quelle.",
   },
   faq: {
     title: "FAQ",

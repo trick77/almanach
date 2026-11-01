@@ -61,7 +61,9 @@ export function ProjectsPage() {
                     </span>
                   )}
                 </div>
-                <div className="mt-3 text-[13px] text-muted">
+                {/* A line of its own: its first letter a capital, where the
+                    headers' inline "letzter Merge" stays lowercase. */}
+                <div className="mt-3 text-[13px] text-muted first-letter:uppercase">
                   {S.projects.lastMerge}{" "}
                   {p.last_merge === null ? S.common.never : day(p.last_merge)}
                 </div>

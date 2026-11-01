@@ -3,7 +3,7 @@ import { Diagram } from "./Diagram";
 import { day, shortSHA } from "./format";
 import { notePathFor } from "./routing";
 import { S } from "./strings";
-import { Chip, Empty, Prose, Summary, eyebrow, mono } from "./ui";
+import { Chip, Empty, Inline, Prose, Summary, eyebrow, mono } from "./ui";
 
 /** The kinds in the order the Markdown export has them: what must not
  *  break and why first, the parts after. */
@@ -135,7 +135,9 @@ export function StatementBlock({
 }) {
   return (
     <article className="border-t border-border-soft py-3 first:border-t-0">
-      <h4 className="font-semibold text-ink">{s.name}</h4>
+      <h4 className="font-semibold text-ink">
+        <Inline text={s.name} />
+      </h4>
       <Prose
         text={s.text}
         className="mt-1 mb-1.5 font-serif text-[15.5px] leading-[1.55] text-ink-dim"

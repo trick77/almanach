@@ -222,8 +222,10 @@ export interface SourceSummary {
   failed: number;
   missing: number;
   last_listed_at: string | null;
+  /** The newest sync of any of its repositories: a static source is never
+   *  listed, so this is its last run. */
+  last_synced_at: string | null;
   last_error: string;
-  auto_describe: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -255,6 +257,26 @@ export interface SourceRepo {
 export type RunState =
   "queued" | "cataloguing" | "describing" | "project" | "done" | "failed";
 
+/** Why a run left a part out; "" for a run from before it was kept. */
+export type SkipReason =
+  | ""
+  | "gone"
+  | "calls"
+  | "bytes"
+  | "ceiling"
+  | "failed"
+  | "refused"
+  | "over_ceiling"
+  | "no_page";
+
+/** One part a run left out: a subject by name, or the overview or the
+ *  project step. */
+export interface SkippedPart {
+  part: "overview" | "subject" | "project";
+  name: string;
+  reason: SkipReason;
+}
+
 /** A repository's newest baseline run and the commit last documented. */
 export interface Baseline {
   run_id: number;
@@ -265,6 +287,8 @@ export interface Baseline {
   step: number;
   steps: number;
   skipped: number;
+  /** The parts the run left out, in the order it hit them. */
+  skipped_parts: SkippedPart[];
   /** 3 decimals; absent when the gateway priced none of its calls. */
   cost_usd?: string;
   error: string;
@@ -286,7 +310,6 @@ export interface SourceDetail {
   disk_bytes: number;
   last_listed_at: string | null;
   last_error: string;
-  auto_describe: boolean;
   created_at: string;
   updated_at: string;
   repos: SourceRepo[];

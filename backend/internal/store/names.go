@@ -263,6 +263,10 @@ func renameRepo(ctx context.Context, tx *sql.Tx, key, slug, to, cloneURL string)
 		if open {
 			return ErrRunOpen
 		}
+		// The folder stays on one host: the token goes to that host only.
+		if err := oneHostIn(ctx, tx, pid, rid, cloneURL); err != nil {
+			return err
+		}
 	}
 	return renameRepoTo(ctx, tx, pid, rid, to, cloneURL)
 }

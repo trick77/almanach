@@ -1,18 +1,28 @@
 // The small shared vocabulary, after ../noergler's ui.tsx: class strings
 // hoisted to named consts where a component would add nothing, components
 // where there is behaviour or a shape worth a name.
-import type { CSSProperties, ReactNode } from "react";
-import { paragraphs, type Tone } from "./format";
+import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { codeSpans, paragraphs, type Tone } from "./format";
 import { S } from "./strings";
 import { onNav } from "./routing";
 
 export const page = "h-full overflow-auto";
-/** The reading column: 900px, centred, ../rongo's measure. */
-export const column = "mx-auto max-w-[900px] px-4 py-7 sm:px-6 lg:px-10";
+/** The page column: 1400px, centred, ../noergler's width. Tables, source
+ *  rows and diagrams take it; running text keeps measure, label/value rows
+ *  and forms boxWidth. */
+export const column = "mx-auto max-w-[1400px] px-4 py-7 sm:px-6 lg:px-10";
+/** measure is every running text's line: 75ch of its own font size, the
+ *  one reading width in the UI (prose, lede, empty). A meta line is chips
+ *  and dates, not text: it keeps the column. */
+export const measure = "max-w-[75ch]";
+/** boxWidth holds every bordered box (forms, confirms, failures) and the
+ *  label/value rows at the width they had in the 900px column: in the
+ *  1400px one a label sat 1300px from its value. */
+export const boxWidth = "max-w-[820px]";
 export const h2 =
   "font-serif text-[22px] font-medium leading-tight tracking-tight text-ink sm:text-[28px]";
 export const meta = "mt-1.5 text-[14.5px] text-muted";
-export const lede = "mt-1 mb-6 max-w-[66ch] text-[14.5px] text-muted";
+export const lede = "mt-1 mb-6 text-[14.5px] text-muted " + measure;
 export const eyebrow =
   "mt-7 mb-2.5 text-[11px] font-medium tracking-[.12em] text-faint uppercase";
 export const mono = "font-mono text-[12.5px]";
@@ -134,8 +144,10 @@ export function Pill({
   );
 }
 
-/** Prose renders a text as paragraphs, split on blank lines and nothing
- *  else: the wiki is prose, never markdown. */
+/** Prose renders a text as paragraphs, split on blank lines, with a
+ *  backtick-quoted identifier in the mono face (codeSpans): the wiki is
+ *  prose, no other markdown. Held at measure, in the font size the
+ *  caller's className sets; a caller sets no max-w of its own. */
 export function Prose({
   text,
   className = "",
@@ -144,13 +156,34 @@ export function Prose({
   className?: string;
 }) {
   return (
-    <div className={className}>
+    <div className={measure + " " + className}>
       {paragraphs(text).map((p, i) => (
         <p key={i} className="mb-3.5 last:mb-0">
-          {p}
+          <Inline text={p} />
         </p>
       ))}
     </div>
+  );
+}
+
+/** Inline is a line of model text with its backtick-quoted identifiers in
+ *  the mono face (codeSpans): a paragraph of Prose, a statement's name. */
+export function Inline({ text }: { text: string }) {
+  return (
+    <>
+      {codeSpans(text).map((s, j) =>
+        s.code ? (
+          <code
+            key={j}
+            className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink"
+          >
+            {s.text}
+          </code>
+        ) : (
+          <Fragment key={j}>{s.text}</Fragment>
+        ),
+      )}
+    </>
   );
 }
 
@@ -236,7 +269,11 @@ export function Panel({
   return (
     <div
       className={
-        "mt-3 rounded-ui border px-4 py-3.5 text-[13.5px] " +
+        // wrap-break-word: a mono error (a URL, a JSON fragment) breaks
+        // inside the box instead of running past its border.
+        "mt-3 rounded-ui border px-4 py-3.5 text-[13.5px] wrap-break-word " +
+        boxWidth +
+        " " +
         (tone === "danger"
           ? "border-danger bg-danger/8 text-ink-dim"
           : "border-border bg-panel")
@@ -249,13 +286,20 @@ export function Panel({
 
 /** Empty is what a section says when there is nothing, a real state here. */
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="py-1.5 text-[13.5px] text-faint">{children}</p>;
+  return (
+    <p className={"py-1.5 text-[13.5px] text-faint " + measure}>{children}</p>
+  );
 }
 
 /** Failed takes `what` in the case the sentence needs ("das Projekt"). */
 export function Failed({ what }: { what: string }) {
   return (
-    <div className="rounded-ui border border-border bg-panel px-3.5 py-3 text-[13.5px] text-muted">
+    <div
+      className={
+        "rounded-ui border border-border bg-panel px-3.5 py-3 text-[13.5px] text-muted " +
+        boxWidth
+      }
+    >
       {S.common.failed(what)}
     </div>
   );
@@ -316,7 +360,9 @@ export function Tile({
       <div className="mt-0.5 text-[22px] font-medium tabular-nums text-ink">
         {value}
       </div>
-      {note && <div className="text-[12px] text-muted">{note}</div>}
+      {note && (
+        <div className="text-[12px] text-muted wrap-break-word">{note}</div>
+      )}
     </div>
   );
 }

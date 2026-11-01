@@ -3,15 +3,16 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
 func bitbucketSource(key string) ProjectSource {
-	return ProjectSource{ProjectKey: key, Kind: SourceBitbucket, Host: "https://forge.example.invalid", TokenAuth: TokenBearer, TokenEnc: []byte("sealed"), AutoDescribe: true}
+	return ProjectSource{ProjectKey: key, Kind: SourceBitbucket, Host: "https://forge.example.invalid", TokenAuth: TokenBearer, TokenEnc: []byte("sealed")}
 }
 
 func staticSource(key string) ProjectSource {
-	return ProjectSource{ProjectKey: key, Kind: SourceStatic, TokenAuth: TokenBasic, TokenUser: "x-access-token", AutoDescribe: true}
+	return ProjectSource{ProjectKey: key, Kind: SourceStatic, TokenAuth: TokenBasic, TokenUser: "x-access-token"}
 }
 
 func TestSources_CreateListUpdateDelete(t *testing.T) {
@@ -36,6 +37,9 @@ func TestSources_CreateListUpdateDelete(t *testing.T) {
 	}
 	if !rows[0].HasToken() || rows[1].HasToken() || rows[1].Host != "" {
 		t.Fatalf("token/host: SHOP token=%v tools token=%v host=%q", rows[0].HasToken(), rows[1].HasToken(), rows[1].Host)
+	}
+	if rows[1].LastSyncedAt != nil {
+		t.Fatalf("a source without repos synced at %v", rows[1].LastSyncedAt)
 	}
 
 	// Keep the token when setToken is false, clear it with an empty one.
@@ -70,6 +74,51 @@ func TestSources_CreateListUpdateDelete(t *testing.T) {
 	}
 	if _, found, _ := s.SourceByKey(ctx, "tools"); found {
 		t.Fatal("deleted source still found")
+	}
+}
+
+// A folder holds one host: the add checks the rows in its own write
+// transaction, the default port and case aside; a folder already on two
+// names both.
+func TestAddSourceRepo_OneHost(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.CreateSource(ctx, staticSource("tools")); err != nil {
+		t.Fatal(err)
+	}
+	add := func(slug, url string) error {
+		return s.AddSourceRepo(ctx, SourceRepo{ProjectKey: "tools", Slug: slug, CloneURL: url})
+	}
+	if err := add("a", "https://forge.example.invalid/a.git"); err != nil {
+		t.Fatal(err)
+	}
+	if err := add("b", "https://FORGE.example.invalid:443/b.git"); err != nil {
+		t.Fatalf("same host, default port: %v", err)
+	}
+	var other *OtherHostError
+	if err := add("c", "https://other.example.invalid/c.git"); !errors.As(err, &other) || strings.Join(other.Hosts, ",") != "https://forge.example.invalid" {
+		t.Fatalf("other host: %v", err)
+	}
+	if n := count(t, s, "source_repos", "project_id = (SELECT project_id FROM project_names WHERE key = 'tools')"); n != 2 {
+		t.Fatalf("rows after the refusal: %d", n)
+	}
+	// A folder from before the rule, on two hosts: every add is refused,
+	// both hosts named.
+	pid, _, err := projectID(ctx, s.db, "tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rid, err := ensureRepo(ctx, s.db, pid, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO source_repos (repo_id, project_id, clone_url, origin, state, created_at)
+		VALUES (?, ?, 'https://other.example.invalid/old.git', 'manual', 'missing', ?)`, rid, pid, nowStamp()); err != nil {
+		t.Fatal(err)
+	}
+	err = add("d", "https://forge.example.invalid/d.git")
+	if !errors.As(err, &other) || strings.Join(other.Hosts, ",") != "https://forge.example.invalid,https://other.example.invalid" {
+		t.Fatalf("mixed folder: %v", err)
 	}
 }
 
@@ -121,6 +170,10 @@ func TestSourceRepos_ManualAndStates(t *testing.T) {
 	rows, _ := s.Sources(ctx)
 	if rows[0].Repos != 1 || rows[0].Active != 1 || rows[0].Ready != 0 {
 		t.Fatalf("counts after request: %+v", rows[0])
+	}
+	// A static source is never listed: its last run is its newest repo sync.
+	if rows[0].LastListedAt != nil || rows[0].LastSyncedAt == nil || !rows[0].LastSyncedAt.Equal(*repos[0].LastSyncedAt) {
+		t.Fatalf("last synced = %v, want the repo's %v", rows[0].LastSyncedAt, repos[0].LastSyncedAt)
 	}
 
 	ok, err := s.DeleteSourceRepo(ctx, "tools", "cli")

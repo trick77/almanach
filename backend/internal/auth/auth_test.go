@@ -218,22 +218,10 @@ func TestGateChecksOriginInNoneMode(t *testing.T) {
 	}
 }
 
-// The trusted origin is written as a browser writes Origin.
+// The trusted origin is written as a browser writes Origin (urlorigin's
+// tests hold the normaliser's cases): a browser on the default port sends
+// no port, and it is trusted.
 func TestOriginDropsTheDefaultPort(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://Almanach.example.com:443/api/auth/callback": "https://almanach.example.com",
-		"https://almanach.example.com:8443/x":                "https://almanach.example.com:8443",
-		"http://localhost:80/x":                              "http://localhost",
-		"http://localhost:443/x":                             "http://localhost:443",
-		"https://[::1]:443/x":                                "https://[::1]",
-		"https://almanach.example.com/x":                     "https://almanach.example.com",
-		"no-scheme":                                          "",
-	} {
-		if got := origin(in); got != want {
-			t.Errorf("origin(%q) = %q, want %q", in, got, want)
-		}
-	}
-	// A browser on the default port sends no port: it is trusted.
 	s := sessions(t)
 	h := Gate(s, "https://almanach.example.com:443/api/auth/callback", nil)(echo)
 	req := httptest.NewRequest(http.MethodPost, "/api/sources", nil)

@@ -394,10 +394,13 @@ paths:
       tags: [sources]
       summary: Change a source's host or token, or rename its project
       description: >-
-        Every field is optional; an omitted `token` keeps the stored one, an empty one clears it. `project_key`
-        renames the project, a change of case included: it keeps its pages, notes and clones, and the old key
-        stays a name of it (every route still answers under it, with the current key in the body). A key another
-        project ever had, in any case, is a 409. A rename comes alone: `project_key` with any other field is a 422.
+        Every field is optional; an omitted `token` keeps the stored one, an empty one clears it. A token reaches
+        one host only: on a static source whose repositories span more than one host, a new token, or a changed
+        `token_auth` or `token_user` with a token stored, is a 422 naming the field and the hosts; clearing is not.
+        `project_key` renames the project, a change of case included: it keeps its pages, notes and clones, and the
+        old key stays a name of it (every route still answers under it, with the current key in the body). A key
+        another project ever had, in any case, is a 409. A rename comes alone: a changed `project_key` with any
+        other field is a 422; an unchanged one is no rename.
       operationId: updateSource
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -473,7 +476,10 @@ paths:
     post:
       tags: [sources]
       summary: Add a repository to a static source
-      description: A Bitbucket source lists its repositories itself and answers 422.
+      description: >-
+        A Bitbucket source lists its repositories itself and answers 422. A static source holds one host: a
+        `clone_url` on another scheme, host or port than its repositories' (the default port aside) is a 422,
+        and so is any on a source that already spans several, which the message lists.
       operationId: addSourceRepo
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -845,7 +851,7 @@ components:
 
     SourceSummary:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_error, auto_describe, created_at, updated_at]
+      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_synced_at, last_error, created_at, updated_at]
       properties:
         project_key:
           type: string
@@ -876,12 +882,13 @@ components:
         last_listed_at:
           type: [string, "null"]
           format: date-time
+        last_synced_at:
+          type: [string, "null"]
+          format: date-time
+          description: The newest sync of any of its repositories, null before the first.
         last_error:
           type: string
           description: The last listing's failure, or empty.
-        auto_describe:
-          type: boolean
-          description: Runs start on their own (a clone's first ready, the monthly reconcile).
         created_at:
           type: string
           format: date-time
@@ -891,7 +898,7 @@ components:
 
     SourceDetail:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, auto_describe, created_at, updated_at, repos]
+      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
       properties:
         project_key:
           type: string
@@ -917,8 +924,6 @@ components:
           format: date-time
         last_error:
           type: string
-        auto_describe:
-          type: boolean
         created_at:
           type: string
           format: date-time
@@ -968,7 +973,7 @@ components:
     Baseline:
       type: object
       description: The repository's newest baseline run and the commit last documented.
-      required: [run_id, state, mode, trigger, commit, step, steps, skipped, error, queued_at, started_at, finished_at, documented_commit, documented_at]
+      required: [run_id, state, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at]
       properties:
         run_id:
           type: integer
@@ -991,6 +996,23 @@ components:
         skipped:
           type: integer
           description: Subjects the run could not fold; the next reconcile reads them again.
+        skipped_parts:
+          type: array
+          description: The parts the run left out, in the order it hit them; one per part, where skipped counts each time.
+          items:
+            type: object
+            required: [part, name, reason]
+            properties:
+              part:
+                type: string
+                enum: [overview, subject, project]
+              name:
+                type: string
+                description: The subject's name, empty for the overview and the project.
+              reason:
+                type: string
+                enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
+                description: Why it was left out; empty for a run from before reasons were kept.
         cost_usd:
           type: string
           description: What the gateway priced of the run's calls, 3 decimals; omitted when it priced none.
@@ -1052,9 +1074,6 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
-        auto_describe:
-          type: boolean
-          description: Omitted is on.
 
     SourceAccess:
       type: object
@@ -1072,9 +1091,6 @@ components:
           enum: [bearer, basic]
         token_user:
           type: string
-        auto_describe:
-          type: boolean
-          description: Omitted keeps it.
 
     NewSourceRepo:
       type: object
@@ -1084,7 +1100,7 @@ components:
           type: string
         clone_url:
           type: string
-          description: https, no credentials.
+          description: https, no credentials, on the host of the source's other repositories.
         branch:
           type: string
           description: Empty resolves the remote's default branch.

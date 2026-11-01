@@ -62,6 +62,48 @@ export function paragraphs(text: string): string[] {
     .filter((p) => p.length > 0);
 }
 
+/** A run of a paragraph: prose, or an identifier the model quoted in
+ *  backticks. */
+export type Span = { text: string; code: boolean };
+
+/** codeSpans cuts a paragraph into prose and code, the only markup the
+ *  wiki takes: the way lang.SwissSS (swiss.go, swissLine) reads it, so
+ *  what it left unconverted is what shows as code. Line by line, a run of
+ *  backticks opens a span the next same run on that line closes; a run
+ *  never closed leaves the rest of its line text, itself included. */
+export function codeSpans(p: string): Span[] {
+  const out: Span[] = [];
+  const text = (t: string) => {
+    if (t === "") return;
+    const prev = out[out.length - 1];
+    if (prev !== undefined && !prev.code) prev.text += t;
+    else out.push({ text: t, code: false });
+  };
+  for (const [n, line] of p.split("\n").entries()) {
+    if (n > 0) text("\n");
+    let i = 0;
+    while (i < line.length) {
+      const open = line.indexOf("`", i);
+      if (open < 0) {
+        text(line.slice(i));
+        break;
+      }
+      text(line.slice(i, open));
+      let j = open;
+      while (line[j] === "`") j++;
+      const run = line.slice(open, j);
+      const close = line.indexOf(run, j);
+      if (close < 0) {
+        text(line.slice(open));
+        break;
+      }
+      out.push({ text: line.slice(j, close), code: true });
+      i = close + run.length;
+    }
+  }
+  return out;
+}
+
 export type Tone = "ok" | "warn" | "fail" | "none" | "quiet";
 
 /** changeTone colours a change kind: a bugfix stands out, the rest is

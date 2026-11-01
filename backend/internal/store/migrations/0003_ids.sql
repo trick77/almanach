@@ -273,13 +273,12 @@ CREATE TABLE sources_new (
     created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z'),
     updated_at TEXT NOT NULL CHECK (updated_at GLOB '????-??-??T??:??:??.?????????Z'),
     last_listed_at TEXT CHECK (last_listed_at GLOB '????-??-??T??:??:??.?????????Z'),
-    last_error TEXT NOT NULL DEFAULT '',
-    auto_describe BOOLEAN NOT NULL DEFAULT 1 CHECK (auto_describe IN (0, 1))
+    last_error TEXT NOT NULL DEFAULT ''
 );
 INSERT INTO sources_new (project_id, kind, host, token_auth, token_user, token_enc, created_at, updated_at,
-                         last_listed_at, last_error, auto_describe)
+                         last_listed_at, last_error)
 SELECT p.id, s.kind, s.host, s.token_auth, s.token_user, s.token_enc, s.created_at, s.updated_at,
-       s.last_listed_at, s.last_error, s.auto_describe
+       s.last_listed_at, s.last_error
   FROM sources s JOIN projects_new p ON p.key = s.project_key;
 
 -- One row per clone; the repository's project is its source.

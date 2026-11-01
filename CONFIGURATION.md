@@ -15,10 +15,11 @@ is a startup fault that names its replacement.
 | --- | --- |
 | `BACKEND_DB_PATH` | The SQLite database file, e.g. `/data/almanach.db`; created on first open if missing. Its folder must exist and be writable (the file's `-wal` and `-shm` land beside it), checked at startup by `serve` and `migrate` alike. A local disk on its own volume, never a shared filesystem: WAL needs the locks of one host. `migrate` needs nothing else. |
 | `BACKEND_TEAM_KEYS_PATH` | Path of the team-keys file: JSON `{"<team>": "<token>"}`, one token per team. The token is the team's identity; the same value goes into the team's `almanach:` block in noergler. In oidc mode it also opens the two Markdown exports (`/api/projects/{key}.md`, `/api/projects/{key}/repos/{slug}.md`) read-only, for a coding agent; no other route. Re-read when the file's modification time changes, so a new team needs no restart; a malformed file keeps the last good table and logs. Two teams sharing a token, or an empty entry, is a startup fault. Never committed. compose mounts the folder `./conf` read-only at `/conf` and sets `/conf/team-keys.json` (`cp conf/team-keys.example.json conf/team-keys.json`): a folder, because Docker turns a missing bind-mounted file into a directory. |
-| `LLMWIRE_LITELLM_BASE_URL` | Host of the OpenAI-compatible gateway. Read by llmwire. |
-| `LLMWIRE_LITELLM_API_KEY` | The gateway key. Read by llmwire. |
-| `LLMWIRE_LITELLM_MODELS` | `<profile>=<alias>,...`: which llmwire profiles the gateway serves, under which alias. |
-| `BACKEND_MODEL` | The merge model as an llmwire **profile id**, never a gateway alias. Must be listed above and must support strict JSON-schema output, checked at startup off the profile; the gateway's model listing must carry the alias, checked at startup too. A gateway that does not answer at startup (unreachable, 5xx) is a warning: notes are taken, folds wait for it; a refused key, a 4xx, a body that is no listing or a missing alias aborts. |
+| `LLMWIRE_LITELLM_BASE_URL` | Host of the OpenAI-compatible gateway. Read by llmwire. Gateway route only. |
+| `LLMWIRE_LITELLM_API_KEY` | The gateway key. Read by llmwire. Gateway route only. |
+| `LLMWIRE_LITELLM_MODELS` | `<profile>=<alias>,...`: which llmwire profiles the gateway serves, under which alias. A profile listed here goes through the gateway. |
+| `LLMWIRE_<PROVIDER>_API_KEY` | Direct route: a profile not listed in `LLMWIRE_LITELLM_MODELS` goes straight to its provider with this key, e.g. `LLMWIRE_MIMO_API_KEY` for `mimo-v2.6-pro`. Unset, startup aborts naming the variable (`needs LLMWIRE_MIMO_API_KEY set in the environment`). Read by llmwire; one per provider the configured models use. |
+| `BACKEND_MODEL` | The merge model as an llmwire **profile id**, never a gateway alias. Reached by one of the two routes above and must support strict JSON-schema output, checked at startup off the profile; on the gateway route the gateway's model listing must carry the alias, checked at startup too. A gateway that does not answer at startup (unreachable, 5xx) is a warning: notes are taken, folds wait for it; a refused key, a 4xx, a body that is no listing or a missing alias aborts. |
 
 ## Optional
 
@@ -43,7 +44,7 @@ is a startup fault that names its replacement.
 | `BACKEND_BASELINE_CATALOGUE_MODEL` | `BACKEND_MODEL` | The baseline's catalogue step (which subjects a repository is made of, which files belong to each) as an llmwire profile id: a cheaper model may pick, the main one writes. Checked at startup like `BACKEND_MODEL`, at its balanced reasoning level. Only read with `BACKEND_REPOS_DIR` set. |
 | `BACKEND_BASELINE_MAX_CALLS` | `16` | Model calls one baseline run may make: the catalogue, the overview, one per subject, the project. At least 3. Checked before every call; past it the rest is skipped and the run ends partial. |
 | `BACKEND_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read: the docs its catalogue reads and every part's files. A part over what is left is skipped, and a smaller one after it may still be read. |
-| `BACKEND_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since, and only with the source's automatic runs on). `0`: only the buttons. |
+| `BACKEND_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since). `0`: only the buttons. |
 | `BACKEND_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `BACKEND_ENV` | `dev` | Environment name in every log line. |
 
