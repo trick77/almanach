@@ -1,7 +1,13 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dependencies, RepoDetail } from "./api";
-import { DepsPage, depGraph, libraryRows, repoNamer } from "./DepsPage";
+import {
+  DepsPage,
+  depGraph,
+  libraryRows,
+  oddVersions,
+  repoNamer,
+} from "./DepsPage";
 import { RepoPage, depGroups } from "./RepoPage";
 
 function serve(table: Record<string, unknown>) {
@@ -107,6 +113,13 @@ describe("dependency graph", () => {
       ["rongo", true],
     ]);
     expect(rows[1].users[0].odd).toBe(false);
+  });
+
+  it("marks only the versions apart from the most common one", () => {
+    expect(oddVersions(["v1", "v1", "v0"])).toEqual([false, false, true]);
+    expect(oddVersions(["v1", "v0"])).toEqual([true, true]);
+    expect(oddVersions(["v1", "v1"])).toEqual([false, false]);
+    expect(oddVersions([])).toEqual([]);
   });
 });
 

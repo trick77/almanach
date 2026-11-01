@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { DependencyEnd, ProjectDetail, RepoDetail } from "./api";
+import { oddVersions } from "./DepsPage";
 import { DescriptionView, SourceChip, descriptionRail } from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
@@ -287,7 +288,10 @@ export function depGroups(data: RepoDetail): RailGroup[] {
     groups.push({
       title: S.deps.uses,
       links: data.uses.map((u) => {
-        const odd = u.also.some((o) => o.version !== u.version);
+        const odd = oddVersions([
+          u.version,
+          ...u.also.map((o) => o.version),
+        ])[0];
         return {
           label: name(u),
           to: repoPath(u.project, u.slug),
@@ -302,20 +306,18 @@ export function depGroups(data: RepoDetail): RailGroup[] {
         };
       }),
     });
+  const odd = oddVersions(data.used_by.map((u) => u.version));
   if (data.used_by.length > 0)
     groups.push({
       title: S.deps.usedBy,
-      links: data.used_by.map((u) => {
-        const odd = data.used_by.some((o) => o.version !== u.version);
-        return {
-          label: name(u),
-          to: repoPath(u.project, u.slug),
-          current: false,
-          note: u.version || undefined,
-          odd,
-          noteTitle: odd ? S.deps.otherVersion : undefined,
-        };
-      }),
+      links: data.used_by.map((u, i) => ({
+        label: name(u),
+        to: repoPath(u.project, u.slug),
+        current: false,
+        note: u.version || undefined,
+        odd: odd[i],
+        noteTitle: odd[i] ? S.deps.otherVersion : undefined,
+      })),
     });
   return groups;
 }

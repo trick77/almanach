@@ -83,10 +83,23 @@ export function libraryRows(d: Dependencies): LibraryRow[] {
     rows.get(id)!.users.push({ ref: e.from, version: e.version, odd: false });
   }
   for (const row of rows.values()) {
-    for (const u of row.users)
-      u.odd = row.users.some((o) => o !== u && o.version !== u.version);
+    const odd = oddVersions(row.users.map((u) => u.version));
+    row.users.forEach((u, i) => (u.odd = odd[i]));
   }
   return [...rows.values()];
+}
+
+/** oddVersions marks, among the versions one library's users name, those
+ *  apart from the rest: all the same, none; otherwise every version fewer
+ *  users name than the most common one, and on a tie for most common,
+ *  every one, since none is the rule. */
+export function oddVersions(versions: string[]): boolean[] {
+  const count = new Map<string, number>();
+  for (const v of versions) count.set(v, (count.get(v) ?? 0) + 1);
+  if (count.size <= 1) return versions.map(() => false);
+  const most = Math.max(...count.values());
+  const tie = [...count.values()].filter((n) => n === most).length > 1;
+  return versions.map((v) => tie || count.get(v)! < most);
 }
 
 /** DepsPage is the dependency graph over the source repositories. */
