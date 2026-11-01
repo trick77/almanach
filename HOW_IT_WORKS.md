@@ -221,7 +221,8 @@ its merge time with two minutes of slack. A git read that fails holds the
 step like a busy clone, before its files are read or a call made, for up to
 two minutes from that commit's first failure in the run; past that a
 statement whose merge commit git cannot place is read-only for the step
-(a patch touching it is refused, and the log says why) and asked again in
+(a patch's edit, drop or confirmation of it is struck, the rest of the
+patch taken, and the log says why) and asked again in
 the next. A statement another PR already marks newer holds nothing. Git's
 answers are kept for the run. Runs among
 themselves go oldest first, one to its end before the next begins.
@@ -678,8 +679,16 @@ not pages: none links.
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none
 of its files is in the tree any more (`./` and directories forgiven), and
-an edit of it keeps every file of it the tree still has; anything else
-rejects the patch, the part is skipped and named for the next reconcile.
+an edit of it keeps every file of it the tree still has. A step's patch
+is never refused whole (user, 2026-11-01): an item that breaks a rule
+costs only itself, logged. An edit without an id, of an id the page lacks
+or already edited, of a PR fact shedding a file the tree has, or of a kind
+the page cannot hold or empty, is left out, the statement as stored and not
+marked checked; a new statement of such a kind or empty is left out; a drop
+of a statement the patch also edits or confirms, or of a PR fact whose files
+remain, is left out, the statement kept. A project answer with an empty
+summary keeps the stored one; only a first project page without one is
+refused, the step skipped. A note's merge, a whole page, stays strict.
 An edit keeps the statement's PR sources and adds the run's commit
 (`Basis`, with the repository's slug); a confirmed statement gets the
 commit as `checked`, which a later change of its text voids.
@@ -687,9 +696,9 @@ commit as `checked`, which a later change of its text voids.
 **Failures and caps.** A gateway-class failure holds the worker as for a
 note, with the step's attempt counted on the run; eight fail the run. A
 full run's catalogue that fails on its own fails the run: there is no plan
-to read. A part's call that fails on its own, or a patch the rules refuse,
-skips that part, the parts after it still read; a project step refused
-or unpaid is skipped too. No part is skipped for the page's size. The calls
+to read. A part's call that fails on its own skips that part, the parts
+after it still read; a project step refused (a first page without a
+summary) or unpaid is skipped too. No part is skipped for the page's size. The calls
 (`BACKEND_BASELINE_MAX_CALLS`) are checked before each call, and when
 they are spent the rest is skipped. The bytes
 (`BACKEND_BASELINE_MAX_BYTES`, the catalogue's docs and every part's
@@ -1133,8 +1142,10 @@ things a change must not undo by accident.
 
 ### Rules of a rewrite
 
-A rewrite the model returns passes all of these or is rejected whole, with
-the reason in the log and the page unchanged:
+A note's rewrite (the merge, a whole page) passes all of these or is
+rejected whole, with the reason in the log and the page unchanged. A
+baseline step's patch never is: its bad items are left out one by one (see
+"PR facts are checked, not erased"):
 
 - A statement's `kind` is one of `component`, `rule`, `invariant`,
   `entity`, `decision`, `extension`, `pitfall`; on the project page not

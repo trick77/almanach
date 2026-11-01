@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/trick77/almanach/internal/inference"
@@ -13,41 +14,46 @@ import (
 // statement a PR taught may be dropped only when the code no longer has any
 // of its files. An edit of one may correct its text and add files, but
 // keeps every file of it the tree still has: otherwise the next run would
-// find it resting on nothing and drop it after all. Anything else rejects
-// the patch whole. An edit of an id the page does not have, or of one an
-// earlier edit already took, costs only itself (user, 2026-11-01: an eval
-// lost two parts to one such id each): left out, named in BadEdits, the
-// statement as stored or as first edited. An unknown id to drop or confirm
-// refers to nothing: it is left out, named in Unknown, and the rest of the
-// patch applies.
+// find it resting on nothing and drop it after all. A patch is never
+// refused whole: an item that breaks a rule costs only itself (user,
+// 2026-11-01). An edit without an id, of an id the page does not have, of
+// one an earlier edit already took, or of a PR-taught statement that sheds
+// a file the tree still has is left out, named in BadEdits, the statement
+// as stored or as first edited. A drop of a statement the patch also edits
+// or confirms, or of a PR-taught one whose files still exist, is left out,
+// named in BadDrops, the statement kept. An unknown id to drop or confirm
+// refers to nothing: it is left out, named in Unknown.
 
 // Applied is a patch turned into the whole proposal a fold checks: every
 // statement of the page in its order with edits in place and drops gone,
 // then the new ones (ID nil). Checked says per statement that the step read
 // the code behind it (edited, new or confirmed); Summary nil keeps the
 // summary. Unknown is the drop and confirmed ids the page does not have;
-// BadEdits the edits left out, by id and reason.
+// BadEdits the edits left out, BadDrops the drops left out, by id and
+// reason.
 type Applied struct {
 	Statements []inference.Statement
 	Checked    []bool
 	Summary    *string
 	Unknown    []string
 	BadEdits   []string
+	BadDrops   []string
 }
 
 // ApplyPatch applies a step's patch to the current statements. exists says
-// whether a path is in the tree at the run's commit. The reason is "" when
-// the patch holds, else why it is rejected.
-func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path string) bool) (Applied, string) {
+// whether a path is in the tree at the run's commit. It never refuses: what
+// breaks a rule is left out and named.
+func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path string) bool) Applied {
 	byID := make(map[string]store.Statement, len(current))
 	for _, s := range current {
 		byID[s.ID] = s
 	}
 	edits := map[string]inference.Statement{}
-	var unknown, bad []string
+	var unknown, bad, badDrops []string
 	for _, st := range p.Statements {
 		if st.ID == nil || *st.ID == "" {
-			return Applied{}, "an edit without a statement id"
+			bad = append(bad, NoIDEdit(st.Name))
+			continue
 		}
 		id := *st.ID
 		if _, ok := byID[id]; !ok {
@@ -60,10 +66,22 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		}
 		if old := byID[id]; FromPR(old) {
 			if lost := shed(old.Files, st.Files, exists); lost != "" {
-				return Applied{}, "edit of " + id + ", which a pull request taught, drops its file " + lost + " the tree still has"
+				bad = append(bad, id+" (taught by a pull request, drops its file "+lost+" the tree still has)")
+				continue
 			}
 		}
 		edits[id] = st
+	}
+	// Confirmed before drops: a statement both confirmed and dropped was
+	// checked and found right, the drop is the slip.
+	confirmed := map[string]bool{}
+	var unknownConfirmed []string
+	for _, id := range p.Confirmed {
+		if _, ok := byID[id]; !ok {
+			unknownConfirmed = append(unknownConfirmed, id)
+			continue
+		}
+		confirmed[id] = true
 	}
 	dropped := map[string]bool{}
 	for _, id := range p.Drop {
@@ -72,27 +90,20 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 			unknown = append(unknown, id)
 			continue
 		}
-		if _, edited := edits[id]; edited {
-			return Applied{}, "statement " + id + " both edited and dropped"
+		switch _, edited := edits[id]; {
+		case edited:
+			badDrops = append(badDrops, id+" (edited too, the edit taken)")
+		case confirmed[id]:
+			badDrops = append(badDrops, id+" (confirmed too, kept)")
+		case FromPR(s) && !gone(s.Files, exists):
+			badDrops = append(badDrops, id+" (taught by a pull request, its files still exist)")
+		default:
+			dropped[id] = true
 		}
-		if FromPR(s) && !gone(s.Files, exists) {
-			return Applied{}, "drop of " + id + ", which a pull request taught and whose files still exist"
-		}
-		dropped[id] = true
-	}
-	confirmed := map[string]bool{}
-	for _, id := range p.Confirmed {
-		if _, ok := byID[id]; !ok {
-			unknown = append(unknown, id)
-			continue
-		}
-		if dropped[id] {
-			return Applied{}, "statement " + id + " both confirmed and dropped"
-		}
-		confirmed[id] = true
 	}
 
-	out := Applied{Unknown: unknown, BadEdits: bad}
+	// Unknown in the patch's order: drops, then confirmations.
+	out := Applied{Unknown: append(unknown, unknownConfirmed...), BadEdits: bad, BadDrops: badDrops}
 	if p.Summary != nil && strings.TrimSpace(*p.Summary) != "" {
 		out.Summary = p.Summary
 	}
@@ -114,8 +125,11 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		out.Statements = append(out.Statements, st)
 		out.Checked = append(out.Checked, true)
 	}
-	return out, ""
+	return out
 }
+
+// NoIDEdit names an edit without an id, left out, by the name it carried.
+func NoIDEdit(name string) string { return strconv.Quote(name) + " (no id)" }
 
 // UnknownEdit names an edit of an id the page lacks, left out, for
 // BadEdits and a fold's log alike.

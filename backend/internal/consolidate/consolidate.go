@@ -527,7 +527,7 @@ func attachDescription(scope string, current []store.Statement, d *inference.Des
 	if reason != "" {
 		return nil, leftOutParts{}, reason
 	}
-	return attach(scope, current, proposed, src, next, dl)
+	return attach(scope, current, proposed, src, next, dl, false)
 }
 
 // attach turns the model's statements into stored ones: a kept id carries
@@ -548,8 +548,12 @@ func attachDescription(scope string, current []store.Statement, d *inference.Des
 // commit a statement was last checked against stays while its name, text
 // and diagram do; a change voids it, the caller sets a new one when it read
 // the code. A kind the scope's page may not hold (any unknown one, an
-// extension on the project page) rejects the rewrite like an invented id.
-func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits) (out []store.Statement, leftOut leftOutParts, reason string) {
+// extension on the project page), or an empty name or text, rejects a
+// merge's rewrite. A step's patch (patch true) never: such an item costs
+// only itself (user, 2026-11-01), a new one left out, an edit left out with
+// the statement as stored, named in leftOut (keptStored by id, which a step
+// never marks checked).
+func attach(scope string, current []store.Statement, proposed []inference.Statement, src store.Source, next int, dl diagramLimits, patch bool) (out []store.Statement, leftOut leftOutParts, reason string) {
 	byID := map[string]store.Statement{}
 	for _, s := range current {
 		byID[s.ID] = s
@@ -558,13 +562,6 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 	olds := make([]*store.Statement, 0, len(proposed))
 	seen := map[string]bool{}
 	for _, p := range proposed {
-		if !kinds[scope][p.Kind] {
-			return nil, leftOutParts{}, "statement kind " + p.Kind + " not on a " + scope + " page"
-		}
-		s := cleanStatement(p)
-		if s.Name == "" || s.Text == "" {
-			return nil, leftOutParts{}, "empty statement"
-		}
 		var old *store.Statement
 		if p.ID != nil && *p.ID != "" {
 			o, ok := byID[*p.ID]
@@ -576,6 +573,28 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			}
 			seen[*p.ID] = true
 			old = &o
+		}
+		s := cleanStatement(p)
+		why := ""
+		switch {
+		case !kinds[scope][p.Kind]:
+			why = "statement kind " + p.Kind + " not on a " + scope + " page"
+		case s.Name == "" || s.Text == "":
+			why = "empty statement"
+		}
+		if why != "" {
+			if !patch {
+				return nil, leftOutParts{}, why
+			}
+			if old == nil {
+				leftOut.badItems = append(leftOut.badItems, fmt.Sprintf("new %q (%s)", s.Name, why))
+				continue
+			}
+			leftOut.badItems = append(leftOut.badItems, fmt.Sprintf("edit of %s (%s), kept as stored", old.ID, why))
+			leftOut.keptStored = append(leftOut.keptStored, old.ID)
+			out = append(out, *old)
+			olds = append(olds, old)
+			continue
 		}
 		// No cap on a name or on the file count: a statement is never left
 		// out for its size (user, 2026-11-01). A path no tree can hold
@@ -730,19 +749,31 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 // diagrams, by name past the page's count, by name and reason for breaking
 // a rule, by name gone stale beside a changed name or text; the paths no
 // tree can hold taken off a statement's files, by name and path (paths);
-// the edits of an unknown or repeated id a step's patch left out, by id and
-// reason (badEdits); the self and repeated edges taken out of a flow that
-// passed its check, by name and edge (edges).
+// the edits and drops a step's patch left out, by id and reason (badEdits,
+// badDrops, baseline.ApplyPatch); a step's statements of a kind the page
+// cannot hold or empty, by name or id and reason (badItems), the edits
+// among them kept as stored (keptStored, by id); the self and repeated
+// edges taken out of a flow that passed its check, by name and edge
+// (edges).
 type leftOutParts struct {
 	overCount, invalid, stale []string
 	paths, badEdits, edges    []string
+	badDrops, badItems        []string
+	keptStored                []string
 }
 
-// logLeftOut says which statements lost a diagram or a path, and why.
-// Called once the rewrite is taken: a refused one logs its refusal only.
+// logLeftOut says which statements lost a diagram or a path, and which
+// items of a step's patch were left out, and why. Called once the rewrite
+// is taken: a refused one logs its refusal only.
 func logLeftOut(ctx context.Context, log *slog.Logger, at string, s leftOutParts) {
 	if len(s.badEdits) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: edit left out: %s", at, strings.Join(s.badEdits, ", ")))
+	}
+	if len(s.badDrops) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: drop left out: %s", at, strings.Join(s.badDrops, ", ")))
+	}
+	if len(s.badItems) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: statement breaking a rule left out: %s", at, strings.Join(s.badItems, ", ")))
 	}
 	if len(s.paths) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: path over %d characters or with whitespace taken off, statement kept: %s", at, pathMaxChars, strings.Join(s.paths, "; ")))

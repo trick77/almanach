@@ -431,10 +431,7 @@ func TestApplyPatch_EditsDropsConfirmsAppends(t *testing.T) {
 		Drop:      []string{"s3"},
 		Confirmed: []string{"s1"},
 	}
-	a, reason := ApplyPatch(page(), p, inTree("auth/login.go", "jobs/retry.go", "billing/invoice.go"))
-	if reason != "" {
-		t.Fatal(reason)
-	}
+	a := ApplyPatch(page(), p, inTree("auth/login.go", "jobs/retry.go", "billing/invoice.go"))
 	var got []string
 	for i, st := range a.Statements {
 		sid := "new"
@@ -451,66 +448,91 @@ func TestApplyPatch_EditsDropsConfirmsAppends(t *testing.T) {
 		t.Errorf("Summary = %v", a.Summary)
 	}
 	blank := "  "
-	if a, _ := ApplyPatch(page(), inference.Patch{Summary: &blank}, inTree()); a.Summary != nil || len(a.Statements) != 4 {
+	if a := ApplyPatch(page(), inference.Patch{Summary: &blank}, inTree()); a.Summary != nil || len(a.Statements) != 4 {
 		t.Errorf("blank summary, empty patch = %+v, want the page kept whole", a)
 	}
 }
 
-// What a PR taught goes only when the code shows its files gone; every
-// other wrong answer rejects the patch whole.
-func TestApplyPatch_Rejections(t *testing.T) {
+// What a PR taught goes only when the code shows its files gone. A patch is
+// never refused whole: each item that breaks a rule is left out and named,
+// the statement as stored, the rest of the patch applied (user,
+// 2026-11-01).
+func TestApplyPatch_ItemsCostOnlyThemselves(t *testing.T) {
 	everything := inTree("auth/login.go", "jobs/retry.go", "billing/invoice.go")
+	// names is the page's statements as id:name, in order.
+	names := func(a Applied) []string {
+		var out []string
+		for _, s := range a.Statements {
+			sid := "new"
+			if s.ID != nil {
+				sid = *s.ID
+			}
+			out = append(out, sid+":"+s.Name)
+		}
+		return out
+	}
+	stored := []string{"s1:Auth", "s2:Retry", "s3:Invoice", "s4:Once"}
 	for name, c := range map[string]struct {
 		p      inference.Patch
 		exists func(string) bool
-		reason string
+		edits  []string
+		drops  []string
+		want   []string
 	}{
-		"edit without an id":    {inference.Patch{Statements: []inference.Statement{{Name: "x", Text: "y"}}}, everything, "an edit without a statement id"},
-		"edit with an empty id": {inference.Patch{Statements: []inference.Statement{{ID: id(""), Name: "x", Text: "y"}}}, everything, "an edit without a statement id"},
-		"edited and dropped":    {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}}, Drop: []string{"s3"}}, everything, "both edited and dropped"},
-		"PR fact, files there":  {inference.Patch{Drop: []string{"s1"}}, everything, "drop of s1, which a pull request taught"},
-		"PR fact, no files":     {inference.Patch{Drop: []string{"s4"}}, inTree(), "drop of s4"},
-		"confirmed and gone":    {inference.Patch{Drop: []string{"s3"}, Confirmed: []string{"s3"}}, everything, "both confirmed and dropped"},
-		"PR fact edited off its file": {inference.Patch{Statements: []inference.Statement{{ID: id("s1"), Kind: "component", Name: "Auth",
-			Text: "Moved.", Files: []string{"elsewhere.go"}}}}, everything, "edit of s1, which a pull request taught, drops its file auth/login.go"},
+		"edit without an id":    {inference.Patch{Statements: []inference.Statement{{Name: "x", Text: "y"}}}, everything, []string{`"x" (no id)`}, nil, stored},
+		"edit with an empty id": {inference.Patch{Statements: []inference.Statement{{ID: id(""), Name: "x", Text: "y"}}}, everything, []string{`"x" (no id)`}, nil, stored},
+		"edited and dropped": {inference.Patch{Statements: []inference.Statement{{ID: id("s3"), Name: "Neu"}}, Drop: []string{"s3"}}, everything, nil,
+			[]string{"s3 (edited too, the edit taken)"}, []string{"s1:Auth", "s2:Retry", "s3:Neu", "s4:Once"}},
+		"PR fact, files there": {inference.Patch{Drop: []string{"s1"}}, everything, nil, []string{"s1 (taught by a pull request, its files still exist)"}, stored},
+		"PR fact, no files":    {inference.Patch{Drop: []string{"s4"}}, inTree(), nil, []string{"s4 (taught by a pull request, its files still exist)"}, stored},
+		"confirmed and gone":   {inference.Patch{Drop: []string{"s3"}, Confirmed: []string{"s3"}}, everything, nil, []string{"s3 (confirmed too, kept)"}, stored},
+		"PR fact edited off its file": {inference.Patch{Statements: []inference.Statement{{ID: id("s1"), Kind: "component", Name: "Moved",
+			Text: "Moved.", Files: []string{"elsewhere.go"}}}}, everything,
+			[]string{"s1 (taught by a pull request, drops its file auth/login.go the tree still has)"}, nil, stored},
 	} {
-		if _, reason := ApplyPatch(page(), c.p, c.exists); !strings.Contains(reason, c.reason) {
-			t.Errorf("%s: reason = %q, want %q", name, reason, c.reason)
+		a := ApplyPatch(page(), c.p, c.exists)
+		if !reflect.DeepEqual(a.BadEdits, c.edits) || !reflect.DeepEqual(a.BadDrops, c.drops) || !reflect.DeepEqual(names(a), c.want) {
+			t.Errorf("%s: edits %q drops %q statements %v; want %q %q %v", name, a.BadEdits, a.BadDrops, names(a), c.edits, c.drops, c.want)
 		}
 	}
-	a, reason := ApplyPatch(page(), inference.Patch{Drop: []string{"s1"}}, inTree("jobs/retry.go"))
-	if reason != "" || len(a.Statements) != 3 {
-		t.Errorf("PR fact whose files are gone: reason %q, %d statements, want it dropped", reason, len(a.Statements))
+	// A good item beside a bad one is taken.
+	a := ApplyPatch(page(), inference.Patch{Statements: []inference.Statement{{Name: "ohne", Text: "y"},
+		{ID: id("s3"), Kind: "rule", Name: "Rechnung", Text: "Monatlich."}}, Drop: []string{"s1", "s2"}}, inTree("auth/login.go"))
+	if want := []string{"s1:Auth", "s3:Rechnung", "s4:Once"}; !reflect.DeepEqual(names(a), want) {
+		t.Errorf("good beside bad = %v, want %v", names(a), want)
+	}
+	if a := ApplyPatch(page(), inference.Patch{Drop: []string{"s1"}}, inTree("jobs/retry.go")); len(a.Statements) != 3 {
+		t.Errorf("PR fact whose files are gone: %d statements, want it dropped", len(a.Statements))
 	}
 	// An unknown id to drop or confirm refers to nothing: left out, named,
 	// and the rest of the patch applies.
-	a, reason = ApplyPatch(page(), inference.Patch{Drop: []string{"s9", "s3"}, Confirmed: []string{"8b0d8f4a", "s1"}}, everything)
-	if reason != "" || !reflect.DeepEqual(a.Unknown, []string{"s9", "8b0d8f4a"}) || len(a.Statements) != 3 || !a.Checked[0] {
-		t.Errorf("unknown drop and confirm ids: reason %q, unknown %v, %d statements, checked %v", reason, a.Unknown, len(a.Statements), a.Checked)
+	a = ApplyPatch(page(), inference.Patch{Drop: []string{"s9", "s3"}, Confirmed: []string{"8b0d8f4a", "s1"}}, everything)
+	if !reflect.DeepEqual(a.Unknown, []string{"s9", "8b0d8f4a"}) || len(a.Statements) != 3 || !a.Checked[0] {
+		t.Errorf("unknown drop and confirm ids: unknown %v, %d statements, checked %v", a.Unknown, len(a.Statements), a.Checked)
 	}
 	// An edit of an id the page lacks, or of one already edited, costs only
 	// itself: the first edit of s3 counts.
-	a, reason = ApplyPatch(page(), inference.Patch{Statements: []inference.Statement{
+	a = ApplyPatch(page(), inference.Patch{Statements: []inference.Statement{
 		{ID: id("s9"), Name: "x", Text: "y"}, {ID: id("s3"), Name: "Erste", Text: "y"}, {ID: id("s3"), Name: "Zweite", Text: "y"}}}, everything)
-	if reason != "" || !reflect.DeepEqual(a.BadEdits, []string{"s9 (unknown id)", "s3 (id used twice)"}) || len(a.Statements) != 4 || a.Statements[2].Name != "Erste" {
-		t.Errorf("bad edits: reason %q, left out %v, statements %+v", reason, a.BadEdits, a.Statements)
+	if !reflect.DeepEqual(a.BadEdits, []string{"s9 (unknown id)", "s3 (id used twice)"}) || len(a.Statements) != 4 || a.Statements[2].Name != "Erste" {
+		t.Errorf("bad edits: left out %v, statements %+v", a.BadEdits, a.Statements)
 	}
 	// An edit may add files and correct the text, keeping the ones the tree
 	// has, however spelled; a file that left the tree may go.
 	kept := inference.Patch{Statements: []inference.Statement{{ID: id("s1"), Kind: "component", Name: "Auth", Text: "Login, two steps.",
 		Files: []string{"./auth/login.go", "auth/otp.go"}}}}
-	if _, reason := ApplyPatch(page(), kept, everything); reason != "" {
-		t.Errorf("edit keeping the file: %s", reason)
+	if a := ApplyPatch(page(), kept, everything); len(a.BadEdits) != 0 || a.Statements[0].Text != "Login, two steps." {
+		t.Errorf("edit keeping the file: left out %v", a.BadEdits)
 	}
 	moved := inference.Patch{Statements: []inference.Statement{{ID: id("s2"), Kind: "rule", Name: "Retry", Text: "Moved.",
 		Files: []string{"jobs/backoff.go"}}}}
-	if _, reason := ApplyPatch(page(), moved, inTree("auth/login.go")); reason != "" {
-		t.Errorf("edit away from a file that left the tree: %s", reason)
+	if a := ApplyPatch(page(), moved, inTree("auth/login.go")); len(a.BadEdits) != 0 || a.Statements[1].Text != "Moved." {
+		t.Errorf("edit away from a file that left the tree: left out %v", a.BadEdits)
 	}
 	// A statement whose file is named as its directory still rests on code.
 	dir := page()
 	dir[0].Files = []string{"auth/"}
-	if _, reason := ApplyPatch(dir, inference.Patch{Drop: []string{"s1"}}, everything); !strings.Contains(reason, "drop of s1") {
-		t.Errorf("drop of a PR fact named by its directory: reason %q", reason)
+	if a := ApplyPatch(dir, inference.Patch{Drop: []string{"s1"}}, everything); len(a.BadDrops) != 1 || len(a.Statements) != 4 {
+		t.Errorf("drop of a PR fact named by its directory: left out %v, %d statements", a.BadDrops, len(a.Statements))
 	}
 }

@@ -1014,8 +1014,10 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 	if x.code.asked != 2+2*4 {
 		t.Errorf("git asked %d times, want 10", x.code.asked)
 	}
-	if id := touchesNewer(want, inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}); id != "no commit, past the slack" {
-		t.Errorf("touchesNewer = %q", id)
+	// A patch touching one is not refused: that id is struck, the rest kept.
+	if p, struck := strikeHeld(inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}, want); !slices.Equal(p.Confirmed, []string{"held again"}) ||
+		!slices.Equal(struck, []string{"no commit, past the slack (taught by a pull request newer than the commit read)"}) {
+		t.Errorf("strikeHeld = %v, struck %v", p.Confirmed, struck)
 	}
 	// A commit that first fails later in the run gets its own wait.
 	late := strings.Repeat("f", 40)
@@ -1084,8 +1086,13 @@ func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 	now = now.Add(placeWait)
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 1 || !strings.Contains(x.models.prompts[1], "taught this is unknown") {
-		t.Fatalf("after placeWait: run = %+v; want done, the drop of s1 refused", r)
+	// The drop of s1 is struck, not the part refused: s1 stays, nothing
+	// skipped.
+	if r.State != store.RunDone || r.Skipped != 0 || !strings.Contains(x.models.prompts[1], "taught this is unknown") {
+		t.Fatalf("after placeWait: run = %+v; want done, nothing skipped", r)
+	}
+	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; len(p.Statements) != 1 || p.Statements[0].ID != "s1" {
+		t.Errorf("page = %+v, want s1 kept", p.Statements)
 	}
 }
 
@@ -1108,9 +1115,10 @@ func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
 	if !strings.Contains(x.models.prompts[1], "newer than the code shown") {
 		t.Errorf("the overview prompt does not mark s1 as newer:\n%s", x.models.prompts[1])
 	}
+	// The overview's drop of s1 is struck, the overview not skipped.
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 1 {
-		t.Fatalf("run = %+v, want the overview's drop of s1 refused and skipped", r)
+	if r.State != store.RunDone || r.Skipped != 0 {
+		t.Fatalf("run = %+v, want the overview's drop of s1 struck, nothing skipped", r)
 	}
 	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
 	if len(page.Statements) != 2 || page.Statements[0].ID != "s1" {
@@ -1119,8 +1127,8 @@ func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
 	if got := page.Statements[1].Files; !reflect.DeepEqual(got, []string{"auth/login.go", "./README.md"}) {
 		t.Errorf("files = %v, want the invented path dropped", got)
 	}
-	if p := x.plan(t); len(p.Skipped) != 0 || !p.StepSkipped(baseline.PartOverview) {
-		t.Errorf("skipped = %v, steps = %v, want the overview marked for the next reconcile", p.Skipped, p.Steps)
+	if p := x.plan(t); len(p.Skipped) != 0 || p.StepSkipped(baseline.PartOverview) {
+		t.Errorf("skipped = %v, steps = %v, want nothing skipped", p.Skipped, p.Steps)
 	}
 }
 
@@ -1411,20 +1419,42 @@ func TestRun_DescribeStepsCarryTheRepoMap(t *testing.T) {
 	}
 }
 
-// A project rewrite the rules refuse counts as a skipped part.
-func TestRun_ProjectSkippedWhenRefused(t *testing.T) {
-	x := newWorld(t, 3)
-	x.queue(store.RunFull, "")
-	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
-	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "x", Statements: []inference.Statement{{Kind: "nope", Name: "n", Text: "t"}}}}
-	x.w.drain(context.Background())
-	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 1 || !x.plan(t).StepSkipped(baseline.PartProject) {
-		t.Fatalf("run = %+v plan %+v, want the refused project rewrite skipped", r, x.plan(t))
+// A project answer's bad item costs only itself (user, 2026-11-01): a
+// statement of a kind the page cannot hold is left out, the rest taken; an
+// empty summary keeps the stored one. Only a first page without a summary
+// is refused, and counts as a skipped part.
+func TestRun_ProjectItemCostsOnlyItself(t *testing.T) {
+	project := func(stored store.Page, d *inference.Description) world {
+		x := newWorld(t, 3)
+		x.queue(store.RunFull, "")
+		// The world's project page, this one, or none (a first page).
+		if stored.RevisionID != 0 {
+			x.st.pages[pageKey(store.ScopeProject, "tools", "")] = stored
+		} else {
+			delete(x.st.pages, pageKey(store.ScopeProject, "tools", ""))
+		}
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.project = inference.DescriptionResult{Call: called, Description: d}
+		x.w.drain(context.Background())
+		return x
 	}
-	if why := x.plan(t).Steps[baseline.PartProject]; why != baseline.SkipRefused {
-		t.Errorf("why = %q, want refused", why)
+	x := project(store.Page{}, &inference.Description{Summary: "Das Projekt.", Added: []inference.Statement{
+		{Kind: "nope", Name: "n", Text: "t"}, stmt(nil, "rule", "Gut", "Gilt.", "x.go")}})
+	p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	if r := x.run(); r.State != store.RunDone || r.Skipped != 0 || p.Summary != "Das Projekt." || len(p.Statements) != 1 || p.Statements[0].Name != "Gut" {
+		t.Fatalf("run = %+v, page = %+v; want the good statement taken, the bad one left out", r, p)
+	}
+	stored := store.Page{RevisionID: 1, Revision: 1, Summary: "Das alte Projekt.", Statements: []store.Statement{
+		{ID: "s1", Kind: "rule", Name: "Alt", Text: "Gilt.", Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}}}}
+	x = project(stored, &inference.Description{Summary: " ", Added: []inference.Statement{stmt(nil, "rule", "Neu", "Auch.", "x.go")}})
+	if p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; p.Summary != "Das alte Projekt." || len(p.Statements) != 2 {
+		t.Fatalf("empty summary: page = %+v, want the stored summary and the new statement", p)
+	}
+	x = project(store.Page{}, &inference.Description{Summary: " ", Added: []inference.Statement{stmt(nil, "rule", "Neu", "Auch.", "x.go")}})
+	r := x.run()
+	if r.State != store.RunDone || r.Skipped != 1 || x.plan(t).Steps[baseline.PartProject] != baseline.SkipRefused {
+		t.Fatalf("first page without a summary: run = %+v plan %+v, want the step refused, skipped", r, x.plan(t))
 	}
 }
 
@@ -1596,6 +1626,46 @@ func TestProblemsFor(t *testing.T) {
 	out := renderProblems([]store.RepoProblem{{Area: "auth", Bugfixes: 3, TopCause: "logic", PRKeys: []string{"T/svc#9", "T/svc#4"}}})
 	if !strings.Contains(out, "- `auth/`: 3 bugfixes, cause seen most `logic`, newest fixes T/svc#9, T/svc#4") {
 		t.Errorf("rendered = %q", out)
+	}
+}
+
+// A subject step's bad item costs only itself (user, 2026-11-01): an edit
+// of a kind the page cannot hold leaves the statement as stored, its check
+// unchanged; a new one with an empty text is left out; a drop of a statement
+// it also confirms is left out; the rest is taken, nothing skipped.
+func TestRun_SubjectItemCostsOnlyItself(t *testing.T) {
+	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{
+		{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}, Checked: "old"},
+		{ID: "s2", Kind: "rule", Name: "Sperre", Text: "Nach fünf.", Files: []string{"auth/login.go"}, Checked: "old"}}}
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{}},
+		{Call: called, Patch: inference.Patch{
+			Statements: []inference.Statement{stmt(ref("s1"), "opinion", "Login", "Anders.", "auth/login.go")},
+			Added:      []inference.Statement{stmt(nil, "rule", "Leer", " ", "auth/login.go"), stmt(nil, "rule", "Gut", "Gilt.", "auth/login.go")},
+			Drop:       []string{"s2"}, Confirmed: []string{"s2"}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunDone || r.Skipped != 0 {
+		t.Fatalf("run = %+v, want done, nothing skipped", r)
+	}
+	p := x.st.pages[key]
+	if len(p.Statements) != 3 || p.Statements[0].Text != "Zweistufig." || p.Statements[0].Checked != "old" ||
+		p.Statements[1].ID != "s2" || p.Statements[1].Checked != head || p.Statements[2].Name != "Gut" {
+		t.Fatalf("page = %+v; want s1 as stored and unchecked, s2 kept and confirmed, Gut added", p.Statements)
+	}
+	for _, want := range []string{"statement breaking a rule left out: edit of s1 (statement kind opinion not on a repository page), kept as stored",
+		`new \"Leer\" (empty statement)`, "drop left out: s2 (confirmed too, kept)"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q:\n%s", want, logs.String())
+		}
 	}
 }
 
