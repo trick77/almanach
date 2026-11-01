@@ -52,6 +52,7 @@ import {
   tdMono,
   tdNum,
   th,
+  measure,
 } from "./ui";
 
 /** pollEvery is how often the page refetches while a clone runs. */
@@ -270,7 +271,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         {error !== "" && (
           <span
             role="alert"
-            className="self-center text-[13px] text-danger-ink"
+            className={"self-center text-[13px] text-danger-ink " + measure}
           >
             {error}
           </span>

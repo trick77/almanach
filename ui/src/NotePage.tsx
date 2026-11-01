@@ -23,6 +23,7 @@ import {
   Summary,
   Tile,
   Tiles,
+  boxWidth,
   column,
   eyebrow,
   h2,
@@ -70,11 +71,6 @@ export function NotePage({
   );
 }
 
-/** factWidth holds the label/value rows (bugfix, facts) at the width they
- *  had in the 900px column: in the 1400px one a label sat 1300px from its
- *  value. */
-const factWidth = "max-w-[820px]";
-
 const LISTS: {
   key: "components" | "rules" | "invariants" | "entities";
   label: string;
@@ -117,14 +113,17 @@ function Body({ n }: { n: NoteDetail }) {
           <div className={eyebrow}>{S.note.bugfix}</div>
           <div
             className={
-              factWidth +
-              " rounded-ui border border-border bg-panel px-4.5 py-4"
+              boxWidth + " rounded-ui border border-border bg-panel px-4.5 py-4"
             }
           >
             <dl className="m-0 text-[13.5px]">
-              <Fact label={S.note.symptom}>{bugfix.symptom}</Fact>
-              <Fact label={S.note.cause}>{bugfix.cause}</Fact>
-              <Fact label={S.note.causeKind} last>
+              <Fact label={S.note.symptom} text>
+                {bugfix.symptom}
+              </Fact>
+              <Fact label={S.note.cause} text>
+                {bugfix.cause}
+              </Fact>
+              <Fact label={S.note.causeKind} text last>
                 <Pill tone="warn">{causeLabel(bugfix.cause_kind)}</Pill>
               </Fact>
             </dl>
@@ -154,7 +153,7 @@ function Body({ n }: { n: NoteDetail }) {
       <div className={eyebrow}>{S.note.facts}</div>
       <dl
         className={
-          factWidth +
+          boxWidth +
           " m-0 grid grid-cols-1 gap-x-10 text-[13.5px] sm:grid-cols-2"
         }
       >
@@ -199,7 +198,7 @@ function Body({ n }: { n: NoteDetail }) {
       {call === null ? (
         <Empty>{S.note.noCall}</Empty>
       ) : (
-        <>
+        <div className={boxWidth}>
           <Tiles>
             <Tile
               label={S.note.cacheHit}
@@ -238,30 +237,39 @@ function Body({ n }: { n: NoteDetail }) {
               .filter((s) => s)
               .join(` ${S.common.sep} `)}
           </p>
-        </>
+        </div>
       )}
     </>
   );
 }
 
+/** Fact is a label/value row: a value at the right edge, or, with `text`, a
+ *  sentence (symptom, cause) read left-aligned beside a label column, never
+ *  a right-ragged paragraph. */
 function Fact({
   label,
   last = false,
+  text = false,
   children,
 }: {
   label: string;
   last?: boolean;
+  text?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div
       className={
-        "flex justify-between gap-4 py-[7px] " +
+        (text
+          ? "grid grid-cols-[8.5rem_1fr] gap-4 py-[7px] "
+          : "flex justify-between gap-4 py-[7px] ") +
         (last ? "" : "border-b border-border-soft")
       }
     >
       <dt className="text-muted">{label}</dt>
-      <dd className="m-0 text-right text-ink-dim">{children}</dd>
+      <dd className={"m-0 text-ink-dim " + (text ? "" : "text-right")}>
+        {children}
+      </dd>
     </div>
   );
 }

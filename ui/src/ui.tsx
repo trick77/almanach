@@ -8,12 +8,19 @@ import { onNav } from "./routing";
 
 export const page = "h-full overflow-auto";
 /** The page column: 1400px, centred, ../noergler's width. Tables, source
- *  rows and diagrams take it; prose keeps its own measure (see Prose). */
+ *  rows and diagrams take it; running text keeps measure, label/value rows
+ *  and forms boxWidth. */
 export const column = "mx-auto max-w-[1400px] px-4 py-7 sm:px-6 lg:px-10";
+/** measure is every running text's line: 75ch of its own font size, the
+ *  one reading width in the UI (prose, lede, meta, empty and failed). */
+export const measure = "max-w-[75ch]";
+/** boxWidth holds label/value rows and forms at the width they had in the
+ *  900px column: in the 1400px one a label sat 1300px from its value. */
+export const boxWidth = "max-w-[820px]";
 export const h2 =
   "font-serif text-[22px] font-medium leading-tight tracking-tight text-ink sm:text-[28px]";
-export const meta = "mt-1.5 text-[14.5px] text-muted";
-export const lede = "mt-1 mb-6 max-w-[66ch] text-[14.5px] text-muted";
+export const meta = "mt-1.5 text-[14.5px] text-muted " + measure;
+export const lede = "mt-1 mb-6 text-[14.5px] text-muted " + measure;
 export const eyebrow =
   "mt-7 mb-2.5 text-[11px] font-medium tracking-[.12em] text-faint uppercase";
 export const mono = "font-mono text-[12.5px]";
@@ -136,9 +143,8 @@ export function Pill({
 }
 
 /** Prose renders a text as paragraphs, split on blank lines and nothing
- *  else: the wiki is prose, never markdown. Held at 75ch, the ch of the
- *  font size the caller's className sets: the page column is 1400px, and a
- *  paragraph that wide is not read. */
+ *  else: the wiki is prose, never markdown. Held at measure, in the font
+ *  size the caller's className sets; a caller sets no max-w of its own. */
 export function Prose({
   text,
   className = "",
@@ -147,7 +153,7 @@ export function Prose({
   className?: string;
 }) {
   return (
-    <div className={"max-w-[75ch] " + className}>
+    <div className={measure + " " + className}>
       {paragraphs(text).map((p, i) => (
         <p key={i} className="mb-3.5 last:mb-0">
           {p}
@@ -240,6 +246,8 @@ export function Panel({
     <div
       className={
         "mt-3 rounded-ui border px-4 py-3.5 text-[13.5px] " +
+        boxWidth +
+        " " +
         (tone === "danger"
           ? "border-danger bg-danger/8 text-ink-dim"
           : "border-border bg-panel")
@@ -252,13 +260,20 @@ export function Panel({
 
 /** Empty is what a section says when there is nothing, a real state here. */
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="py-1.5 text-[13.5px] text-faint">{children}</p>;
+  return (
+    <p className={"py-1.5 text-[13.5px] text-faint " + measure}>{children}</p>
+  );
 }
 
 /** Failed takes `what` in the case the sentence needs ("das Projekt"). */
 export function Failed({ what }: { what: string }) {
   return (
-    <div className="rounded-ui border border-border bg-panel px-3.5 py-3 text-[13.5px] text-muted">
+    <div
+      className={
+        "rounded-ui border border-border bg-panel px-3.5 py-3 text-[13.5px] text-muted " +
+        measure
+      }
+    >
       {S.common.failed(what)}
     </div>
   );
