@@ -55,10 +55,18 @@ const Redacted = "`<redacted>` in what you read marks a credential the code remo
 
 // Layout is the text layout rule every prompt that writes statement text
 // or a summary states, word for word: structure where it helps a human
-// reader, prose by default, and only the subset markup.Normalize keeps.
-const Layout = "Layout, for a human reader as much as for an agent: by default paragraphs of full sentences, separated by a blank line. A list only where the content is a true enumeration (steps, distinct options, conditions, fields): one item per line, `- ` before each, `1. ` where the order matters, never nested. `**bold**` sparingly, for the one term a reader must not miss. In a long statement with distinct parts, a `#### ` sub-heading on its own line before each part. Identifiers, paths and commands in backticks. Nothing else: no tables, links, quotes, code blocks or HTML. A short statement stays plain paragraphs."
+// reader, prose by default, carried by the schema's blocks (Block), never
+// by newlines inside a JSON string, which a model drops (2026-11-01).
+const Layout = "Layout, for a human reader as much as for an agent: a text (a statement's `text`, the `summary`) is an array of blocks in reading order, and the code joins them. Never a newline, `<br>`, `#### ` or a list marker inside a block's `text` or an item: a new paragraph, sub-heading or item is a block or an item of its own. `paragraph`: full sentences in `text`, the default. `list`, or `numbered` where the order matters: only for a true enumeration (steps, distinct options, conditions, fields), one entry per item in `items`, no marker written, never nested, `text` a lead-in sentence or empty. `heading`: a short sub-heading in `text`, only in a long statement with distinct parts, before each part. Fields a block does not use are empty (`\"\"`, `[]`). Inside a block: `**bold**` sparingly, for the one term a reader must not miss; identifiers, paths and commands in backticks. Nothing else: no tables, links, quotes, code blocks or HTML. A short statement is one or two paragraphs."
 
 // SummaryLayout is how a summary takes Layout, word for word in every
 // prompt that writes one: the summary is the page's longest text and the
-// first a reader sees, never one block of prose.
-const SummaryLayout = "The summary takes the same layout: each part of its order under its own `#### ` sub-heading, a short German title, in that order; under it one or more paragraphs; a part that is a true enumeration (the repositories and their roles, a repository's main parts) as a `- ` list, one item each, its name first in backticks; `**bold**` for the one term of a part a reader must not miss. A long summary is never one block of prose; only a summary of a few sentences stays plain paragraphs."
+// first a reader sees, never one block of prose. It opens with prose (a
+// card shows its first sentence), and a heading names what its part says:
+// titled after the order's parts, every page opened with "Zweck und
+// Abgrenzung" over text that drew no boundary (2026-11-01).
+const SummaryLayout = "The summary takes the same blocks. It opens with a paragraph, never a heading: what this is, in a few sentences. Each later part of its order that has something to say gets a `heading` naming what that part says here (\"Drei Dienste, eine Datenbank\", \"Vom Upload zum PDF\"), never the order's name for it (never \"Zweck und Abgrenzung\", \"Struktur\", \"Abläufe\", \"Arbeiten daran\"), and paragraphs or a list under it; a part with nothing to say is left out, never a heading over filler. A true enumeration (the repositories and their roles, a repository's main parts) is a `list`, each item its name first in backticks; `**bold**` for the one term of a part a reader must not miss. A long summary is never one paragraph."
+
+// Block is a laid-out text's block as every prompt's output format shows
+// it, word for word: the schema's (inference blocks).
+const Block = "`<block>` is `{\"kind\": \"paragraph\" | \"heading\" | \"list\" | \"numbered\", \"text\": \"<text>\", \"items\": [\"<item>\", ...]}`"

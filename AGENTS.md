@@ -6,8 +6,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 
 - Prompts compiled in, never configurable. UI: German, copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
-  browser write. Text, summary: `lang.Laid` subset (user, 2026-11-01), UI `blocks` mirrors;
-  notes plain. Diagrams only validated JSON, by rongo's code.
+  browser write. Text, summary: schema blocks, never newlines in a JSON string (models drop
+  them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
+  rongo's code.
 - Gate = `make check` (`SHIP_CMD=<binary>` locally). GitHub never first to find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.
 - Fresh clone: `ship hooks` before the first push (check, conform and init install it too); without the pre-push hook a push skips the gate.

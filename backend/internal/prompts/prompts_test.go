@@ -36,5 +36,14 @@ func TestPromptsStateTheLayout(t *testing.T) {
 		if strings.Contains(p, "never in a summary") || strings.Contains(p, `"summary": "<prose>"`) {
 			t.Errorf("%s prompt still keeps the summary one block of prose", name)
 		}
+		// The layout is the schema's blocks: an output format asking for a
+		// text as one string is how a model's newlines got lost.
+		if !strings.Contains(p, Block) || strings.Contains(p, `laid out as above>"`) {
+			t.Errorf("%s prompt's output format does not ask for blocks", name)
+		}
+		// The order's parts are content, never a heading's title.
+		if strings.Contains(strings.ToLower(p), "purpose and boundary") {
+			t.Errorf("%s prompt still names a part \"purpose and boundary\"", name)
+		}
 	}
 }

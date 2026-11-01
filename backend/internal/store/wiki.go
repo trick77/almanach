@@ -253,6 +253,8 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	if p.Statements == nil {
 		p.Statements = []Statement{}
 	}
+	p.Summary = relaid(p.Summary)
+	relaidStatements(p.Statements)
 	if p.Map, err = diagramOf(drawn); err != nil {
 		return Page{}, false, err
 	}

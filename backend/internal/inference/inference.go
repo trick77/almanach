@@ -416,7 +416,7 @@ var (
 
 func description(diagrams bool, kinds []string) map[string]any {
 	return nullable(object(map[string]any{
-		"summary":    map[string]any{"type": "string", "minLength": 1},
+		"summary":    blocks(),
 		"statements": statements(diagrams, kinds),
 		"added":      added(diagrams, kinds),
 	}))
@@ -449,7 +449,7 @@ func statementProps(diagrams bool, kinds []string) map[string]any {
 	props := map[string]any{
 		"kind":  enum(kinds...),
 		"name":  map[string]any{"type": "string", "minLength": 1},
-		"text":  map[string]any{"type": "string", "minLength": 1},
+		"text":  blocks(),
 		"files": array(str()),
 	}
 	if diagrams {
@@ -463,7 +463,7 @@ func statementProps(diagrams bool, kinds []string) map[string]any {
 // draw). Its statements are a patch's edits: one not named stays.
 func projectDescription(diagrams bool) map[string]any {
 	return nullable(object(map[string]any{
-		"summary":    map[string]any{"type": "string", "minLength": 1},
+		"summary":    blocks(),
 		"statements": statements(diagrams, ProjectKinds),
 		"added":      added(diagrams, ProjectKinds),
 		"drop":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},

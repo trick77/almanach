@@ -918,6 +918,18 @@ func TestDescribe(t *testing.T) {
 	if got := describe(p); !strings.Contains(got, "### [s2] rule: R\n\n#### Ablauf\n\n- eins\n- zwei\n") {
 		t.Errorf("describe with layout = %q", got)
 	}
+	// A text stored on one line (loom's, 2026-11-01) is asked for again: the
+	// summary as none, the statement as an edit; a page only read shows it
+	// as it is.
+	flat := "Zweck und Abgrenzung `loom` ist ein Chat. #### Struktur Das Repository hat Teile."
+	p.Summary, p.Statements[1].Text = flat, flat
+	got = describe(p)
+	if !strings.HasPrefix(got, lostSummary+flat+"\n") || !strings.Contains(got, "### [s2] rule: R\n\n"+flat+"\n"+lostText) {
+		t.Errorf("describe with lost layout = %q", got)
+	}
+	if got := describeRead(p); strings.Contains(got, lostSummary) || strings.Contains(got, lostText) {
+		t.Errorf("describeRead marks a lost layout: %q", got)
+	}
 }
 
 // A statement and a page are as long as their subject needs: a repository

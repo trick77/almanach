@@ -8,7 +8,9 @@
 package markup
 
 import (
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,13 +20,152 @@ import (
 // export's ### statement names and the prompt frame's ### [id] lines.
 const Heading = "#### "
 
+// MaxHeading is the longest title a heading line holds, in runes: a longer
+// one is a whole text a model wrote on one line behind a "#### ", kept as
+// text without the marks.
+const MaxHeading = 120
+
+// The kinds of a Block.
+const (
+	BlockParagraph = "paragraph"
+	BlockHeading   = "heading"
+	BlockList      = "list"
+	BlockNumbered  = "numbered"
+)
+
+// BlockKinds is every kind a Block may have, the schema's enum.
+var BlockKinds = []string{BlockParagraph, BlockHeading, BlockList, BlockNumbered}
+
+// Block is one block of a laid-out text as the model returns it. The
+// schema carries the layout, not newlines inside a JSON string: a model
+// that writes a whole text on one line (or breaks it with "<br>") still
+// gives paragraphs, lists and sub-headings. Text is a paragraph's or a
+// heading's, or a list's lead-in; Items a list's.
+type Block struct {
+	Kind  string   `json:"kind"`
+	Text  string   `json:"text"`
+	Items []string `json:"items"`
+}
+
+// FromBlocks is blocks as text for Normalize: a heading a "#### " line, a
+// list one item a line, numbered from 1, blocks one blank line apart.
+// Marks a model wrote anyway ("## " before a heading's text, "- " before
+// an item) are dropped, not doubled; empty blocks and items are left out.
+func FromBlocks(bs []Block) string {
+	var out []string
+	for _, b := range bs {
+		text := strings.TrimSpace(b.Text)
+		switch b.Kind {
+		case BlockHeading:
+			if t, ok := heading(text); ok {
+				text = t
+			}
+			if t := strings.Join(strings.Fields(text), " "); t != "" {
+				out = append(out, Heading+t)
+			}
+		case BlockList, BlockNumbered:
+			if text != "" {
+				out = append(out, text)
+			}
+			var lines []string
+			for _, it := range b.Items {
+				it = strings.Join(strings.Fields(it), " ")
+				if li, ok := ListItem(it); ok {
+					it = li[strings.IndexByte(li, ' ')+1:]
+				}
+				if it == "" {
+					continue
+				}
+				if b.Kind == BlockList {
+					lines = append(lines, "- "+it)
+				} else {
+					lines = append(lines, strconv.Itoa(len(lines)+1)+". "+it)
+				}
+			}
+			if len(lines) > 0 {
+				out = append(out, strings.Join(lines, "\n"))
+			}
+		default:
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+// brTag is an HTML line break as models write one.
+var brTag = regexp.MustCompile(`(?i)<br\s*/?>`)
+
+// breaks is s with every <br> outside code a newline: a model that will
+// not write a newline into a JSON string writes the tag instead. Inside a
+// code span or a closed fence it is code and stays.
+func breaks(s string) string {
+	if !brTag.MatchString(s) {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	fence := ""
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if fence != "" {
+			if ClosesFence(t, fence) {
+				fence = ""
+			}
+			continue
+		}
+		if f := FenceOf(t); f != "" && slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), f) }) {
+			fence = f
+			continue
+		}
+		var b strings.Builder
+		for j := 0; j < len(l); {
+			if l[j] == '`' {
+				end, _ := SpanAt(l, j)
+				b.WriteString(l[j:end])
+				j = end
+				continue
+			}
+			next := strings.IndexByte(l[j:], '`')
+			if next < 0 {
+				next = len(l) - j
+			}
+			b.WriteString(brTag.ReplaceAllString(l[j:j+next], "\n"))
+			j += next
+		}
+		lines[i] = b.String()
+	}
+	return strings.Join(lines, "\n")
+}
+
+// LayoutLost reports whether stored text lost its layout on the way in: a
+// heading's or a break's marks inside a line (" #### ", "<br>"), or a
+// text of an essay's length on one line. Such a text is a model's whole
+// answer on one line; the prompt asks for it again, laid out.
+func LayoutLost(s string) bool {
+	if brTag.MatchString(s) {
+		return true
+	}
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(strings.TrimSpace(l), " "+Heading) {
+			return true
+		}
+	}
+	return !strings.Contains(s, "\n") && utf8.RuneCountInString(s) > lostLength
+}
+
+// lostLength is the length past which one line is a text that lost its
+// layout: a single paragraph that long is no documentation anyone writes.
+const lostLength = 1200
+
 // Normalize is model text in the stored form: blocks one blank line apart;
 // a paragraph's lines as written, their indents dropped (so the Swiss rule
 // skips none as code); a list item one "- " or "N. " line, its
 // continuation lines joined to it; a heading, any level, a "#### " line;
 // a rule ("* * *", "---") dropped, a block's end. A fenced block's lines
 // become `code` spans: a "# comment" in it never turns into a heading.
-// What was dropped is the text when nothing else is: a text that is only
+// A <br> outside code is a newline; a heading longer than MaxHeading is
+// text. What was dropped is the text when nothing else is: a text that is only
 // headings or a fence's word keeps the titles or the word as lines, never
 // empty headings to show or an empty text for the page check to refuse.
 // Normalize of its own output is that output: one pass is repeated until
@@ -32,7 +173,7 @@ const Heading = "#### "
 // first pass leaves that the next reads anew ("* -" and "-" joined are
 // "- - -", a rule) would otherwise drop an item on a later read.
 func Normalize(s string) string {
-	out := normalizeOnce(s)
+	out := normalizeOnce(breaks(s))
 	for range 8 {
 		next := normalizeOnce(out)
 		if next == out {
@@ -121,7 +262,16 @@ func normalizeOnce(s string) string {
 			flush()
 			continue
 		}
-		if title, ok := heading(line); ok {
+		if title, ok := heading(line); ok && utf8.RuneCountInString(title) > MaxHeading {
+			// A "heading" of a paragraph's length is a model's whole text on
+			// one line: its marks go, it stays text, never one long title.
+			// Every run of marks at once: one left would be a heading on the
+			// next read.
+			line = title
+			for t, more := heading(line); more; t, more = heading(line) {
+				line = t
+			}
+		} else if ok {
 			flush()
 			blocks = append(blocks, Heading+title)
 			dropped = append(dropped, title)

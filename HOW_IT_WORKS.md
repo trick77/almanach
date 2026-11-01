@@ -261,9 +261,13 @@ A page is written for two readers in a different order: first a coding
 agent about to change the repository (what must not break, where to make
 a change, why things are as they are, what broke before, how to check its
 work), then a developer in his first weeks (purpose, structure, flows,
-words). The repository summary keeps a fixed order: purpose and boundary,
-structure, key flows, and last and short, working on it (the gate and test
-commands, the conventions, what the repository's agent notes insist on).
+words). The repository summary keeps a fixed order: purpose (what is
+outside only where the code draws that line), structure, key flows, and
+last and short, working on it (the gate and test commands, the
+conventions, what the repository's agent notes insist on). It opens with a
+paragraph; a later part's heading names what it says there, never the
+order's name for it ("Zweck und Abgrenzung" over text that drew no
+boundary was the result), and a part with nothing to say is left out.
 An agent jumps to the end, a newcomer reads from the top. Statements are
 of eight kinds:
 
@@ -674,7 +678,7 @@ resumes after a restart. The run pins the clone's head when it starts.
    a long summary cut at a paragraph or sentence and marked; those without
    a summary, or past hundreds of repositories without room for one, by
    slug only after them, and the page keeps what it says of them and of a
-   cut one), so the page is written as one system: purpose and boundary,
+   cut one), so the page is written as one system: purpose,
    each repository's role, the flows across them and the runtime in the
    summary; shared components, shared entities and cross-repository rules
    as statements. The summary is rewritten whole; the statements are a patch
@@ -1089,8 +1093,15 @@ so the choice is not undone as a cleanup.
   the only place a browser writes. Statement text and summaries carry one
   layout for the human reader: paragraphs, flat lists, bold terms, code
   spans and one sub-heading level. A summary is never one block of prose:
-  the prompts put each part of its order under its own `####` heading, the
-  repositories' roles and a repository's main parts as a list. The backend
+  it opens with a paragraph, each later part under a heading of its own,
+  the repositories' roles and a repository's main parts as a list. The
+  schema carries that layout: a summary or a statement's text is an array
+  of blocks (paragraph, heading, list, numbered) and the code writes the
+  newlines (`markup.FromBlocks`). A text as one JSON string lost them: one
+  model wrote whole summaries on one line, another broke them with `<br>`,
+  and every heading and list came out as one paragraph. A step that sees
+  such a stored text (`markup.LayoutLost`) is told to write it anew, so a
+  rerun lays it out again; a `<br>` stored is read as a newline. The backend
   (`lang.Laid`, `internal/markup`) puts what the model writes into that
   stored form after redaction (a key's PEM shape holds only as written)
   and before the Swiss rule reads it: any heading level becomes `####`,
