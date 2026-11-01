@@ -106,11 +106,11 @@ func TestLastRun_CountsTheFailuresSinceTheLastDone(t *testing.T) {
 		t.Fatalf("LastRun with no run: ok=%v err=%v", ok, err)
 	}
 	count := func() int {
-		_, n, ok, err := s.LastRun(ctx, "tools", "svc")
+		_, st, ok, err := s.LastRun(ctx, "tools", "svc")
 		if err != nil || !ok {
 			t.Fatalf("LastRun: ok=%v err=%v", ok, err)
 		}
-		return n
+		return st.Failed
 	}
 	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
 	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
@@ -124,6 +124,50 @@ func TestLastRun_CountsTheFailuresSinceTheLastDone(t *testing.T) {
 	finish(t, s, enqueue(t, s, "tools", "svc"), RunFailed)
 	if n := count(); n != 1 {
 		t.Fatalf("failed after a done run = %d, want 1", n)
+	}
+}
+
+// Retried counts the newest runs in a row the poller queued as retries,
+// failed or done; a run any other trigger queued ends the streak. The
+// source page reads the same count.
+func TestLastRun_CountsTheRetriesInARow(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "tools", "svc")
+	run := func(trigger, state string) {
+		t.Helper()
+		id, err := s.EnqueueRun(ctx, "tools", "svc", RunFull, trigger, "", "c0ffee")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _, _ := s.RunByID(ctx, id)
+		finish(t, s, r, state)
+	}
+	retried := func() int {
+		t.Helper()
+		_, st, _, err := s.LastRun(ctx, "tools", "svc")
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs, err := s.SourceRuns(ctx, "tools")
+		if err != nil || runs["svc"].Retried != st.Retried {
+			t.Fatalf("SourceRuns retried %d, LastRun %d, err %v", runs["svc"].Retried, st.Retried, err)
+		}
+		return st.Retried
+	}
+	run(TriggerMonthly, RunFailed)
+	run(TriggerRetry, RunDone)
+	run(TriggerRetry, RunDone)
+	if n := retried(); n != 2 {
+		t.Fatalf("retried = %d, want 2", n)
+	}
+	run(TriggerManual, RunDone)
+	if n := retried(); n != 0 {
+		t.Fatalf("retried after a button's run = %d, want 0", n)
+	}
+	run(TriggerRetry, RunFailed)
+	if n := retried(); n != 1 {
+		t.Fatalf("retried = %d, want 1", n)
 	}
 }
 

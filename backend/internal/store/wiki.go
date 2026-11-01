@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
@@ -92,9 +95,10 @@ type Page struct {
 	// RepoMap is a repository page's map of itself, nil on a project page
 	// and on a repository page no run's map step has drawn yet.
 	RepoMap *diagram.Diagram
-	// RepoMapBasis is the description RepoMap was drawn from, as the map
-	// step hashed it; "" with no map. A basis that no longer matches the
-	// page's text is a map due again.
+	// RepoMapBasis is the description the map step last answered for, as
+	// it hashed it: RepoMap drawn from it, or none when the model drew none;
+	// "" before any answer. A basis that no longer matches the page's text
+	// is a map due again.
 	RepoMapBasis string
 	// Stored is the summary and texts as the revision holds them, set only
 	// when the read laid them out anew (lang.Relaid): a map basis hashed
@@ -110,6 +114,53 @@ type Page struct {
 type StoredText struct {
 	Summary string
 	Texts   []string
+}
+
+// MapStands reports whether the map step answered for a repository page's
+// description as it stands, a map drawn or none (a model that drew none
+// for this text is not asked again until it changes): then a run has
+// nothing new to draw from.
+func (p Page) MapStands() bool {
+	if p.RepoMapBasis == "" {
+		return false
+	}
+	if p.RepoMapBasis == p.MapBasis() {
+		return true
+	}
+	// A basis hashed before the layout is of the text as stored; a read
+	// that only laid it out anew is no reason for a paid redraw.
+	// TRANSITIONAL(layout): Remove with Page.Stored.
+	if p.Stored == nil {
+		return false
+	}
+	raw := p
+	raw.Summary = p.Stored.Summary
+	raw.Statements = slices.Clone(p.Statements)
+	for i := range raw.Statements {
+		raw.Statements[i].Text = p.Stored.Texts[i]
+	}
+	return p.RepoMapBasis == raw.MapBasis()
+}
+
+// MapBasis is the description a repository map is drawn from, as a hash:
+// the summary and each statement's kind, name, text and files, never its
+// sources or last check, which change without the text. The shape hashed
+// is what every stored basis was: change it and every map is due again.
+func (p Page) MapBasis() string {
+	type part struct {
+		Kind, Name, Text string
+		Files            []string
+	}
+	parts := make([]part, 0, len(p.Statements))
+	for _, s := range p.Statements {
+		parts = append(parts, part{s.Kind, s.Name, s.Text, s.Files})
+	}
+	raw, _ := json.Marshal(struct {
+		Summary    string
+		Statements []part
+	}{p.Summary, parts})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // QueuedNote is the next note the worker folds in.
@@ -368,7 +419,9 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 
 // diagramOf reads a stored diagram column; NULL is nil.
 func diagramOf(raw []byte) (*diagram.Diagram, error) {
-	if raw == nil {
+	// The JSON text null is no map either: a write before SetRepoMap kept
+	// a nil map as SQL NULL stored it so.
+	if raw == nil || string(raw) == "null" {
 		return nil, nil
 	}
 	d := &diagram.Diagram{}

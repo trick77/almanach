@@ -54,8 +54,8 @@ Nothing flows back into reviews.
   Bitbucket's API or entered by hand, kept current by a poller, each
   repository with its baseline state and a button to read it again.
 
-Every page is capped as a whole, so nothing bloats: a rewrite over a
-ceiling is refused, never truncated. A JSON API serves all of it
+A page is system documentation, as long as its subject needs: nothing
+is dropped or truncated for its size. A JSON API serves all of it
 ([backend/api/openapi.yaml](backend/api/openapi.yaml)); a German web UI,
 compiled into the binary, shows it. The wiki is read-only; the sources
 are the one thing the UI configures.

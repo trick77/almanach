@@ -147,6 +147,8 @@ const detail: SourceDetail = {
         finished_at: when,
         documented_commit: "5c3b2a1abcdef",
         documented_at: when,
+        left_parts: false,
+        auto_retry: false,
       },
     },
     {
@@ -265,7 +267,7 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     expect(await screen.findByText("Beschrieben")).toBeInTheDocument();
-    expect(screen.getByText(/^Bei 5c3b2a1 · \$2\.418 · /)).toBeInTheDocument();
+    expect(screen.getByText(/^Bei 5c3b2a1 · \$2\.42 ·/)).toBeInTheDocument();
     expect(screen.getByText("Noch nicht")).toBeInTheDocument();
     expect(screen.getByText(/1 beschrieben/)).toBeInTheDocument();
     // The clone without a head cannot be described yet.
@@ -316,6 +318,10 @@ describe("SourcePage baseline", () => {
         baseline: {
           ...run,
           skipped: 8,
+          left_parts: true,
+          auto_retry: true,
+          // A run from before pages lost their ceiling.
+          // TRANSITIONAL(ceilings): Remove when SkipReason drops "ceiling".
           skipped_parts: [
             { part: "overview" as const, name: "", reason: "ceiling" as const },
             {
@@ -347,7 +353,7 @@ describe("SourcePage baseline", () => {
     serve({ "sources/werkzeuge": { ...detail, repos } });
     render(<SourcePage projectKey="werkzeuge" />);
     expect(await screen.findByText("Beschreibt 2/3")).toBeInTheDocument();
-    expect(screen.getByText("Bei 7e1d9a0 · $0.812 bisher")).toBeInTheDocument();
+    expect(screen.getByText("Bei 7e1d9a0 · $0.81 bisher")).toBeInTheDocument();
     expect(screen.getByText("Teilweise")).toBeInTheDocument();
     // Each part once: the run counted 8 skips over 7 parts.
     expect(screen.getByText(/7 Teile übersprungen/)).toBeInTheDocument();
@@ -355,11 +361,15 @@ describe("SourcePage baseline", () => {
     // The skipped parts by reason, one line each, the run's order kept.
     expect(
       screen.getByText(
-        "Seite an der Obergrenze: Überblick, Auth, B und 2 weitere",
+        "An der früheren Seitengrenze: Überblick, Auth, B und 2 weitere",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Modellaufruf fehlgeschlagen: Projekt"),
+      screen.getByText("Fehler: Modellaufruf fehlgeschlagen: Projekt"),
+    ).toBeInTheDocument();
+    // When the skipped parts are read again.
+    expect(
+      screen.getByText("Wird von selbst erneut gelesen."),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Beschreibung fehlgeschlagen: the catalogue failed/),
@@ -389,6 +399,65 @@ describe("SourcePage baseline", () => {
     render(<SourcePage projectKey="werkzeuge" />);
     expect(await screen.findByText("Projekt")).toBeInTheDocument();
     expect(screen.getByText("Aufbau")).toBeInTheDocument();
+  });
+
+  it("offers a reconcile of a documented head only while parts were skipped", async () => {
+    const run = detail.repos[0]!.baseline!;
+    const head = detail.repos[0]!.head_commit;
+    const skipped = [
+      { part: "subject" as const, name: "Auth", reason: "refused" as const },
+    ];
+    const gone = [
+      { part: "subject" as const, name: "Alt", reason: "gone" as const },
+    ];
+    const repos = [
+      {
+        ...detail.repos[0],
+        slug: "done",
+        baseline: { ...run, documented_commit: head },
+      },
+      {
+        ...detail.repos[0],
+        slug: "left",
+        baseline: {
+          ...run,
+          documented_commit: head,
+          skipped: 1,
+          skipped_parts: skipped,
+          trigger: "retry" as const,
+          left_parts: true,
+        },
+      },
+      {
+        ...detail.repos[0],
+        slug: "gone",
+        baseline: {
+          ...run,
+          documented_commit: head,
+          skipped: 1,
+          skipped_parts: gone,
+          // The server's rule: a subject gone is nothing to read again.
+          left_parts: false,
+        },
+      },
+    ];
+    serve({ "sources/werkzeuge": { ...detail, repos } });
+    render(<SourcePage projectKey="werkzeuge" />);
+    // Rows alphabetical: done, gone, left.
+    const [done, goneBtn, left] = await screen.findAllByText("Aktualisieren");
+    expect(done).toBeDisabled();
+    expect(left).toBeEnabled();
+    expect(goneBtn).toBeDisabled();
+    expect(
+      screen.getByText("Fehler: Antwort regelwidrig, verworfen: Auth"),
+    ).toBeInTheDocument();
+    // No retry on its own (auto_retry false): the next run or the button,
+    // said once, not under the gone subject.
+    expect(
+      screen.getAllByText(
+        "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
+      ),
+    ).toHaveLength(1);
   });
 
   it("saves the access form without a switch for the runs", async () => {
@@ -448,7 +517,7 @@ describe("SourcePage", () => {
       screen.getByPlaceholderText("https://github.com/acme/acme-cli.git"),
       { target: { value: "http://x" } },
     );
-    fireEvent.click(screen.getByText("Hinzufügen und klonen"));
+    fireEvent.click(screen.getByText("Hinzufügen und clonen"));
     expect(
       await screen.findByText("clone_url: an https URL without credentials"),
     ).toBeInTheDocument();

@@ -168,13 +168,12 @@ The answer is then held to rules the model cannot bend:
   the answer is the whole page, so leaving such an edit out would delete
   the statement it meant to edit (a baseline step's patch keeps every id
   it does not name, and leaves only that edit out).
-- Ceilings: statement count per scope and runes per whole description
-  (the summary and every statement's name and text). No statement has a
-  length cap of its own: a description is documentation, each statement as
-  long as its subject needs, and only the whole must not grow without
-  bound. Over a ceiling the rewrite is rejected whole and the page stays
-  as it was. Never truncated: a truncated description lies. Fixed caps on
-  a statement's name and its file list cost only that statement.
+- No ceiling: a description is system documentation, each statement as
+  long as its subject needs, the page as long as its statements. No count,
+  no size, no cap on a name or the file count; nothing is dropped or
+  truncated for its size. A path over 200 runes or with whitespace is no
+  path of a tree: it leaves the statement's file list, logged, the
+  statement kept.
 - An identical rewrite is no revision.
 
 What passes is written as the next revision of the page and the page
@@ -569,21 +568,11 @@ resumes after a restart. The run pins the clone's head when it starts.
    pitfall only where a problem area or a bugfix note backs it; without
    one, none. The answer is a patch (edits by id, new statements in
    `added` without one, drops, confirmations, a summary or null), applied
-   under the rules below and then folded like a note: `attach`, the
-   ceilings, identical means no revision. The revision and
-   the run's progress land in one transaction. Each overview and subject
-   prompt names a budget, computed by code, for what its patch may add to
-   the page net: characters of prose and new statements, a corrected or
-   deepened statement counting only by what it adds. The ceilings count
-   the whole page and a patch over one costs its part, so each part gets a
-   share of the room under each (the overview weighs two while parts
-   follow it; at least 2000 characters and, below the statement cap with
-   room for 300 characters, one statement, never past the room left; with
-   no room, none, and the prompt says to correct, deepen or merge
-   instead). The share is of the page's room, never a limit on a
-   statement's length. It keeps an early part from filling the page and
-   every answer short; the growth after the fold is logged against it,
-   never enforced, a patch never cut.
+   under the rules below and then folded like a note: `attach`, a summary
+   required, identical means no revision. The revision and
+   the run's progress land in one transaction. No prompt names a budget
+   or a ceiling: the page has none, and every part writes what its code
+   teaches. The growth after the fold is logged.
 4. *Project.* The repository's new description folded into the project
    page, on a full run always, on a reconcile when the summary changed.
    Beside it the step sees the summaries of the project's other source
@@ -600,11 +589,8 @@ resumes after a restart. The run pins the clone's head when it starts.
    (an eval's second repository wiped the first one's eleven). No tree
    shows a project statement's files gone, so the step never drops a
    PR-taught one (a note's fold may rewrite it): that drop is left out
-   and logged. When new statements take the page over a ceiling, as many
-   as fit are kept in the order written and the rest left out and logged,
-   the summary, map, edits and drops kept: a full project page is never
-   frozen, and a first page of 25 against 24 keeps its first 24. A first
-   page is never written without statements. Its revision and the step's
+   and logged. Every new statement is kept: the page has no ceiling. Its
+   revision and the step's
    end (`project_done` in the run's plan) land in one transaction, so a
    restart never pays the project call twice.
 5. *Repository map.* Last, after the project step, so a tight budget
@@ -623,7 +609,11 @@ resumes after a restart. The run pins the clone's head when it starts.
    transaction: no revision of its own, the text did not change. A
    refused map, a failed call or spent calls write nothing, the basis
    stays stale for the next run. The map is optional: a database busy past
-   its attempts ends the run done without it, never failed.
+   its attempts ends the run done without it, never failed. None drawn is
+   an answer too: recorded with its basis, no map, so the same text is not
+   asked again. A page with no answer for its text (described before maps
+   existed, a map step skipped) is never stranded at an unchanged head: the
+   poller queues the retry below for it.
 
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
@@ -635,7 +625,7 @@ and repeated edges, logged: they say nothing), unique ids, known shapes, labels 
 capped, the nodes and edges per diagram from config, within the drawing's
 own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule,
 or one added past the page's count (`BACKEND_DIAGRAM_MAX_PER_PAGE`), is left out
-and logged with its reason (once the rewrite passed its ceilings), on the
+and logged with its reason (once the rewrite is taken), on the
 merge and every baseline step alike: its statement is kept. On the merge
 and the project step a statement nothing else changed keeps its sources
 and last check; on a describe step a returned statement is checked
@@ -698,12 +688,8 @@ commit as `checked`, which a later change of its text voids.
 note, with the step's attempt counted on the run; eight fail the run. A
 full run's catalogue that fails on its own fails the run: there is no plan
 to read. A part's call that fails on its own, or a patch the rules refuse,
-skips that part; a project step refused or unpaid is skipped too. A patch
-that takes the page over a ceiling from free room is rejected whole, the
-page stays, and only that part is skipped: the parts after it are still
-read. A page already at a ceiling (a lowered one included) ends the
-reading before the next part's call, so no part pays for an answer the
-ceiling would refuse, on this run or any reconcile after it. The calls
+skips that part, the parts after it still read; a project step refused
+or unpaid is skipped too. No part is skipped for the page's size. The calls
 (`BACKEND_BASELINE_MAX_CALLS`) are checked before each call, and when
 they are spent the rest is skipped. The bytes
 (`BACKEND_BASELINE_MAX_BYTES`, the catalogue's docs and every part's
@@ -711,7 +697,23 @@ files) are checked per part: a part over what is left is skipped, a
 smaller one after it may still be read. A
 run that ends with skipped parts is shown as partial and still records
 its commit; the next reconcile reads the skipped parts again, the docs and
-the project included. A clone the poller holds (a long
+the project included, a reconcile at the documented commit too. That next
+run is never left to a head that may not move: a done run at the head
+that skipped a part worth reading again (`baseline.LeftParts`: not a
+subject gone, nor a project left unchanged without a page), or left
+the repository page without a map answer for its text, gets a reconcile
+at the same commit (trigger `retry`) from the poller a day after it ended
+(the reconcile interval when shorter), at most three retries in a row,
+a failed run's retries counted, and only with the interval on; it reads
+the skipped parts and the map, nothing else. A head that moved waits for
+the interval, which reads the skipped parts with the changes. The poller
+reads a run's page for that once, not every cycle. Past the retries, or
+with the interval off, the button is the way, kept open at a documented
+head while a part is left. The source page names each skip's reason, an
+error as one, and says whether the parts are read again on their own
+(`auto_retry`) or with the next run, sooner by the button; the server
+sends the rule's answer (`left_parts`), the page has no copy of it. A clone
+the poller holds (a long
 clone or fetch) defers the step to the next drain rather than holding the
 worker behind it; the reads take the poller's disk lock for the read only,
 never across a model call.
@@ -906,8 +908,8 @@ with its `purpose` (`merge`, `catalogue`, `overview`, `subject`,
 What is derived and what is kept: `deliveries` and `notes` are kept as
 they arrived. `bugfix_area`, the statements' `sources` and ids, the
 revision numbers and the page pointers are code's. The `summary` and the
-statements' text are the model's, as long as the subject needs under the
-page's ceiling. The problem areas are not
+statements' text are the model's, as long as the subject needs. The
+problem areas are not
 stored at all: they are a query over bugfix notes within a window, grouped
 by repository and `bugfix_area`.
 
@@ -947,13 +949,16 @@ so the choice is not undone as a cleanup.
   never had is invented and never accepted: a merge is rejected, a step's
   patch loses that edit; new statements come in a list with no id field,
   numbered by code; a dropped id is never reissued.
-- **Caps are enforced in code, and a rewrite over a ceiling is rejected
-  whole.** The prompt tells the model the numbers, but prose grows unless
-  something refuses it. Truncating would produce a description that lies
-  about the system; rejecting keeps the previous revision, and the next PR
-  that gets it right corrects it. A statement over a field cap (name,
-  files) costs only itself, like a diagram breaking a rule; the project
-  step keeps the new statements that fit under its ceiling.
+- **No ceiling on a description.** Pages were once held to a statement
+  count and a size, a rewrite over one rejected whole, and a step given a
+  budget of what it might add. On real repositories that threw away whole
+  subjects' work: a late part of a run found the page full and lost
+  everything it read. A description is system documentation; dropping
+  what the code teaches because of where the page stands is a hole in the
+  documentation, not a limit on bloat. Truncating would lie, and so does
+  leaving out. What keeps a page from repeating itself is the prompt's
+  rule that a fact an existing statement covers is an edit of it, never a
+  second statement.
 - **Problem areas group by directory, not by name.** Three spellings of one
   component would be three areas. The shared directory of the bugfix's
   component files is computed once at ingest and does not depend on the
@@ -1147,27 +1152,14 @@ the reason in the log and the page unchanged:
   sources exactly; one whose name or text changed gains the current PR
   once (never twice for the same PR); a new statement starts with the
   current PR. The model never writes a source.
-- Ceilings, in this order after the spelling: the summary is not empty;
-  the statement count is within the scope's cap
-  (`BACKEND_REPO_MAX_STATEMENTS`, `BACKEND_PROJECT_MAX_STATEMENTS`); the
-  prose of the whole description (summary plus every name and text) is
-  within the scope's cap (`BACKEND_REPO_MAX_CHARS`,
-  `BACKEND_PROJECT_MAX_CHARS`). A statement's text has no cap of its own.
-- Field caps, per statement, checked before the ceilings: each name within
-  80 runes; at most 5 files, each within 200 runes and without
-  whitespace (empty file strings are dropped before counting). A
-  statement over one costs that statement, never the rewrite: a new one
-  is left out, an edit leaves the statement as stored (and a step never
-  marks it checked), both logged. Only a new or changed name or file list
-  meets the caps: one stored so stays, like a diagram stored under higher
-  caps. Caps that leave out every statement proposed reject the rewrite:
-  they never empty a page; the refusal names each statement and its cap.
-  As a rejection of the whole, one long name lost seven parts of an eval.
-  The prompts state the name, file and path caps: with only the name's
-  given, an eval's first project page was refused, every statement over
-  one. The project step leaves such new statements out before it looks
-  for the most that fit under its ceiling, so one among the first no
-  longer ends that search.
+- The summary is not empty, after the spelling. There is no ceiling: no
+  statement count, no size of the whole, no cap on a name or the number
+  of files (user, 2026-11-01; earlier caps lost whole parts of real
+  runs). The old `BACKEND_*_MAX_STATEMENTS` and `BACKEND_*_MAX_CHARS`
+  set are a startup fault.
+- A path over 200 runes or with whitespace is no path of a tree: it
+  leaves the statement's file list, logged, the statement kept (empty
+  file strings are dropped first). The prompts state that rule.
 - A rewrite identical to the current page (same summary, same statements
   in the same order with the same ids, kinds, names, texts and files)
   writes no revision.

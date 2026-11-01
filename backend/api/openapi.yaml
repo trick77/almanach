@@ -975,7 +975,7 @@ components:
     Baseline:
       type: object
       description: The repository's newest baseline run and the commit last documented.
-      required: [run_id, state, map_step, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at]
+      required: [run_id, state, map_step, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at, left_parts, auto_retry]
       properties:
         run_id:
           type: integer
@@ -1017,7 +1017,7 @@ components:
               reason:
                 type: string
                 enum: ["", gone, calls, bytes, ceiling, failed, refused, over_ceiling, no_page]
-                description: Why it was left out; empty for a run from before reasons were kept.
+                description: Why it was left out; empty for a run from before reasons were kept. ceiling and over_ceiling only on runs from before pages lost their ceiling.
         cost_usd:
           type: string
           description: What the gateway priced of the run's calls, 3 decimals; omitted when it priced none.
@@ -1038,6 +1038,12 @@ components:
         documented_at:
           type: [string, "null"]
           format: date-time
+        left_parts:
+          type: boolean
+          description: The done run skipped a part worth reading again (any but a subject gone or a project left unchanged without a page), the rule the poller retries by.
+        auto_retry:
+          type: boolean
+          description: left_parts, and the poller reads them again on its own, a day after the run ended or the reconcile interval when shorter (the interval on, fewer than three retries in a row, the head the documented commit); false, only the next run or a button does.
 
     Describe:
       type: object
@@ -1820,7 +1826,7 @@ components:
           type: integer
         chars:
           type: integer
-          description: Runes of prose in the revision (summary plus every statement's name and text), the figure the page's ceiling applies to.
+          description: Runes of prose in the revision (summary plus every statement's name and text).
         created_at:
           type: string
           format: date-time

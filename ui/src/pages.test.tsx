@@ -891,8 +891,8 @@ describe("NotePage", () => {
     expect(screen.getByText("Logik")).toBeInTheDocument();
     expect(screen.getByText("Lädt per SFTP hoch.")).toBeInTheDocument();
     expect(screen.getByText("90 %")).toBeInTheDocument();
-    expect(screen.getByText("$0.012")).toBeInTheDocument();
-    expect(screen.getByText("$0.040")).toBeInTheDocument();
+    expect(screen.getByText("$0.01")).toBeInTheDocument();
+    expect(screen.getByText("$0.04")).toBeInTheDocument();
     expect(screen.getByText("noch nicht")).toBeInTheDocument();
     expect(screen.getByText(/\(Bug\)/)).toBeInTheDocument();
   });

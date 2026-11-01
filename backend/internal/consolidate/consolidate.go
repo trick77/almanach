@@ -350,11 +350,11 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	if callID != 0 {
 		id = &callID
 	}
-	if err := w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, w.limits.RepoMaxStatements, w.limits.RepoMaxChars, id); err != nil {
+	if err := w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, id); err != nil {
 		deferred = w.deferBusy(ctx, q, err)
 		return
 	}
-	if err := w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars, id); err != nil {
+	if err := w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, id); err != nil {
 		deferred = w.deferBusy(ctx, q, err)
 	}
 	return
@@ -394,7 +394,7 @@ func (w *Worker) deferBusy(ctx context.Context, q store.QueuedNote, err error) b
 // logs why not. nil = the model wants no change. The error is only ever a
 // busy database's (store.IsBusy): the caller defers the note; any other
 // failure is logged here and the page stays.
-func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, d *inference.Description, maxStatements, maxChars int, callID *int64) error {
+func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, d *inference.Description, callID *int64) error {
 	if d == nil {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
 		return nil
@@ -413,11 +413,10 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		return busyOnly(err)
 	}
 	statements, leftOut, reason := attachDescription(scope, current.Statements, d, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
-	// Spelling first: ss for ß adds a rune, and the cap is on what is stored.
 	summary := proseSummary(d.Summary)
-	chars, capReason := check(summary, statements, maxStatements, maxChars)
+	chars, emptyReason := check(summary, statements)
 	if reason == "" {
-		reason = capReason
+		reason = emptyReason
 	}
 	if reason != "" {
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s rewrite rejected (%s), page unchanged", scope, reason))
@@ -578,21 +577,21 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			seen[*p.ID] = true
 			old = &o
 		}
-		// One statement over a field cap costs that statement, never the
-		// rewrite (user, 2026-10-31: an eval lost seven parts so): a new one
-		// is left out, an edit leaves the statement as stored. Only a new
-		// or changed name or file list meets the caps: one stored so stays,
-		// like a diagram stored under higher caps.
-		if why := fieldCap(s); why != "" && (old == nil || old.Name != s.Name || !slices.Equal(old.Files, s.Files)) {
-			if old == nil {
-				leftOut.overCap = append(leftOut.overCap, fmt.Sprintf("%q (%s)", s.Name, why))
-				continue
+		// No cap on a name or on the file count: a statement is never left
+		// out for its size (user, 2026-11-01). A path no tree can hold
+		// leaves a new or changed file list, the statement kept; a list
+		// stored so stays as it is.
+		// An edit whose every path is bad keeps the stored list rather than
+		// lose all its files.
+		if old == nil || !slices.Equal(old.Files, s.Files) {
+			kept, bad := splitPaths(s.Files)
+			if len(bad) > 0 {
+				leftOut.paths = append(leftOut.paths, fmt.Sprintf("%q (%s)", s.Name, strings.Join(bad, ", ")))
 			}
-			leftOut.capKept = append(leftOut.capKept, old.ID)
-			leftOut.capKeptWhy = append(leftOut.capKeptWhy, fmt.Sprintf("%s (%s)", old.ID, why))
-			out = append(out, *old)
-			olds = append(olds, old)
-			continue
+			if len(kept) == 0 && len(bad) > 0 && old != nil {
+				kept = old.Files
+			}
+			s.Files = kept
 		}
 		// A returned flow loses its self and repeated edges first, as the
 		// map does: one such edge cost a whole diagram.
@@ -633,12 +632,6 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			next++
 			s.Sources = []store.Source{src}
 		}
-	}
-	// Caps that left out every statement proposed never empty a page. The
-	// refusal names them: logLeftOut never runs on a refused rewrite, and
-	// an eval's first project page went with no trace of which cap.
-	if len(proposed) > 0 && len(out) == 0 {
-		return nil, leftOutParts{}, "every statement over a field cap: " + strings.Join(leftOut.overCap, ", ")
 	}
 	return out, leftOut, ""
 }
@@ -728,31 +721,24 @@ func stripOverCount(out []store.Statement, olds []*store.Statement, allowed int)
 
 // leftOutParts is what attach left out of the statements it kept: the
 // diagrams, by name past the page's count, by name and reason for breaking
-// a rule, by name gone stale beside a changed name or text; the new
-// statements over a field cap (fieldCap) left out, by name and reason
-// (overCap); and the edits over one, the statement kept as stored, by id
-// (capKept, which a step never marks checked) and with the reason; the
-// edits of an unknown or repeated id a step's patch left out, by id and
+// a rule, by name gone stale beside a changed name or text; the paths no
+// tree can hold taken off a statement's files, by name and path (paths);
+// the edits of an unknown or repeated id a step's patch left out, by id and
 // reason (badEdits); the self and repeated edges taken out of a flow that
 // passed its check, by name and edge (edges).
 type leftOutParts struct {
-	overCount, invalid, stale, overCap []string
-	capKept, capKeptWhy                []string
-	badEdits, edges                    []string
+	overCount, invalid, stale []string
+	paths, badEdits, edges    []string
 }
 
-// logLeftOut says which statements lost a diagram or were left out, and
-// why. Called once the rewrite passed its ceilings: a rejected one logs its
-// rejection only.
+// logLeftOut says which statements lost a diagram or a path, and why.
+// Called once the rewrite is taken: a refused one logs its refusal only.
 func logLeftOut(ctx context.Context, log *slog.Logger, at string, s leftOutParts) {
 	if len(s.badEdits) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: edit left out: %s", at, strings.Join(s.badEdits, ", ")))
 	}
-	if len(s.overCap) > 0 {
-		log.WarnContext(ctx, fmt.Sprintf("%s: new statement over a field cap left out: %s", at, strings.Join(s.overCap, ", ")))
-	}
-	if len(s.capKeptWhy) > 0 {
-		log.WarnContext(ctx, fmt.Sprintf("%s: edit over a field cap left out, statement kept as stored: %s", at, strings.Join(s.capKeptWhy, ", ")))
+	if len(s.paths) > 0 {
+		log.WarnContext(ctx, fmt.Sprintf("%s: path over %d characters or with whitespace taken off, statement kept: %s", at, pathMaxChars, strings.Join(s.paths, "; ")))
 	}
 	if len(s.invalid) > 0 {
 		log.WarnContext(ctx, fmt.Sprintf("%s: diagram breaking a rule left out: %s", at, strings.Join(s.invalid, ", ")))
@@ -799,66 +785,33 @@ func cleanFiles(files []string) []string {
 	return out
 }
 
-// Caps on the fields the config does not size: a statement's name and its
-// file list, the same numbers noergler holds a note's items to.
-const (
-	nameMaxChars = 80
-	filesMax     = 5
-	pathMaxChars = 200
-)
+// pathMaxChars is the longest path a statement's files keep: past it, or
+// with whitespace, it is no path of a tree, the same rule noergler holds a
+// note's files to.
+const pathMaxChars = 200
 
-// check applies the ceilings: the statement count, the prose of the whole
-// description, and the fixed caps on a name and on files. chars is that
-// prose count, stored on the revision row. The diagram count is attach's:
-// a diagram too many is stripped, never a reason to reject.
-func check(summary string, statements []store.Statement, maxStatements, maxChars int) (int, string) {
+// check refuses an empty summary, the one thing a description must have;
+// there is no ceiling (user, 2026-11-01). chars is the prose count, stored
+// on the revision row.
+func check(summary string, statements []store.Statement) (int, string) {
 	if strings.TrimSpace(summary) == "" {
 		return 0, "empty summary"
 	}
-	if len(statements) > maxStatements {
-		return 0, fmt.Sprintf("%d statements over the cap of %d", len(statements), maxStatements)
-	}
-	// The ceiling is on the whole description, never on one statement: a
-	// description is documentation and a statement is as long as its
-	// subject needs. Prose runes only: names, texts, the summary.
-	size := prose(summary, statements)
-	if size > maxChars {
-		return 0, fmt.Sprintf("description is %d characters, over the cap of %d", size, maxChars)
-	}
-	// chars on the revision is the figure the ceiling gated, so the API
-	// shows the same number the cap applies to.
-	return size, ""
+	return prose(summary, statements), ""
 }
 
-// withinFieldCaps is the new statements within the field caps, and the
-// rest by name and cap, as attach names them.
-func withinFieldCaps(added []inference.Statement) (kept []inference.Statement, over []string) {
-	for _, a := range added {
-		s := cleanStatement(a)
-		if why := fieldCap(s); why != "" {
-			over = append(over, fmt.Sprintf("%q (%s)", s.Name, why))
+// splitPaths parts files, in one pass, into the paths a tree can hold and
+// those it cannot: over pathMaxChars or with whitespace.
+func splitPaths(files []string) (kept, bad []string) {
+	kept = make([]string, 0, len(files))
+	for _, f := range files {
+		if utf8.RuneCountInString(f) > pathMaxChars || strings.ContainsAny(f, " \t\n") {
+			bad = append(bad, f)
 			continue
 		}
-		kept = append(kept, a)
+		kept = append(kept, f)
 	}
-	return kept, over
-}
-
-// fieldCap is why a statement, as stored (trimmed, Swiss), is over a cap
-// of one of its fields: its name, its file count, a path; "" when none.
-func fieldCap(s store.Statement) string {
-	if utf8.RuneCountInString(s.Name) > nameMaxChars {
-		return fmt.Sprintf("name over %d characters", nameMaxChars)
-	}
-	if len(s.Files) > filesMax {
-		return fmt.Sprintf("names %d files, over %d", len(s.Files), filesMax)
-	}
-	for _, f := range s.Files {
-		if utf8.RuneCountInString(f) > pathMaxChars || strings.ContainsAny(f, " \t\n") {
-			return fmt.Sprintf("a path over %d characters or with whitespace", pathMaxChars)
-		}
-	}
-	return ""
+	return kept, bad
 }
 
 // sameStatement compares what a reader sees of a stored statement and a
@@ -900,12 +853,6 @@ func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l
 		"{pr_key}", q.PRKey,
 		"{ticket_key}", ticket,
 		"{change_kind}", kind,
-		"{repo_max_statements}", fmt.Sprint(l.RepoMaxStatements),
-		"{project_max_statements}", fmt.Sprint(l.ProjectMaxStatements),
-		"{repo_max_chars}", fmt.Sprint(l.RepoMaxChars),
-		"{project_max_chars}", fmt.Sprint(l.ProjectMaxChars),
-		"{repo_chars}", fmt.Sprint(prose(repoPage.Summary, repoPage.Statements)),
-		"{project_chars}", fmt.Sprint(prose(projectPage.Summary, projectPage.Statements)),
 		"{repo_description}", describe(repoPage),
 		"{project_description}", describe(projectPage),
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
@@ -1035,7 +982,7 @@ func diagramLine(d *diagram.Diagram) string {
 	return "\nDiagram: " + string(j) + "\n"
 }
 
-// prose is the runes a description's ceiling counts: the summary and every
+// prose is the runes a revision's chars counts: the summary and every
 // statement's name and text. Paths and ids are not prose.
 func prose(summary string, statements []store.Statement) int {
 	n := utf8.RuneCountInString(summary)

@@ -67,35 +67,40 @@ const DefaultAddr = "0.0.0.0:8080"
 // loopback SERVER_HOST turn into a bind on every interface. LOG_LEVEL is
 // left out: too common a name to refuse.
 var renamed = map[string]string{ //nolint:gosec // variable names, no credentials
-	"ALMANACH_DB_PATH":                "BACKEND_DB_PATH",
-	"ALMANACH_TEAM_KEYS_PATH":         "BACKEND_TEAM_KEYS_PATH",
-	"ALMANACH_AUTH_MODE":              "BACKEND_AUTH_MODE",
-	"ALMANACH_OIDC_ISSUER":            "BACKEND_OIDC_ISSUER",
-	"ALMANACH_OIDC_CLIENT_ID":         "BACKEND_OIDC_CLIENT_ID",
-	"ALMANACH_OIDC_CLIENT_SECRET":     "BACKEND_OIDC_CLIENT_SECRET",
-	"ALMANACH_OIDC_REDIRECT_URL":      "BACKEND_OIDC_REDIRECT_URL",
-	"ALMANACH_SESSION_SECRET":         "BACKEND_SESSION_SECRET",
-	"ALMANACH_MODEL":                  "BACKEND_MODEL",
-	"ALMANACH_REPO_MAX_STATEMENTS":    "BACKEND_REPO_MAX_STATEMENTS",
-	"ALMANACH_PROJECT_MAX_STATEMENTS": "BACKEND_PROJECT_MAX_STATEMENTS",
-	"ALMANACH_REPO_MAX_CHARS":         "BACKEND_REPO_MAX_CHARS",
-	"ALMANACH_PROJECT_MAX_CHARS":      "BACKEND_PROJECT_MAX_CHARS",
-	"ALMANACH_DIAGRAM_MAX_NODES":      "BACKEND_DIAGRAM_MAX_NODES",
-	"ALMANACH_DIAGRAM_MAX_EDGES":      "BACKEND_DIAGRAM_MAX_EDGES",
-	"ALMANACH_PROBLEM_WINDOW_DAYS":    "BACKEND_PROBLEM_WINDOW_DAYS",
-	"ALMANACH_REPOS_DIR":              "BACKEND_REPOS_DIR",
-	"ALMANACH_SYNC_INTERVAL":          "BACKEND_SYNC_INTERVAL",
-	"ALMANACH_GIT_CA_FILE":            "BACKEND_GIT_CA_FILE",
-	"ALMANACH_BASELINE_MAX_CALLS":     "BACKEND_BASELINE_MAX_CALLS",
-	"ALMANACH_BASELINE_MAX_BYTES":     "BACKEND_BASELINE_MAX_BYTES",
-	"ALMANACH_BASELINE_RECONCILE":     "BACKEND_BASELINE_RECONCILE",
-	"ALMANACH_ENV":                    "BACKEND_ENV",
-	"ALMANACH_REASONING_EFFORT":       "BACKEND_MODEL_REASONING_EFFORT",
-	"ALMANACH_MAX_DIAGRAMS":           "BACKEND_DIAGRAM_MAX_PER_PAGE",
-	"ALMANACH_SECRET_KEY":             "BACKEND_SOURCE_TOKEN_KEY",
-	"ALMANACH_CATALOGUE_MODEL":        "BACKEND_BASELINE_CATALOGUE_MODEL",
-	"SERVER_HOST":                     "BACKEND_ADDR",
-	"SERVER_PORT":                     "BACKEND_ADDR",
+	"ALMANACH_DB_PATH":             "BACKEND_DB_PATH",
+	"ALMANACH_TEAM_KEYS_PATH":      "BACKEND_TEAM_KEYS_PATH",
+	"ALMANACH_AUTH_MODE":           "BACKEND_AUTH_MODE",
+	"ALMANACH_OIDC_ISSUER":         "BACKEND_OIDC_ISSUER",
+	"ALMANACH_OIDC_CLIENT_ID":      "BACKEND_OIDC_CLIENT_ID",
+	"ALMANACH_OIDC_CLIENT_SECRET":  "BACKEND_OIDC_CLIENT_SECRET",
+	"ALMANACH_OIDC_REDIRECT_URL":   "BACKEND_OIDC_REDIRECT_URL",
+	"ALMANACH_SESSION_SECRET":      "BACKEND_SESSION_SECRET",
+	"ALMANACH_MODEL":               "BACKEND_MODEL",
+	"ALMANACH_DIAGRAM_MAX_NODES":   "BACKEND_DIAGRAM_MAX_NODES",
+	"ALMANACH_DIAGRAM_MAX_EDGES":   "BACKEND_DIAGRAM_MAX_EDGES",
+	"ALMANACH_PROBLEM_WINDOW_DAYS": "BACKEND_PROBLEM_WINDOW_DAYS",
+	"ALMANACH_REPOS_DIR":           "BACKEND_REPOS_DIR",
+	"ALMANACH_SYNC_INTERVAL":       "BACKEND_SYNC_INTERVAL",
+	"ALMANACH_GIT_CA_FILE":         "BACKEND_GIT_CA_FILE",
+	"ALMANACH_BASELINE_MAX_CALLS":  "BACKEND_BASELINE_MAX_CALLS",
+	"ALMANACH_BASELINE_MAX_BYTES":  "BACKEND_BASELINE_MAX_BYTES",
+	"ALMANACH_BASELINE_RECONCILE":  "BACKEND_BASELINE_RECONCILE",
+	"ALMANACH_ENV":                 "BACKEND_ENV",
+	"ALMANACH_REASONING_EFFORT":    "BACKEND_MODEL_REASONING_EFFORT",
+	"ALMANACH_MAX_DIAGRAMS":        "BACKEND_DIAGRAM_MAX_PER_PAGE",
+	"ALMANACH_SECRET_KEY":          "BACKEND_SOURCE_TOKEN_KEY",
+	"ALMANACH_CATALOGUE_MODEL":     "BACKEND_BASELINE_CATALOGUE_MODEL",
+	"SERVER_HOST":                  "BACKEND_ADDR",
+	"SERVER_PORT":                  "BACKEND_ADDR",
+}
+
+// retired is every variable an earlier release read that nothing replaces:
+// the page ceilings. A description is system documentation, never cut to a
+// size (user, 2026-11-01). One still set is a startup fault, as a renamed
+// one is: a value set to make room would otherwise sit there unread.
+var retired = []string{
+	"ALMANACH_REPO_MAX_STATEMENTS", "ALMANACH_PROJECT_MAX_STATEMENTS", "ALMANACH_REPO_MAX_CHARS", "ALMANACH_PROJECT_MAX_CHARS",
+	"BACKEND_REPO_MAX_STATEMENTS", "BACKEND_PROJECT_MAX_STATEMENTS", "BACKEND_REPO_MAX_CHARS", "BACKEND_PROJECT_MAX_CHARS",
 }
 
 // oidcVars is every variable oidc mode reads and none refuses.
@@ -104,19 +109,10 @@ var oidcVars = []string{
 	"BACKEND_OIDC_REDIRECT_URL", "BACKEND_SESSION_SECRET",
 }
 
-// Limits are the ceilings the merge call is held to: how many statements a
-// description may hold and how large the whole description may be. There
-// is no cap on a statement's or the summary's own length: a description is
-// documentation, and its prose is as long as the thing needs; the whole
-// page is what must not grow without bound. Over any of them the rewrite
-// is rejected whole and the page stays as it was: never truncated.
+// Limits are the diagram caps. A description has none: no statement count,
+// no size, no cap on a statement's own length. It is system documentation,
+// as long as its subject needs (user, 2026-11-01).
 type Limits struct {
-	RepoMaxStatements    int
-	ProjectMaxStatements int
-	// RepoMaxChars and ProjectMaxChars are the runes of a whole description:
-	// the summary and every statement's name and text.
-	RepoMaxChars    int
-	ProjectMaxChars int
 	// DiagramMaxNodes and DiagramMaxEdges cap every statement diagram: past
 	// about a dozen nodes a picture stops reading and should be two. The
 	// system map is held to the drawing's own limits (diagram.DrawMaxNodes,
@@ -202,13 +198,9 @@ func Load(lookup func(string) string) (*App, error) {
 		Model:           r.Required("BACKEND_MODEL"),
 		ReasoningEffort: r.String("BACKEND_MODEL_REASONING_EFFORT", ""),
 		Limits: Limits{
-			RepoMaxStatements:    positive(r, "BACKEND_REPO_MAX_STATEMENTS", 40),
-			ProjectMaxStatements: positive(r, "BACKEND_PROJECT_MAX_STATEMENTS", 24),
-			RepoMaxChars:         positive(r, "BACKEND_REPO_MAX_CHARS", 60000),
-			ProjectMaxChars:      positive(r, "BACKEND_PROJECT_MAX_CHARS", 40000),
-			DiagramMaxNodes:      positive(r, "BACKEND_DIAGRAM_MAX_NODES", 12),
-			DiagramMaxEdges:      positive(r, "BACKEND_DIAGRAM_MAX_EDGES", 20),
-			MaxDiagrams:          nonNegative(r, "BACKEND_DIAGRAM_MAX_PER_PAGE", 6),
+			DiagramMaxNodes: positive(r, "BACKEND_DIAGRAM_MAX_NODES", 12),
+			DiagramMaxEdges: positive(r, "BACKEND_DIAGRAM_MAX_EDGES", 20),
+			MaxDiagrams:     nonNegative(r, "BACKEND_DIAGRAM_MAX_PER_PAGE", 6),
 		},
 		ProblemWindow: positive(r, "BACKEND_PROBLEM_WINDOW_DAYS", 90),
 		Sources: Sources{
@@ -229,6 +221,11 @@ func Load(lookup func(string) string) (*App, error) {
 	for _, old := range slices.Sorted(maps.Keys(renamed)) {
 		if strings.TrimSpace(lookup(old)) != "" {
 			r.Fail("%s was renamed to %s; rename it", old, renamed[old])
+		}
+	}
+	for _, old := range retired {
+		if strings.TrimSpace(lookup(old)) != "" {
+			r.Fail("%s is no longer read: a description has no ceiling; remove it", old)
 		}
 	}
 	if why := badAddr(app.Addr); why != "" {
@@ -401,8 +398,7 @@ func (a *App) Summary() string {
 	if a.AuthMode == AuthOIDC {
 		mode = fmt.Sprintf("{oidc issuer %s, client %s}", a.OIDC.Issuer, a.OIDC.ClientID)
 	}
-	return fmt.Sprintf("addr=%s auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars, diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
+	return fmt.Sprintf("addr=%s auth=%s model=%s effort=%q limits={diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
 		a.Addr, mode, a.Model, a.ReasoningEffort,
-		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars,
 		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources)
 }

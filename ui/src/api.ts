@@ -262,7 +262,10 @@ export interface SourceRepo {
 export type RunState =
   "queued" | "cataloguing" | "describing" | "project" | "done" | "failed";
 
-/** Why a run left a part out; "" for a run from before it was kept. */
+/** Why a run left a part out; "" for a run from before it was kept.
+ *  "ceiling" and "over_ceiling" only on runs from before pages lost their
+ *  ceiling. TRANSITIONAL(ceilings): Remove both when no stored run plan
+ *  carries them. */
 export type SkipReason =
   | ""
   | "gone"
@@ -305,6 +308,12 @@ export interface Baseline {
   finished_at: string | null;
   documented_commit: string;
   documented_at: string | null;
+  /** A done run skipped a part worth reading again; the server's rule,
+   *  the one the poller retries by. */
+  left_parts: boolean;
+  /** left_parts, and the poller reads them again on its own; false, only
+   *  the next run or a button does. */
+  auto_retry: boolean;
 }
 
 export interface SourceDetail {
