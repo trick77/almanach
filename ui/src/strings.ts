@@ -274,8 +274,7 @@ export const S = {
     kindHint: {
       bitbucket:
         "Almanach liest die Repositories des Projekts aus der Bitbucket-API und listet sie bei jedem Run neu: neue kommen dazu, entfernte verschwinden.",
-      static:
-        "Ein Repository per Clone-URL, von jedem Git-Host über https.",
+      static: "Ein Repository per Clone-URL, von jedem Git-Host über https.",
     } as Record<string, string>,
     tokenStored: "Hinterlegt",
     tokenNone: "Öffentlich",
