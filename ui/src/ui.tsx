@@ -2,7 +2,7 @@
 // hoisted to named consts where a component would add nothing, components
 // where there is behaviour or a shape worth a name.
 import type { CSSProperties, ReactNode } from "react";
-import { paragraphs, type Tone } from "./format";
+import { codeSpans, paragraphs, type Tone } from "./format";
 import { S } from "./strings";
 import { onNav } from "./routing";
 
@@ -144,9 +144,10 @@ export function Pill({
   );
 }
 
-/** Prose renders a text as paragraphs, split on blank lines and nothing
- *  else: the wiki is prose, never markdown. Held at measure, in the font
- *  size the caller's className sets; a caller sets no max-w of its own. */
+/** Prose renders a text as paragraphs, split on blank lines, with a
+ *  backtick-quoted identifier in the mono face (codeSpans): the wiki is
+ *  prose, no other markdown. Held at measure, in the font size the
+ *  caller's className sets; a caller sets no max-w of its own. */
 export function Prose({
   text,
   className = "",
@@ -158,7 +159,18 @@ export function Prose({
     <div className={measure + " " + className}>
       {paragraphs(text).map((p, i) => (
         <p key={i} className="mb-3.5 last:mb-0">
-          {p}
+          {codeSpans(p).map((s, j) =>
+            s.code ? (
+              <code
+                key={j}
+                className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink"
+              >
+                {s.text}
+              </code>
+            ) : (
+              s.text
+            ),
+          )}
         </p>
       ))}
     </div>

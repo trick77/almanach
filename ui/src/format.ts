@@ -62,6 +62,27 @@ export function paragraphs(text: string): string[] {
     .filter((p) => p.length > 0);
 }
 
+/** A run of a paragraph: prose, or an identifier the model quoted in
+ *  backticks. */
+export type Span = { text: string; code: boolean };
+
+/** codeSpans cuts a paragraph into prose and code: a backtick pair on one
+ *  line around something that is not a backtick, the only markup the wiki
+ *  takes. The model quotes paths and names that way; anything else stays
+ *  text, and a lone backtick shows as itself. */
+export function codeSpans(p: string): Span[] {
+  const out: Span[] = [];
+  let last = 0;
+  for (const m of p.matchAll(/`([^`\n]+)`/g)) {
+    const at = m.index ?? 0;
+    if (at > last) out.push({ text: p.slice(last, at), code: false });
+    out.push({ text: m[1], code: true });
+    last = at + m[0].length;
+  }
+  if (last < p.length) out.push({ text: p.slice(last), code: false });
+  return out;
+}
+
 export type Tone = "ok" | "warn" | "fail" | "none" | "quiet";
 
 /** changeTone colours a change kind: a bugfix stands out, the rest is

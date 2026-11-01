@@ -3,6 +3,7 @@ import {
   causeLabel,
   changeLabel,
   changeTone,
+  codeSpans,
   day,
   dayTime,
   money,
@@ -51,6 +52,28 @@ describe("paragraphs", () => {
       "- drei",
     ]);
     expect(paragraphs("  \n\n")).toEqual([]);
+  });
+});
+
+describe("codeSpans", () => {
+  it("cuts backtick pairs out as code, the rest stays text", () => {
+    expect(codeSpans("Der Prozess `backend/` rendert `ui/`.")).toEqual([
+      { text: "Der Prozess ", code: false },
+      { text: "backend/", code: true },
+      { text: " rendert ", code: false },
+      { text: "ui/", code: true },
+      { text: ".", code: false },
+    ]);
+  });
+  it("leaves a lone, an empty or a line-crossing backtick as itself", () => {
+    expect(codeSpans("ein ` allein")).toEqual([
+      { text: "ein ` allein", code: false },
+    ]);
+    expect(codeSpans("leer `` hier")).toEqual([
+      { text: "leer `` hier", code: false },
+    ]);
+    expect(codeSpans("`a\nb`")).toEqual([{ text: "`a\nb`", code: false }]);
+    expect(codeSpans("")).toEqual([]);
   });
 });
 
