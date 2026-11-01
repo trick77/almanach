@@ -29,10 +29,12 @@
 #    included: never share its output.
 #
 # 2. One bearer token per team in conf/team-keys.json, the same token in
-#    that team's almanach: block in noergler. Readable by uid 1000; mounted
-#    read-only, hot-reloaded on change.
+#    that team's almanach: block in noergler. Mounted read-only,
+#    hot-reloaded on change. The container runs as 65532:65532 and reads
+#    it through the group; you stay its owner, others get nothing:
 #
 #      cp conf/team-keys.example.json conf/team-keys.json
+#      sudo chgrp -R 65532 conf && chmod 750 conf && chmod 640 conf/team-keys.json
 #
 #    conf/ is the container's /conf: a CA bundle for a forge behind an
 #    internal CA goes there too, with ALMANACH_GIT_CA_FILE=/conf/ca.pem in
@@ -47,8 +49,14 @@
 #      docker compose up -d --no-build
 #
 # The database and the clones live on the named volumes data and repos,
-# which take uid 1000 from the image on first mount: nothing to chown. A
-# backup is the data volume; the clones refill from the forge.
+# which take uid 65532 from the image on first mount: nothing to chown. A
+# backup is the data volume; the clones refill from the forge. Volumes
+# made by an image that still ran as uid 1000 (0.1.2 and before) belong to
+# it, and migrate then fails on the database; hand them over once, the
+# stack down, outside compose (its cap_drop forbids a chown). The volume
+# names carry the project, the folder's name by default:
+#
+#      docker run --rm --user 0 --entrypoint chown -v almanach_data:/data -v almanach_repos:/app/repos ghcr.io/trick77/almanach:latest -R 65532:65532 /data /app/repos
 #
 # Needs Docker Compose 2.24.4 or later: older versions reject the long
 # env_file form (path/required) and the !override tag of compose.dev.yaml.
@@ -56,7 +64,7 @@
 # What both services share: the image and the hardening.
 x-almanach: &almanach
   image: ghcr.io/trick77/almanach:latest
-  user: "1000:1000"
+  user: "65532:65532"
   cap_drop: [ALL]
   security_opt:
     - no-new-privileges:true
