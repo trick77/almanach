@@ -74,6 +74,7 @@ export function SourcesPage() {
             </div>
             {adding && (
               <NewSourceForm
+                defaultHost={data.default_host}
                 onDone={(created) => {
                   setAdding(false);
                   reload();
@@ -199,17 +200,20 @@ export function hostOf(url: string): string {
 }
 
 /** NewSourceForm is the create form: the token is optional and comes
- *  first; how it travels and the username appear only once one is typed. */
+ *  first; how it travels and the username appear only once one is typed.
+ *  The host starts as BACKEND_BITBUCKET_HOST and stays editable. */
 function NewSourceForm({
+  defaultHost,
   onDone,
   onCancel,
 }: {
+  defaultHost: string;
   onDone: (created: SourceDetail) => void;
   onCancel: () => void;
 }) {
   const [kind, setKind] = useState<SourceKind>("bitbucket");
   const [key, setKey] = useState("");
-  const [host, setHost] = useState("");
+  const [host, setHost] = useState(defaultHost);
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>("bearer");
   const [user, setUser] = useState("");

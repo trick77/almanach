@@ -1156,6 +1156,9 @@ the reason in the log and the page unchanged:
   `..`; a clone URL is https without credentials; a Bitbucket source has a
   host (https, no query, no credentials), a static one has none.
   Checked on the way in (422 naming the field) and again before a removal.
+- `BACKEND_BITBUCKET_HOST` only prefills the create form's host, checked
+  at startup by the same rule (`gitrepo.ValidHost`); the host stored on
+  the source is the one used.
 - `token_auth` defaults to `bearer` for Bitbucket and `basic` for static;
   `token_user` goes with `basic` only. An omitted token on PATCH keeps the
   stored one, an empty one clears it. A token without `BACKEND_SOURCE_TOKEN_KEY`

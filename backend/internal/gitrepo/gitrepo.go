@@ -91,6 +91,15 @@ func ValidSegment(s string) bool {
 	return s != "" && s != "." && s != ".." && segment.MatchString(s)
 }
 
+// ValidHost reports whether raw is a forge base URL: https, a host, no
+// user info, nothing after the path (a bare "?" included: the listing
+// appends its path to it). One check for the API and the configuration.
+func ValidHost(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil &&
+		u.RawQuery == "" && !u.ForceQuery && u.Fragment == ""
+}
+
 // ProjectDir is <root>/<key>, validated.
 func (c *Client) ProjectDir(key string) (string, error) {
 	if !ValidSegment(key) {

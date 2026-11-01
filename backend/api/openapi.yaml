@@ -781,10 +781,13 @@ components:
 
     Sources:
       type: object
-      required: [enabled, sources]
+      required: [enabled, default_host, sources]
       properties:
         enabled:
           type: boolean
+        default_host:
+          type: string
+          description: BACKEND_BITBUCKET_HOST, the host a new Bitbucket source starts with; empty when unset or the feature is off.
         sources:
           type: array
           items:

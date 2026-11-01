@@ -59,7 +59,9 @@ type SourcesDeps struct {
 	Poller Nudger
 	Git    Checkouts
 	Key    secret.Key
-	sizes  sizeCache
+	// DefaultHost prefills a new Bitbucket source's host (BACKEND_BITBUCKET_HOST).
+	DefaultHost string
+	sizes       sizeCache
 }
 
 // sizeCache remembers a project folder's size for a short while: the
@@ -146,8 +148,9 @@ type sourceSummaryBody struct {
 }
 
 type sourcesBody struct {
-	Enabled bool                `json:"enabled"`
-	Sources []sourceSummaryBody `json:"sources"`
+	Enabled     bool                `json:"enabled"`
+	DefaultHost string              `json:"default_host"`
+	Sources     []sourceSummaryBody `json:"sources"`
 }
 
 func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +160,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
 	}
+	out.DefaultHost = d.Sources.DefaultHost
 	rows, err := d.Sources.Store.Sources(r.Context())
 	if err != nil {
 		httpx.ServerError(w, r, err, "sources")
@@ -301,12 +305,6 @@ type createSourceBody struct {
 	AutoDescribe *bool `json:"auto_describe"`
 }
 
-// validHost is an http(s) URL with a host and nothing after the path.
-func validHost(raw string) bool {
-	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Host != "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil
-}
-
 // validCloneURL is https with a host and no credentials: the token travels
 // per command, never in a stored URL.
 func validCloneURL(raw string) bool {
@@ -367,7 +365,7 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	case in.Kind != store.SourceBitbucket && in.Kind != store.SourceStatic:
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "kind: bitbucket or static")
 		return
-	case in.Kind == store.SourceBitbucket && !validHost(in.Host):
+	case in.Kind == store.SourceBitbucket && !gitrepo.ValidHost(in.Host):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an https URL is required for a Bitbucket source")
 		return
 	case in.Kind == store.SourceStatic && in.Host != "":
@@ -459,7 +457,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 		tokenUser = *in.TokenUser
 	}
 	switch {
-	case src.Kind == store.SourceBitbucket && !validHost(host):
+	case src.Kind == store.SourceBitbucket && !gitrepo.ValidHost(host):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an https URL is required for a Bitbucket source")
 		return
 	case src.Kind == store.SourceStatic && host != "":
