@@ -174,7 +174,7 @@ export const S = {
     whatOne: "die Quelle",
     empty: "Noch keine Quelle.",
     disabled:
-      "Quellen sind auf dieser Instanz nicht konfiguriert (ALMANACH_REPOS_DIR).",
+      "Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
     headers: [
       "Slug",
       "Art",

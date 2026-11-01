@@ -83,7 +83,7 @@ production stack; for local work `compose.dev.yaml` goes on top: port
 
 ```sh
 cp .env.example .env            # fill in the gateway and the model; for private
-                                # repositories ALMANACH_SECRET_KEY (openssl rand -base64 32)
+                                # repositories BACKEND_SOURCE_TOKEN_KEY (openssl rand -base64 32)
 cp conf/team-keys.example.json conf/team-keys.json
 make dev                        # migrate, then almanach on 127.0.0.1:8081; make dev-down stops it
 ```
@@ -93,7 +93,7 @@ compose.dev.env -f compose.yaml -f compose.dev.yaml up --build`.
 `compose.yaml` checks `PUBLIC_FQDN` and the OIDC block while it is read,
 before any override applies; `compose.dev.env`, the later env file and
 so the winner, gives those checks stand-ins, and the override blanks the
-OIDC variables in the container and runs `ALMANACH_AUTH_MODE=none`. The
+OIDC variables in the container and runs `BACKEND_AUTH_MODE=none`. The
 dev `.env` needs the gateway and the model, nothing else. A variable
 exported in your shell beats both files.
 
@@ -104,7 +104,7 @@ backup is the data volume; the clones refill from the forge.
 Open http://localhost:8081/quellen and add a Bitbucket project, or a
 static folder with its repositories entered by hand; each repository's
 baseline runs once its clone is there. A private repository's token is
-sealed with `ALMANACH_SECRET_KEY`; without it only public ones clone.
+sealed with `BACKEND_SOURCE_TOKEN_KEY`; without it only public ones clone.
 Then read the result:
 
 ```sh
@@ -122,7 +122,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8081/auth/ping
 ```
 
 The read API, the UI and the source writes are open as the dev override
-runs them (`ALMANACH_AUTH_MODE=none`): keep it off any network others
+runs them (`BACKEND_AUTH_MODE=none`): keep it off any network others
 reach.
 
 In production, `docker compose up -d` with `compose.yaml` alone: it
@@ -130,14 +130,14 @@ builds the checkout (`pull_policy: build`, never a surprise pull), with
 no host port; the only way in is a Traefik router on the external
 `traefik` network (entrypoint `websecure`, TLS) for `PUBLIC_FQDN`.
 Almanach signs readers in itself over OIDC at your identity provider;
-`ALMANACH_AUTH_MODE=oidc` is fixed in the file, so `.env` cannot turn it
+`BACKEND_AUTH_MODE=oidc` is fixed in the file, so `.env` cannot turn it
 off. `.env` carries `PUBLIC_FQDN`, the OIDC block (issuer, client id and
 secret, redirect URL `https://<PUBLIC_FQDN>/api/auth/callback`) and
-`ALMANACH_SESSION_SECRET`; the example leaves all six blank, and `up`
+`BACKEND_SESSION_SECRET`; the example leaves all six blank, and `up`
 stops naming each one still blank. The webhook and the ping stay bearer
 only. The first-run steps, running a published release instead, and
 the caveats (a shell export beats `.env`; `docker compose config` prints
-the secrets) are at the top of `compose.yaml`; see `ALMANACH_AUTH_MODE`
+the secrets) are at the top of `compose.yaml`; see `BACKEND_AUTH_MODE`
 in [CONFIGURATION.md](CONFIGURATION.md). Needs Docker Compose 2.24.4 or
 later.
 

@@ -198,7 +198,7 @@ func TestDiagramSchemas(t *testing.T) {
 	}
 }
 
-// ALMANACH_MAX_DIAGRAMS=0 offers no statement diagram anywhere; the
+// BACKEND_DIAGRAM_MAX_PER_PAGE=0 offers no statement diagram anywhere; the
 // project's map is asked for still.
 func TestNoDiagramsSchemas(t *testing.T) {
 	statementProps := func(statements map[string]any) map[string]any {

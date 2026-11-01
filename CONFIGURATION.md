@@ -5,43 +5,46 @@ reported together, and any one aborts startup. A variable set to blank
 counts as unset. `.env.example` is the working reference: a live line is
 required, a commented line is optional and shows its default.
 
+Every variable is `BACKEND_*`, named for the process, never the product.
+A name an earlier release read (`ALMANACH_*`, `SERVER_HOST`, `SERVER_PORT`)
+is a startup fault that names its replacement.
+
 ## Required
 
 | Variable | Meaning |
 | --- | --- |
-| `ALMANACH_DB_PATH` | The SQLite database file, e.g. `/data/almanach.db`; created on first open if missing. Its folder must exist and be writable (the file's `-wal` and `-shm` land beside it), checked at startup by `serve` and `migrate` alike. A local disk on its own volume, never a shared filesystem: WAL needs the locks of one host. `migrate` needs nothing else. |
-| `ALMANACH_TEAM_KEYS_PATH` | Path of the team-keys file: JSON `{"<team>": "<token>"}`, one token per team. The token is the team's identity; the same value goes into the team's `almanach:` block in noergler. In oidc mode it also opens the two Markdown exports (`/api/projects/{key}.md`, `/api/projects/{key}/repos/{slug}.md`) read-only, for a coding agent; no other route. Re-read when the file's modification time changes, so a new team needs no restart; a malformed file keeps the last good table and logs. Two teams sharing a token, or an empty entry, is a startup fault. Never committed. compose mounts the folder `./conf` read-only at `/conf` and sets `/conf/team-keys.json` (`cp conf/team-keys.example.json conf/team-keys.json`): a folder, because Docker turns a missing bind-mounted file into a directory. |
+| `BACKEND_DB_PATH` | The SQLite database file, e.g. `/data/almanach.db`; created on first open if missing. Its folder must exist and be writable (the file's `-wal` and `-shm` land beside it), checked at startup by `serve` and `migrate` alike. A local disk on its own volume, never a shared filesystem: WAL needs the locks of one host. `migrate` needs nothing else. |
+| `BACKEND_TEAM_KEYS_PATH` | Path of the team-keys file: JSON `{"<team>": "<token>"}`, one token per team. The token is the team's identity; the same value goes into the team's `almanach:` block in noergler. In oidc mode it also opens the two Markdown exports (`/api/projects/{key}.md`, `/api/projects/{key}/repos/{slug}.md`) read-only, for a coding agent; no other route. Re-read when the file's modification time changes, so a new team needs no restart; a malformed file keeps the last good table and logs. Two teams sharing a token, or an empty entry, is a startup fault. Never committed. compose mounts the folder `./conf` read-only at `/conf` and sets `/conf/team-keys.json` (`cp conf/team-keys.example.json conf/team-keys.json`): a folder, because Docker turns a missing bind-mounted file into a directory. |
 | `LLMWIRE_LITELLM_BASE_URL` | Host of the OpenAI-compatible gateway. Read by llmwire. |
 | `LLMWIRE_LITELLM_API_KEY` | The gateway key. Read by llmwire. |
 | `LLMWIRE_LITELLM_MODELS` | `<profile>=<alias>,...`: which llmwire profiles the gateway serves, under which alias. |
-| `ALMANACH_MODEL` | The merge model as an llmwire **profile id**, never a gateway alias. Must be listed above and must support strict JSON-schema output, checked at startup off the profile; the gateway's model listing must carry the alias, checked at startup too. A gateway that does not answer at startup (unreachable, 5xx) is a warning: notes are taken, folds wait for it; a refused key, a 4xx, a body that is no listing or a missing alias aborts. |
+| `BACKEND_MODEL` | The merge model as an llmwire **profile id**, never a gateway alias. Must be listed above and must support strict JSON-schema output, checked at startup off the profile; the gateway's model listing must carry the alias, checked at startup too. A gateway that does not answer at startup (unreachable, 5xx) is a warning: notes are taken, folds wait for it; a refused key, a 4xx, a body that is no listing or a missing alias aborts. |
 
 ## Optional
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALMANACH_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts, or `off` for no reasoning (a no-op on a model that never reasons, a startup fault on one that reasons and cannot be switched off); anything else is a startup fault. Thinking is most of a call's output: measured on a baseline subject step, about 1.5k of 22k output tokens were the patch. |
-| `SERVER_HOST` | `0.0.0.0` | Listen address. |
-| `SERVER_PORT` | `8080` | Listen port. |
-| `ALMANACH_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `SERVER_HOST`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. `compose.yaml` fixes `oidc`, `compose.dev.yaml` `none`; `.env` sets neither. |
-| `ALMANACH_REPO_MAX_STATEMENTS` | `40` | Statements a repository description may hold. |
-| `ALMANACH_PROJECT_MAX_STATEMENTS` | `24` | Statements a project description may hold. |
-| `ALMANACH_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
-| `ALMANACH_PROJECT_MAX_CHARS` | `40000` | The same for a project description. |
-| `ALMANACH_DIAGRAM_MAX_NODES` | `12` | Nodes one statement diagram may hold (participants of a sequence, tables of an entity model); the project's system map is held to the drawing's 16 instead. At most 16, the most the drawing lays out; a sequence and an entity model stop at 8 whatever this says. Past about a dozen a picture stops reading and should be two; the prompts say so. The node and edge caps hold a new or changed diagram: one stored under higher caps stays as it is. |
-| `ALMANACH_DIAGRAM_MAX_EDGES` | `20` | Edges one diagram may hold (messages and notes of a sequence, relationships of an entity model, which stop at 20 and 12). At most 24. |
-| `ALMANACH_MAX_DIAGRAMS` | `6` | Statement diagrams one page may hold, repository or project page; the system map does not count. A diagram added past it is left out, its statement kept. `0`: no schema offers a statement diagram, the map is still drawn. A page already over a lowered cap keeps its diagrams but gains none. |
-| `ALMANACH_PROBLEM_WINDOW_DAYS` | `90` | How far back the problem areas look by default; `?days=` overrides per request. |
-| `ALMANACH_REPOS_DIR` | unset | The clones (the Quellen pages). Unset: the feature is off, no poller, the routes answer 404, the UI hides the entry. Set: the base folder every clone lands under as `<dir>/<project>/<slug>`; must exist and be writable (checked with a probe file at startup), and `git` must be on PATH. compose gives its container `/app/repos` on the `repos` volume; a deployment needs a volume claim there, owned by uid 65532 (fsGroup 65532 or an init chown; a runAsUser, if set, 65532: the image has a passwd entry for no other uid, and git looks its own up). |
-| `ALMANACH_SECRET_KEY` | unset | Base64 of 32 random bytes (`openssl rand -base64 32`). Seals the sources' tokens in the database with AES-GCM. Unset, public repositories still clone and saving a token is a 422. Changing it orphans every stored token: the affected sources fail with a line naming the key until the token is entered again. |
-| `ALMANACH_SYNC_INTERVAL` | `30m` | The poller's cycle: every Bitbucket source listed, every clone fetched. `0` means on demand only (the Synchronisieren buttons). The first cycle runs thirty seconds after start whatever the interval. |
-| `ALMANACH_GIT_CA_FILE` | unset | A PEM bundle git trusts for https (`GIT_SSL_CAINFO`), for a forge behind an internal CA. The path as the process sees it: under compose the file goes into `./conf` and this reads `/conf/ca.pem`. |
-| `ALMANACH_CATALOGUE_MODEL` | `ALMANACH_MODEL` | The baseline's catalogue step (which subjects a repository is made of, which files belong to each) as an llmwire profile id: a cheaper model may pick, the main one writes. Checked at startup like `ALMANACH_MODEL`, at its balanced reasoning level. Only read with `ALMANACH_REPOS_DIR` set. |
-| `ALMANACH_BASELINE_MAX_CALLS` | `16` | Model calls one baseline run may make: the catalogue, the overview, one per subject, the project. At least 3. Checked before every call; past it the rest is skipped and the run ends partial. |
-| `ALMANACH_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read: the docs its catalogue reads and every part's files. A part over what is left is skipped, and a smaller one after it may still be read. |
-| `ALMANACH_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since, and only with the source's automatic runs on). `0`: only the buttons. |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
-| `ALMANACH_ENV` | `dev` | Environment name in every log line. |
+| `BACKEND_MODEL_REASONING_EFFORT` | the model's balanced level | A reasoning level the profile accepts, or `off` for no reasoning (a no-op on a model that never reasons, a startup fault on one that reasons and cannot be switched off); anything else is a startup fault. Thinking is most of a call's output: measured on a baseline subject step, about 1.5k of 22k output tokens were the patch. |
+| `BACKEND_ADDR` | `0.0.0.0:8080` | Listen address, `host:port`; an empty host (`:8080`) is every interface. |
+| `BACKEND_AUTH_MODE` | `none` | `none`: no sign-in, the read API and the source writes are open and name nobody; allowed on any `BACKEND_ADDR`, so keep it off networks others reach. `oidc`: readers sign in at an OpenID provider (see [Signing in](#signing-in)). The webhook and the ping are bearer only in either mode. `compose.yaml` fixes `oidc`, `compose.dev.yaml` `none`; `.env` sets neither. |
+| `BACKEND_REPO_MAX_STATEMENTS` | `40` | Statements a repository description may hold. |
+| `BACKEND_PROJECT_MAX_STATEMENTS` | `24` | Statements a project description may hold. |
+| `BACKEND_REPO_MAX_CHARS` | `60000` | Runes a whole repository description may hold: the summary and every statement's name and text together. No statement has a cap of its own: a description is documentation, as long as its subject needs; this is the ceiling against unbounded growth. |
+| `BACKEND_PROJECT_MAX_CHARS` | `40000` | The same for a project description. |
+| `BACKEND_DIAGRAM_MAX_NODES` | `12` | Nodes one statement diagram may hold (participants of a sequence, tables of an entity model); the project's system map is held to the drawing's 16 instead. At most 16, the most the drawing lays out; a sequence and an entity model stop at 8 whatever this says. Past about a dozen a picture stops reading and should be two; the prompts say so. The node and edge caps hold a new or changed diagram: one stored under higher caps stays as it is. |
+| `BACKEND_DIAGRAM_MAX_EDGES` | `20` | Edges one diagram may hold (messages and notes of a sequence, relationships of an entity model, which stop at 20 and 12). At most 24. |
+| `BACKEND_DIAGRAM_MAX_PER_PAGE` | `6` | Statement diagrams one page may hold, repository or project page; the system map does not count. A diagram added past it is left out, its statement kept. `0`: no schema offers a statement diagram, the map is still drawn. A page already over a lowered cap keeps its diagrams but gains none. |
+| `BACKEND_PROBLEM_WINDOW_DAYS` | `90` | How far back the problem areas look by default; `?days=` overrides per request. |
+| `BACKEND_REPOS_DIR` | unset | The clones (the Quellen pages). Unset: the feature is off, no poller, the routes answer 404, the UI hides the entry. Set: the base folder every clone lands under as `<dir>/<project>/<slug>`; must exist and be writable (checked with a probe file at startup), and `git` must be on PATH. compose gives its container `/app/repos` on the `repos` volume; a deployment needs a volume claim there, owned by uid 65532 (fsGroup 65532 or an init chown; a runAsUser, if set, 65532: the image has a passwd entry for no other uid, and git looks its own up). |
+| `BACKEND_SOURCE_TOKEN_KEY` | unset | Base64 of 32 random bytes (`openssl rand -base64 32`). Seals the sources' tokens in the database with AES-GCM. Unset, public repositories still clone and saving a token is a 422. Changing it orphans every stored token: the affected sources fail with a line naming the key until the token is entered again. |
+| `BACKEND_SYNC_INTERVAL` | `30m` | The poller's cycle: every Bitbucket source listed, every clone fetched. `0` means on demand only (the Synchronisieren buttons). The first cycle runs thirty seconds after start whatever the interval. |
+| `BACKEND_GIT_CA_FILE` | unset | A PEM bundle git trusts for https (`GIT_SSL_CAINFO`), for a forge behind an internal CA. The path as the process sees it: under compose the file goes into `./conf` and this reads `/conf/ca.pem`. |
+| `BACKEND_BASELINE_CATALOGUE_MODEL` | `BACKEND_MODEL` | The baseline's catalogue step (which subjects a repository is made of, which files belong to each) as an llmwire profile id: a cheaper model may pick, the main one writes. Checked at startup like `BACKEND_MODEL`, at its balanced reasoning level. Only read with `BACKEND_REPOS_DIR` set. |
+| `BACKEND_BASELINE_MAX_CALLS` | `16` | Model calls one baseline run may make: the catalogue, the overview, one per subject, the project. At least 3. Checked before every call; past it the rest is skipped and the run ends partial. |
+| `BACKEND_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read: the docs its catalogue reads and every part's files. A part over what is left is skipped, and a smaller one after it may still be read. |
+| `BACKEND_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since, and only with the source's automatic runs on). `0`: only the buttons. |
+| `BACKEND_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
+| `BACKEND_ENV` | `dev` | Environment name in every log line. |
 
 Over any cap the merge call's rewrite is rejected whole and the page stays
 as it was; the caps are the one lever against endless growth, and the
@@ -54,7 +57,7 @@ rewrite either: one that fails is not drawn and the stored one stays.
 
 ## Signing in
 
-With `ALMANACH_AUTH_MODE=oidc` every variable below is required, and each
+With `BACKEND_AUTH_MODE=oidc` every variable below is required, and each
 is a startup fault under `none`, where it would look active and change
 nothing. The provider's discovery document is fetched in the background
 from startup on, each attempt bounded to 30 s; the listener never waits
@@ -72,11 +75,11 @@ and the service restarted. A deep link survives the sign-in: the login carries t
 
 | Variable | Meaning |
 | --- | --- |
-| `ALMANACH_OIDC_ISSUER` | The provider's issuer exactly as the provider states it, path and trailing slash included (`https://auth.example.com`, `https://idp.example.com/realms/wiki`, `https://tenant.example.com/`): discovery compares it byte for byte. https; plain http only on a loopback host, for a local provider. No user info, query or fragment. |
-| `ALMANACH_OIDC_CLIENT_ID` | The client registered for Almanach at the provider. Scopes asked: `openid profile email`. |
-| `ALMANACH_OIDC_CLIENT_SECRET` | Its secret. |
-| `ALMANACH_OIDC_REDIRECT_URL` | The callback as the browser reaches it: exactly `https://<host>/api/auth/callback`, nothing after the path. The session and login cookies are always Secure: behind a TLS-terminating proxy the process sees plain HTTP. |
-| `ALMANACH_SESSION_SECRET` | Signs the session cookie `almanach_session`, at least 32 bytes (`openssl rand -base64 48`). There is no session table: rotating it signs everyone out. |
+| `BACKEND_OIDC_ISSUER` | The provider's issuer exactly as the provider states it, path and trailing slash included (`https://auth.example.com`, `https://idp.example.com/realms/wiki`, `https://tenant.example.com/`): discovery compares it byte for byte. https; plain http only on a loopback host, for a local provider. No user info, query or fragment. |
+| `BACKEND_OIDC_CLIENT_ID` | The client registered for Almanach at the provider. Scopes asked: `openid profile email`. |
+| `BACKEND_OIDC_CLIENT_SECRET` | Its secret. |
+| `BACKEND_OIDC_REDIRECT_URL` | The callback as the browser reaches it: exactly `https://<host>/api/auth/callback`, nothing after the path. The session and login cookies are always Secure: behind a TLS-terminating proxy the process sees plain HTTP. |
+| `BACKEND_SESSION_SECRET` | Signs the session cookie `almanach_session`, at least 32 bytes (`openssl rand -base64 48`). There is no session table: rotating it signs everyone out. |
 
 A session lasts 30 days and is not renewed. Every route under `/api/` but
 `/api/auth/login` and `/api/auth/callback` needs it, the sources' write
@@ -104,7 +107,7 @@ variable's name. `.env.example` leaves them blank.
 | Variable | Meaning |
 | --- | --- |
 | `PUBLIC_FQDN` | The hostname Traefik routes Almanach on. Read by compose only. |
-| `ALMANACH_OIDC_ISSUER`, `ALMANACH_OIDC_CLIENT_ID`, `ALMANACH_OIDC_CLIENT_SECRET`, `ALMANACH_OIDC_REDIRECT_URL`, `ALMANACH_SESSION_SECRET` | As in [Signing in](#signing-in). |
+| `BACKEND_OIDC_ISSUER`, `BACKEND_OIDC_CLIENT_ID`, `BACKEND_OIDC_CLIENT_SECRET`, `BACKEND_OIDC_REDIRECT_URL`, `BACKEND_SESSION_SECRET` | As in [Signing in](#signing-in). |
 
 Checked means interpolated, and when Compose interpolates, a variable
 exported in the shell beats `.env`: a stale export silently wins over the
@@ -120,7 +123,7 @@ while it reads `compose.yaml`, before any override applies, so
 later one wins): stand-ins for those checks, never real values.
 
 Paths in `.env` are the process's view. compose sets the database, keys
-and clone paths itself; `ALMANACH_GIT_CA_FILE` it leaves to `.env`, so
+and clone paths itself; `BACKEND_GIT_CA_FILE` it leaves to `.env`, so
 under compose the bundle sits in `./conf`, mounted read-only at `/conf`,
 and the variable reads `/conf/ca.pem`.
 
@@ -139,7 +142,7 @@ default 10 s would kill it.
 | Command | What |
 | --- | --- |
 | `almanach serve` | Run the service. Refuses a schema that is behind. |
-| `almanach migrate` | Apply pending migrations to `ALMANACH_DB_PATH` and exit. |
+| `almanach migrate` | Apply pending migrations to `BACKEND_DB_PATH` and exit. |
 | `almanach version` | Print the version. |
 | `almanach -healthcheck` | Probe `/healthz` on loopback, exit 0 on a 2xx. |
 | `almanach -readycheck` | Probe `/readyz`: the database answers. |

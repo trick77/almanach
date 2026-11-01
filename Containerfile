@@ -48,7 +48,7 @@ WORKDIR /app
 COPY --from=builder /out/almanach /almanach
 USER 65532:65532
 EXPOSE 8080
-# The binary probes its own /healthz (SERVER_HOST/SERVER_PORT as serve binds).
+# The binary probes its own /healthz (BACKEND_ADDR as serve binds).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/almanach", "-healthcheck"]
 ENTRYPOINT ["/almanach"]

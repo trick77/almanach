@@ -896,7 +896,7 @@ func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l
 
 // diagramRules is the shared diagram section with its caps filled in, one
 // rendering for the merge, describe and project prompts; with
-// ALMANACH_MAX_DIAGRAMS=0 the line that says statements carry none.
+// BACKEND_DIAGRAM_MAX_PER_PAGE=0 the line that says statements carry none.
 func diagramRules(l config.Limits) string {
 	if l.MaxDiagrams == 0 {
 		return strings.TrimSpace(prompts.DiagramsOff)
@@ -908,7 +908,7 @@ func diagramRules(l config.Limits) string {
 }
 
 // diagramField is a statement's diagram in the output formats, as the
-// schema offers it: not at all with ALMANACH_MAX_DIAGRAMS=0.
+// schema offers it: not at all with BACKEND_DIAGRAM_MAX_PER_PAGE=0.
 func diagramField(l config.Limits) string {
 	if l.MaxDiagrams == 0 {
 		return ""

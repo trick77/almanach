@@ -445,7 +445,7 @@ func (p *Poller) access(s store.ProjectSource) (gitrepo.Access, error) {
 	tok, err := p.Key.Open(s.TokenEnc)
 	if err != nil {
 		if errors.Is(err, secret.ErrNoKey) {
-			return a, errors.New("a token is stored but ALMANACH_SECRET_KEY is not set")
+			return a, errors.New("a token is stored but BACKEND_SOURCE_TOKEN_KEY is not set")
 		}
 		return a, fmt.Errorf("stored token cannot be opened (key changed?): %w", err)
 	}

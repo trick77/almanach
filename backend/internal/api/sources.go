@@ -110,7 +110,7 @@ func (d Deps) registerSources(s *httpapi.Server) {
 // enabled answers the 404 of a switched-off feature itself.
 func (d Deps) enabled(w http.ResponseWriter) bool {
 	if d.Sources == nil {
-		httpx.WriteError(w, http.StatusNotFound, "sources are not configured (ALMANACH_REPOS_DIR)")
+		httpx.WriteError(w, http.StatusNotFound, "sources are not configured (BACKEND_REPOS_DIR)")
 		return false
 	}
 	return true
@@ -340,7 +340,7 @@ func (d Deps) seal(token string) ([]byte, string) {
 		return nil, ""
 	}
 	if !d.Sources.Key.Enabled() {
-		return nil, "token: ALMANACH_SECRET_KEY is not set, no token can be stored"
+		return nil, "token: BACKEND_SOURCE_TOKEN_KEY is not set, no token can be stored"
 	}
 	sealed, err := d.Sources.Key.Seal(token)
 	if err != nil {

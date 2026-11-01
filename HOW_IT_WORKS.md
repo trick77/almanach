@@ -63,7 +63,7 @@ The two surfaces have different trust models. Machine traffic (noergler)
 authenticates with a bearer token that *is* the team: the token names the
 team, nothing in a body does, and the webhook knows no session: bearer
 only. Human traffic in production signs in over OIDC
-(`ALMANACH_AUTH_MODE=oidc`): every `/api` route but the login's own two
+(`BACKEND_AUTH_MODE=oidc`): every `/api` route but the login's own two
 needs Almanach's signed session cookie, whose reader the access log
 records and nothing else acts on; the wiki is read-only and serves the
 same to everyone who can sign in. A coding agent pulls a page's Markdown
@@ -327,7 +327,7 @@ read-only by design.
 
 ### Signing in
 
-`ALMANACH_AUTH_MODE=oidc` is kit's authorization code flow
+`BACKEND_AUTH_MODE=oidc` is kit's authorization code flow
 (`ship/kit/auth`), without a users table. The UI asks
 `GET /api/me` before it renders anything; a 401 sends the browser by full
 navigation to `GET /api/auth/login?next=<the page>`, which redirects to the
@@ -339,7 +339,7 @@ signed session cookie `almanach_session` (HMAC over the claims, 30 days,
 Secure, HttpOnly, SameSite Lax), and the browser goes back to the page.
 A `/api/me` that cannot be reached or read halts with a retry button: the
 UI never assumes a mode the server did not state. Nothing is stored server-side: `POST /api/auth/logout`
-clears the cookie, and rotating `ALMANACH_SESSION_SECRET` signs everyone
+clears the cookie, and rotating `BACKEND_SESSION_SECRET` signs everyone
 out. A failed callback lands on `/?auth_error=…` and a sign-out on
 `/?signed_out=1`; when `/api/me` then answers 401 the UI halts with a
 button instead of redirecting, because a live provider session would
@@ -392,7 +392,7 @@ repositories are listed from the Bitbucket Server REST API
 every cycle; and a **static folder**, a project key the operator chooses
 with repositories entered by hand as clone URLs, for example the
 repositories of one GitHub organisation. Both land as
-`<ALMANACH_REPOS_DIR>/<project_key>/<slug>`; nothing else is ever written
+`<BACKEND_REPOS_DIR>/<project_key>/<slug>`; nothing else is ever written
 there. In compose that folder is the `repos` volume, in a deployment a
 volume claim.
 
@@ -435,7 +435,7 @@ any repository size, and every rule here was paid for there.
 One poller, in process, sequential: a stampede of parallel clones against
 one forge is how a token gets rate-limited. The first cycle runs thirty
 seconds after start (announced in the log, so "not yet" reads apart from
-"broken"), then every `ALMANACH_SYNC_INTERVAL`, jittered, and at once on a
+"broken"), then every `BACKEND_SYNC_INTERVAL`, jittered, and at once on a
 nudge from the API. A cycle lists every Bitbucket source (a new slug is a
 pending row, a vanished one `missing` with its clone kept, a failed listing
 leaves the rows alone and goes on the source), then syncs every repository
@@ -445,7 +445,7 @@ stops a cycle. Cycle start and finish log their counts; an unchanged
 repository is a debug line. A shutdown cuts the clone in flight; the next
 cycle finds the half directory and redoes it.
 
-The token at rest is sealed with AES-256-GCM under `ALMANACH_SECRET_KEY`,
+The token at rest is sealed with AES-256-GCM under `BACKEND_SOURCE_TOKEN_KEY`,
 a fresh nonce per seal, stdlib only. Without the key a public source still
 works and saving a token is a 422 naming the variable; a stored token the
 key cannot open (the key changed) fails that source's repositories with a
@@ -457,7 +457,7 @@ They are gated exactly like the read routes: by the session in oidc mode,
 by nobody in none; the reader is logged on every write and decides
 nothing. A write needs `Content-Type: application/json`, which
 a cross-site form cannot send without a preflight. With
-`ALMANACH_REPOS_DIR` unset the feature is off: no poller, the list route
+`BACKEND_REPOS_DIR` unset the feature is off: no poller, the list route
 answers `enabled: false`, every other route 404, and the UI hides the
 entry. The UI section "Quellen" is the one read-write part of the SPA: the
 sources list with a create form, a source page with its repositories, their
@@ -487,7 +487,7 @@ every note is taken and the wiki lists noergler's projects.
 **Triggers.** The poller queues a full run on a clone's first `ready` (its
 row had no head before), and queues a reconcile when the head left the
 documented commit and the last run ended more than
-`ALMANACH_BASELINE_RECONCILE` ago. A failed run, first, reconcile or a
+`BACKEND_BASELINE_RECONCILE` ago. A failed run, first, reconcile or a
 button's, is queued again in its own mode (trigger `retry`) a day after it
 ended, or after the interval when that is shorter, three times in a row,
 whatever the head and even with reconciles off; past that the repository
@@ -505,11 +505,11 @@ resumes after a restart. The run pins the clone's head when it starts.
 1. *Catalogue.* The tree at the commit (`ls-tree`, modes and sizes), held
    to what a run may read: regular files, within 100 kB, not vendored,
    built, locked, binary or generated. A full run asks the catalogue model
-   (`ALMANACH_CATALOGUE_MODEL`, else `ALMANACH_MODEL`) for the
+   (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
    from the listing (directories over 4000 files) and the docs. Code holds
    the answer to the tree: invented paths dropped, directories expanded,
-   each subject within 240 kB, at most `ALMANACH_BASELINE_MAX_CALLS` less
+   each subject within 240 kB, at most `BACKEND_BASELINE_MAX_CALLS` less
    three. A reconcile starts from the documented run's plan instead: the
    diff since its commit (`diff-tree`, files that left the readable set
    counted as gone) maps onto the subjects, and only files no subject
@@ -590,7 +590,7 @@ it), nothing twice (a statement's flow, like the map, first loses its self
 and repeated edges, logged: they say nothing), unique ids, known shapes, labels present, Swiss and
 capped, the nodes and edges per diagram from config, within the drawing's
 own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule,
-or one added past the page's count (`ALMANACH_MAX_DIAGRAMS`), is left out
+or one added past the page's count (`BACKEND_DIAGRAM_MAX_PER_PAGE`), is left out
 and logged with its reason (once the rewrite passed its ceilings), on the
 merge and every baseline step alike: its statement is kept. On the merge
 and the project step a statement nothing else changed keeps its sources
@@ -649,9 +649,9 @@ page stays, and only that part is skipped: the parts after it are still
 read. A page already at a ceiling (a lowered one included) ends the
 reading before the next part's call, so no part pays for an answer the
 ceiling would refuse, on this run or any reconcile after it. The calls
-(`ALMANACH_BASELINE_MAX_CALLS`) are checked before each call, and when
+(`BACKEND_BASELINE_MAX_CALLS`) are checked before each call, and when
 they are spent the rest is skipped. The bytes
-(`ALMANACH_BASELINE_MAX_BYTES`, the catalogue's docs and every part's
+(`BACKEND_BASELINE_MAX_BYTES`, the catalogue's docs and every part's
 files) are checked per part: a part over what is left is skipped, a
 smaller one after it may still be read. A
 run that ends with skipped parts is shown as partial and still records
@@ -664,9 +664,9 @@ never across a model call.
 ## 5. Operations
 
 - `almanach migrate` applies the embedded migrations to the file
-  `ALMANACH_DB_PATH` names, each in its own transaction, and exits: the
+  `BACKEND_DB_PATH` names, each in its own transaction, and exits: the
   init container's job. The whole run holds a lock on
-  `<ALMANACH_DB_PATH>-migrate.lock` beside the database, so a second
+  `<BACKEND_DB_PATH>-migrate.lock` beside the database, so a second
   migrator waits for the first instead of applying the same file again.
   `almanach serve` refuses a schema that is behind, naming the pending
   files. Both check first that the file's folder exists and takes a file.
@@ -937,7 +937,7 @@ so the choice is not undone as a cleanup.
   of distroless.
 - **The token is typed in the UI and sealed in the database**, not an
   environment variable name as in ../rongo's `repos.yaml`. A new token is a
-  form, not a redeploy; `ALMANACH_SECRET_KEY` is what makes that safe, and
+  form, not a redeploy; `BACKEND_SOURCE_TOKEN_KEY` is what makes that safe, and
   without it no token is stored at all.
 - **Origin is identity.** A checkout is named after its row, and a row's
   clone URL can be corrected; comparing `remote.origin.url` on every cycle
@@ -964,7 +964,7 @@ so the choice is not undone as a cleanup.
   note is folded, a note whose PR the run already read included.
 - **A cheaper model picks, the strong one writes.** The catalogue is a
   listing and the docs, a selection task; the steps that write are the
-  expensive ones. `ALMANACH_CATALOGUE_MODEL` is optional.
+  expensive ones. `BACKEND_BASELINE_CATALOGUE_MODEL` is optional.
 
 ## 9. Rules and invariants
 
@@ -1083,10 +1083,10 @@ the reason in the log and the page unchanged:
   current PR. The model never writes a source.
 - Ceilings, in this order after the spelling: the summary is not empty;
   the statement count is within the scope's cap
-  (`ALMANACH_REPO_MAX_STATEMENTS`, `ALMANACH_PROJECT_MAX_STATEMENTS`); the
+  (`BACKEND_REPO_MAX_STATEMENTS`, `BACKEND_PROJECT_MAX_STATEMENTS`); the
   prose of the whole description (summary plus every name and text) is
-  within the scope's cap (`ALMANACH_REPO_MAX_CHARS`,
-  `ALMANACH_PROJECT_MAX_CHARS`). A statement's text has no cap of its own.
+  within the scope's cap (`BACKEND_REPO_MAX_CHARS`,
+  `BACKEND_PROJECT_MAX_CHARS`). A statement's text has no cap of its own.
 - Field caps, per statement, checked before the ceilings: each name within
   80 runes; at most 5 files, each within 200 runes and without
   whitespace (empty file strings are dropped before counting). A
@@ -1126,7 +1126,7 @@ the reason in the log and the page unchanged:
   entities; a list that is null or not an array counts as empty and never
   breaks a read.
 - Problem areas: bugfix notes of the project whose `merged_at` is within
-  the window (`?days=`, 1 to 3650, default `ALMANACH_PROBLEM_WINDOW_DAYS`),
+  the window (`?days=`, 1 to 3650, default `BACKEND_PROBLEM_WINDOW_DAYS`),
   grouped by repository and `bugfix_area`. Per area: the count, the most
   frequent `cause_kind` (ties broken alphabetically; a missing kind counts
   as `other`), the component name and PR of the most recent fix, and the
@@ -1158,7 +1158,7 @@ the reason in the log and the page unchanged:
   Checked on the way in (422 naming the field) and again before a removal.
 - `token_auth` defaults to `bearer` for Bitbucket and `basic` for static;
   `token_user` goes with `basic` only. An omitted token on PATCH keeps the
-  stored one, an empty one clears it. A token without `ALMANACH_SECRET_KEY`
+  stored one, an empty one clears it. A token without `BACKEND_SOURCE_TOKEN_KEY`
   is a 422; a stored token the key cannot open fails the source's
   repositories with a line naming the key.
 - The token is a header per command, never a URL; the clone's config never
@@ -1173,7 +1173,7 @@ the reason in the log and the page unchanged:
   hand-entered row is never touched by a listing.
 - `RequestSync` moves every row but a missing one to pending and nudges the
   poller; the cycle in flight finishes first, the next one serves it.
-- The feature off (`ALMANACH_REPOS_DIR` unset): no poller, `GET /api/sources`
+- The feature off (`BACKEND_REPOS_DIR` unset): no poller, `GET /api/sources`
   answers `enabled: false`, every other sources route 404, the UI hides the
   entry. On: git on PATH, the folder present and writable (a probe file),
   and the key, if set, 32 bytes of base64, all checked at startup.
@@ -1222,7 +1222,7 @@ the reason in the log and the page unchanged:
   seconds. A gateway that
   is unreachable or answers 5xx is a warning; a refused key, a 4xx, a body
   that is not a listing, or an alias missing from it is a fault.
-- `serve` never migrates; `migrate` needs only `ALMANACH_DB_PATH`. A schema
+- `serve` never migrates; `migrate` needs only `BACKEND_DB_PATH`. A schema
   behind the binary refuses to start.
 - `/healthz` and `/readyz` answer a loopback caller without forwarding
   headers only; through a router they are 404 by design.
@@ -1232,6 +1232,6 @@ the reason in the log and the page unchanged:
   one is a startup fault, and each is a fault under none. A provider that
   does not answer discovery (30 s an attempt) is a warning, retried in the
   background, never awaited; the login lands on a halting page meanwhile. `none` is allowed on any
-  `SERVER_HOST`.
+  `BACKEND_ADDR`.
 - Caps and the problem window must be positive integers; a zero or
   negative value is a startup fault, not a disabled cap.
