@@ -44,10 +44,22 @@ export function kindLabel(kind: Kind, project: boolean): string {
 export const summaryId = "ueberblick";
 export const kindId = (k: Kind) => `art-${k}`;
 
+/** plainOf is a statement's text as the search reads it (plain), parsed
+ *  once per statement, not twice per keystroke (rail and list). */
+const plainCache = new WeakMap<Statement, string>();
+function plainOf(s: Statement): string {
+  let p = plainCache.get(s);
+  if (p === undefined) {
+    p = plain(s.text);
+    plainCache.set(s, p);
+  }
+  return p;
+}
+
 /** statementMatches is the search's test on a statement: its name, its
  *  text and its files. */
 export function statementMatches(s: Statement, query: string): boolean {
-  return matchesQuery(query, s.name, plain(s.text), ...s.files);
+  return matchesQuery(query, s.name, plainOf(s), ...s.files);
 }
 
 /** descriptionRail is the rail's part of a description: the summary and

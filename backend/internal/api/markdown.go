@@ -174,7 +174,7 @@ func writeJSONBlock(b *strings.Builder, d *diagram.Diagram) {
 		return
 	}
 	j := strings.TrimSuffix(buf.String(), "\n")
-	fence := strings.Repeat("`", max(3, longestRun(j, '`')+1))
+	fence := strings.Repeat("`", max(3, markup.LongestRun(j, '`')+1))
 	b.WriteString(fence + "json\n" + j + "\n" + fence + "\n\n")
 }
 
@@ -232,7 +232,9 @@ func blockStart(t string) bool {
 		n := len(t) - len(strings.TrimLeft(t, "#"))
 		return n <= 6 && markerEnds(t[n:])
 	case '`', '~':
-		return strings.HasPrefix(t, strings.Repeat(t[:1], 3))
+		// markup's fence rule: a code span Normalize wrote around a line with
+		// ``` in it opens no fence and keeps no backslash.
+		return markup.FenceOf(t) != ""
 	case '<':
 		return len(t) > 1 && (t[1] >= 'a' && t[1] <= 'z' || t[1] >= 'A' && t[1] <= 'Z' || strings.ContainsRune("/!?", rune(t[1])))
 	case '-', '+', '*':
@@ -248,17 +250,4 @@ func blockStart(t string) bool {
 // block: nothing, or a blank.
 func markerEnds(rest string) bool {
 	return rest == "" || rest[0] == ' ' || rest[0] == '\t'
-}
-
-func longestRun(s string, c byte) int {
-	best, run := 0, 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == c {
-			run++
-			best = max(best, run)
-		} else {
-			run = 0
-		}
-	}
-	return best
 }

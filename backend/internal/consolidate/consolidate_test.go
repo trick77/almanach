@@ -245,7 +245,7 @@ func TestFoldLayoutIsNoChange(t *testing.T) {
 		t.Fatalf("revisions = %+v", st.revisions)
 	}
 	r := st.revisions[0]
-	if want := "**Zweck**\n\nDer Dienst."; r.Summary != want {
+	if want := "Der Dienst."; r.Summary != want {
 		t.Errorf("summary = %q, want %q", r.Summary, want)
 	}
 	s := r.Statements[0]

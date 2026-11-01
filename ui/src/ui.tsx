@@ -192,9 +192,9 @@ export function Inline({
     ? matchRanges(parts.map((p) => p.text).join(""), query)
     : [];
   // Each run's offset in the runs' text as one.
-  const starts = parts.map((_, j) =>
-    parts.slice(0, j).reduce((n, p) => n + p.text.length, 0),
-  );
+  const starts: number[] = [];
+  for (let j = 0, at = 0; j < parts.length; at += parts[j].text.length, j++)
+    starts.push(at);
   return (
     <>
       {parts.map((s, j) => {

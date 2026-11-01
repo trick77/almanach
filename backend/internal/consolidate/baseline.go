@@ -716,7 +716,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: page grew by %d chars of prose, budget %d; %s, budget %d; %d returned unchanged",
 		name, grown, b.chars, plural(added, "new statement"), b.statements, returnedUnchanged(page.Statements, patch)))
 	logLeftOut(ctx, w.log, "baseline: "+name, leftOut)
-	if summary != page.Summary {
+	if !sameLaidOut(page.Summary, summary, false) {
 		plan.SummaryChanged = true
 	}
 	prev := *r
@@ -724,7 +724,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if err := encodeInto(r, *plan); err != nil {
 		return err
 	}
-	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && sameChecks(statements, page.Statements) {
+	if sameLaidOut(page.Summary, summary, false) && sameStatements(page.Statements, statements) && sameChecks(statements, page.Statements) {
 		w.log.InfoContext(ctx, "baseline: "+name+": page identical, no revision")
 		return w.save(ctx, *r)
 	}
@@ -1354,7 +1354,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	leftOut.overCap = append(overCap, leftOut.overCap...)
 	logLeftOut(ctx, w.log, "baseline: "+projectLabel, leftOut)
 	drawn := w.revisionMap(ctx, page, d.Map, slugs)
-	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
+	if sameLaidOut(page.Summary, summary, false) && sameStatements(page.Statements, statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, "", nil
 	}

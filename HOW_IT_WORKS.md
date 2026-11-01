@@ -982,7 +982,7 @@ so the choice is not undone as a cleanup.
   (`lang.Laid`, `internal/markup`) puts what the model writes into that
   stored form after redaction (a key's PEM shape holds only as written)
   and before the Swiss rule reads it: any heading level becomes `####`
-  (bold in a summary), `*` bullets `-`, a closed fence code spans. The UI
+  (dropped in a summary), `*` bullets `-`, a closed fence code spans. The UI
   (`format.ts` `blocks`) reads only that form, so markup beyond it (a
   quote, a table, HTML) stays text and cannot change the page's shape. A
   text only laid out anew says nothing new and credits no source. Note

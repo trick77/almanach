@@ -18,7 +18,7 @@ func TestNormalize(t *testing.T) {
 			"- eins weiter\n- zwei\n\nDanach."},
 		{"heading any level in text", "Vorher.\n## Ablauf ##\nNachher.\n# **Fehler**", true,
 			"Vorher.\n\n#### Ablauf\n\nNachher.\n\n#### Fehler"},
-		{"heading in a summary is bold", "### Zweck\nDas System.", false, "**Zweck**\n\nDas System."},
+		{"a summary holds no heading", "### Zweck\nDas System.\n## Der **neue** Teil", false, "Das System."},
 		{"bold and code stay inline", "Die **eine** Regel: `strict`.", true, "Die **eine** Regel: `strict`."},
 		{"fence lines become code spans", "So:\n```sh\n# install\nmake `x`\n```\nFertig.", true,
 			"So:\n\n`# install`\n`` make `x` ``\n\nFertig."},
@@ -27,6 +27,7 @@ func TestNormalize(t *testing.T) {
 		{"a bare marker is text", "-\n#", true, "-\n#"},
 		{"a title's own # stays", "## Warum C#\n### F# Interop ##", true, "#### Warum C#\n\n#### F# Interop"},
 		{"a fence never closed is no block", "Vorher.\n```\nText danach.\n- eins", true, "Vorher.\nText danach.\n\n- eins"},
+		{"a fence never closed keeps its line's text", "~~~ Achtung: nie zweimal\nDanach.", true, "Achtung: nie zweimal\nDanach."},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := Normalize(c.in, c.headings)

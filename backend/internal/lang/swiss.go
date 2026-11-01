@@ -71,18 +71,14 @@ func swissLine(line string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); {
 		if line[i] == '`' {
-			j := i
-			for j < len(line) && line[j] == '`' {
-				j++
-			}
-			run := line[i:j]
-			end := strings.Index(line[j:], run)
-			if end < 0 {
+			// markup's span rule; a run never closed leaves the rest as is.
+			j, ok := markup.SpanAt(line, i)
+			if !ok {
 				b.WriteString(line[i:])
 				return b.String()
 			}
-			b.WriteString(line[i : j+end+len(run)])
-			i = j + end + len(run)
+			b.WriteString(line[i:j])
+			i = j
 			continue
 		}
 		next := strings.IndexByte(line[i:], '`')

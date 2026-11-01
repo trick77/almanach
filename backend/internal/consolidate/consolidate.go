@@ -424,7 +424,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		return nil
 	}
 	logLeftOut(ctx, w.log, "consolidate: "+scope, leftOut)
-	if sameLaidOut(current.Summary, summary, false) && sameStatements(statements, current.Statements) {
+	if sameLaidOut(current.Summary, summary, false) && sameStatements(current.Statements, statements) {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description identical, no revision")
 		return nil
 	}
@@ -654,22 +654,29 @@ func cleanStatement(p inference.Statement) store.Statement {
 // sub-heading (lang.Laid).
 func proseSummary(s string) string { return lang.Laid(s, false) }
 
+// relaid is stored text as lang.Laid would store it now: laid out, then
+// Swiss. Redaction is not redone: what is stored was redacted. Text stored
+// before the layout was its whitespace, a "* " item or a ß an old fence
+// rule kept apart from it.
+func relaid(stored string, headings bool) string {
+	return lang.SwissSS(markup.Normalize(stored, headings))
+}
+
 // sameLaidOut reports whether a stored text and a returned one read the
-// same: equal, or equal once the stored one is laid out as the returned
-// one was. Text stored before the layout was its whitespace or a "* "
-// item apart; returned as it stood, it is no new revision.
+// same: equal, or equal once the stored one is relaid. Returned as it
+// stood, text stored before the layout is no new revision.
 func sameLaidOut(stored, returned string, headings bool) bool {
-	return stored == returned || markup.Normalize(stored, headings) == returned
+	return stored == returned || relaid(stored, headings) == returned
 }
 
 // sameText reports whether a statement's new text says what its old one
 // did: umlauts spelled in (lang.SameButSpelling) or only laid out anew,
 // a paragraph turned into a list, a term set in bold (markup.Words). The
-// old text is laid out first as the new one was: text stored before the
-// layout ("* " items, "## " lines) returned as it stood says nothing new.
+// old text is relaid first: text stored before the layout, returned as it
+// stood, says nothing new.
 func sameText(old, text string) bool {
 	return lang.SameButSpelling(old, text) ||
-		lang.SameButSpelling(markup.Words(markup.Normalize(old, true)), markup.Words(text))
+		lang.SameButSpelling(markup.Words(relaid(old, true)), markup.Words(text))
 }
 
 // diagramLimits is what a page's statement diagrams are held to: the caps
@@ -871,21 +878,23 @@ func fieldCap(s store.Statement) string {
 	return ""
 }
 
-// sameStatement compares what a reader sees of a statement: its id, kind,
-// name, text (sameLaidOut either way round: a is the stored one or the
-// returned one), files and diagram, not its sources or last check.
-func sameStatement(a, b store.Statement) bool {
-	return a.ID == b.ID && a.Kind == b.Kind && a.Name == b.Name &&
-		(sameLaidOut(a.Text, b.Text, true) || sameLaidOut(b.Text, a.Text, true)) &&
-		slices.Equal(a.Files, b.Files) && diagram.Equal(a.Diagram, b.Diagram)
+// sameStatement compares what a reader sees of a stored statement and a
+// returned one: id, kind, name, text (sameLaidOut), files and diagram,
+// not sources or last check.
+func sameStatement(stored, returned store.Statement) bool {
+	return stored.ID == returned.ID && stored.Kind == returned.Kind && stored.Name == returned.Name &&
+		sameLaidOut(stored.Text, returned.Text, true) &&
+		slices.Equal(stored.Files, returned.Files) && diagram.Equal(stored.Diagram, returned.Diagram)
 }
 
-func sameStatements(a, b []store.Statement) bool {
-	if len(a) != len(b) {
+// sameStatements is sameStatement over a page's stored and returned
+// statements, in order.
+func sameStatements(stored, returned []store.Statement) bool {
+	if len(stored) != len(returned) {
 		return false
 	}
-	for i := range a {
-		if !sameStatement(a[i], b[i]) {
+	for i := range stored {
+		if !sameStatement(stored[i], returned[i]) {
 			return false
 		}
 	}

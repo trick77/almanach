@@ -2,8 +2,9 @@
 // may carry: paragraphs, flat lists, **bold**, `code` spans and, in a
 // statement's text, one level of #### sub-heading. Normalize puts what a
 // model writes into that stored form, inside lang.Laid: after redaction,
-// before the Swiss rule. Anything beyond the subset stays text. ui/src/format.ts blocks reads the same
-// form, the Markdown export passes it through.
+// before the Swiss rule. Anything beyond the subset stays text.
+// ui/src/format.ts blocks reads the same form, the Markdown export passes
+// it through.
 package markup
 
 import (
@@ -21,7 +22,7 @@ const Heading = "#### "
 // a paragraph's lines as written, their indents dropped (so the Swiss rule
 // skips none as code); a list item one "- " or "N. " line, its
 // continuation lines joined to it; a heading, any level, a "#### " line
-// where headings is set and a **bold** paragraph where not (a summary). A
+// where headings is set and dropped where not (a summary). A
 // fenced block's lines become `code` spans: a "# comment" in it never
 // turns into a heading. Normalize of its own output is that output.
 func Normalize(s string, headings bool) string {
@@ -50,24 +51,28 @@ func Normalize(s string, headings bool) string {
 			continue
 		}
 		if f := FenceOf(line); f != "" {
-			// A fence never closed is no block: its line goes, the rest
-			// stays text, not one column of code to the end.
 			if slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), f) }) {
 				flush()
 				fence = f
+				continue
 			}
-			continue
+			// A fence never closed is no block: its marker goes, what
+			// follows it on the line and the lines after stay text, not one
+			// column of code to the end.
+			if line = strings.TrimSpace(line[len(f):]); line == "" {
+				continue
+			}
 		}
 		if line == "" {
 			flush()
 			continue
 		}
 		if title, ok := heading(line); ok {
+			// A summary holds no heading: the prompt asks for none, and a
+			// title kept as a bold line would read as its opening.
 			flush()
 			if headings {
 				blocks = append(blocks, Heading+title)
-			} else {
-				blocks = append(blocks, "**"+title+"**")
 			}
 			continue
 		}
@@ -162,20 +167,38 @@ func FenceOf(line string) string {
 // CodeSpan is s as one inline code span, its backtick run one longer than
 // the longest inside, set off by a blank when s holds one.
 func CodeSpan(s string) string {
-	longest, run := 0, 0
-	for _, r := range s {
-		if r == '`' {
-			run++
-			longest = max(longest, run)
-		} else {
-			run = 0
-		}
-	}
+	longest := LongestRun(s, '`')
 	tick := strings.Repeat("`", longest+1)
 	if longest > 0 {
 		return tick + " " + s + " " + tick
 	}
 	return tick + s + tick
+}
+
+// LongestRun is the length of the longest run of c in s.
+func LongestRun(s string, c byte) int {
+	best, run := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			run++
+			best = max(best, run)
+		} else {
+			run = 0
+		}
+	}
+	return best
+}
+
+// SpanAt reads the run of backticks at s[i]: the end of the code span it
+// opens, past the next same run, and true; or the run's own end and false
+// when nothing after it on s closes it. The one code-span rule of unbold,
+// Words and lang's Swiss spelling, as format.ts codeSpans has it.
+func SpanAt(s string, i int) (int, bool) {
+	n := len(s[i:]) - len(strings.TrimLeft(s[i:], "`"))
+	if j := strings.Index(s[i+n:], s[i:i+n]); j >= 0 {
+		return i + n + j + n, true
+	}
+	return i + n, false
 }
 
 // StoredHeading reports whether a line, trimmed, is a sub-heading in the
@@ -226,12 +249,7 @@ func unbold(l string) string {
 	var marks []int
 	for i := 0; i < len(l); {
 		if l[i] == '`' {
-			n := len(l[i:]) - len(strings.TrimLeft(l[i:], "`"))
-			if j := strings.Index(l[i+n:], l[i:i+n]); j >= 0 {
-				i += n + j + n
-			} else {
-				i += n
-			}
+			i, _ = SpanAt(l, i)
 			continue
 		}
 		if strings.HasPrefix(l[i:], "**") {
@@ -284,15 +302,12 @@ func Words(s string) string {
 	for i := 0; i < len(p); {
 		if p[i] == '`' {
 			// A code span is one token, its punctuation kept: != is not ==.
-			n := len(p[i:]) - len(strings.TrimLeft(p[i:], "`"))
-			if j := strings.Index(p[i+n:], p[i:i+n]); j >= 0 {
-				end()
-				out = append(out, p[i:i+n+j+n])
-				i += n + j + n
-				continue
-			}
-			i += n
 			end()
+			j, ok := SpanAt(p, i)
+			if ok {
+				out = append(out, p[i:j])
+			}
+			i = j
 			continue
 		}
 		r, size := utf8.DecodeRuneInString(p[i:])
