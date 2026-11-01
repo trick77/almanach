@@ -641,10 +641,10 @@ func TestProject_MapExpected(t *testing.T) {
 		t.Errorf("no page: map_declined = %s", body["map_declined"])
 	}
 	st.repos["PLAT"] = nil
-	for i := range diagram.DrawMaxNodes {
+	for i := range diagram.MapMaxNodes {
 		st.repos["PLAT"] = append(st.repos["PLAT"], store.RepoRow{Slug: fmt.Sprintf("r%02d", i)})
 	}
 	if got := expected(); got != "false" {
-		t.Errorf("%d source repositories: map_expected = %s, want false, too many for a map", diagram.DrawMaxNodes, got)
+		t.Errorf("%d source repositories: map_expected = %s, want false, too many for a map", diagram.MapMaxNodes, got)
 	}
 }

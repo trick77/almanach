@@ -141,6 +141,11 @@ func (m evalModels) RepoMap(ctx context.Context, prompt string) inference.RepoMa
 	return m.llm.RepoMap(ctx, prompt)
 }
 
+func (m evalModels) ProjectMap(ctx context.Context, prompt string) inference.RepoMapResult {
+	m.keep("project_map", prompt)
+	return m.llm.ProjectMap(ctx, prompt)
+}
+
 // evalClient is EVAL_MODEL at EVAL_EFFORT.
 func evalClient(t *testing.T, log *slog.Logger) *inference.Client {
 	t.Helper()

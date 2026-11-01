@@ -81,7 +81,7 @@ export type Elk = { layout(graph: ElkNode): Promise<ElkNode> };
 /** Text to frame, each side. */
 const padX = 16;
 /** Space around the drawing, inside the canvas. */
-const margin = 24;
+export const margin = 24;
 /** Vertical space between two boxes on the path; the arrow between them. */
 const stepGap = 24;
 /** Clear space between a label and its line. */
@@ -133,7 +133,11 @@ const longestWord = (n: FlowNodeIR) => {
  * line, within bounds; past the upper bound labels wrap. Never narrower than
  * the longest word, which wrapping cannot shorten: a long identifier widens
  * every box rather than running out of its own. */
-function boxWidth(nodes: FlowNodeIR[], min: number, max: number): number {
+export function boxWidth(
+  nodes: FlowNodeIR[],
+  min: number,
+  max: number,
+): number {
   const w = Math.max(0, ...nodes.map(width1));
   const word = Math.max(0, ...nodes.map(longestWord));
   return Math.max(
@@ -142,7 +146,7 @@ function boxWidth(nodes: FlowNodeIR[], min: number, max: number): number {
   );
 }
 
-function lay(n: FlowNodeIR, kind: NodeKind, w: number): NodeBox {
+export function lay(n: FlowNodeIR, kind: NodeKind, w: number): NodeBox {
   const s = styleOf(n);
   const lines = wrap(n.label, w - 2 * padX, s.size, s.face);
   const base = kind === "outcome" ? 36 : 40;
@@ -583,7 +587,7 @@ export function isMapping(ir: FlowIR): boolean {
 /** Vertical space between the stacked boxes of a column. */
 const rowGap = 20;
 /** A zone's inner margin; the top holds its title. */
-const zonePad = { top: 44, side: 20, bottom: 20 };
+export const zonePad = { top: 44, side: 20, bottom: 20 };
 
 /** titleRoom is the width a zone needs for its title: the bold title, set
  * 18px in, and as much again on the right. */

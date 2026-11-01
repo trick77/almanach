@@ -152,7 +152,8 @@ type Baseline struct {
 	// that picks what to read; "" means Model.
 	CatalogueModel string
 	// MaxCalls is the model calls one run may make: catalogue, overview, one
-	// per subject, project.
+	// per subject, project, repository map (a refused map asked again
+	// counts too).
 	MaxCalls int
 	// MaxBytes is the file content one run may read.
 	MaxBytes int
@@ -162,6 +163,7 @@ type Baseline struct {
 }
 
 // minBaselineCalls is a run with no subject: catalogue, overview, project.
+// The repository map's call is kept only from four (best effort below).
 const minBaselineCalls = 3
 
 // App is the whole configuration.

@@ -55,6 +55,9 @@ func repoMapSchema() map[string]any {
 	return flow(enum(diagram.RepoMapZones...), enum(diagram.RepoMapZones...))
 }
 
+// flow is a flow's schema. No maxItems: a strict schema takes no array
+// bound past minItems 0 or 1 on every provider; the caps are the prompt's
+// and the check's, a map over them asked again.
 func flow(nodeZone, zoneID map[string]any) map[string]any {
 	return object(map[string]any{
 		"kind":      enum(diagram.KindFlow),

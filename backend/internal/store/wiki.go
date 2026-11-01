@@ -395,6 +395,9 @@ const (
 	PurposeSubject   = "subject"
 	PurposeProject   = "project"
 	PurposeRepoMap   = "repo_map"
+	// PurposeProjectMap is the system map asked again alone, the project
+	// step's description taken.
+	PurposeProjectMap = "project_map"
 )
 
 // LLMCall is one model call as the gateway described it. SourceKind "" and

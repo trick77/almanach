@@ -2181,7 +2181,7 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, map, revisions, notes, notes_total, last_merge, uses, used_by]
+      required: [project_key, slug, description, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by]
       properties:
         project_key:
           type: string
@@ -2196,6 +2196,12 @@ components:
           oneOf:
             - $ref: "#/components/schemas/FlowDiagram"
             - type: "null"
+        map_declined:
+          type: boolean
+          description: >-
+            The map step refused every map it was given for the description
+            as it stands (asked again twice in the run): map is null until
+            the description changes.
         notes_total:
           type: integer
           description: Every note of the repository; `notes` lists the newest hundred.

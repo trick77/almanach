@@ -151,7 +151,7 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 		b.WriteString("## Systemkarte\n\n")
 		writeJSONBlock(&b, p.Map)
 	}
-	if p.RepoMap != nil {
+	if p.RepoMap != nil && !diagram.IsSentinel(p.RepoMap) {
 		b.WriteString("## Aufbau\n\n")
 		writeJSONBlock(&b, p.RepoMap)
 	}

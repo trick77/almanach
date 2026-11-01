@@ -595,9 +595,12 @@ type repoDetailBody struct {
 	Description *descriptionBody `json:"description"`
 	// Map is the repository's map of itself (Aufbau), null before a
 	// baseline run's map step drew one.
-	Map       *diagram.Diagram `json:"map"`
-	Revisions []revisionBody   `json:"revisions"`
-	Notes     []noteBody       `json:"notes"`
+	Map *diagram.Diagram `json:"map"`
+	// MapDeclined says the map step refused every map it was given for the
+	// text as it stands: no map until the text changes.
+	MapDeclined bool           `json:"map_declined"`
+	Revisions   []revisionBody `json:"revisions"`
+	Notes       []noteBody     `json:"notes"`
 	// NotesTotal is every note of the repository; Notes lists the newest
 	// hundred.
 	NotesTotal int        `json:"notes_total"`
@@ -661,8 +664,15 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "dependencies")
 		return
 	}
-	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Map: page.RepoMap, Notes: noteBodies(notes),
-		Revisions: make([]revisionBody, 0, len(revisions))}
+	// The sentinel is no map: declined for the text it was asked for, not
+	// for one that changed since (the next run asks again).
+	drawn := page.RepoMap
+	if diagram.IsSentinel(drawn) {
+		drawn = nil
+	}
+	declined := diagram.IsSentinel(page.RepoMap) && page.MapStands()
+	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Map: drawn, MapDeclined: declined,
+		Notes: noteBodies(notes), Revisions: make([]revisionBody, 0, len(revisions))}
 	out.Uses, out.UsedBy = usesOf(g, store.RepoRef{ProjectKey: key, Slug: slug})
 	for _, rp := range repos {
 		if rp.Slug == slug {

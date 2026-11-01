@@ -173,6 +173,7 @@ const repo: RepoDetail = {
   ],
   notes: project.recent_notes,
   map: null,
+  map_declined: false,
   uses: [],
   used_by: [],
 };
@@ -954,6 +955,22 @@ describe("RepoPage", () => {
     expect(
       within(rail).getByText("pay-clearing").getAttribute("aria-current"),
     ).toBe("page");
+    expect(within(rail).getByText("Aufbau")).toBeInTheDocument();
+  });
+
+  it("says why it has no map when every draft was refused", async () => {
+    serve({
+      "projects/PAY/repos/pay-clearing": {
+        ...repo,
+        map_declined: true,
+        description: project.description,
+      },
+      "projects/PAY": project,
+    });
+    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    expect(await screen.findByText(/^Kein Aufbau: /)).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Aufbau" })).toBeNull();
+    const rail = screen.getByRole("navigation", { name: "Inhalt" });
     expect(within(rail).getByText("Aufbau")).toBeInTheDocument();
   });
 

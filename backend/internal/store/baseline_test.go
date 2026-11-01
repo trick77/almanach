@@ -409,6 +409,15 @@ func TestInsertLLMCall_KindsAndPurposes(t *testing.T) {
 	if _, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, Outcome: "ok"}); err == nil {
 		t.Fatal("a baseline call without a commit was stored")
 	}
+	// The system map asked again alone (0002), and still no made-up one.
+	if _, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "c0ffee",
+		Purpose: PurposeProjectMap, BaselineRunID: &run, Outcome: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "c0ffee",
+		Purpose: "invented", Outcome: "ok"}); err == nil {
+		t.Fatal("a call of an unknown purpose was stored")
+	}
 }
 
 // A source repository is known as one.

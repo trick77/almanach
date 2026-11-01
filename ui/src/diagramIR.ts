@@ -101,7 +101,16 @@ const maxEdges = 24;
 const maxActors = 8;
 const maxRows = 20;
 
-export function fits(ir: DiagramIR): boolean {
+/** Almanach: a map, the system map or a repository's, holds more: every
+ * external system it names is its own box (user, 2026-11-01), and its
+ * layout wraps rows rather than widening (mapLayout.ts). The backend's
+ * MapMaxNodes and MapMaxEdges. */
+export const mapMaxNodes = 22;
+export const mapMaxEdges = 33;
+
+export function fits(ir: DiagramIR, map = false): boolean {
+  if (ir.kind === "flow" && map)
+    return ir.nodes.length <= mapMaxNodes && ir.edges.length <= mapMaxEdges;
   if (ir.kind === "sequence")
     return ir.actors.length <= maxActors && ir.rows.length <= maxRows;
   if (ir.kind === "er")
