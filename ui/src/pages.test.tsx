@@ -84,8 +84,8 @@ const project: ProjectDetail = {
       {
         id: "s2",
         kind: "rule",
-        name: "Kleinere Grenze gilt",
-        text: "Die kleinere Grenze gilt.",
+        name: "Grenze aus `limit()`",
+        text: "Die kleinere Grenze aus `max_size` gilt.",
         files: [],
         sources: [],
       },
@@ -256,6 +256,9 @@ describe("ProjectPage", () => {
       screen.getByText("Ein Auftrag durchläuft Zustände."),
     ).toBeInTheDocument();
     expect(screen.getByText("Auftragsannahme")).toBeInTheDocument();
+    // A backtick-quoted identifier is code, in the name and in the text.
+    expect(screen.getByText("limit()").tagName).toBe("CODE");
+    expect(screen.getByText("max_size").tagName).toBe("CODE");
     expect(
       screen.getByText("Der Mandant kommt aus der Kopfzeile."),
     ).toBeInTheDocument();
