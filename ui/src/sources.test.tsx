@@ -262,6 +262,8 @@ describe("SourcesPage", () => {
     await waitFor(() => expect(writes).toHaveLength(1));
     const body = writes[0]?.body as { host: string };
     expect(body.host).toBe("https://forge.example.invalid");
+    // A Bitbucket project takes the server's rule: no system sent.
+    expect(body).not.toHaveProperty("system");
   });
 
   it("creates a static folder whose repositories stand alone", async () => {
@@ -278,6 +280,12 @@ describe("SourcesPage", () => {
     expect(toggle).toHaveAttribute("aria-checked", "true");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "false");
+    // Another kind and back: the default again, as with the token's.
+    fireEvent.click(screen.getByText("Bitbucket-Projekt"));
+    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    const again = screen.getByRole("switch", { name: "Bildet ein System" });
+    expect(again).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(again);
     expect(
       screen.getByText(/etwa Bibliotheken und Werkzeuge/),
     ).toBeInTheDocument();

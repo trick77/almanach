@@ -308,9 +308,9 @@ export const S = {
         "Almanach beschreibt die Repositories als ein System: eine Projektseite und eine Systemkarte, wie bei einem Bitbucket-Projekt.",
       hintOff: `${standsAlone} Eine frühere Projektseite bleibt gespeichert.`,
       meta: (system: boolean) => (system ? "Ein System" : standaloneRepos),
-      // The create form's hint for off: a new folder has no page to keep.
-      createHintOff: `${standsAlone} Für Repositories, die nichts miteinander zu tun haben, etwa Bibliotheken und Werkzeuge.`,
-      createHint: "Später auf der Seite der Quelle umschaltbar.",
+      // The create form's hint: for off, a new folder has no page to keep.
+      createHint: (system: boolean) =>
+        `${system ? S.sources.system.hintOn : `${standsAlone} Für Repositories, die nichts miteinander zu tun haben, etwa Bibliotheken und Werkzeuge.`} Später auf der Seite der Quelle umschaltbar.`,
     },
     counts: {
       ready: (n: number) => `${n} bereit`,

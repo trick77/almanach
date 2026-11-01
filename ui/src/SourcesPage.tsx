@@ -10,7 +10,6 @@ import {
 } from "./api";
 import { dayTime } from "./format";
 import { navigateTo, sourcePath } from "./routing";
-import { SystemToggle } from "./SourcePage";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import {
@@ -22,6 +21,7 @@ import {
   Pill,
   Segmented,
   Skeleton,
+  SystemToggle,
   btn,
   btnPrimary,
   column,
@@ -227,6 +227,7 @@ function NewSourceForm({
   const pickKind = (k: SourceKind) => {
     setKind(k);
     setAuth(k === "bitbucket" ? "bearer" : "basic");
+    setSystem(true);
   };
 
   const submit = async () => {
@@ -297,9 +298,14 @@ function NewSourceForm({
         {kind === "static" && (
           <div className="sm:col-span-2">
             <span className={fieldLabel}>{sys.label}</span>
-            <SystemToggle system={system} onSwitch={() => setSystem(!system)} />
-            <span className={fieldHint}>
-              {system ? sys.hintOn : sys.createHintOff} {sys.createHint}
+            <SystemToggle
+              system={system}
+              onSwitch={() => setSystem((s) => !s)}
+              describedBy="new-system-hint"
+              disabled={busy}
+            />
+            <span id="new-system-hint" className={fieldHint}>
+              {sys.createHint(system)}
             </span>
           </div>
         )}
