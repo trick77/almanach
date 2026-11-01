@@ -1152,10 +1152,7 @@ function AddRepoForm({
           <span className={fieldHint}>{f.urlHint}</span>
         </label>
         <label>
-          <span className={fieldLabel}>
-            {f.slug}{" "}
-            <span className="text-faint">{S.sources.form.optional}</span>
-          </span>
+          <span className={fieldLabel}>{f.slug}</span>
           <input
             className={input + " " + mono}
             value={slug}

@@ -306,9 +306,7 @@ function NewSourceForm({
               <span className={fieldHint}>{f.firstRepoHint}</span>
             </label>
             <label>
-              <span className={fieldLabel}>
-                {f.slug} <span className="text-faint">{f.optional}</span>
-              </span>
+              <span className={fieldLabel}>{f.slug}</span>
               <input
                 className={input + " " + mono}
                 value={key}
