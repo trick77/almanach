@@ -190,13 +190,14 @@ export const S = {
     >,
     kindLabel: {
       bitbucket: "Bitbucket-Projekt",
-      static: "Statischer Ordner",
+      // No-break spaces: a narrow form wraps before the bracket, never inside it.
+      static: "Statischer Ordner (z.\u00a0B.\u00a0GitHub)",
     } as Record<string, string>,
     kindHint: {
       bitbucket:
         "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Run neu gelistet.",
       static:
-        "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation.",
+        "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation. Das Token dafür kommt ins Feld unten.",
     } as Record<string, string>,
     tokenStored: "Hinterlegt",
     tokenNone: "Öffentlich",
@@ -225,8 +226,12 @@ export const S = {
       token: "Personal Access Token",
       optional: "(optional)",
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",
-      tokenHint:
-        "Nur nötig für private Repositories oder ein privates Bitbucket-Projekt.",
+      tokenHint: {
+        bitbucket:
+          "Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und klont seine Repositories.",
+        static:
+          "Nur nötig für private Repositories. Ein Token für den ganzen Ordner: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read».",
+      } as Record<string, string>,
       tokenAs: "Token senden als",
       bearerHint:
         "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center.",
@@ -258,6 +263,7 @@ export const S = {
     },
     actions: {
       sync: "Synchronisieren",
+      syncRunning: "Synchronisieren läuft gerade.",
       queued: "Angestossen …",
       addRepo: "Repository hinzufügen",
       access: { bitbucket: "Host und Token", static: "Token" } as Record<

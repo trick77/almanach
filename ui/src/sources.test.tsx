@@ -4,6 +4,7 @@ import App from "./App";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import type { Me, SourceDetail, Sources } from "./api";
+import { S } from "./strings";
 
 /** serve answers GET paths from a table and records every write. */
 function serve(table: Record<string, unknown>) {
@@ -200,6 +201,9 @@ describe("SourcesPage", () => {
       { target: { value: "pat" } },
     );
     expect(screen.getByText("Token senden als")).toBeInTheDocument();
+    expect(
+      screen.getByText(/listet das Projekt über die API/),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toEqual({
@@ -216,6 +220,18 @@ describe("SourcesPage", () => {
       },
     });
     await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
+  });
+
+  it("gives the token the selected kind's hint", async () => {
+    serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    expect(screen.getByText(/privates Bitbucket-Projekt/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    expect(screen.getByText(/«Contents: read»/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/privates Bitbucket-Projekt/),
+    ).not.toBeInTheDocument();
   });
 
   it("creates a source that describes nothing on its own, on the configured host", async () => {
@@ -322,6 +338,11 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     fireEvent.click(await screen.findByText("Token"));
+    // A static folder's token hint: one token, the GitHub scopes.
+    expect(
+      screen.getByText(/gilt für jedes Repository darin/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/listet das Projekt/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText(/Automatisch beschreiben/));
     fireEvent.click(screen.getByText("Speichern"));
     await waitFor(() => expect(writes).toHaveLength(1));
@@ -329,6 +350,24 @@ describe("SourcePage baseline", () => {
       token_auth: "basic",
       token_user: "",
       auto_describe: false,
+    });
+  });
+
+  it("sends a token typed in the access form", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    fireEvent.click(await screen.findByText("Token"));
+    fireEvent.change(
+      screen.getByPlaceholderText("Leer lassen für öffentliche Repositories"),
+      { target: { value: "ghp" } },
+    );
+    fireEvent.click(screen.getByText("Speichern"));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]?.body).toEqual({
+      token: "ghp",
+      token_auth: "basic",
+      token_user: "",
+      auto_describe: true,
     });
   });
 });
@@ -372,6 +411,48 @@ describe("SourcePage", () => {
         true,
       ),
     );
+  });
+
+  describe("the source's sync button", () => {
+    const [cli, legacy] = detail.repos;
+    if (!cli?.baseline || !legacy) throw new Error("fixture");
+    const run = cli.baseline;
+
+    /** sourceSync renders the page with the given repos and returns the
+     *  source's button: the ready row's own one shares its name. */
+    const sourceSync = async (repos: SourceDetail["repos"]) => {
+      serve({ "sources/werkzeuge": { ...detail, repos } });
+      render(<SourcePage projectKey="werkzeuge" />);
+      await screen.findByText("acme-cli");
+      const top = screen
+        .getAllByRole("button", { name: "Synchronisieren" })
+        .filter((b) => b.closest("table") === null);
+      expect(top).toHaveLength(1);
+      return top[0];
+    };
+
+    it("is held while a repo syncs", async () => {
+      const b = await sourceSync([cli, { ...legacy, state: "syncing" }]);
+      expect(b).toBeDisabled();
+      expect(b).toHaveAttribute("title", S.sources.actions.syncRunning);
+    });
+
+    it("stays free while a repo only waits", async () => {
+      const b = await sourceSync([cli, { ...legacy, state: "pending" }]);
+      expect(b).toBeEnabled();
+      expect(b).not.toHaveAttribute("title");
+      // The tile still says something runs.
+      expect(screen.getByText(S.sources.tiles.running)).toBeInTheDocument();
+    });
+
+    it("stays free while a run describes", async () => {
+      const b = await sourceSync([
+        { ...cli, baseline: { ...run, state: "describing" } },
+        legacy,
+      ]);
+      expect(b).toBeEnabled();
+      expect(b).not.toHaveAttribute("title");
+    });
   });
 
   it("confirms before removing", async () => {

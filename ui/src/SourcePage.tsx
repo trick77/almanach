@@ -115,6 +115,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const active = data.repos.filter(
     (r) => r.state === "pending" || r.state === "syncing",
   ).length;
+  const syncing = data.repos.some((r) => r.state === "syncing");
   const failed = data.repos.filter((r) => r.state === "failed").length;
   const describing = data.repos.filter((r) => runOpen(r.baseline)).length;
   const described = data.repos.filter(
@@ -234,7 +235,11 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         <button
           type="button"
           className={btnPrimary}
-          disabled={queued}
+          // A clone or fetch being worked holds the button. Pending does
+          // not: a stuck queue would lock it for good. Nor does a baseline
+          // run, which pins its commit.
+          disabled={queued || syncing}
+          title={syncing ? S.sources.actions.syncRunning : undefined}
           onClick={sync}
         >
           {queued ? S.sources.actions.queued : S.sources.actions.sync}
@@ -785,14 +790,17 @@ function AccessForm({
               </button>
             </div>
           ) : (
-            <input
-              className={input}
-              type="password"
-              autoComplete="off"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={data.has_token ? f.newToken : f.tokenPlaceholder}
-            />
+            <>
+              <input
+                className={input}
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder={data.has_token ? f.newToken : f.tokenPlaceholder}
+              />
+              <span className={fieldHint}>{f.tokenHint[data.kind]}</span>
+            </>
           )}
         </div>
         <AutoDescribeField value={auto} onChange={setAuto} />
