@@ -1383,7 +1383,7 @@ components:
           type: string
         system:
           type: boolean
-          description: Switches a static folder between one system and repositories that stand alone. Comes alone in its PATCH; false for a Bitbucket source is a 422.
+          description: Switches a static folder between one system and repositories that stand alone. A change comes alone in its PATCH, an unchanged value is no switch; false for a Bitbucket source is a 422. Back on, the next run folds the project page.
 
     NewSourceRepo:
       type: object
