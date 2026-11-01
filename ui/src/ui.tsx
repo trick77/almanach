@@ -7,8 +7,9 @@ import { S } from "./strings";
 import { onNav } from "./routing";
 
 export const page = "h-full overflow-auto";
-/** The reading column: 900px, centred, ../rongo's measure. */
-export const column = "mx-auto max-w-[900px] px-4 py-7 sm:px-6 lg:px-10";
+/** The page column: 1400px, centred, ../noergler's width. Tables, source
+ *  rows and diagrams take it; prose keeps its own measure (see Prose). */
+export const column = "mx-auto max-w-[1400px] px-4 py-7 sm:px-6 lg:px-10";
 export const h2 =
   "font-serif text-[22px] font-medium leading-tight tracking-tight text-ink sm:text-[28px]";
 export const meta = "mt-1.5 text-[14.5px] text-muted";
@@ -135,7 +136,8 @@ export function Pill({
 }
 
 /** Prose renders a text as paragraphs, split on blank lines and nothing
- *  else: the wiki is prose, never markdown. */
+ *  else: the wiki is prose, never markdown. Held at 75ch, in its own font
+ *  size: the page column is 1400px, and a paragraph that wide is not read. */
 export function Prose({
   text,
   className = "",
@@ -144,7 +146,7 @@ export function Prose({
   className?: string;
 }) {
   return (
-    <div className={className}>
+    <div className={"max-w-[75ch] " + className}>
       {paragraphs(text).map((p, i) => (
         <p key={i} className="mb-3.5 last:mb-0">
           {p}
