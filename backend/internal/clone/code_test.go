@@ -2,6 +2,7 @@ package clone
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -137,11 +138,12 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 	}
 }
 
-// A done run that skipped parts, or left the repository page without a map
-// drawn from its text (described before maps existed), gets one reconcile
-// a day after it ended, whatever the head: an unchanged head never queues
-// one otherwise, and its button is held. Once: a retry's own leftovers wait
-// for the interval.
+// A done run at the head that skipped parts (a subject gone aside), or left
+// the repository page without a map drawn from its text (described before
+// maps existed), is retried a day after it ended: a reconcile at the same
+// commit, while fewer than three retries ran in a row, a retry of a failed
+// run included. A head that moved waits for the interval; with the
+// interval off (buttons only) nothing is queued.
 func TestDescribe_RetriesWhatADoneRunLeft(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	month := 30 * 24 * time.Hour
@@ -151,33 +153,42 @@ func TestDescribe_RetriesWhatADoneRunLeft(t *testing.T) {
 	drawn.RepoMapBasis = drawn.MapBasis()
 	stale := drawn
 	stale.Summary = "Ein Dienst, neu beschrieben."
+	failed := json.RawMessage(`{"format":2,"skipped":["A"],"why":{"A":"failed"}}`)
+	gone := json.RawMessage(`{"format":2,"skipped":["A"],"why":{"A":"gone"}}`)
 	for name, c := range map[string]struct {
-		ago     time.Duration
-		skipped int
-		trigger string
-		page    store.Page
-		head    string
-		want    string
+		ago       time.Duration
+		skipped   int
+		plan      json.RawMessage
+		retried   int
+		page      store.Page
+		head      string
+		reconcile time.Duration
+		want      string
 	}{
-		"skipped parts":            {25 * time.Hour, 2, store.TriggerManual, drawn, "d0", "tools cli reconcile retry d0 d0"},
-		"no map yet":               {25 * time.Hour, 0, store.TriggerFirstReady, described, "d0", "tools cli reconcile retry d0 d0"},
-		"map from older text":      {25 * time.Hour, 0, store.TriggerMonthly, stale, "d0", "tools cli reconcile retry d0 d0"},
-		"head moved, map missing":  {25 * time.Hour, 0, store.TriggerManual, described, "h1", "tools cli reconcile retry d0 h1"},
-		"an hour ago":              {time.Hour, 2, store.TriggerManual, described, "d0", ""},
-		"the retry left some too":  {25 * time.Hour, 2, store.TriggerRetry, described, "d0", ""},
-		"finished, map stands":     {25 * time.Hour, 0, store.TriggerManual, drawn, "d0", ""},
-		"no page, nothing skipped": {25 * time.Hour, 0, store.TriggerManual, store.Page{}, "d0", ""},
+		"skipped parts":              {25 * time.Hour, 1, failed, 0, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"a plan from before reasons": {25 * time.Hour, 2, nil, 0, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"no map yet":                 {25 * time.Hour, 0, nil, 0, described, "d0", month, "tools cli reconcile retry d0 d0"},
+		"map from older text":        {25 * time.Hour, 0, nil, 0, stale, "d0", month, "tools cli reconcile retry d0 d0"},
+		"after a failed run's retry": {25 * time.Hour, 1, failed, 1, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"third retry":                {25 * time.Hour, 1, failed, 2, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
+		"past the retries":           {25 * time.Hour, 1, failed, 3, drawn, "d0", month, ""},
+		"only a subject gone":        {25 * time.Hour, 1, gone, 0, drawn, "d0", month, ""},
+		"head moved":                 {25 * time.Hour, 1, failed, 0, described, "h1", month, ""},
+		"buttons only":               {25 * time.Hour, 1, failed, 0, described, "d0", 0, ""},
+		"an hour ago":                {time.Hour, 1, failed, 0, described, "d0", month, ""},
+		"finished, map stands":       {25 * time.Hour, 0, nil, 0, drawn, "d0", month, ""},
+		"no page, nothing skipped":   {25 * time.Hour, 0, nil, 0, store.Page{}, "d0", month, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
-			s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, Trigger: c.trigger, Commit: "d0", State: store.RunDone,
-				Skipped: c.skipped, FinishedAt: ptr(now.Add(-c.ago))}
-			s.page = c.page
+			s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, Trigger: store.TriggerManual, Commit: "d0", State: store.RunDone,
+				Skipped: c.skipped, Plan: c.plan, FinishedAt: ptr(now.Add(-c.ago))}
+			s.retried, s.page = c.retried, c.page
 			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
 			g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
 			g.heads[dirOf("tools", "cli")+"@main"] = c.head
 			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-				Describe: Describe{Reconcile: month, Wake: func() {}}, Now: func() time.Time { return now }})
+				Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}, Now: func() time.Time { return now }})
 			if err := p.CycleOnce(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -185,6 +196,34 @@ func TestDescribe_RetriesWhatADoneRunLeft(t *testing.T) {
 				t.Fatalf("queued %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// A done run's page is read once, not every cycle: the verdict is kept for
+// that run and asked again only of a newer one.
+func TestDescribe_ReadsTheMapOncePerRun(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	drawn := store.Page{Scope: store.ScopeRepository, Summary: "Ein Dienst.", RepoMap: &diagram.Diagram{Kind: diagram.KindFlow}}
+	drawn.RepoMapBasis = drawn.MapBasis()
+	s, g := newFakeStore(), newFakeGit()
+	s.last = store.BaselineRun{ID: 2, Trigger: store.TriggerManual, Commit: "d0", State: store.RunDone, FinishedAt: ptr(now.Add(-48 * time.Hour))}
+	s.page = drawn
+	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
+	g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+	g.heads[dirOf("tools", "cli")+"@main"] = "d0"
+	p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Describe: Describe{Reconcile: 30 * 24 * time.Hour, Wake: func() {}}, Now: func() time.Time { return now }})
+	for range 3 {
+		if err := p.CycleOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.last.ID = 3
+	if err := p.CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.pageAsked != 2 || len(s.enqueued) != 0 {
+		t.Fatalf("page read %d times over two runs, queued %v; want twice, nothing", s.pageAsked, s.enqueued)
 	}
 }
 

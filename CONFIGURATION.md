@@ -44,13 +44,12 @@ is a startup fault too.
 | `BACKEND_BASELINE_CATALOGUE_MODEL` | `BACKEND_MODEL` | The baseline's catalogue step (which subjects a repository is made of, which files belong to each) as an llmwire profile id: a cheaper model may pick, the main one writes. Checked at startup like `BACKEND_MODEL`, at its balanced reasoning level. Only read with `BACKEND_REPOS_DIR` set. |
 | `BACKEND_BASELINE_MAX_CALLS` | `16` | Model calls one baseline run may make: the catalogue, the overview, one per subject, the project, the repository map (kept back from the subjects, the first dropped when spent). At least 3. Checked before every call; past it the rest is skipped and the run ends partial. |
 | `BACKEND_BASELINE_MAX_BYTES` | `2000000` | File content one baseline run may read: the docs its catalogue reads and every part's files. A part over what is left is skipped, and a smaller one after it may still be read. |
-| `BACKEND_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since). `0`: only the buttons. |
+| `BACKEND_BASELINE_RECONCILE` | `720h` | How long after its last run a repository whose head moved off the documented commit is read again on its own (only the changes since). While it is on, a done run at the head that skipped parts or left the repository page without its map is also retried a day after it ended (the interval when shorter), at most three retries in a row: only the skipped parts and the map are read. `0`: only the buttons, but a failed run is still tried again. |
 | `BACKEND_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `BACKEND_ENV` | `dev` | Environment name in every log line. |
 
-Over any cap the merge call's rewrite is rejected whole and the page stays
-as it was; the caps are the one lever against endless growth, and the
-prompt tells the model the numbers. A statement diagram over a node or
+A description has no cap: no setting limits its statements or its size,
+and nothing is dropped for either. A statement diagram over a node or
 edge cap, one that breaks a rule (an arrow to an undeclared node), or one
 past the page's count never costs a rewrite: it is left out and logged,
 its statement kept. The diagram the statement had stays while its name

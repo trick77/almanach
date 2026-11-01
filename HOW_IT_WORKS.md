@@ -607,10 +607,11 @@ resumes after a restart. The run pins the clone's head when it starts.
    transaction: no revision of its own, the text did not change. A
    refused map, a failed call or spent calls write nothing, the basis
    stays stale for the next run. The map is optional: a database busy past
-   its attempts ends the run done without it, never failed. A page with no
-   map drawn from its text (described before maps existed, a map step
-   skipped) is never stranded at an unchanged head: the poller queues the
-   retry below for it.
+   its attempts ends the run done without it, never failed. None drawn is
+   an answer too: recorded with its basis, no map, so the same text is not
+   asked again. A page with no answer for its text (described before maps
+   existed, a map step skipped) is never stranded at an unchanged head: the
+   poller queues the retry below for it.
 
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
@@ -695,13 +696,19 @@ smaller one after it may still be read. A
 run that ends with skipped parts is shown as partial and still records
 its commit; the next reconcile reads the skipped parts again, the docs and
 the project included, a reconcile at the documented commit too. That next
-run is never left to a head that may not move: a done run with skipped
-parts, or one that left the repository page without a map drawn from its
-text, gets one reconcile (trigger `retry`) from the poller a day after it
-ended (the reconcile interval when shorter), whatever the head; a retry's
-own leftovers wait for the interval or the button, which a skipped part
-keeps open at a documented head. The source page names each skip's
-reason, an error as one, and says when the parts are read again. A clone
+run is never left to a head that may not move: a done run at the head
+that skipped parts (a subject gone aside: nothing to read again), or left
+the repository page without a map answer for its text, gets a reconcile
+at the same commit (trigger `retry`) from the poller a day after it ended
+(the reconcile interval when shorter), at most three retries in a row,
+a failed run's retries counted, and only with the interval on; it reads
+the skipped parts and the map, nothing else. A head that moved waits for
+the interval, which reads the skipped parts with the changes. The poller
+reads a run's page for that once, not every cycle. Past the retries, or
+with the interval off, the button is the way, kept open at a documented
+head while a part is left. The source page names each skip's reason, an
+error as one, and says whether the parts are read again on their own
+(`auto_retry`) or by the button. A clone
 the poller holds (a long
 clone or fetch) defers the step to the next drain rather than holding the
 worker behind it; the reads take the poller's disk lock for the read only,

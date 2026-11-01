@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/baseline"
+	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/secret"
@@ -72,7 +73,10 @@ type SourcesDeps struct {
 	Key    secret.Key
 	// DefaultHost prefills a new Bitbucket source's host (BACKEND_BITBUCKET_HOST).
 	DefaultHost string
-	sizes       sizeCache
+	// Reconcile is the poller's reconcile interval (BACKEND_BASELINE_RECONCILE),
+	// zero for buttons only: whether a skipped part is retried on its own.
+	Reconcile time.Duration
+	sizes     sizeCache
 }
 
 // sizeCache remembers a project folder's size for a short while: the
@@ -225,6 +229,9 @@ type baselineBody struct {
 	FinishedAt       *time.Time        `json:"finished_at"`
 	DocumentedCommit string            `json:"documented_commit"`
 	DocumentedAt     *time.Time        `json:"documented_at"`
+	// AutoRetry: the poller reads what a done run skipped again on its own
+	// (clone.RetriesOnItsOwn); else only a button does.
+	AutoRetry bool `json:"auto_retry"`
 }
 
 // baselineOf is a repository's newest run as the page shows it; err is a
@@ -294,6 +301,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 				d.Log.WarnContext(ctx, "source page: run plan does not decode, its skipped parts left out",
 					"repo", rp.Slug, "run_id", rr.Last.ID, logging.Err(err))
 			}
+			body.Baseline.AutoRetry = clone.RetriesOnItsOwn(d.Sources.Reconcile, rr.Retried, rr.Documented, rp.HeadCommit)
 		}
 		out.Repos = append(out.Repos, body)
 	}

@@ -1442,8 +1442,9 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	keep := page.RepoMap
 	switch {
 	case res.Map == nil && keep == nil:
+		// Recorded with the basis like a map: the model is not asked again
+		// for the same text (a retry per run otherwise, forever).
 		w.log.InfoContext(ctx, at+": none drawn")
-		return w.finish(ctx, r, plan)
 	case res.Map == nil:
 		w.log.InfoContext(ctx, at+": no change")
 	default:

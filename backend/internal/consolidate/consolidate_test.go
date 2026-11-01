@@ -839,6 +839,21 @@ func TestDescribe(t *testing.T) {
 // A statement and a page are as long as their subject needs: a repository
 // text and a project summary of 100000 runes each are taken, and the
 // chars stored are the prose runes.
+// A file list stored so stays when an edit returns it unchanged, a path
+// with a space included: only a new or changed list loses a bad path.
+func TestFoldKeepsAStoredFileList(t *testing.T) {
+	st := newFakeStore()
+	page := existingRepoPage()
+	page.Statements[0].Files = []string{"docs/Design Notes.md"}
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an, neu.", Files: []string{"docs/Design Notes.md"}}},
+		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || !slices.Equal(st.revisions[0].Statements[0].Files, []string{"docs/Design Notes.md"}) {
+		t.Fatalf("revisions = %+v, want the stored file kept", st.revisions)
+	}
+}
+
 func TestFoldLongDescriptionsTaken(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()

@@ -93,16 +93,19 @@ type Page struct {
 	// RepoMap is a repository page's map of itself, nil on a project page
 	// and on a repository page no run's map step has drawn yet.
 	RepoMap *diagram.Diagram
-	// RepoMapBasis is the description RepoMap was drawn from, as the map
-	// step hashed it; "" with no map. A basis that no longer matches the
-	// page's text is a map due again.
+	// RepoMapBasis is the description the map step last answered for, as
+	// it hashed it: RepoMap drawn from it, or none when the model drew none;
+	// "" before any answer. A basis that no longer matches the page's text
+	// is a map due again.
 	RepoMapBasis string
 }
 
-// MapStands reports whether a repository page's map was drawn from its
-// description as it stands: then a run has nothing new to draw from.
+// MapStands reports whether the map step answered for a repository page's
+// description as it stands, a map drawn or none (a model that drew none
+// for this text is not asked again until it changes): then a run has
+// nothing new to draw from.
 func (p Page) MapStands() bool {
-	return p.RepoMap != nil && p.RepoMapBasis == p.MapBasis()
+	return p.RepoMapBasis != "" && p.RepoMapBasis == p.MapBasis()
 }
 
 // MapBasis is the description a repository map is drawn from, as a hash:

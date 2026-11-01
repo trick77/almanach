@@ -524,8 +524,9 @@ function RepoRow({
   // last run skipped parts: those it reads again.
   const upToDate =
     documented &&
-    r.baseline?.documented_commit === r.head_commit &&
-    r.baseline.skipped === 0;
+    r.baseline !== null &&
+    r.baseline.documented_commit === r.head_commit &&
+    !leftParts(r.baseline);
   const describe = async (mode: "reconcile" | "full") => {
     setSending(true);
     try {
@@ -726,16 +727,21 @@ function BaselineCell({ b }: { b: Baseline | null }) {
             )}
           </div>
         ))}
-      {b.state === "done" &&
-        b.skipped_parts.some((p) => p.reason !== "gone") && (
-          <div className="mt-0.5 max-w-[190px] text-[11.5px] text-faint">
-            {b.trigger === "retry"
-              ? S.baseline.retryManual
-              : S.baseline.retryAuto}
-          </div>
-        )}
+      {b.state === "done" && leftParts(b) && (
+        <div className="mt-0.5 max-w-[190px] text-[11.5px] text-faint">
+          {b.auto_retry ? S.baseline.retryAuto : S.baseline.retryManual}
+        </div>
+      )}
     </>
   );
+}
+
+/** leftParts reports whether a run skipped a part worth reading again: any
+ *  but a subject gone. A run from before its parts were named counts its
+ *  skipped number. The poller asks the same. */
+function leftParts(b: Baseline): boolean {
+  if (b.skipped_parts.length === 0) return b.skipped > 0;
+  return b.skipped_parts.some((p) => p.reason !== "gone");
 }
 
 /** maxSkipNames is how many names a reason's line shows before it counts

@@ -822,7 +822,8 @@ func TestRun_Reconcile(t *testing.T) {
 	}
 
 	// The same quiet reconcile after a run that skipped its project step
-	// folds the project nonetheless.
+	// folds the project nonetheless; the map step that drew none for this
+	// text is not asked again.
 	q := newWorld(t, 16)
 	skipped := runPlan{Plan: baseline.Plan{Subjects: old.Subjects, Steps: map[baseline.Part]baseline.Skip{baseline.PartProject: baseline.SkipFailed}}}
 	raw, _ = json.Marshal(skipped)
@@ -832,7 +833,7 @@ func TestRun_Reconcile(t *testing.T) {
 	q.queue(store.RunReconcile, older40)
 	q.models.project = inference.DescriptionResult{Call: called}
 	q.w.drain(context.Background())
-	if r := q.run(); r.State != store.RunDone || r.Calls != 2 || q.st.calls[0].Purpose != store.PurposeProject || q.st.calls[1].Purpose != store.PurposeRepoMap {
+	if r := q.run(); r.State != store.RunDone || r.Calls != 1 || q.st.calls[0].Purpose != store.PurposeProject {
 		t.Fatalf("quiet reconcile after a skipped project = %+v", r)
 	}
 
@@ -1219,10 +1220,13 @@ func TestRun_RepoMapStep(t *testing.T) {
 		"calls spent":    {3, true, false, stored, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, stored, "skipped: the run's calls are spent"},
 		"no description": {16, false, false, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, nil, "no repository description"},
 		// Drawn from the text as it stands: no call. Missing: drawn.
-		"stands":        {16, true, true, stored, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, stored, "drawn from the description as it stands"},
-		"no map yet":    {16, true, false, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, true, true, drawnRepoMap(), "repository map: drawn"},
-		"none, no map":  {16, true, false, nil, inference.RepoMapResult{Call: called}, true, false, nil, "repository map: none drawn"},
-		"stale on null": {16, true, false, stored, inference.RepoMapResult{Call: called}, true, true, stored, "no change"},
+		"stands":     {16, true, true, stored, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, stored, "drawn from the description as it stands"},
+		"no map yet": {16, true, false, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, true, true, drawnRepoMap(), "repository map: drawn"},
+		// None drawn is an answer: recorded with the basis, never asked
+		// again for the same text.
+		"none, no map":   {16, true, false, nil, inference.RepoMapResult{Call: called}, true, true, nil, "repository map: none drawn"},
+		"declined holds": {16, true, true, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, nil, "drawn from the description as it stands"},
+		"stale on null":  {16, true, false, stored, inference.RepoMapResult{Call: called}, true, true, stored, "no change"},
 	} {
 		x := newWorld(t, c.calls)
 		var logs strings.Builder
@@ -1231,7 +1235,7 @@ func TestRun_RepoMapStep(t *testing.T) {
 		if c.page {
 			p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.",
 				Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T"}}, RepoMap: c.stored}
-			if c.stored != nil {
+			if c.stored != nil || c.current {
 				p.RepoMapBasis = "drawn from an older text"
 				if c.current {
 					p.RepoMapBasis = p.MapBasis()

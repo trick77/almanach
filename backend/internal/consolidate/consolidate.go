@@ -578,10 +578,13 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 		}
 		// No cap on a name or on the file count: a statement is never left
 		// out for its size (user, 2026-11-01). A path no tree can hold
-		// (badPath) leaves the file list, the statement kept.
-		if bad := badPaths(s.Files); len(bad) > 0 {
-			s.Files = slices.DeleteFunc(s.Files, func(f string) bool { return slices.Contains(bad, f) })
-			leftOut.paths = append(leftOut.paths, fmt.Sprintf("%q (%s)", s.Name, strings.Join(bad, ", ")))
+		// leaves a new or changed file list, the statement kept; a list
+		// stored so stays as it is.
+		if old == nil || !slices.Equal(old.Files, s.Files) {
+			var bad []string
+			if s.Files, bad = splitPaths(s.Files); len(bad) > 0 {
+				leftOut.paths = append(leftOut.paths, fmt.Sprintf("%q (%s)", s.Name, strings.Join(bad, ", ")))
+			}
 		}
 		// A returned flow loses its self and repeated edges first, as the
 		// map does: one such edge cost a whole diagram.
@@ -776,16 +779,18 @@ func check(summary string, statements []store.Statement) (int, string) {
 	return prose(summary, statements), ""
 }
 
-// badPaths is the paths in files no tree can hold: over pathMaxChars or
-// with whitespace.
-func badPaths(files []string) []string {
-	var bad []string
+// splitPaths parts files, in one pass, into the paths a tree can hold and
+// those it cannot: over pathMaxChars or with whitespace.
+func splitPaths(files []string) (kept, bad []string) {
+	kept = make([]string, 0, len(files))
 	for _, f := range files {
 		if utf8.RuneCountInString(f) > pathMaxChars || strings.ContainsAny(f, " \t\n") {
 			bad = append(bad, f)
+			continue
 		}
+		kept = append(kept, f)
 	}
-	return bad
+	return kept, bad
 }
 
 // sameStatement compares what a reader sees of a statement: its id, kind,

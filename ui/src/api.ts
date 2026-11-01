@@ -306,6 +306,9 @@ export interface Baseline {
   finished_at: string | null;
   documented_commit: string;
   documented_at: string | null;
+  /** The poller reads what a done run skipped again on its own; false,
+   *  only a button does. */
+  auto_retry: boolean;
 }
 
 export interface SourceDetail {

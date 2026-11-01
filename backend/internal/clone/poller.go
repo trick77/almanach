@@ -13,11 +13,13 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
@@ -40,7 +42,7 @@ type Store interface {
 	MarkRepoReady(ctx context.Context, key, slug, branch, head string) error
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
-	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, int, bool, error)
+	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, store.RunStreak, bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
 	RepoIDs(ctx context.Context, key, slug string) (projectID, repoID int64, ok bool, err error)
@@ -119,6 +121,11 @@ type Poller struct {
 	// by cur, which Remove takes before it waits on disk.
 	cur     sync.Mutex
 	current inFlight
+	// verdicts keeps unfinished's answer per repository for its last run.
+	verdicts struct {
+		sync.Mutex
+		byRepo map[string]verdict
+	}
 }
 
 type inFlight struct {
@@ -377,14 +384,16 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 // when the head is off the documented commit and the last run is older
 // than the interval, and a failed run again, in its own mode, after
 // retryAfter, at most maxRetries times in a row; past that the failed
-// repository is back on the reconcile interval. A done run that skipped
-// parts, or left the repository page without a map drawn from its text
-// (a page described before maps existed, a map step skipped), gets one
-// reconcile after retryAfter, whatever the head: it reads the skipped
-// parts again and draws the map, the head unchanged. Once: a retry that
-// skips again waits for the interval. A repository already cloned when the
-// baseline shipped has no run at all and waits for its button. A run
-// already open is no failure.
+// repository is back on the reconcile interval. A done run at the head
+// that skipped parts (a subject gone aside), or left the repository page
+// without a map drawn from its text (a page described before maps
+// existed, a map step skipped), is retried too: a reconcile at the same
+// commit, which reads the skipped parts again and draws the map, after
+// retryAfter, while fewer than maxRetries retries ran in a row and the
+// reconcile interval is on (RetriesOnItsOwn). A head that moved waits for
+// the interval, which reads the skipped parts with the changes. A
+// repository already cloned when the baseline shipped has no run at all
+// and waits for its button. A run already open is no failure.
 func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	if p.Describe.Wake == nil {
 		return
@@ -392,7 +401,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	key, slug := j.Source.ProjectKey, j.Repo.Slug
 	mode, trigger, base := store.RunFull, store.TriggerFirstReady, ""
 	if j.Repo.HeadCommit != "" {
-		last, failed, ok, err := p.Store.LastRun(ctx, key, slug)
+		last, streak, ok, err := p.Store.LastRun(ctx, key, slug)
 		if err != nil || !ok || last.FinishedAt == nil {
 			// No run yet (cloned before the baseline: its button's), or
 			// one still open.
@@ -410,7 +419,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 		}
 		since := p.Now().Sub(*last.FinishedAt)
 		switch {
-		case last.State == store.RunFailed && since >= p.retryAfter() && failed <= maxRetries:
+		case last.State == store.RunFailed && since >= p.retryAfter() && streak.Failed <= maxRetries:
 			// A failed run, first, reconcile or a button's, is tried again
 			// in its own mode whatever the head, a bounded number of
 			// times: a failure that is permanent (a repository too large
@@ -423,11 +432,11 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 				// afresh.
 				mode = store.RunFull
 			}
-		case last.State == store.RunDone && since >= p.retryAfter() && last.Trigger != store.TriggerRetry && p.unfinished(ctx, last, key, slug):
+		case last.State == store.RunDone && since >= p.retryAfter() && RetriesOnItsOwn(p.Describe.Reconcile, streak.Retried, doc.Commit, head) &&
+			p.unfinished(ctx, last, key, slug):
 			// Skipped parts and a missing map are never left for a head
 			// that may not move again: the last run's skipped names are
-			// read again, the map drawn. A run whose only skip was a
-			// subject gone reads nothing and ends without a call.
+			// read again, the map drawn, nothing else read.
 			mode, trigger, base = store.RunReconcile, store.TriggerRetry, doc.Commit
 		case p.Describe.Reconcile <= 0 || since < p.Describe.Reconcile:
 			return
@@ -453,20 +462,60 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	p.Describe.Wake()
 }
 
-// unfinished reports whether a done run left work behind: parts skipped,
-// or a repository page whose map was not drawn from its text. Read last,
-// after the cheap checks: a page read per repository per cycle otherwise.
-// A failed read counts as finished: the next cycle asks again.
+// RetriesOnItsOwn reports whether the poller reads a done run's skipped
+// parts again by itself: the reconcile interval on (zero: buttons only),
+// fewer than maxRetries retries in a row, the head still the documented
+// commit. The source page says so with the same rule.
+func RetriesOnItsOwn(reconcile time.Duration, retried int, documented, head string) bool {
+	return reconcile > 0 && retried < maxRetries && documented != "" && documented == head
+}
+
+// unfinished reports whether a done run left work behind: a part skipped
+// for any reason but a subject gone (nothing to read again), or a
+// repository page whose map was not drawn from its text. Asked after the
+// cheap checks, and once per run: a run's verdict is kept by repository,
+// so the page is read once, not every cycle. A failed read counts as
+// finished and is not kept: the next cycle asks again.
 func (p *Poller) unfinished(ctx context.Context, last store.BaselineRun, key, slug string) bool {
-	if last.Skipped > 0 {
+	if leftParts(last) {
 		return true
+	}
+	p.verdicts.Lock()
+	v, seen := p.verdicts.byRepo[key+"/"+slug]
+	p.verdicts.Unlock()
+	if seen && v.run == last.ID {
+		return v.unfinished
 	}
 	page, ok, err := p.Store.CurrentPage(ctx, store.ScopeRepository, key, slug)
 	if err != nil {
 		p.logRunCheck(err, key, slug)
 		return false
 	}
-	return ok && !page.MapStands()
+	unfinished := ok && !page.MapStands()
+	p.verdicts.Lock()
+	if p.verdicts.byRepo == nil {
+		p.verdicts.byRepo = map[string]verdict{}
+	}
+	p.verdicts.byRepo[key+"/"+slug] = verdict{run: last.ID, unfinished: unfinished}
+	p.verdicts.Unlock()
+	return unfinished
+}
+
+// verdict is unfinished's answer for one run of a repository.
+type verdict struct {
+	run        int64
+	unfinished bool
+}
+
+// leftParts reports whether a run skipped a part worth reading again: any
+// but a subject gone. A plan that does not read, or one from before its
+// parts were named, counts its skipped number.
+func leftParts(r store.BaselineRun) bool {
+	parts, err := baseline.RunSkips(r.Plan)
+	if err != nil || len(parts) == 0 {
+		return r.Skipped > 0
+	}
+	return slices.ContainsFunc(parts, func(s baseline.SkippedPart) bool { return s.Reason != baseline.SkipGone })
 }
 
 // retryWait is how long a failed run waits before it is queued again:

@@ -68,4 +68,4 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  Skipped part / missing map: poller retries a done run once, any head; UI names errors, retry.
+  Skipped part / missing map at head: poller retries ≤3 in a row, interval on; UI names errors, retry.

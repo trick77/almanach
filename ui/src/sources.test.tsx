@@ -147,6 +147,7 @@ const detail: SourceDetail = {
         finished_at: when,
         documented_commit: "5c3b2a1abcdef",
         documented_at: when,
+        auto_retry: false,
       },
     },
     {
@@ -316,6 +317,7 @@ describe("SourcePage baseline", () => {
         baseline: {
           ...run,
           skipped: 8,
+          auto_retry: true,
           // A run from before pages lost their ceiling.
           // TRANSITIONAL(ceilings): Remove when SkipReason drops "ceiling".
           skipped_parts: [
@@ -403,6 +405,9 @@ describe("SourcePage baseline", () => {
     const skipped = [
       { part: "subject" as const, name: "Auth", reason: "refused" as const },
     ];
+    const gone = [
+      { part: "subject" as const, name: "Alt", reason: "gone" as const },
+    ];
     const repos = [
       {
         ...detail.repos[0],
@@ -420,21 +425,33 @@ describe("SourcePage baseline", () => {
           trigger: "retry" as const,
         },
       },
+      {
+        ...detail.repos[0],
+        slug: "gone",
+        baseline: {
+          ...run,
+          documented_commit: head,
+          skipped: 1,
+          skipped_parts: gone,
+        },
+      },
     ];
     serve({ "sources/werkzeuge": { ...detail, repos } });
     render(<SourcePage projectKey="werkzeuge" />);
-    const [done, left] = await screen.findAllByText("Aktualisieren");
+    // Rows alphabetical: done, gone, left.
+    const [done, goneBtn, left] = await screen.findAllByText("Aktualisieren");
     expect(done).toBeDisabled();
     expect(left).toBeEnabled();
+    // A subject gone has nothing to read again.
+    expect(goneBtn).toBeDisabled();
     expect(
       screen.getByText("Fehler: Antwort regelwidrig, verworfen: Auth"),
     ).toBeInTheDocument();
-    // The poller retried once already: the button is the way now.
-    expect(
-      screen.getByText(
-        "Schon einmal wiederholt: Aktualisieren liest sie erneut.",
-      ),
-    ).toBeInTheDocument();
+    // No retry on its own (auto_retry false): the button is the way, and
+    // only once, not under the gone subject.
+    expect(screen.getAllByText("Aktualisieren liest sie erneut.")).toHaveLength(
+      1,
+    );
   });
 
   it("saves the access form without a switch for the runs", async () => {

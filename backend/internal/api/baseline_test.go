@@ -167,6 +167,11 @@ func TestSourceBody_Baseline(t *testing.T) {
 	if got := string(b["skipped_parts"]); got != `[{"part":"subject","name":"Auth","reason":"calls"}]` {
 		t.Errorf("skipped_parts = %s", got)
 	}
+	// The handler's poller has no reconcile interval: buttons only, no
+	// retry on its own.
+	if got := string(b["auto_retry"]); got != "false" {
+		t.Errorf("auto_retry = %s, want false with the interval off", got)
+	}
 
 	// A key noergler spells otherwise would have every note ignored.
 	fs.noerglerKeys = []string{"PLAT"}
