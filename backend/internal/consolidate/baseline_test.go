@@ -1279,9 +1279,8 @@ func TestProblemsFor(t *testing.T) {
 	}
 }
 
-// A hallucinated id to confirm or drop refers to nothing: the step leaves
-// it out with a log line and applies the rest; an unknown id on an edit
-// still refuses the patch.
+// A hallucinated id to confirm, drop or edit refers to nothing: the step
+// leaves it out with a log line and applies the rest.
 func TestRun_UnknownIDsLeftOut(t *testing.T) {
 	var buf strings.Builder
 	x := newWorld(t, 16)
@@ -1304,8 +1303,8 @@ func TestRun_UnknownIDsLeftOut(t *testing.T) {
 	if !strings.Contains(buf.String(), `the overview: unknown ids left out" ids="[s77 8b0d8f4a]"`) {
 		t.Errorf("log lacks the unknown ids:\n%s", buf.String())
 	}
-	if !strings.Contains(buf.String(), "Anmeldung skipped: patch refused: unknown statement id s9") {
-		t.Errorf("an invented edit was not refused:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "Anmeldung: edit left out: s9 (unknown id)") || strings.Contains(buf.String(), "Anmeldung skipped") {
+		t.Errorf("an invented edit was not left out alone:\n%s", buf.String())
 	}
 }
 

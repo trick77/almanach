@@ -14,20 +14,25 @@ import (
 // of its files. An edit of one may correct its text and add files, but
 // keeps every file of it the tree still has: otherwise the next run would
 // find it resting on nothing and drop it after all. Anything else rejects
-// the patch whole, like an edit of an id the page does not have: that is a
-// statement invented. An unknown id to drop or confirm refers to nothing:
-// it is left out, named in Unknown, and the rest of the patch applies.
+// the patch whole. An edit of an id the page does not have, or of one an
+// earlier edit already took, costs only itself (user, 2026-11-01: an eval
+// lost two parts to one such id each): left out, named in BadEdits, the
+// statement as stored or as first edited. An unknown id to drop or confirm
+// refers to nothing: it is left out, named in Unknown, and the rest of the
+// patch applies.
 
 // Applied is a patch turned into the whole proposal a fold checks: every
 // statement of the page in its order with edits in place and drops gone,
 // then the new ones (ID nil). Checked says per statement that the step read
 // the code behind it (edited, new or confirmed); Summary nil keeps the
-// summary. Unknown is the drop and confirmed ids the page does not have.
+// summary. Unknown is the drop and confirmed ids the page does not have;
+// BadEdits the edits left out, by id and reason.
 type Applied struct {
 	Statements []inference.Statement
 	Checked    []bool
 	Summary    *string
 	Unknown    []string
+	BadEdits   []string
 }
 
 // ApplyPatch applies a step's patch to the current statements. exists says
@@ -39,17 +44,19 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		byID[s.ID] = s
 	}
 	edits := map[string]inference.Statement{}
-	var unknown []string
+	var unknown, bad []string
 	for _, st := range p.Statements {
 		if st.ID == nil || *st.ID == "" {
 			return Applied{}, "an edit without a statement id"
 		}
 		id := *st.ID
 		if _, ok := byID[id]; !ok {
-			return Applied{}, "unknown statement id " + id
+			bad = append(bad, UnknownEdit(id))
+			continue
 		}
 		if _, twice := edits[id]; twice {
-			return Applied{}, "statement id used twice " + id
+			bad = append(bad, TwiceEdit(id))
+			continue
 		}
 		if old := byID[id]; FromPR(old) {
 			if lost := shed(old.Files, st.Files, exists); lost != "" {
@@ -85,7 +92,7 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		confirmed[id] = true
 	}
 
-	out := Applied{Unknown: unknown}
+	out := Applied{Unknown: unknown, BadEdits: bad}
 	if p.Summary != nil && strings.TrimSpace(*p.Summary) != "" {
 		out.Summary = p.Summary
 	}
@@ -109,6 +116,13 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 	}
 	return out, ""
 }
+
+// UnknownEdit names an edit of an id the page lacks, left out, for
+// BadEdits and a fold's log alike.
+func UnknownEdit(id string) string { return id + " (unknown id)" }
+
+// TwiceEdit names an edit of an id an earlier edit took, left out.
+func TwiceEdit(id string) string { return id + " (id used twice)" }
 
 // FromPR reports whether a pull request is among a statement's sources.
 func FromPR(s store.Statement) bool {

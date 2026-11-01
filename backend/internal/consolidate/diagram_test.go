@@ -117,6 +117,29 @@ func TestFoldStatementDiagram(t *testing.T) {
 	}
 }
 
+// A statement's flow loses its self and repeated edges, logged, and is
+// kept: like the map, one such edge no longer costs the diagram.
+func TestFoldFlowSelfAndRepeatedEdgesTakenOut(t *testing.T) {
+	flow := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR",
+		Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}, {ID: "b", Label: "B", Shape: "step"}},
+		Edges: []diagram.Edge{{From: "a", To: "a", Head: "end"}, {From: "a", To: "b", Label: "Strasse", Head: "end"}, {From: "a", To: "b", Label: " Straße ", Head: "end"}}}
+	st := newFakeStore()
+	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{Kind: "component", Name: "Ablage", Text: "Legt ab.", Diagram: flow}}}, nil)})
+	var logs strings.Builder
+	w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	w.Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("revisions = %+v", st.revisions)
+	}
+	if d := st.revisions[0].Statements[0].Diagram; d == nil || len(d.Edges) != 1 || d.Edges[0].To != "b" {
+		t.Errorf("diagram = %+v, want the one edge a → b", d)
+	}
+	if !strings.Contains(logs.String(), `self or repeated edges taken out: \"Ablage\" (a → a, a → b)`) {
+		t.Errorf("log lacks the edges taken out:\n%s", logs.String())
+	}
+}
+
 // {"kind": "none"} removes a statement's diagram and keeps the statement;
 // on a new statement it is no diagram.
 func TestFoldNoneRemovesTheDiagram(t *testing.T) {

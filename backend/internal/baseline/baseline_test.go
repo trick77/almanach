@@ -352,10 +352,8 @@ func TestApplyPatch_Rejections(t *testing.T) {
 		exists func(string) bool
 		reason string
 	}{
-		"invented id":           {inference.Patch{Statements: []inference.Statement{{ID: id("s9"), Name: "x", Text: "y"}}}, everything, "unknown statement id s9"},
 		"edit without an id":    {inference.Patch{Statements: []inference.Statement{{Name: "x", Text: "y"}}}, everything, "an edit without a statement id"},
 		"edit with an empty id": {inference.Patch{Statements: []inference.Statement{{ID: id(""), Name: "x", Text: "y"}}}, everything, "an edit without a statement id"},
-		"edited twice":          {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}, {ID: id("s3")}}}, everything, "used twice s3"},
 		"edited and dropped":    {inference.Patch{Statements: []inference.Statement{{ID: id("s3")}}, Drop: []string{"s3"}}, everything, "both edited and dropped"},
 		"PR fact, files there":  {inference.Patch{Drop: []string{"s1"}}, everything, "drop of s1, which a pull request taught"},
 		"PR fact, no files":     {inference.Patch{Drop: []string{"s4"}}, inTree(), "drop of s4"},
@@ -376,6 +374,13 @@ func TestApplyPatch_Rejections(t *testing.T) {
 	a, reason = ApplyPatch(page(), inference.Patch{Drop: []string{"s9", "s3"}, Confirmed: []string{"8b0d8f4a", "s1"}}, everything)
 	if reason != "" || !reflect.DeepEqual(a.Unknown, []string{"s9", "8b0d8f4a"}) || len(a.Statements) != 3 || !a.Checked[0] {
 		t.Errorf("unknown drop and confirm ids: reason %q, unknown %v, %d statements, checked %v", reason, a.Unknown, len(a.Statements), a.Checked)
+	}
+	// An edit of an id the page lacks, or of one already edited, costs only
+	// itself: the first edit of s3 counts.
+	a, reason = ApplyPatch(page(), inference.Patch{Statements: []inference.Statement{
+		{ID: id("s9"), Name: "x", Text: "y"}, {ID: id("s3"), Name: "Erste", Text: "y"}, {ID: id("s3"), Name: "Zweite", Text: "y"}}}, everything)
+	if reason != "" || !reflect.DeepEqual(a.BadEdits, []string{"s9 (unknown id)", "s3 (id used twice)"}) || len(a.Statements) != 4 || a.Statements[2].Name != "Erste" {
+		t.Errorf("bad edits: reason %q, left out %v, statements %+v", reason, a.BadEdits, a.Statements)
 	}
 	// An edit may add files and correct the text, keeping the ones the tree
 	// has, however spelled; a file that left the tree may go.

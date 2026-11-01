@@ -115,12 +115,13 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 	return checkFlow(d, caps)
 }
 
-// RepairMap takes out of a proposed map the edges that say nothing: one
-// pointing at its own node, and one repeating an edge before it (same ends,
-// same label). One such edge refused a whole map once ("almanach →
-// almanach"); every other rule still refuses it in CheckMap. A copy, with
-// the edges taken out named; nil stays nil.
-func RepairMap(d *ir.Diagram) (*ir.Diagram, []string) {
+// RepairEdges takes out of a proposed flow, the map or a statement's, the
+// edges that say nothing: one pointing at its own node, and one repeating
+// an edge before it (same ends, same label). One such edge refused a whole
+// map once ("almanach → almanach"); every other rule still refuses it in
+// CheckMap and CheckDiagram. A copy, with the edges taken out named; nil
+// stays nil.
+func RepairEdges(d *ir.Diagram) (*ir.Diagram, []string) {
 	if d == nil {
 		return nil, nil
 	}

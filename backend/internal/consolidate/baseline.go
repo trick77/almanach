@@ -656,6 +656,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, name, "patch refused: "+reason)
 	}
+	leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
 	summary := page.Summary
 	if applied.Summary != nil {
 		summary = lang.SwissSS(strings.TrimSpace(*applied.Summary))
@@ -1251,6 +1252,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 		if reason != "" {
 			return nil, leftOutParts{}, 0, reason, ""
 		}
+		leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
 		chars, capReason := check(summary, statements, w.limits.ProjectMaxStatements, w.limits.ProjectMaxChars)
 		return statements, leftOut, chars, "", capReason
 	}
@@ -1303,7 +1305,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 
 // revisionMap is the map a project revision carries. A project too large for
 // one gets none. Otherwise the returned map, its self and repeated edges
-// and its departed repositories taken out (RepairMap, DropDeparted), its
+// and its departed repositories taken out (RepairEdges, DropDeparted), its
 // repository nodes labelled by slug, is held to the map's rules and the
 // drawing's limits (not the
 // statement diagrams' caps); one that fails, or none returned, keeps the
@@ -1320,7 +1322,7 @@ func (w *Worker) revisionMap(ctx context.Context, page store.Page, proposed *dia
 		w.log.WarnContext(ctx, at+": none returned, the stored one kept")
 		return w.carriedMap(ctx, page, slugs)
 	}
-	repaired, dropped := baseline.RepairMap(proposed)
+	repaired, dropped := baseline.RepairEdges(proposed)
 	if len(dropped) > 0 {
 		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
 	}

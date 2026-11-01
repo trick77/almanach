@@ -151,7 +151,7 @@ statements in two lists: `statements`, every statement it keeps or edits,
 each with its `id` (the schema requires the string), and `added`, the new
 ones, which have no id field at all. A model asked to write `null` for a
 new statement's id numbered it anyway (`s1` on an empty page, `s36` on one
-up to `s35`) and lost the rewrite to the invented-id rule; with no field to
+up to `s35`) and lost the rewrite to the invented-id rule then; with no field to
 write, it cannot. The code numbers a new statement. On a page without
 statements the model still put new ones in `statements` with ids (an
 eval's project step, `s2`); there is nothing to edit there, so on every
@@ -164,7 +164,10 @@ The answer is then held to rules the model cannot bend:
   this pull request only when its text or name changed; a new statement
   starts with this pull request, numbered past every id the page's history
   ever used, so an id dropped in one fold never names another fact later.
-  An id the page does not have, or one used twice, rejects the rewrite.
+  An edit of an id the page does not have (invented), or of one an earlier
+  edit took, is left out and logged ("edit left out: s9 (unknown id)"); the
+  first edit of an id counts, the rest of the answer stands. An answer of
+  nothing else would empty the page and is rejected.
 - Ceilings: statement count per scope and runes per whole description
   (the summary and every statement's name and text). No statement has a
   length cap of its own: a description is documentation, each statement as
@@ -583,7 +586,8 @@ rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
 sequence or an entity model, and `baseline/diagram.go` holds it to code's
 rules like a statement: every arrow and message end declared, no self edge
 in a flow or an entity model (a sequence may message itself, rongo draws
-it), nothing twice, unique ids, known shapes, labels present, Swiss and
+it), nothing twice (a statement's flow, like the map, first loses its self
+and repeated edges, logged: they say nothing), unique ids, known shapes, labels present, Swiss and
 capped, the nodes and edges per diagram from config, within the drawing's
 own limits (`diagram.DrawMax*`). A statement diagram that breaks a rule,
 or one added past the page's count (`ALMANACH_MAX_DIAGRAMS`), is left out
@@ -885,8 +889,9 @@ so the choice is not undone as a cleanup.
   model asked to maintain them would invent PR numbers. So the model
   returns statements with their ids and code carries the sources forward,
   appending the current PR when the text changed. An edited id the page
-  never had is rejected as invented; new statements come in a list with
-  no id field, numbered by code; a dropped id is never reissued.
+  never had is invented and never accepted: that edit is left out, not the
+  answer; new statements come in a list with no id field, numbered by code;
+  a dropped id is never reissued.
 - **Caps are enforced in code, and a rewrite over a ceiling is rejected
   whole.** The prompt tells the model the numbers, but prose grows unless
   something refuses it. Truncating would produce a description that lies
@@ -1184,13 +1189,15 @@ the reason in the log and the page unchanged:
   rules for a PR statement read the whole tree.
 - A statement taught by a PR whose merge commit the run's commit does not
   hold is read-only for that run.
-- A patch: an unnamed id stays; an edit of an id the page lacks (invented),
-  an edit without an id, an id edited twice, edited and dropped, or
-  confirmed and dropped rejects it. An unknown id to drop or confirm
-  refers to nothing: it is left out with a log line ("unknown ids left
-  out: ...") and the rest applies. Nothing unknown is ever accepted, so the
-  invented-id rule holds; only its blast radius is narrower, one
-  hallucinated hash in `confirmed` no longer costing a part. A PR
+- A patch: an unnamed id stays; an edit without an id, edited and
+  dropped, or confirmed and dropped rejects it. An edit of an id the page
+  lacks (invented) or of one an earlier edit took is left out with a log
+  line ("edit left out: s23 (unknown id), s3 (id used twice)"), the
+  statement as stored or as first edited; an unknown id to drop or confirm
+  refers to nothing and is left out too ("unknown ids left out: ..."); the
+  rest applies. Nothing unknown is ever accepted, so the invented-id rule
+  holds; only its blast radius is narrower: one made-up id cost a whole
+  part twice in one eval (user, 2026-11-01). A PR
   statement is dropped only when its files left the tree, and an edit of
   it keeps the files the tree still has.
 - A run that ends with no revision still records its commit as documented.
