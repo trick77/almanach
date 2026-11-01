@@ -188,7 +188,7 @@ func sourcesHandlerWith(t *testing.T, fs *fakeSources, st *fakeStore, w *fakeWak
 	}
 	nudger, checkouts := &fakeNudger{}, &fakeCheckouts{}
 	Register(srv, Deps{Store: st, Keys: keysFile(t), Worker: w, AuthMode: config.AuthNone, ProblemWindow: 90, Log: discard,
-		Sources: &SourcesDeps{Store: fs, Poller: nudger, Git: checkouts, Key: key}})
+		Sources: &SourcesDeps{Store: fs, Poller: nudger, Git: checkouts, Key: key, DefaultHost: "https://forge.example.invalid"}})
 	return srv.Handler(), nudger, checkouts
 }
 
@@ -215,6 +215,7 @@ func TestSources_CreateValidatesAndSeals(t *testing.T) {
 		{`{"project_key":"X","kind":"svn"}`, "kind"},
 		{`{"project_key":"X","kind":"bitbucket"}`, "host"},
 		{`{"project_key":"X","kind":"bitbucket","host":"http://forge.example.invalid"}`, "host"},
+		{`{"project_key":"X","kind":"bitbucket","host":"https://forge.example.invalid?"}`, "host"},
 		{`{"project_key":"X","kind":"static","host":"https://x"}`, "host"},
 		{`{"project_key":"X","kind":"static","token_auth":"digest"}`, "token_auth"},
 		{`{"project_key":"X","kind":"bitbucket","host":"https://x","token_user":"me"}`, "token_user"},
@@ -258,7 +259,7 @@ func TestSources_CreateValidatesAndSeals(t *testing.T) {
 	}
 
 	code, body = do(t, h, http.MethodGet, "/api/sources", "", "", nil)
-	if code != 200 || string(body["enabled"]) != "true" {
+	if code != 200 || string(body["enabled"]) != "true" || field(t, body, "default_host") != "https://forge.example.invalid" {
 		t.Fatalf("list: %d %v", code, body)
 	}
 	var list []map[string]any

@@ -2,10 +2,6 @@
 // never the sharp s), generic masculine. There is no second language: the
 // readers are German speaking, and the wiki itself is German.
 
-// How a source's token is kept, the end of every kind's token hint.
-const tokenKept =
-  "Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.";
-
 export const S = {
   app: "Almanach",
   nav: {
@@ -70,7 +66,7 @@ export const S = {
     noNotes: "Noch keine Notiz.",
     map: "Systemkarte",
     noMap:
-      "Noch keine Systemkarte: sie entsteht beim nächsten Lauf, der dieses Projekt aus dem Code beschreibt.",
+      "Noch keine Systemkarte: sie entsteht beim nächsten Run, der dieses Projekt aus dem Code beschreibt.",
   },
   diagram: {
     titles: {
@@ -186,7 +182,7 @@ export const S = {
       "Token",
       "Repos",
       "Zustand",
-      "Letzter Lauf",
+      "Letzter Run",
     ],
     kind: { bitbucket: "bitbucket", static: "statisch" } as Record<
       string,
@@ -199,7 +195,7 @@ export const S = {
     } as Record<string, string>,
     kindHint: {
       bitbucket:
-        "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Lauf neu gelistet.",
+        "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Run neu gelistet.",
       static:
         "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation. Das Token dafür kommt ins Feld unten.",
     } as Record<string, string>,
@@ -231,14 +227,16 @@ export const S = {
       optional: "(optional)",
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",
       tokenHint: {
-        bitbucket: `Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und klont seine Repositories. ${tokenKept}`,
-        static: `Nur nötig für private Repositories. Ein Token für den ganzen Ordner: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read». ${tokenKept}`,
+        bitbucket:
+          "Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und klont seine Repositories.",
+        static:
+          "Nur nötig für private Repositories. Ein Token für den ganzen Ordner: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read».",
       } as Record<string, string>,
       tokenAs: "Token senden als",
       bearerHint:
-        "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center die sichere Wahl.",
+        "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center.",
       basicHint:
-        "Basic: Benutzername und Token als Authorization-Header für genau diesen einen git-Aufruf, wie bei Bearer, nie in der URL. Für GitHub die übliche Wahl.",
+        "Basic: Benutzername und Token als Basic-Auth-Header. Für GitHub.",
       user: "Benutzername",
       userHint:
         "GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).",
@@ -248,7 +246,7 @@ export const S = {
       replace: "Ersetzen",
       clear: "Löschen",
       storedHint:
-        "Das gespeicherte Token wird nie angezeigt. Ersetzen überschreibt es, Löschen macht die Quelle öffentlich.",
+        "Ersetzen überschreibt das gespeicherte Token, Löschen macht die Quelle öffentlich.",
       newToken: "Neues Token",
       saving: "Speichert …",
     },
@@ -323,8 +321,7 @@ export const S = {
       branchHint:
         "Leer: wird mit ls-remote vom Remote gelesen und hier eingetragen.",
       url: "Clone-URL",
-      urlHint:
-        "Nur https. Das Token der Quelle wird beim Klonen mitgegeben, nie in die URL geschrieben.",
+      urlHint: "Nur https.",
       add: "Hinzufügen und klonen",
     },
     listingError: "Letztes Listing fehlgeschlagen:",
@@ -366,7 +363,7 @@ export const S = {
     },
     auto: "Automatisch beschreiben",
     autoHint:
-      "Ein Repository beim ersten Klon (ein Fehlschlag einen Tag später erneut), danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Knöpfe, für alle Repositories dieser Quelle.",
+      "Ein Repository beim ersten Klon, danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Buttons, für alle Repositories dieser Quelle.",
   },
   faq: {
     title: "FAQ",
@@ -375,7 +372,7 @@ export const S = {
       "Almanach ist das lebende Wiki, das noergler beim Reviewen füttert: nach jedem Review schreibt das Modell eine Notiz, was der Pull Request über das Repository lehrt, und beim Merge kommt sie hierher. Almanach fügt jede Notiz in die Beschreibung des Repositorys und des Projekts ein, als Dokumentation mit Quellen, nie von Hand geschrieben.",
     who: "Wer schreibt hier?",
     whoText:
-      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Klon und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Lauf oder Pull Request. Jede Revision bleibt erhalten.",
+      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Klon und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Run oder Pull Request. Jede Revision bleibt erhalten.",
     sources: "Woher kommt eine Aussage?",
     sourcesText:
       "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",

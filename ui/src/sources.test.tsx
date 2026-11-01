@@ -61,6 +61,7 @@ const when = new Date(2026, 9, 30, 14, 2).toISOString();
 
 const sources: Sources = {
   enabled: true,
+  default_host: "",
   sources: [
     {
       project_key: "SHOP",
@@ -177,7 +178,7 @@ describe("SourcesPage", () => {
   });
 
   it("says when the feature is off", async () => {
-    serve({ sources: { enabled: false, sources: [] } });
+    serve({ sources: { enabled: false, default_host: "", sources: [] } });
     render(<SourcesPage />);
     expect(await screen.findByText(/BACKEND_REPOS_DIR/)).toBeInTheDocument();
     expect(screen.queryByText("Neue Quelle")).not.toBeInTheDocument();
@@ -233,25 +234,26 @@ describe("SourcesPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("creates a source that describes nothing on its own", async () => {
-    const writes = serve({ sources });
+  it("creates a source that describes nothing on its own, on the configured host", async () => {
+    const writes = serve({
+      sources: { ...sources, default_host: "https://forge.example.invalid" },
+    });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
     fireEvent.change(screen.getByPlaceholderText("SHOP"), {
       target: { value: "neu" },
     });
-    fireEvent.change(
+    expect(
       screen.getByPlaceholderText("https://bitbucket.example.invalid"),
-      { target: { value: "https://forge.example.invalid" } },
-    );
+    ).toHaveValue("https://forge.example.invalid");
     const auto = screen.getByLabelText(/Automatisch beschreiben/);
     expect(auto).toBeChecked();
     fireEvent.click(auto);
     fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
     await waitFor(() => expect(writes).toHaveLength(1));
-    expect((writes[0]?.body as { auto_describe: boolean }).auto_describe).toBe(
-      false,
-    );
+    const body = writes[0]?.body as { auto_describe: boolean; host: string };
+    expect(body.auto_describe).toBe(false);
+    expect(body.host).toBe("https://forge.example.invalid");
   });
 });
 
@@ -482,7 +484,7 @@ describe("App with sources", () => {
     vi.unstubAllGlobals();
     serve({
       me,
-      sources: { enabled: false, sources: [] },
+      sources: { enabled: false, default_host: "", sources: [] },
       projects: { projects: [] },
     });
     render(<App />);

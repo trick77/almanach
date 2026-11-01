@@ -17,6 +17,7 @@ import (
 
 	"github.com/trick77/almanach/internal/authroute"
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/gitrepo"
 )
 
 // AuthMode is how the read API knows who asks.
@@ -140,6 +141,9 @@ type Sources struct {
 	// GitCAFile is a PEM bundle for a forge behind an internal CA, handed
 	// to git as GIT_SSL_CAINFO; "" keeps the system store.
 	GitCAFile string
+	// BitbucketHost prefills the host of a new Bitbucket source, trailing
+	// slash trimmed; a source may still name another. "" prefills nothing.
+	BitbucketHost string
 }
 
 // Enabled reports whether clones are configured at all.
@@ -208,10 +212,11 @@ func Load(lookup func(string) string) (*App, error) {
 		},
 		ProblemWindow: positive(r, "BACKEND_PROBLEM_WINDOW_DAYS", 90),
 		Sources: Sources{
-			ReposDir:     r.String("BACKEND_REPOS_DIR", ""),
-			SecretKey:    r.String("BACKEND_SOURCE_TOKEN_KEY", ""),
-			SyncInterval: r.Duration("BACKEND_SYNC_INTERVAL", 30*time.Minute),
-			GitCAFile:    r.String("BACKEND_GIT_CA_FILE", ""),
+			ReposDir:      r.String("BACKEND_REPOS_DIR", ""),
+			SecretKey:     r.String("BACKEND_SOURCE_TOKEN_KEY", ""),
+			SyncInterval:  r.Duration("BACKEND_SYNC_INTERVAL", 30*time.Minute),
+			GitCAFile:     r.String("BACKEND_GIT_CA_FILE", ""),
+			BitbucketHost: strings.TrimRight(r.String("BACKEND_BITBUCKET_HOST", ""), "/"),
 		},
 		Baseline: Baseline{
 			CatalogueModel: r.String("BACKEND_BASELINE_CATALOGUE_MODEL", ""),
@@ -242,6 +247,11 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if app.Limits.DiagramMaxEdges > diagram.DrawMaxEdges {
 		r.Fail("BACKEND_DIAGRAM_MAX_EDGES: at most %d, the most the drawing lays out, got %d", diagram.DrawMaxEdges, app.Limits.DiagramMaxEdges)
+	}
+	// Read only with sources on, so checked only then: a stale value in an
+	// instance without clones costs no startup.
+	if h := app.Sources.BitbucketHost; app.Sources.Enabled() && h != "" && !gitrepo.ValidHost(h) {
+		r.Fail("BACKEND_BITBUCKET_HOST: an https URL without user info, query or fragment, got %q", h)
 	}
 	if app.Baseline.Reconcile < 0 {
 		r.Fail("BACKEND_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
@@ -383,8 +393,8 @@ func (a *App) Summary() string {
 		if catalogue == "" {
 			catalogue = a.Model
 		}
-		sources = fmt.Sprintf("{dir %s, interval %s, token_key %v, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
-			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "",
+		sources = fmt.Sprintf("{dir %s, interval %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
+			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "", a.Sources.BitbucketHost,
 			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
 	}
 	mode := string(a.AuthMode)

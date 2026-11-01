@@ -230,6 +230,8 @@ export interface SourceSummary {
 
 export interface Sources {
   enabled: boolean;
+  /** BACKEND_BITBUCKET_HOST; "" when unset. */
+  default_host: string;
   sources: SourceSummary[];
 }
 

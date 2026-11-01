@@ -81,6 +81,32 @@ func TestLoadOverrides(t *testing.T) {
 	}
 }
 
+func TestBitbucketHost(t *testing.T) {
+	env := minimal()
+	env["BACKEND_REPOS_DIR"] = "/app/repos"
+	env["BACKEND_BITBUCKET_HOST"] = " https://forge.example.invalid/bitbucket/ "
+	app, err := Load(lookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if app.Sources.BitbucketHost != "https://forge.example.invalid/bitbucket" {
+		t.Errorf("BitbucketHost = %q", app.Sources.BitbucketHost)
+	}
+	bads := []string{"http://forge.example.invalid", "forge.example.invalid", "https://me@forge.example.invalid",
+		"https://forge.example.invalid?x=1", "https://forge.example.invalid?", "https://"}
+	for _, bad := range bads {
+		env["BACKEND_BITBUCKET_HOST"] = bad
+		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_BITBUCKET_HOST") {
+			t.Errorf("%q: err = %v", bad, err)
+		}
+	}
+	// Sources off: the value is never read, so never checked.
+	delete(env, "BACKEND_REPOS_DIR")
+	if _, err := Load(lookup(env)); err != nil {
+		t.Errorf("sources off: %v", err)
+	}
+}
+
 const sessionSecret = "0123456789abcdef0123456789abcdef"
 
 func oidcEnv() map[string]string {
