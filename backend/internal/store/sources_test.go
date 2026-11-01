@@ -185,18 +185,26 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 		t.Fatalf("RequestSync moved %d rows, want 1 (ui only)", n)
 	}
 
-	if err := s.MarkSourceListed(ctx, "SHOP", "401 from the API"); err != nil {
+	if err := s.MarkSourceListed(ctx, "SHOP", "401 from the API", false); err != nil {
 		t.Fatal(err)
 	}
 	src, _, _ := s.SourceByKey(ctx, "SHOP")
 	if src.LastError != "401 from the API" || src.LastListedAt != nil {
 		t.Fatalf("after failed listing: %+v", src)
 	}
-	if err := s.MarkSourceListed(ctx, "SHOP", ""); err != nil {
+	if err := s.MarkSourceListed(ctx, "SHOP", "", true); err != nil {
 		t.Fatal(err)
 	}
 	src, _, _ = s.SourceByKey(ctx, "SHOP")
 	if src.LastError != "" || src.LastListedAt == nil {
 		t.Fatalf("after good listing: %+v", src)
+	}
+	// An applied listing that left a repository out: its time and why.
+	if err := s.MarkSourceListed(ctx, "SHOP", "left out: ui", true); err != nil {
+		t.Fatal(err)
+	}
+	src, _, _ = s.SourceByKey(ctx, "SHOP")
+	if src.LastError != "left out: ui" || src.LastListedAt == nil {
+		t.Fatalf("after a listing with conflicts: %+v", src)
 	}
 }

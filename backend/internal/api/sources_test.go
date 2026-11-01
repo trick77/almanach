@@ -99,7 +99,7 @@ func (f *fakeSources) RenameRepo(_ context.Context, key, slug, to, cloneURL stri
 	if f.taken[key+"/"+to] {
 		return store.ErrNameTaken
 	}
-	if rr, ok := f.runs[slug]; ok && rr.Last.Open() {
+	if rr, ok := f.runs[slug]; ok && rr.Last.Open() && cloneURL != "" {
 		return store.ErrRunOpen
 	}
 	for i, r := range f.repos[key] {
@@ -390,6 +390,10 @@ func TestSources_Rename(t *testing.T) {
 	if _, ok := fs.sources["acme"]; !ok {
 		t.Fatal("a refused rename renamed")
 	}
+	// The source sent back whole, its key unchanged, is an access update.
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/acme", "", `{"project_key":"acme","auto_describe":false}`, jsonHdr); code != 200 || fs.sources["acme"].AutoDescribe {
+		t.Errorf("unchanged key with another field: %d %v", code, body)
+	}
 	// A key or slug another had is a 409 on create, not a 500.
 	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"taken","kind":"static"}`, jsonHdr); code != 409 {
 		t.Errorf("new source under a taken key: %d, want 409", code)
@@ -423,8 +427,8 @@ func TestSources_Rename(t *testing.T) {
 		}
 	}
 	fs.runs = map[string]store.RepoRuns{"core": {Last: store.BaselineRun{ProjectKey: "acme", State: store.RunDescribing}}}
-	if code, _ := do(t, h, http.MethodPatch, "/api/sources/acme/repos/core", "", `{"slug":"x"}`, jsonHdr); code != 409 {
-		t.Errorf("rename with an open run: %d, want 409", code)
+	if code, _ := do(t, h, http.MethodPatch, "/api/sources/acme/repos/core", "", `{"slug":"x","clone_url":"https://forge.example.invalid/x.git"}`, jsonHdr); code != 409 {
+		t.Errorf("new clone URL with an open run: %d, want 409", code)
 	}
 }
 

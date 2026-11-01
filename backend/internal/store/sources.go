@@ -245,13 +245,15 @@ func (s *Store) DeleteSource(ctx context.Context, key string) (bool, error) {
 	return n == 1, err
 }
 
-// MarkSourceListed records a listing's outcome: the time on success, the
-// error text on failure (the time then stays as it was).
-func (s *Store) MarkSourceListed(ctx context.Context, key, errText string) error {
+// MarkSourceListed records a listing's outcome: the time when it was
+// applied (listed), the error text when there is one: a failure, or
+// repositories an applied listing left out. A failed listing keeps the
+// time as it was.
+func (s *Store) MarkSourceListed(ctx context.Context, key, errText string, listed bool) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE sources SET last_error = ?2,
-		       last_listed_at = CASE WHEN ?2 = '' THEN ?3 ELSE last_listed_at END
-		 WHERE project_id = (SELECT project_id FROM project_names WHERE key = ?1)`, key, errText, nowStamp())
+		       last_listed_at = CASE WHEN ?4 THEN ?3 ELSE last_listed_at END
+		 WHERE project_id = (SELECT project_id FROM project_names WHERE key = ?1)`, key, errText, nowStamp(), listed)
 	return err
 }
 

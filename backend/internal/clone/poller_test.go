@@ -35,8 +35,10 @@ type fakeStore struct {
 	runErr     error
 	failed     int
 	docAsked   int
-	// conflicts is what ApplyListing reports left out.
+	// conflicts is what ApplyListing reports left out; listedAt whether a
+	// listing's time was recorded, by key.
 	conflicts []string
+	listedAt  map[string]bool
 }
 
 func newFakeStore() *fakeStore {
@@ -51,10 +53,14 @@ func (f *fakeStore) ApplyListing(_ context.Context, key string, l []store.Listed
 	f.listed[key] = l
 	return store.ListingResult{Added: len(l) - len(f.conflicts), Conflicts: f.conflicts}, nil
 }
-func (f *fakeStore) MarkSourceListed(_ context.Context, key, e string) error {
+func (f *fakeStore) MarkSourceListed(_ context.Context, key, e string, listed bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listErr[key] = e
+	if f.listedAt == nil {
+		f.listedAt = map[string]bool{}
+	}
+	f.listedAt[key] = listed
 	return nil
 }
 func (f *fakeStore) SyncJobs(context.Context) ([]store.SyncJob, error) { return f.jobs, nil }
@@ -295,6 +301,9 @@ func TestList_ReportsNameConflicts(t *testing.T) {
 	}
 	if !strings.Contains(s.listErr["SHOP"], "ui") {
 		t.Fatalf("listing error = %q, want the conflicting slug named", s.listErr["SHOP"])
+	}
+	if !s.listedAt["SHOP"] {
+		t.Error("an applied listing with conflicts did not record its time")
 	}
 }
 

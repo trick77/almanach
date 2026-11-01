@@ -17,7 +17,8 @@ import (
 // had, in any case.
 var ErrNameTaken = errors.New("name used by another")
 
-// ErrRunOpen is a repository rename while a baseline run of it is open.
+// ErrRunOpen is a new clone URL for a repository while a baseline run of it
+// is open: the re-clone would pull the folder from under the run.
 var ErrRunOpen = errors.New("a baseline run is open")
 
 // ErrNoProject is a project key no project ever had.
@@ -44,16 +45,13 @@ func projectID(ctx context.Context, q rowQuerier, key string) (int64, bool, erro
 }
 
 // repoID resolves any key of the project and any slug the repository ever
-// had; ok false when none.
+// had; ok false when none (an empty slug names no repository).
 func repoID(ctx context.Context, q rowQuerier, key, slug string) (int64, bool, error) {
-	var id int64
-	err := q.QueryRowContext(ctx, `
-		SELECT rn.repo_id FROM repo_names rn JOIN project_names pn ON pn.project_id = rn.project_id
-		 WHERE pn.key = ? AND rn.slug = ?`, key, slug).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
+	if slug == "" {
 		return 0, false, nil
 	}
-	return id, err == nil, err
+	_, rid, ok, err := scopeIDs(ctx, q, key, slug)
+	return rid, ok, err
 }
 
 // ensureProject is the project a key names, registered when no project
@@ -110,30 +108,39 @@ func ensureRepo(ctx context.Context, q querier, projectID int64, slug string) (i
 // ownerInAnyCase is the owner of name in a (name, owner) list, matched in
 // any case, folded in Go (SQLite's lower() folds ASCII only).
 func ownerInAnyCase(rows *sql.Rows, name string) (int64, bool, error) {
+	owners, err := ownersInAnyCase(rows, name)
+	if err != nil || len(owners) == 0 {
+		return 0, false, err
+	}
+	return owners[0], true, nil
+}
+
+// ownersInAnyCase is every owner of name in a (name, owner) list, matched
+// in any case, in list order. The one case-folding scan: SQLite's lower()
+// folds ASCII only, Go folds Unicode.
+func ownersInAnyCase(rows *sql.Rows, name string) ([]int64, error) {
 	defer func() { _ = rows.Close() }()
+	var owners []int64
 	for rows.Next() {
 		var known string
 		var owner int64
 		if err := rows.Scan(&known, &owner); err != nil {
-			return 0, false, err
+			return nil, err
 		}
 		if strings.EqualFold(known, name) {
-			return owner, true, nil
+			owners = append(owners, owner)
 		}
 	}
-	return 0, false, rows.Err()
+	return owners, rows.Err()
 }
 
 // RepoIDs resolves a repository by any of its names to its project's and
 // its own id; ok false when no repository ever had the name.
 func (s *Store) RepoIDs(ctx context.Context, key, slug string) (projectID, repoID int64, ok bool, err error) {
-	err = s.db.QueryRowContext(ctx, `
-		SELECT rn.project_id, rn.repo_id FROM repo_names rn JOIN project_names pn ON pn.project_id = rn.project_id
-		 WHERE pn.key = ? AND rn.slug = ?`, key, slug).Scan(&projectID, &repoID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if slug == "" {
 		return 0, 0, false, nil
 	}
-	return projectID, repoID, err == nil, err
+	return scopeIDs(ctx, s.db, key, slug)
 }
 
 // ProjectIDOf resolves a project by any of its keys; ok false when none.
@@ -172,18 +179,16 @@ func (s *Store) RepoNamesOf(ctx context.Context, key, slug string) (string, stri
 // than self in the given name list. The case is folded in Go: SQLite's
 // lower() folds ASCII only.
 func takenByOther(rows *sql.Rows, name string, self int64) (bool, error) {
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var known string
-		var owner int64
-		if err := rows.Scan(&known, &owner); err != nil {
-			return false, err
-		}
-		if owner != self && strings.EqualFold(known, name) {
+	owners, err := ownersInAnyCase(rows, name)
+	if err != nil {
+		return false, err
+	}
+	for _, owner := range owners {
+		if owner != self {
 			return true, nil
 		}
 	}
-	return false, rows.Err()
+	return false, nil
 }
 
 // RenameProject gives the project any key names the key to. The old key
@@ -221,8 +226,9 @@ func (s *Store) RenameProject(ctx context.Context, key, to string) (int64, error
 // RenameRepo gives a repository a new slug and, when cloneURL is not
 // empty, a new clone URL, which queues a sync. The old slug stays a name of
 // the repository. Refused with ErrNameTaken when another repository of the
-// project ever had the slug, in any case; ErrRunOpen while a baseline run of
-// it is open; ErrNoRepo when the source has no such repository.
+// project ever had the slug, in any case; ErrRunOpen for a new clone URL
+// while a baseline run of it is open; ErrNoRepo when the source has no such
+// repository.
 func (s *Store) RenameRepo(ctx context.Context, key, slug, to, cloneURL string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		return renameRepo(ctx, tx, key, slug, to, cloneURL)
@@ -238,20 +244,25 @@ func renameRepo(ctx context.Context, tx *sql.Tx, key, slug, to, cloneURL string)
 		return ErrNoRepo
 	}
 	var pid int64
-	err = tx.QueryRowContext(ctx, `SELECT project_id FROM source_repos WHERE repo_id = ?`, rid).Scan(&pid)
+	var current string
+	err = tx.QueryRowContext(ctx, `SELECT project_id, clone_url FROM source_repos WHERE repo_id = ?`, rid).Scan(&pid, &current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNoRepo
 	}
 	if err != nil {
 		return err
 	}
-	var open bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM baseline_runs WHERE repo_id = ? AND state NOT IN ('done', 'failed'))`,
-		rid).Scan(&open); err != nil {
-		return err
-	}
-	if open {
-		return ErrRunOpen
+	// A new slug touches no run: runs, pages and the clone folder are keyed
+	// by id. A new clone URL re-clones the folder a run may be reading.
+	if cloneURL != "" && cloneURL != current {
+		var open bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM baseline_runs WHERE repo_id = ? AND state NOT IN ('done', 'failed'))`,
+			rid).Scan(&open); err != nil {
+			return err
+		}
+		if open {
+			return ErrRunOpen
+		}
 	}
 	return renameRepoTo(ctx, tx, pid, rid, to, cloneURL)
 }

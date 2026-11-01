@@ -258,8 +258,8 @@ func TestRedact_RealisticGitErrorShapes(t *testing.T) {
 
 // TRANSITIONAL(ids): a clone in a folder named by names moves to the one
 // named by ids, once; the emptied project folder goes, a folder with other
-// clones stays; nothing to move or a taken target is no move. Remove with
-// MoveLegacy.
+// clones stays; nothing to move is no move, and with the id folder there
+// already the name-named copy is stale and goes. Remove with MoveLegacy.
 func TestMoveLegacy(t *testing.T) {
 	c := client(t)
 	for _, d := range []string{"tools/cli/objects", "tools/api/objects", "solo/one/objects"} {
@@ -284,6 +284,12 @@ func TestMoveLegacy(t *testing.T) {
 	}
 	if moved, err := c.MoveLegacy("tools", "api", "p2", "r2"); err != nil || moved {
 		t.Errorf("move onto a taken folder: %v %v, want none", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(c.Root(), "tools")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the stale name-named copy stayed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(c.Root(), "p2", "r2")); err != nil {
+		t.Errorf("the id folder went: %v", err)
 	}
 	if moved, err := c.MoveLegacy("solo", "one", "p3", "r3"); err != nil || !moved {
 		t.Fatalf("move solo/one: %v %v", moved, err)

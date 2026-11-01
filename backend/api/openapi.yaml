@@ -539,7 +539,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Another repository of the project had this slug, in any case, or a run of this repository is open.
+          description: Another repository of the project had this slug, in any case, or a new clone URL while a run of this repository is open.
           content:
             application/json:
               schema:

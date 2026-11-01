@@ -458,6 +458,9 @@ function ReposTable({
       </div>
       {renamingRepo !== undefined && (
         <RenameRepoForm
+          // A fresh form per repository: switching rows must not carry the
+          // last one's typed slug over.
+          key={renamingRepo.slug}
           sourceKey={data.project_key}
           repo={renamingRepo}
           onDone={onRenamed}
@@ -589,12 +592,7 @@ function RepoRow({
               </button>
             )}
             {renamable && (
-              <button
-                type="button"
-                className={rowBtn}
-                disabled={runOpen(r.baseline)}
-                onClick={onAskRename}
-              >
+              <button type="button" className={rowBtn} onClick={onAskRename}>
                 {S.sources.repoActions.rename}
               </button>
             )}

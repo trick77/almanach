@@ -32,7 +32,7 @@ const FirstDelay = 30 * time.Second
 type Store interface {
 	Sources(ctx context.Context) ([]store.SourceRow, error)
 	ApplyListing(ctx context.Context, key string, listed []store.ListedRepo) (store.ListingResult, error)
-	MarkSourceListed(ctx context.Context, key, errText string) error
+	MarkSourceListed(ctx context.Context, key, errText string, listed bool) error
 	SyncJobs(ctx context.Context) ([]store.SyncJob, error)
 	MarkRepoSyncing(ctx context.Context, key, slug string) error
 	MarkRepoReady(ctx context.Context, key, slug, branch, head string) error
@@ -167,9 +167,10 @@ func (p *Poller) RemoveProject(projectID int64) error {
 	return p.Git.RemoveProject(projectSeg(projectID))
 }
 
-// idSeg is a folder name the ids use (p12, r7): a legacy removal never
-// touches one, whatever a project key or slug happened to be called.
-var idSeg = regexp.MustCompile(`^[pr][0-9]+$`)
+// idSeg is a folder name the ids use (p12, r7): a legacy move or removal
+// never touches one, whatever a project key or slug happened to be called.
+// Any case: on a case-insensitive volume P1 is p1.
+var idSeg = regexp.MustCompile(`(?i)^[pr][0-9]+$`)
 
 // RemoveLegacy deletes key/slug's clone in the folder named by names, under
 // the disk lock, unless the folder could be an id folder.
@@ -459,6 +460,7 @@ func (p *Poller) logRunCheck(err error, key, slug string) {
 
 // list reconciles one Bitbucket source's repositories with the API.
 func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
+	errText, applied := "", false
 	a, err := p.access(s)
 	if err == nil {
 		var listed []store.ListedRepo
@@ -469,15 +471,17 @@ func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
 			if err == nil {
 				p.Log.Info("source_listed", "project", s.ProjectKey, "repositories", len(listed), "added", res.Added,
 					"renamed", res.Renamed, "missing", res.Missing)
+				applied = true
 				if len(res.Conflicts) > 0 {
 					// A name is never given to another repository: the
 					// listed one is left out, the source page says why.
-					err = fmt.Errorf("left out, the slug was another repository's: %s", strings.Join(res.Conflicts, ", "))
+					// The listing itself applied: its time still counts.
+					errText = "left out, the slug was another repository's: " + strings.Join(res.Conflicts, ", ")
+					p.Log.Warn("source_listing_conflicts", "project", s.ProjectKey, "repos", strings.Join(res.Conflicts, ","))
 				}
 			}
 		}
 	}
-	errText := ""
 	if err != nil {
 		if ctx.Err() != nil {
 			return
@@ -485,7 +489,7 @@ func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
 		errText = err.Error()
 		p.Log.Warn("source_listing_failed", "project", s.ProjectKey, "err", errText)
 	}
-	if markErr := p.Store.MarkSourceListed(ctx, s.ProjectKey, errText); markErr != nil {
+	if markErr := p.Store.MarkSourceListed(ctx, s.ProjectKey, errText, applied); markErr != nil {
 		p.Log.Error("recording the listing failed", "project", s.ProjectKey, "err", markErr.Error())
 	}
 }
@@ -526,10 +530,12 @@ func (p *Poller) sync(ctx context.Context, j store.SyncJob) (string, bool, error
 	// TRANSITIONAL(ids): a clone from before the ids sits in a folder named
 	// by its names; moved once, it is not cloned again. Remove when every
 	// instance has synced once on a release with ids.
-	if moved, err := p.Git.MoveLegacy(key, slug, pseg, rseg); err != nil {
-		p.Log.Warn("moving the clone to its id folder failed; cloning afresh", "project", key, "repo", slug, "err", err.Error())
-	} else if moved {
-		p.Log.Info("clone moved to its id folder", "project", key, "repo", slug, "dir", dir)
+	if !idSeg.MatchString(key) {
+		if moved, err := p.Git.MoveLegacy(key, slug, pseg, rseg); err != nil {
+			p.Log.Warn("moving the clone to its id folder failed; cloning afresh", "project", key, "repo", slug, "err", err.Error())
+		} else if moved {
+			p.Log.Info("clone moved to its id folder", "project", key, "repo", slug, "dir", dir)
+		}
 	}
 	// The directory is a label; the origin is the identity. A corrected
 	// clone URL must not go on serving the old code under the new name.

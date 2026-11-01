@@ -203,8 +203,9 @@ func TestRenameProject_NameNeverReused(t *testing.T) {
 }
 
 // A hand-entered repository renamed keeps its pages, notes and runs; the
-// old slug still finds it; a new clone URL queues a sync; an open run or a
-// slug another repository had refuses the rename.
+// old slug still finds it; a new clone URL queues a sync, refused while a
+// run is open (the re-clone would pull the folder from under it); a slug
+// another repository had refuses the rename.
 func TestRenameRepo(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -218,8 +219,15 @@ func TestRenameRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := enqueue(t, s, "PRJ", "svc")
-	if err := s.RenameRepo(ctx, "PRJ", "svc", "core", ""); !errors.Is(err, ErrRunOpen) {
-		t.Fatalf("rename with an open run: %v, want ErrRunOpen", err)
+	if err := s.RenameRepo(ctx, "PRJ", "svc", "core", "https://forge.example.invalid/core.git"); !errors.Is(err, ErrRunOpen) {
+		t.Fatalf("new clone URL with an open run: %v, want ErrRunOpen", err)
+	}
+	// A slug alone touches no run: everything it holds is keyed by id.
+	if err := s.RenameRepo(ctx, "PRJ", "svc", "svc2", ""); err != nil {
+		t.Fatalf("slug only with an open run: %v", err)
+	}
+	if r, ok, _ := s.RunByID(ctx, run.ID); !ok || r.Slug != "svc2" || !r.Open() {
+		t.Fatalf("the open run after the rename: %+v %v", r, ok)
 	}
 	finish(t, s, run, RunDone)
 

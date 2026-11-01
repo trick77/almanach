@@ -53,9 +53,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   never edit applied migration. Probes exec, not httpGet.
 - oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,
   gates nothing.
-- Project, repo = id; key, slug only in `projects`, `repos`, `*_names` (+ claims, PR keys as sent);
-  never join on a name. Rename alone, one tx. Name once used, any case, never to another; own may
-  change case (user, 2026-11-01). Carry-over code: `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
+- Project, repo = id; names only in `projects`, `repos`, `*_names` (+ claims, PR keys as sent);
+  never join on one. Name once used, any case, never to another; own may change case (user,
+  2026-11-01). Carry-over: `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
 - Sources: Almanach clones, noergler never indexes. git binary (`os/exec`; image has git), never
   go-git (rejected 2026-10-30). Clones only at `BACKEND_REPOS_DIR/p<project id>/r<repo id>`, never by
   name; single path segments, `filepath.Rel`-checked before `RemoveAll`. Clone URLs https, no creds. Bare

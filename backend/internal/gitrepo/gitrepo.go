@@ -239,7 +239,9 @@ func (c *Client) Remove(key, slug string) error {
 // MoveLegacy moves the clone at <root>/<fromKey>/<fromSlug> to
 // <root>/<toKey>/<toSlug> when the first is a directory and the second does
 // not exist, then removes the old project folder if that left it empty.
-// Reports whether it moved. Every segment is validated as Dir does.
+// When the second exists already (an earlier move failed and the clone was
+// fetched afresh there), the first is a stale copy and goes. Reports whether
+// it moved. Every segment is validated as Dir does.
 //
 // TRANSITIONAL(ids): clones from before the ids sit in folders named by
 // names. Remove when every instance has synced once on a release with ids
@@ -259,7 +261,13 @@ func (c *Client) MoveLegacy(fromKey, fromSlug, toKey, toSlug string) (bool, erro
 	if info, err := os.Stat(from); err != nil || !info.IsDir() {
 		return false, nil //nolint:nilerr // nothing to move is no failure
 	}
-	if _, err := os.Lstat(to); err == nil || !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(to); err == nil {
+		if err := os.RemoveAll(from); err != nil {
+			return false, err
+		}
+		_ = os.Remove(filepath.Dir(from)) // only an empty folder goes
+		return false, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(to), 0o750); err != nil {

@@ -467,7 +467,9 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	if !jsonBody(w, r, &in) {
 		return
 	}
-	if in.ProjectKey != nil {
+	// An unchanged project_key (a client sending the source back whole) is
+	// no rename.
+	if in.ProjectKey != nil && strings.TrimSpace(*in.ProjectKey) != src.ProjectKey {
 		d.renameSource(w, r, src, in)
 		return
 	}
@@ -539,19 +541,17 @@ func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.Pro
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
 		return
 	}
-	if to != src.ProjectKey {
-		_, err := d.Sources.Store.RenameProject(ctx, src.ProjectKey, to)
-		switch {
-		case errors.Is(err, store.ErrNameTaken):
-			httpx.WriteError(w, http.StatusConflict, "project_key: another project had this key")
-			return
-		case err != nil:
-			httpx.ServerError(w, r, err, "rename project")
-			return
-		}
-		d.Log.InfoContext(ctx, "project_renamed", "project", to, "from", src.ProjectKey, "user", d.user(r))
-		d.Sources.Poller.Nudge()
+	_, err := d.Sources.Store.RenameProject(ctx, src.ProjectKey, to)
+	switch {
+	case errors.Is(err, store.ErrNameTaken):
+		httpx.WriteError(w, http.StatusConflict, "project_key: another project had this key")
+		return
+	case err != nil:
+		httpx.ServerError(w, r, err, "rename project")
+		return
 	}
+	d.Log.InfoContext(ctx, "project_renamed", "project", to, "from", src.ProjectKey, "user", d.user(r))
+	d.Sources.Poller.Nudge()
 	d.writeSource(w, r, to, http.StatusOK)
 }
 
@@ -788,7 +788,7 @@ func (d Deps) renameRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusConflict, "slug: another repository had this slug")
 		return
 	case errors.Is(err, store.ErrRunOpen):
-		httpx.WriteError(w, http.StatusConflict, "a run of this repository is open")
+		httpx.WriteError(w, http.StatusConflict, "clone_url: a run of this repository is open, change the URL once it ends")
 		return
 	case errors.Is(err, store.ErrNoRepo):
 		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
