@@ -355,7 +355,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 			t.Errorf("%s prompt lacks the diagram rules or the field, or has them twice", name)
 		}
 	}
-	// With ALMANACH_MAX_DIAGRAMS=0 the prompts offer no diagram either, the
+	// With BACKEND_MAX_DIAGRAMS=0 the prompts offer no diagram either, the
 	// project's map still asked for.
 	off := limits
 	off.MaxDiagrams = 0

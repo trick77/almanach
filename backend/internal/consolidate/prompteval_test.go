@@ -215,7 +215,7 @@ func TestPromptEval(t *testing.T) {
 	// The production defaults: config with only what it requires set.
 	app, err := config.Load(func(k string) string {
 		switch k {
-		case "ALMANACH_DB_PATH", "ALMANACH_TEAM_KEYS_PATH", "ALMANACH_MODEL":
+		case "BACKEND_DB_PATH", "BACKEND_TEAM_KEYS_PATH", "BACKEND_MODEL":
 			return "unused"
 		}
 		return ""
@@ -421,7 +421,7 @@ func dump(t *testing.T, dir, name string, p store.Page) {
 
 // TestEvalLoad loads the pages an eval of EVAL_REPOS wrote (EVAL_OUT, one
 // <slug>.json each and _project.json) into EVAL_DB, a new SQLite file the
-// app serves as ALMANACH_DB_PATH with ALMANACH_REPOS_DIR set: project EVAL
+// app serves as BACKEND_DB_PATH with BACKEND_REPOS_DIR set: project EVAL
 // as a static source, each repository on it ready, each page one baseline
 // revision. Only EVAL_REPOS' pages, so another run's left in EVAL_OUT never
 // joins in; a missing one fails, and a failed load leaves no file behind.

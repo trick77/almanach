@@ -59,7 +59,7 @@ type Deps struct {
 	Worker        Waker
 	AuthMode      config.AuthMode
 	ProblemWindow int
-	// Sources is the clone feature; nil when ALMANACH_REPOS_DIR is unset,
+	// Sources is the clone feature; nil when BACKEND_REPOS_DIR is unset,
 	// and the routes then say so.
 	Sources *SourcesDeps
 	// OIDC, Sessions and RedirectURL are the sign-in, set in oidc mode

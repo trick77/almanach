@@ -8,9 +8,9 @@
 #
 # 1. Copy .env.example to .env and fill it in: the gateway and the model,
 #    PUBLIC_FQDN (the hostname Traefik routes Almanach on) and the OIDC
-#    block, the client secret and ALMANACH_SESSION_SECRET included
+#    block, the client secret and BACKEND_SESSION_SECRET included
 #    (openssl rand -base64 48). For private repositories also
-#    ALMANACH_SECRET_KEY (openssl rand -base64 32).
+#    BACKEND_SECRET_KEY (openssl rand -base64 32).
 #
 #      cp .env.example .env
 #
@@ -22,7 +22,7 @@
 #    .env.example documents needs no compose edit. A value only exported in
 #    your shell does not reach the container that way. The six checked
 #    lines below are interpolated, though, and for those Compose prefers a
-#    shell export over .env: a stale `export ALMANACH_OIDC_ISSUER=...` in
+#    shell export over .env: a stale `export BACKEND_OIDC_ISSUER=...` in
 #    the shell silently wins. Unset such exports before `up`.
 #
 #    `docker compose config` prints every value, the env_file's secrets
@@ -37,7 +37,7 @@
 #      sudo chgrp -R 65532 conf && chmod 750 conf && chmod 640 conf/team-keys.json
 #
 #    conf/ is the container's /conf: a CA bundle for a forge behind an
-#    internal CA goes there too, with ALMANACH_GIT_CA_FILE=/conf/ca.pem in
+#    internal CA goes there too, with BACKEND_GIT_CA_FILE=/conf/ca.pem in
 #    .env (the path inside the container, never the host's).
 #
 # 3. docker compose up -d: builds this checkout, migrate runs, then
@@ -84,9 +84,9 @@ services:
     # No env_file: migrate needs the database path and nothing else, least
     # of all the gateway key.
     environment:
-      ALMANACH_DB_PATH: /data/almanach.db
+      BACKEND_DB_PATH: /data/almanach.db
       TMPDIR: /tmp
-      LOG_LEVEL: INFO
+      BACKEND_LOG_LEVEL: INFO
     volumes:
       - data:/data
 
@@ -113,15 +113,14 @@ services:
         required: false
     # What this file sets itself, which wins over .env. The paths and the
     # listener: .env's are the host's view, for the binary run outside
-    # compose, and must not reach the container. A loopback SERVER_HOST set
+    # compose, and must not reach the container. A loopback BACKEND_ADDR set
     # for a host run would bind inside the container's own namespace, the
     # router dead and the healthcheck (same env) still green.
     environment:
-      ALMANACH_DB_PATH: /data/almanach.db
-      ALMANACH_TEAM_KEYS_PATH: /conf/team-keys.json
-      ALMANACH_REPOS_DIR: /app/repos
-      SERVER_HOST: 0.0.0.0
-      SERVER_PORT: "8080"
+      BACKEND_DB_PATH: /data/almanach.db
+      BACKEND_TEAM_KEYS_PATH: /conf/team-keys.json
+      BACKEND_REPOS_DIR: /app/repos
+      BACKEND_ADDR: 0.0.0.0:8080
       # git needs a writable home and temp dir; the root filesystem is
       # read-only. The image's user has /tmp as home, but USER exports no
       # HOME.
@@ -129,15 +128,15 @@ services:
       TMPDIR: /tmp
       # Fixed, not interpolated: a stray none in .env must not open the
       # stack. compose.dev.yaml alone sets none.
-      ALMANACH_AUTH_MODE: oidc
+      BACKEND_AUTH_MODE: oidc
       # Checked here, so `up` stops with the message instead of the
       # container restarting in a loop. Interpolated: a shell export wins
       # over .env (step 1 above).
-      ALMANACH_OIDC_ISSUER: ${ALMANACH_OIDC_ISSUER:?set it in .env, the provider's issuer exactly as it states it; see .env.example}
-      ALMANACH_OIDC_CLIENT_ID: ${ALMANACH_OIDC_CLIENT_ID:?set it in .env, the client registered for Almanach; see .env.example}
-      ALMANACH_OIDC_CLIENT_SECRET: ${ALMANACH_OIDC_CLIENT_SECRET:?set it in .env, the client's secret at the provider; see .env.example}
-      ALMANACH_OIDC_REDIRECT_URL: ${ALMANACH_OIDC_REDIRECT_URL:?set it in .env, https://<PUBLIC_FQDN>/api/auth/callback; see .env.example}
-      ALMANACH_SESSION_SECRET: ${ALMANACH_SESSION_SECRET:?set it in .env, openssl rand -base64 48; see .env.example}
+      BACKEND_OIDC_ISSUER: ${BACKEND_OIDC_ISSUER:?set it in .env, the provider's issuer exactly as it states it; see .env.example}
+      BACKEND_OIDC_CLIENT_ID: ${BACKEND_OIDC_CLIENT_ID:?set it in .env, the client registered for Almanach; see .env.example}
+      BACKEND_OIDC_CLIENT_SECRET: ${BACKEND_OIDC_CLIENT_SECRET:?set it in .env, the client's secret at the provider; see .env.example}
+      BACKEND_OIDC_REDIRECT_URL: ${BACKEND_OIDC_REDIRECT_URL:?set it in .env, https://<PUBLIC_FQDN>/api/auth/callback; see .env.example}
+      BACKEND_SESSION_SECRET: ${BACKEND_SESSION_SECRET:?set it in .env, openssl rand -base64 48; see .env.example}
     volumes:
       # The database alone: the file and its -wal, -shm. Never a shared
       # filesystem: SQLite in WAL needs the locks of one local disk.

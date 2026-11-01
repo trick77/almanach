@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,8 +56,8 @@ const minSessionSecret = 32
 
 // oidcVars is every variable oidc mode reads and none refuses.
 var oidcVars = []string{
-	"ALMANACH_OIDC_ISSUER", "ALMANACH_OIDC_CLIENT_ID", "ALMANACH_OIDC_CLIENT_SECRET",
-	"ALMANACH_OIDC_REDIRECT_URL", "ALMANACH_SESSION_SECRET",
+	"BACKEND_OIDC_ISSUER", "BACKEND_OIDC_CLIENT_ID", "BACKEND_OIDC_CLIENT_SECRET",
+	"BACKEND_OIDC_REDIRECT_URL", "BACKEND_SESSION_SECRET",
 }
 
 // Limits are the ceilings the merge call is held to: how many statements a
@@ -88,7 +89,7 @@ type Sources struct {
 	// <ReposDir>/<project_key>/<slug>. "" switches the feature off: no
 	// poller, the routes answer 404, the UI hides the entry.
 	ReposDir string
-	// SecretKey is ALMANACH_SECRET_KEY as given (base64 of 32 bytes), parsed
+	// SecretKey is BACKEND_SECRET_KEY as given (base64 of 32 bytes), parsed
 	// by the secret package; "" means no token can be stored.
 	SecretKey string
 	// SyncInterval is the poller's cycle; zero means manual only.
@@ -126,9 +127,9 @@ type App struct {
 	// writable (the file and its -wal, -shm beside it).
 	DBPath       string
 	TeamKeysPath string
-	Host         string
-	Port         int
-	AuthMode     AuthMode
+	// Addr is host:port serve listens on.
+	Addr     string
+	AuthMode AuthMode
 	// OIDC is set in oidc mode only.
 	OIDC OIDC
 	// Model is an llmwire profile id; the gateway host, key and aliases are
@@ -147,60 +148,62 @@ type App struct {
 func Load(lookup func(string) string) (*App, error) {
 	r := kitenv.New(lookup)
 	app := &App{
-		DBPath:          r.Required("ALMANACH_DB_PATH"),
-		TeamKeysPath:    r.Required("ALMANACH_TEAM_KEYS_PATH"),
-		Host:            r.String("SERVER_HOST", "0.0.0.0"),
-		Port:            r.Int("SERVER_PORT", 8080),
-		AuthMode:        AuthMode(strings.ToLower(r.Enum("ALMANACH_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthOIDC)))),
-		Model:           r.Required("ALMANACH_MODEL"),
-		ReasoningEffort: r.String("ALMANACH_REASONING_EFFORT", ""),
+		DBPath:          r.Required("BACKEND_DB_PATH"),
+		TeamKeysPath:    r.Required("BACKEND_TEAM_KEYS_PATH"),
+		Addr:            r.String("BACKEND_ADDR", "0.0.0.0:8080"),
+		AuthMode:        AuthMode(strings.ToLower(r.Enum("BACKEND_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthOIDC)))),
+		Model:           r.Required("BACKEND_MODEL"),
+		ReasoningEffort: r.String("BACKEND_REASONING_EFFORT", ""),
 		Limits: Limits{
-			RepoMaxStatements:    positive(r, "ALMANACH_REPO_MAX_STATEMENTS", 40),
-			ProjectMaxStatements: positive(r, "ALMANACH_PROJECT_MAX_STATEMENTS", 24),
-			RepoMaxChars:         positive(r, "ALMANACH_REPO_MAX_CHARS", 60000),
-			ProjectMaxChars:      positive(r, "ALMANACH_PROJECT_MAX_CHARS", 40000),
-			DiagramMaxNodes:      positive(r, "ALMANACH_DIAGRAM_MAX_NODES", 12),
-			DiagramMaxEdges:      positive(r, "ALMANACH_DIAGRAM_MAX_EDGES", 20),
-			MaxDiagrams:          nonNegative(r, "ALMANACH_MAX_DIAGRAMS", 6),
+			RepoMaxStatements:    positive(r, "BACKEND_REPO_MAX_STATEMENTS", 40),
+			ProjectMaxStatements: positive(r, "BACKEND_PROJECT_MAX_STATEMENTS", 24),
+			RepoMaxChars:         positive(r, "BACKEND_REPO_MAX_CHARS", 60000),
+			ProjectMaxChars:      positive(r, "BACKEND_PROJECT_MAX_CHARS", 40000),
+			DiagramMaxNodes:      positive(r, "BACKEND_DIAGRAM_MAX_NODES", 12),
+			DiagramMaxEdges:      positive(r, "BACKEND_DIAGRAM_MAX_EDGES", 20),
+			MaxDiagrams:          nonNegative(r, "BACKEND_MAX_DIAGRAMS", 6),
 		},
-		ProblemWindow: positive(r, "ALMANACH_PROBLEM_WINDOW_DAYS", 90),
+		ProblemWindow: positive(r, "BACKEND_PROBLEM_WINDOW_DAYS", 90),
 		Sources: Sources{
-			ReposDir:     r.String("ALMANACH_REPOS_DIR", ""),
-			SecretKey:    r.String("ALMANACH_SECRET_KEY", ""),
-			SyncInterval: r.Duration("ALMANACH_SYNC_INTERVAL", 30*time.Minute),
-			GitCAFile:    r.String("ALMANACH_GIT_CA_FILE", ""),
+			ReposDir:     r.String("BACKEND_REPOS_DIR", ""),
+			SecretKey:    r.String("BACKEND_SECRET_KEY", ""),
+			SyncInterval: r.Duration("BACKEND_SYNC_INTERVAL", 30*time.Minute),
+			GitCAFile:    r.String("BACKEND_GIT_CA_FILE", ""),
 		},
 		Baseline: Baseline{
-			CatalogueModel: r.String("ALMANACH_CATALOGUE_MODEL", ""),
-			MaxCalls:       positive(r, "ALMANACH_BASELINE_MAX_CALLS", 16),
-			MaxBytes:       positive(r, "ALMANACH_BASELINE_MAX_BYTES", 2_000_000),
-			Reconcile:      r.Duration("ALMANACH_BASELINE_RECONCILE", 720*time.Hour),
+			CatalogueModel: r.String("BACKEND_CATALOGUE_MODEL", ""),
+			MaxCalls:       positive(r, "BACKEND_BASELINE_MAX_CALLS", 16),
+			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 2_000_000),
+			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
-		LogLevel: r.String("LOG_LEVEL", "INFO"),
+		LogLevel: r.String("BACKEND_LOG_LEVEL", "INFO"),
+	}
+	if why := badAddr(app.Addr); why != "" {
+		r.Fail("BACKEND_ADDR: %s, got %q", why, app.Addr)
 	}
 	if app.Sources.SyncInterval < 0 {
-		r.Fail("ALMANACH_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
+		r.Fail("BACKEND_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
 	}
 	if app.Baseline.MaxCalls > 0 && app.Baseline.MaxCalls < minBaselineCalls {
-		r.Fail("ALMANACH_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
+		r.Fail("BACKEND_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
 	}
 	// A diagram past the drawing's ceilings is not drawn, so the caps may
 	// not go past them either.
 	if app.Limits.DiagramMaxNodes > diagram.DrawMaxNodes {
-		r.Fail("ALMANACH_DIAGRAM_MAX_NODES: at most %d, the most the drawing lays out, got %d", diagram.DrawMaxNodes, app.Limits.DiagramMaxNodes)
+		r.Fail("BACKEND_DIAGRAM_MAX_NODES: at most %d, the most the drawing lays out, got %d", diagram.DrawMaxNodes, app.Limits.DiagramMaxNodes)
 	}
 	if app.Limits.DiagramMaxEdges > diagram.DrawMaxEdges {
-		r.Fail("ALMANACH_DIAGRAM_MAX_EDGES: at most %d, the most the drawing lays out, got %d", diagram.DrawMaxEdges, app.Limits.DiagramMaxEdges)
+		r.Fail("BACKEND_DIAGRAM_MAX_EDGES: at most %d, the most the drawing lays out, got %d", diagram.DrawMaxEdges, app.Limits.DiagramMaxEdges)
 	}
 	if app.Baseline.Reconcile < 0 {
-		r.Fail("ALMANACH_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
+		r.Fail("BACKEND_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
 	}
 	if app.AuthMode == AuthOIDC {
 		app.OIDC = loadOIDC(r)
 	} else {
 		for _, name := range oidcVars {
 			if strings.TrimSpace(lookup(name)) != "" {
-				r.Fail("%s is read in oidc mode only, got ALMANACH_AUTH_MODE=%s; remove it", name, app.AuthMode)
+				r.Fail("%s is read in oidc mode only, got BACKEND_AUTH_MODE=%s; remove it", name, app.AuthMode)
 			}
 		}
 	}
@@ -210,6 +213,19 @@ func Load(lookup func(string) string) (*App, error) {
 	return app, nil
 }
 
+// badAddr is why addr is no host:port to listen on, "" when it is one. An
+// empty host listens on every interface.
+func badAddr(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "want host:port"
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "the port must be 1 to 65535"
+	}
+	return ""
+}
+
 // loadOIDC reads the sign-in. Every gap is fatal, not a warning: a
 // half-configured instance would start, serve the shell and fail every
 // login at the callback, which reads as a provider outage.
@@ -217,29 +233,29 @@ func loadOIDC(r *kitenv.Reader) OIDC {
 	need := func(name string) string {
 		v := r.String(name, "")
 		if v == "" {
-			r.Fail("ALMANACH_AUTH_MODE=oidc requires %s", name)
+			r.Fail("BACKEND_AUTH_MODE=oidc requires %s", name)
 		}
 		return v
 	}
 	o := OIDC{
-		Issuer:       need("ALMANACH_OIDC_ISSUER"),
-		ClientID:     need("ALMANACH_OIDC_CLIENT_ID"),
-		ClientSecret: need("ALMANACH_OIDC_CLIENT_SECRET"),
-		RedirectURL:  need("ALMANACH_OIDC_REDIRECT_URL"),
+		Issuer:       need("BACKEND_OIDC_ISSUER"),
+		ClientID:     need("BACKEND_OIDC_CLIENT_ID"),
+		ClientSecret: need("BACKEND_OIDC_CLIENT_SECRET"),
+		RedirectURL:  need("BACKEND_OIDC_REDIRECT_URL"),
 	}
 	if o.Issuer != "" {
 		if why := issuerFault(o.Issuer); why != "" {
-			r.Fail("ALMANACH_OIDC_ISSUER: %s, got %q", why, o.Issuer)
+			r.Fail("BACKEND_OIDC_ISSUER: %s, got %q", why, o.Issuer)
 		}
 	}
 	if o.RedirectURL != "" {
 		if why := redirectFault(o.RedirectURL); why != "" {
-			r.Fail("ALMANACH_OIDC_REDIRECT_URL: %s, got %q", why, o.RedirectURL)
+			r.Fail("BACKEND_OIDC_REDIRECT_URL: %s, got %q", why, o.RedirectURL)
 		}
 	}
-	if secret := need("ALMANACH_SESSION_SECRET"); secret != "" {
+	if secret := need("BACKEND_SESSION_SECRET"); secret != "" {
 		if len(secret) < minSessionSecret {
-			r.Fail("ALMANACH_SESSION_SECRET: want at least %d bytes (openssl rand -base64 48), got %d", minSessionSecret, len(secret))
+			r.Fail("BACKEND_SESSION_SECRET: want at least %d bytes (openssl rand -base64 48), got %d", minSessionSecret, len(secret))
 		} else {
 			o.SessionKey = []byte(secret)
 		}
@@ -320,8 +336,8 @@ func (a *App) Summary() string {
 	if a.AuthMode == AuthOIDC {
 		mode = fmt.Sprintf("{oidc issuer %s, client %s}", a.OIDC.Issuer, a.OIDC.ClientID)
 	}
-	return fmt.Sprintf("addr=%s:%d auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars, diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
-		a.Host, a.Port, mode, a.Model, a.ReasoningEffort,
+	return fmt.Sprintf("addr=%s auth=%s model=%s effort=%q limits={repo %d statements / %d chars, project %d statements / %d chars, diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
+		a.Addr, mode, a.Model, a.ReasoningEffort,
 		a.Limits.RepoMaxStatements, a.Limits.RepoMaxChars, a.Limits.ProjectMaxStatements, a.Limits.ProjectMaxChars,
 		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources)
 }

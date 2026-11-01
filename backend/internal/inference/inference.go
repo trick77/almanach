@@ -68,7 +68,7 @@ type Options struct {
 	// Lookup is the environment llmwire reads the gateway's variables from.
 	Lookup func(string) (string, bool)
 	// NoDiagrams leaves `diagram` out of every statement schema
-	// (ALMANACH_MAX_DIAGRAMS=0); the project's map is asked for still.
+	// (BACKEND_MAX_DIAGRAMS=0); the project's map is asked for still.
 	NoDiagrams bool
 }
 
@@ -431,7 +431,7 @@ func nullable(o map[string]any) map[string]any {
 // statements is the array of edits as a description or a patch carries
 // them: each with the id of the statement it edits, a string the code
 // checks against the page; diagram null to keep the one it has (or have
-// none). Without diagrams (ALMANACH_MAX_DIAGRAMS=0) the field is not
+// none). Without diagrams (BACKEND_MAX_DIAGRAMS=0) the field is not
 // offered at all. kinds is what the page may hold.
 func statements(diagrams bool, kinds []string) map[string]any {
 	props := statementProps(diagrams, kinds)

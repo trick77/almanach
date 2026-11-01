@@ -15,7 +15,7 @@ info:
     - `POST /webhooks/noergler` and `GET /auth/ping` take a bearer token. The
       token is the whole identity: it names the team, nothing in a body does.
       Tokens live in the team-keys file of the Almanach instance.
-    - `/api/...` is the read side for the UI. With `ALMANACH_AUTH_MODE=oidc`
+    - `/api/...` is the read side for the UI. With `BACKEND_AUTH_MODE=oidc`
       every route under it but `/api/auth/login` and `/api/auth/callback`
       needs the session cookie the OIDC sign-in sets, and answers 401 without
       one; with `none` it is open to whoever reaches it. The reader gates
@@ -59,7 +59,7 @@ tags:
       project (repositories from its REST API) or a static folder
       (repositories entered by hand). The only writes beside the webhook,
       gated like the read routes by the session. Off, every route but the
-      list answers 404, when `ALMANACH_REPOS_DIR` is unset. A token is sealed
+      list answers 404, when `BACKEND_REPOS_DIR` is unset. A token is sealed
       on the way in and never returned: `has_token` is all a body carries.
   - name: auth
     description: The OIDC sign-in of oidc mode and the UI's session check.
@@ -338,7 +338,7 @@ paths:
       description: |
         A Bitbucket source needs `host`; a static one must not have one.
         `token_auth` defaults to bearer for Bitbucket and basic for static;
-        `token_user` goes with basic only. A token needs `ALMANACH_SECRET_KEY`
+        `token_user` goes with basic only. A token needs `BACKEND_SECRET_KEY`
         on the instance. The next sync cycle starts at once.
       operationId: createSource
       requestBody:
@@ -713,7 +713,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     SourcesOff:
-      description: The feature is off (`ALMANACH_REPOS_DIR` unset).
+      description: The feature is off (`BACKEND_REPOS_DIR` unset).
       content:
         application/json:
           schema:

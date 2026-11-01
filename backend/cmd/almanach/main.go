@@ -16,10 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -75,14 +73,14 @@ func main() {
 const usage = "usage: almanach [serve|migrate|version|-healthcheck|-readycheck]"
 
 // withLog sets up logging before anything logs, names the build, then runs.
-// An unknown LOG_LEVEL still fails startup: logging starts at info so the
+// An unknown BACKEND_LOG_LEVEL still fails startup: logging starts at info so the
 // fault surfaces with the rest of the config's.
 func withLog(fn func(*slog.Logger) error) error {
-	env := os.Getenv("ALMANACH_ENV")
+	env := os.Getenv("BACKEND_ENV")
 	if env == "" {
 		env = "dev"
 	}
-	level := os.Getenv("LOG_LEVEL")
+	level := os.Getenv("BACKEND_LOG_LEVEL")
 	if _, err := logging.ParseLevel(level); err != nil {
 		level = ""
 	}
@@ -95,14 +93,13 @@ func withLog(fn func(*slog.Logger) error) error {
 	return fn(log)
 }
 
-// listenAddr is SERVER_HOST:SERVER_PORT as serve binds it, read without the
-// rest of the config: the healthcheck needs nothing else.
+// listenAddr is BACKEND_ADDR as serve binds it, read without the rest of
+// the config: the healthcheck needs nothing else.
 func listenAddr() string {
-	port := strings.TrimSpace(os.Getenv("SERVER_PORT"))
-	if port == "" {
-		port = "8080"
+	if addr := strings.TrimSpace(os.Getenv("BACKEND_ADDR")); addr != "" {
+		return addr
 	}
-	return net.JoinHostPort(strings.TrimSpace(os.Getenv("SERVER_HOST")), port)
+	return "0.0.0.0:8080"
 }
 
 // startModel builds the client of one llmwire profile and runs its startup
@@ -150,21 +147,21 @@ func writableDir(env, dir string) error {
 // openDB opens the database file after proving its folder takes the file
 // and its -wal and -shm beside it.
 func openDB(ctx context.Context, path string, log *slog.Logger) (*store.Store, error) {
-	if err := writableDir("ALMANACH_DB_PATH", filepath.Dir(path)); err != nil {
+	if err := writableDir("BACKEND_DB_PATH", filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	return store.Open(ctx, path, log)
 }
 
 // migrate applies pending migrations and exits: the init container's job.
-// Only ALMANACH_DB_PATH is needed.
+// Only BACKEND_DB_PATH is needed.
 func migrate(log *slog.Logger) error {
-	if _, err := logging.ParseLevel(os.Getenv("LOG_LEVEL")); err != nil {
-		return fmt.Errorf("LOG_LEVEL: %w", err)
+	if _, err := logging.ParseLevel(os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
+		return fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
 	}
-	path := strings.TrimSpace(os.Getenv("ALMANACH_DB_PATH"))
+	path := strings.TrimSpace(os.Getenv("BACKEND_DB_PATH"))
 	if path == "" {
-		return errors.New("environment variable ALMANACH_DB_PATH is not set")
+		return errors.New("environment variable BACKEND_DB_PATH is not set")
 	}
 	ctx := context.Background()
 	db, err := openDB(ctx, path, log)
@@ -180,8 +177,8 @@ func migrate(log *slog.Logger) error {
 }
 
 func serve(log *slog.Logger) error {
-	if _, err := logging.ParseLevel(os.Getenv("LOG_LEVEL")); err != nil {
-		return fmt.Errorf("LOG_LEVEL: %w", err)
+	if _, err := logging.ParseLevel(os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
+		return fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
 	}
 	app, err := config.Load(os.Getenv)
 	if err != nil {
@@ -238,11 +235,11 @@ func serve(log *slog.Logger) error {
 		} else {
 			gitBin = b
 		}
-		if err := writableDir("ALMANACH_REPOS_DIR", app.Sources.ReposDir); err != nil {
+		if err := writableDir("BACKEND_REPOS_DIR", app.Sources.ReposDir); err != nil {
 			faults = append(faults, err.Error())
 		}
 		if k, err := secret.Parse(app.Sources.SecretKey); err != nil {
-			faults = append(faults, "ALMANACH_SECRET_KEY: "+err.Error())
+			faults = append(faults, "BACKEND_SECRET_KEY: "+err.Error())
 		} else {
 			key = k
 		}
@@ -253,7 +250,7 @@ func serve(log *slog.Logger) error {
 			log.Info("Sources: OK", "dir", app.Sources.ReposDir, "git", gitBin, "token_key", key.Enabled())
 		}
 	} else {
-		log.Info("Sources: off (ALMANACH_REPOS_DIR unset)")
+		log.Info("Sources: off (BACKEND_REPOS_DIR unset)")
 	}
 	// The sign-in. Discovery runs in the background from the first attempt
 	// on, so boot never waits for the provider; one that does not answer
@@ -307,7 +304,7 @@ func serve(log *slog.Logger) error {
 	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
 		OIDC: oidcSvc, Sessions: sessions, RedirectURL: app.OIDC.RedirectURL, Log: log})
 
-	addr := net.JoinHostPort(app.Host, strconv.Itoa(app.Port))
+	addr := app.Addr
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))
 	runErr := httpx.Serve(ctx, httpx.NewServer(addr, srv.Handler()), 15*time.Second)
 

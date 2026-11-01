@@ -178,7 +178,7 @@ describe("SourcesPage", () => {
   it("says when the feature is off", async () => {
     serve({ sources: { enabled: false, sources: [] } });
     render(<SourcesPage />);
-    expect(await screen.findByText(/ALMANACH_REPOS_DIR/)).toBeInTheDocument();
+    expect(await screen.findByText(/BACKEND_REPOS_DIR/)).toBeInTheDocument();
     expect(screen.queryByText("Neue Quelle")).not.toBeInTheDocument();
   });
 

@@ -82,8 +82,8 @@ EVAL_PROMPT ?=
 evalpath = $(if $(1),$(abspath $(patsubst ~/%,$(HOME)/%,$(1))))
 
 # The pages an eval wrote (EVAL_OUT/*.json) loaded into EVAL_DB, a new
-# SQLite file, for the UI: serve it as ALMANACH_DB_PATH with
-# ALMANACH_REPOS_DIR set. No model call, no key.
+# SQLite file, for the UI: serve it as BACKEND_DB_PATH with
+# BACKEND_REPOS_DIR set. No model call, no key.
 EVAL_DB ?=
 
 .PHONY: prompt-eval-db

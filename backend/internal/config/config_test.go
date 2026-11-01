@@ -12,9 +12,9 @@ func lookup(m map[string]string) func(string) string {
 
 func minimal() map[string]string {
 	return map[string]string{
-		"ALMANACH_DB_PATH":        "/data/almanach.db",
-		"ALMANACH_TEAM_KEYS_PATH": "/run/secrets/team-keys.json",
-		"ALMANACH_MODEL":          "gpt-x",
+		"BACKEND_DB_PATH":        "/data/almanach.db",
+		"BACKEND_TEAM_KEYS_PATH": "/run/secrets/team-keys.json",
+		"BACKEND_MODEL":          "gpt-x",
 	}
 }
 
@@ -23,7 +23,7 @@ func TestLoadRequiredMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load accepted an empty environment")
 	}
-	for _, name := range []string{"ALMANACH_DB_PATH is required", "ALMANACH_TEAM_KEYS_PATH is required", "ALMANACH_MODEL is required"} {
+	for _, name := range []string{"BACKEND_DB_PATH is required", "BACKEND_TEAM_KEYS_PATH is required", "BACKEND_MODEL is required"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error lacks %q:\n%v", name, err)
 		}
@@ -38,7 +38,7 @@ func TestLoadDefaults(t *testing.T) {
 	if app.DBPath != "/data/almanach.db" || app.TeamKeysPath != "/run/secrets/team-keys.json" || app.Model != "gpt-x" {
 		t.Errorf("required values = %+v", app)
 	}
-	if app.Host != "0.0.0.0" || app.Port != 8080 || app.AuthMode != AuthNone || app.ReasoningEffort != "" {
+	if app.Addr != "0.0.0.0:8080" || app.AuthMode != AuthNone || app.ReasoningEffort != "" {
 		t.Errorf("server defaults = %+v", app)
 	}
 	want := Limits{RepoMaxStatements: 40, ProjectMaxStatements: 24, RepoMaxChars: 60000, ProjectMaxChars: 40000,
@@ -53,23 +53,22 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadOverrides(t *testing.T) {
 	env := minimal()
-	env["SERVER_HOST"] = "127.0.0.1"
-	env["SERVER_PORT"] = "9090"
-	env["ALMANACH_REASONING_EFFORT"] = "high"
-	env["ALMANACH_REPO_MAX_STATEMENTS"] = "10"
-	env["ALMANACH_PROJECT_MAX_STATEMENTS"] = "5"
-	env["ALMANACH_REPO_MAX_CHARS"] = "800"
-	env["ALMANACH_PROJECT_MAX_CHARS"] = "120"
-	env["ALMANACH_PROBLEM_WINDOW_DAYS"] = "30"
-	env["ALMANACH_DIAGRAM_MAX_NODES"] = "16"
-	env["ALMANACH_DIAGRAM_MAX_EDGES"] = "8"
-	env["ALMANACH_MAX_DIAGRAMS"] = "0"
-	env["LOG_LEVEL"] = "DEBUG"
+	env["BACKEND_ADDR"] = "127.0.0.1:9090"
+	env["BACKEND_REASONING_EFFORT"] = "high"
+	env["BACKEND_REPO_MAX_STATEMENTS"] = "10"
+	env["BACKEND_PROJECT_MAX_STATEMENTS"] = "5"
+	env["BACKEND_REPO_MAX_CHARS"] = "800"
+	env["BACKEND_PROJECT_MAX_CHARS"] = "120"
+	env["BACKEND_PROBLEM_WINDOW_DAYS"] = "30"
+	env["BACKEND_DIAGRAM_MAX_NODES"] = "16"
+	env["BACKEND_DIAGRAM_MAX_EDGES"] = "8"
+	env["BACKEND_MAX_DIAGRAMS"] = "0"
+	env["BACKEND_LOG_LEVEL"] = "DEBUG"
 	app, err := Load(lookup(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if app.Host != "127.0.0.1" || app.Port != 9090 || app.AuthMode != AuthNone || app.ReasoningEffort != "high" {
+	if app.Addr != "127.0.0.1:9090" || app.AuthMode != AuthNone || app.ReasoningEffort != "high" {
 		t.Errorf("server values = %+v", app)
 	}
 	want := Limits{RepoMaxStatements: 10, ProjectMaxStatements: 5, RepoMaxChars: 800, ProjectMaxChars: 120,
@@ -86,12 +85,12 @@ const sessionSecret = "0123456789abcdef0123456789abcdef"
 
 func oidcEnv() map[string]string {
 	env := minimal()
-	env["ALMANACH_AUTH_MODE"] = "oidc"
-	env["ALMANACH_OIDC_ISSUER"] = "https://auth.example.com/"
-	env["ALMANACH_OIDC_CLIENT_ID"] = "almanach"
-	env["ALMANACH_OIDC_CLIENT_SECRET"] = "client-secret-xyz"
-	env["ALMANACH_OIDC_REDIRECT_URL"] = "https://almanach.example.com/api/auth/callback"
-	env["ALMANACH_SESSION_SECRET"] = sessionSecret
+	env["BACKEND_AUTH_MODE"] = "oidc"
+	env["BACKEND_OIDC_ISSUER"] = "https://auth.example.com/"
+	env["BACKEND_OIDC_CLIENT_ID"] = "almanach"
+	env["BACKEND_OIDC_CLIENT_SECRET"] = "client-secret-xyz"
+	env["BACKEND_OIDC_REDIRECT_URL"] = "https://almanach.example.com/api/auth/callback"
+	env["BACKEND_SESSION_SECRET"] = sessionSecret
 	return env
 }
 
@@ -109,8 +108,8 @@ func TestOIDCMode(t *testing.T) {
 		t.Errorf("OIDC = %+v, want %+v", app.OIDC, want)
 	}
 	// Any host: the dev stack and the production stack both bind 0.0.0.0.
-	if app.Host != "0.0.0.0" {
-		t.Errorf("Host = %q", app.Host)
+	if app.Addr != "0.0.0.0:8080" {
+		t.Errorf("Addr = %q", app.Addr)
 	}
 	s := app.Summary()
 	if !strings.Contains(s, "auth={oidc issuer https://auth.example.com/, client almanach}") {
@@ -128,7 +127,7 @@ func TestOIDCModeRequiresEverything(t *testing.T) {
 		env := oidcEnv()
 		delete(env, name)
 		_, err := Load(lookup(env))
-		if err == nil || !strings.Contains(err.Error(), "ALMANACH_AUTH_MODE=oidc requires "+name) {
+		if err == nil || !strings.Contains(err.Error(), "BACKEND_AUTH_MODE=oidc requires "+name) {
 			t.Errorf("without %s: err = %v", name, err)
 		}
 	}
@@ -136,19 +135,19 @@ func TestOIDCModeRequiresEverything(t *testing.T) {
 
 func TestOIDCModeRefusesBadValues(t *testing.T) {
 	for _, tc := range []struct{ name, value, want string }{
-		{"ALMANACH_OIDC_ISSUER", "auth.example.com", "want an absolute URL"},
-		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com/%zz", "want an absolute URL"},
-		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com?x=1", "want no user info, query or fragment"},
-		{"ALMANACH_OIDC_ISSUER", "https://auth.example.com#x", "want no user info, query or fragment"},
-		{"ALMANACH_OIDC_ISSUER", "https://user@auth.example.com", "want no user info, query or fragment"},
-		{"ALMANACH_OIDC_ISSUER", "http://auth.example.com", "want https (http only on a loopback host)"},
-		{"ALMANACH_OIDC_ISSUER", "ftp://auth.example.com", "want https (http only on a loopback host)"},
-		{"ALMANACH_OIDC_REDIRECT_URL", "http://almanach.example.com/api/auth/callback", "want https://<host>/api/auth/callback"},
-		{"ALMANACH_OIDC_REDIRECT_URL", "https:///api/auth/callback", "want https://<host>/api/auth/callback"},
-		{"ALMANACH_OIDC_REDIRECT_URL", "https://almanach.example.com/", "want the path /api/auth/callback"},
-		{"ALMANACH_OIDC_REDIRECT_URL", "https://almanach.example.com/wiki/api/auth/callback", "want the path /api/auth/callback"},
-		{"ALMANACH_OIDC_REDIRECT_URL", "https://almanach.example.com/api/auth/callback?x=1", "want the path /api/auth/callback"},
-		{"ALMANACH_SESSION_SECRET", "too-short", "want at least 32 bytes"},
+		{"BACKEND_OIDC_ISSUER", "auth.example.com", "want an absolute URL"},
+		{"BACKEND_OIDC_ISSUER", "https://auth.example.com/%zz", "want an absolute URL"},
+		{"BACKEND_OIDC_ISSUER", "https://auth.example.com?x=1", "want no user info, query or fragment"},
+		{"BACKEND_OIDC_ISSUER", "https://auth.example.com#x", "want no user info, query or fragment"},
+		{"BACKEND_OIDC_ISSUER", "https://user@auth.example.com", "want no user info, query or fragment"},
+		{"BACKEND_OIDC_ISSUER", "http://auth.example.com", "want https (http only on a loopback host)"},
+		{"BACKEND_OIDC_ISSUER", "ftp://auth.example.com", "want https (http only on a loopback host)"},
+		{"BACKEND_OIDC_REDIRECT_URL", "http://almanach.example.com/api/auth/callback", "want https://<host>/api/auth/callback"},
+		{"BACKEND_OIDC_REDIRECT_URL", "https:///api/auth/callback", "want https://<host>/api/auth/callback"},
+		{"BACKEND_OIDC_REDIRECT_URL", "https://almanach.example.com/", "want the path /api/auth/callback"},
+		{"BACKEND_OIDC_REDIRECT_URL", "https://almanach.example.com/wiki/api/auth/callback", "want the path /api/auth/callback"},
+		{"BACKEND_OIDC_REDIRECT_URL", "https://almanach.example.com/api/auth/callback?x=1", "want the path /api/auth/callback"},
+		{"BACKEND_SESSION_SECRET", "too-short", "want at least 32 bytes"},
 	} {
 		env := oidcEnv()
 		env[tc.name] = tc.value
@@ -171,7 +170,7 @@ func TestOIDCIssuerAsWritten(t *testing.T) {
 		"http://[::1]:8080",
 	} {
 		env := oidcEnv()
-		env["ALMANACH_OIDC_ISSUER"] = issuer
+		env["BACKEND_OIDC_ISSUER"] = issuer
 		app, err := Load(lookup(env))
 		if err != nil {
 			t.Errorf("%s: %v", issuer, err)
@@ -187,14 +186,14 @@ func TestOIDCIssuerAsWritten(t *testing.T) {
 func TestNoneModeRefusesOIDCVariables(t *testing.T) {
 	for _, name := range oidcVars {
 		env := oidcEnv()
-		env["ALMANACH_AUTH_MODE"] = "none"
+		env["BACKEND_AUTH_MODE"] = "none"
 		for _, other := range oidcVars {
 			if other != name {
 				delete(env, other)
 			}
 		}
 		_, err := Load(lookup(env))
-		if err == nil || !strings.Contains(err.Error(), name+" is read in oidc mode only, got ALMANACH_AUTH_MODE=none") {
+		if err == nil || !strings.Contains(err.Error(), name+" is read in oidc mode only, got BACKEND_AUTH_MODE=none") {
 			t.Errorf("%s under none: err = %v", name, err)
 		}
 	}
@@ -202,15 +201,15 @@ func TestNoneModeRefusesOIDCVariables(t *testing.T) {
 
 func TestProxyModeIsGone(t *testing.T) {
 	env := minimal()
-	env["ALMANACH_AUTH_MODE"] = "proxy"
-	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `ALMANACH_AUTH_MODE: "proxy", want one of none, oidc`) {
+	env["BACKEND_AUTH_MODE"] = "proxy"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `BACKEND_AUTH_MODE: "proxy", want one of none, oidc`) {
 		t.Errorf("err = %v", err)
 	}
 }
 
 func TestNonPositiveCap(t *testing.T) {
-	for _, name := range []string{"ALMANACH_REPO_MAX_STATEMENTS", "ALMANACH_PROJECT_MAX_STATEMENTS", "ALMANACH_REPO_MAX_CHARS",
-		"ALMANACH_PROJECT_MAX_CHARS", "ALMANACH_PROBLEM_WINDOW_DAYS"} {
+	for _, name := range []string{"BACKEND_REPO_MAX_STATEMENTS", "BACKEND_PROJECT_MAX_STATEMENTS", "BACKEND_REPO_MAX_CHARS",
+		"BACKEND_PROJECT_MAX_CHARS", "BACKEND_PROBLEM_WINDOW_DAYS"} {
 		for _, v := range []string{"0", "-3"} {
 			env := minimal()
 			env[name] = v
@@ -225,17 +224,17 @@ func TestNonPositiveCap(t *testing.T) {
 		}
 	}
 	env := minimal()
-	env["ALMANACH_REPO_MAX_CHARS"] = "lots"
-	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `ALMANACH_REPO_MAX_CHARS: "lots" is not an integer`) {
+	env["BACKEND_REPO_MAX_CHARS"] = "lots"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `BACKEND_REPO_MAX_CHARS: "lots" is not an integer`) {
 		t.Errorf("non-integer cap: error = %v", err)
 	}
 }
 
 func TestDiagramCaps(t *testing.T) {
 	for name, c := range map[string]struct{ value, fault string }{
-		"ALMANACH_DIAGRAM_MAX_NODES": {"17", "at most 16, the most the drawing lays out"},
-		"ALMANACH_DIAGRAM_MAX_EDGES": {"25", "at most 24, the most the drawing lays out"},
-		"ALMANACH_MAX_DIAGRAMS":      {"-1", "must not be negative"},
+		"BACKEND_DIAGRAM_MAX_NODES": {"17", "at most 16, the most the drawing lays out"},
+		"BACKEND_DIAGRAM_MAX_EDGES": {"25", "at most 24, the most the drawing lays out"},
+		"BACKEND_MAX_DIAGRAMS":      {"-1", "must not be negative"},
 	} {
 		env := minimal()
 		env[name] = c.value
@@ -244,8 +243,8 @@ func TestDiagramCaps(t *testing.T) {
 		}
 	}
 	env := minimal()
-	env["ALMANACH_DIAGRAM_MAX_NODES"] = "0"
-	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "ALMANACH_DIAGRAM_MAX_NODES: must be a positive integer") {
+	env["BACKEND_DIAGRAM_MAX_NODES"] = "0"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_DIAGRAM_MAX_NODES: must be a positive integer") {
 		t.Errorf("no nodes: error = %v", err)
 	}
 }
@@ -260,17 +259,17 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 		t.Fatalf("Baseline = %+v, want %+v", app.Baseline, want)
 	}
 	env := minimal()
-	env["ALMANACH_CATALOGUE_MODEL"] = "cheap"
-	env["ALMANACH_BASELINE_MAX_CALLS"] = "3"
-	env["ALMANACH_BASELINE_RECONCILE"] = "0"
+	env["BACKEND_CATALOGUE_MODEL"] = "cheap"
+	env["BACKEND_BASELINE_MAX_CALLS"] = "3"
+	env["BACKEND_BASELINE_RECONCILE"] = "0"
 	app, err = Load(lookup(env))
 	if err != nil || app.Baseline.CatalogueModel != "cheap" || app.Baseline.MaxCalls != 3 || app.Baseline.Reconcile != 0 {
 		t.Fatalf("overrides = %+v %v", app.Baseline, err)
 	}
 	for name, c := range map[string]struct{ value, fault string }{
-		"ALMANACH_BASELINE_MAX_CALLS": {"2", "a run needs at least 3 calls"},
-		"ALMANACH_BASELINE_MAX_BYTES": {"0", "must be a positive integer"},
-		"ALMANACH_BASELINE_RECONCILE": {"-1h", "must not be negative"},
+		"BACKEND_BASELINE_MAX_CALLS": {"2", "a run needs at least 3 calls"},
+		"BACKEND_BASELINE_MAX_BYTES": {"0", "must be a positive integer"},
+		"BACKEND_BASELINE_RECONCILE": {"-1h", "must not be negative"},
 	} {
 		env := minimal()
 		env[name] = c.value
@@ -282,7 +281,7 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 
 func TestSummaryNamesTheCatalogueModel(t *testing.T) {
 	env := minimal()
-	env["ALMANACH_REPOS_DIR"] = "/repos"
+	env["BACKEND_REPOS_DIR"] = "/repos"
 	app, err := Load(lookup(env))
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +289,7 @@ func TestSummaryNamesTheCatalogueModel(t *testing.T) {
 	if s := app.Summary(); !strings.Contains(s, "baseline {catalogue gpt-x, 16 calls / 2000000 bytes a run, reconcile 720h0m0s}") {
 		t.Errorf("Summary = %s", s)
 	}
-	env["ALMANACH_CATALOGUE_MODEL"] = "cheap"
+	env["BACKEND_CATALOGUE_MODEL"] = "cheap"
 	if app, err = Load(lookup(env)); err != nil {
 		t.Fatal(err)
 	}
@@ -301,13 +300,34 @@ func TestSummaryNamesTheCatalogueModel(t *testing.T) {
 
 func TestInvalidEnum(t *testing.T) {
 	env := minimal()
-	env["ALMANACH_AUTH_MODE"] = "basic"
+	env["BACKEND_AUTH_MODE"] = "basic"
 	_, err := Load(lookup(env))
 	if err == nil {
-		t.Fatal("Load accepted ALMANACH_AUTH_MODE=basic")
+		t.Fatal("Load accepted BACKEND_AUTH_MODE=basic")
 	}
-	if !strings.Contains(err.Error(), `ALMANACH_AUTH_MODE: "basic", want one of none, oidc`) {
+	if !strings.Contains(err.Error(), `BACKEND_AUTH_MODE: "basic", want one of none, oidc`) {
 		t.Errorf("error = %v", err)
+	}
+}
+
+func TestBadAddr(t *testing.T) {
+	for addr, want := range map[string]string{
+		"8080":         "want host:port",
+		"0.0.0.0":      "want host:port",
+		"0.0.0.0:http": "the port must be 1 to 65535",
+		":0":           "the port must be 1 to 65535",
+		":70000":       "the port must be 1 to 65535",
+	} {
+		env := minimal()
+		env["BACKEND_ADDR"] = addr
+		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_ADDR: "+want) {
+			t.Errorf("BACKEND_ADDR=%q: error = %v, want %q", addr, err, want)
+		}
+	}
+	env := minimal()
+	env["BACKEND_ADDR"] = ":9090"
+	if app, err := Load(lookup(env)); err != nil || app.Addr != ":9090" {
+		t.Errorf("BACKEND_ADDR=:9090: %v %+v, want every interface", err, app)
 	}
 }
 
@@ -315,9 +335,9 @@ func TestInvalidEnum(t *testing.T) {
 // OIDC client secret, not the session secret.
 func TestSummaryHidesSecrets(t *testing.T) {
 	env := oidcEnv()
-	env["ALMANACH_REPOS_DIR"] = "/repos"
+	env["BACKEND_REPOS_DIR"] = "/repos"
 	const tokenKey = "c2VjcmV0LWtleS1zZWNyZXQta2V5LXNlY3JldC1rZXk="
-	env["ALMANACH_SECRET_KEY"] = tokenKey
+	env["BACKEND_SECRET_KEY"] = tokenKey
 	app, err := Load(lookup(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)

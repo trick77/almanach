@@ -9,7 +9,7 @@ team-keys.json
 /backend/almanach
 /bin/
 
-# A host run's database (.env.example's ALMANACH_DB_PATH)
+# A host run's database (.env.example's BACKEND_DB_PATH)
 /data/
 
 # The prompt eval's pages
