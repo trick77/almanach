@@ -486,8 +486,8 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	if !strings.Contains(x.models.prompts[1], "rests on code, which the overview does not read") {
 		t.Errorf("overview prompt does not mark s1:\n%s", x.models.prompts[1])
 	}
-	if p := x.plan(t); slices.Contains(p.Skipped, baseline.OverviewPart) {
-		t.Errorf("skipped = %v, want the overview applied", p.Skipped)
+	if p := x.plan(t); p.StepSkipped(baseline.PartOverview) {
+		t.Errorf("steps = %v, want the overview applied", p.Steps)
 	}
 	page := x.st.pages[key]
 	if page.Summary != "Laut README ein Werkzeugdienst." || page.Statements[0].Text != "Zweistufig." || page.Statements[1].Checked != "" {
@@ -769,8 +769,39 @@ func TestRun_SkipsAndCeiling(t *testing.T) {
 		t.Errorf("page = %+v, want B's rewrite rejected and C's statement taken", page.Statements)
 	}
 	// The rejected patch logs its rejection only, no growth against a budget.
-	if out := logs.String(); !strings.Contains(out, "B skipped: rewrite rejected") || strings.Contains(out, "B: page grew") {
+	if out := logs.String(); !strings.Contains(out, `the subject \"B\" skipped: rewrite rejected`) || strings.Contains(out, "B: page grew") {
 		t.Errorf("log for B:\n%s", out)
+	}
+}
+
+// A subject the catalogue names like a step is read as a subject and
+// skipped as one: the steps are held by Part, never by name.
+func TestRun_SubjectNamedLikeAStep(t *testing.T) {
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "the overview", Purpose: "p", Paths: []string{"auth/"}}, {Name: "the project", Purpose: "p", Paths: []string{"billing/"}},
+	}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: inference.Call{Outcome: inference.OutcomeUnparseable}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	purposes := []string{}
+	for _, c := range x.st.calls {
+		purposes = append(purposes, c.Purpose)
+	}
+	if want := []string{"catalogue", "overview", "subject", "subject", "project", "repo_map"}; !reflect.DeepEqual(purposes, want) {
+		t.Fatalf("calls = %v, want %v", purposes, want)
+	}
+	if !strings.Contains(x.models.prompts[2], `the subject "the overview"`) {
+		t.Errorf("second step's prompt does not read the subject:\n%s", x.models.prompts[2])
+	}
+	p := x.plan(t)
+	if !reflect.DeepEqual(p.Skipped, []string{"the overview"}) || p.Why["the overview"] != baseline.SkipFailed || len(p.Steps) != 0 {
+		t.Errorf("skipped = %v, why = %v, steps = %v; want the subject alone", p.Skipped, p.Why, p.Steps)
 	}
 }
 
@@ -795,10 +826,10 @@ func TestRun_PageAtItsCeilingMakesNoCall(t *testing.T) {
 		if r.State != store.RunDone || r.Calls != 3 || r.Skipped != 2 || len(x.models.prompts) != 3 {
 			t.Errorf("%s: run = %+v, %d prompts; want the catalogue, the project and the map only", name, r, len(x.models.prompts))
 		}
-		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{baseline.OverviewPart, "A"}) {
-			t.Errorf("%s: skipped = %v", name, p.Skipped)
-		} else if p.Why[baseline.OverviewPart] != baseline.SkipCeiling || p.Why["A"] != baseline.SkipCeiling {
-			t.Errorf("%s: why = %v, want the ceiling for both", name, p.Why)
+		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A"}) || p.Steps[baseline.PartOverview] != baseline.SkipCeiling {
+			t.Errorf("%s: skipped = %v, steps = %v", name, p.Skipped, p.Steps)
+		} else if p.Why["A"] != baseline.SkipCeiling {
+			t.Errorf("%s: why = %v, want the ceiling", name, p.Why)
 		}
 	}
 }
@@ -852,7 +883,7 @@ func TestRun_Reconcile(t *testing.T) {
 	// The same quiet reconcile after a run that skipped its project step
 	// folds the project nonetheless.
 	q := newWorld(t, 16)
-	skipped := runPlan{Plan: baseline.Plan{Subjects: old.Subjects, Skipped: []string{baseline.ProjectPart}}}
+	skipped := runPlan{Plan: baseline.Plan{Subjects: old.Subjects, Steps: map[baseline.Part]baseline.Skip{baseline.PartProject: baseline.SkipFailed}}}
 	raw, _ = json.Marshal(skipped)
 	q.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
 	q.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
@@ -1146,8 +1177,8 @@ func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
 	if got := page.Statements[1].Files; !reflect.DeepEqual(got, []string{"auth/login.go", "./README.md"}) {
 		t.Errorf("files = %v, want the invented path dropped", got)
 	}
-	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{baseline.OverviewPart}) {
-		t.Errorf("skipped = %v, want the overview named for the next reconcile", p.Skipped)
+	if p := x.plan(t); len(p.Skipped) != 0 || !p.StepSkipped(baseline.PartOverview) {
+		t.Errorf("skipped = %v, steps = %v, want the overview marked for the next reconcile", p.Skipped, p.Steps)
 	}
 }
 
@@ -1155,12 +1186,18 @@ func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
 // overview reads the docs again, a skipped project step folds again, and a
 // file the placing left out stays unplaced.
 func TestRun_ReconcileRetriesWhatTheLastRunSkipped(t *testing.T) {
+	subjects := []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 300}}}}
+	current, _ := json.Marshal(runPlan{Plan: baseline.Plan{Format: baseline.PlanFormat, Subjects: subjects,
+		Steps: map[baseline.Part]baseline.Skip{baseline.PartOverview: baseline.SkipFailed, baseline.PartProject: baseline.SkipCalls}}})
+	// A plan stored before Steps named the two steps in skipped.
+	legacy, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: subjects, Skipped: []string{"the overview", "the project"}}})
+	for name, raw := range map[string][]byte{"current": current, "legacy": legacy} {
+		t.Run(name, func(t *testing.T) { reconcileRetries(t, raw) })
+	}
+}
+
+func reconcileRetries(t *testing.T, raw []byte) {
 	x := newWorld(t, 16)
-	old := runPlan{Plan: baseline.Plan{
-		Subjects: []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 300}}}},
-		Skipped:  []string{baseline.OverviewPart, baseline.ProjectPart},
-	}}
-	raw, _ := json.Marshal(old)
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
 	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
 	x.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 40}}
@@ -1413,10 +1450,10 @@ func TestRun_ProjectSkippedWhenRefused(t *testing.T) {
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "x", Statements: []inference.Statement{{Kind: "nope", Name: "n", Text: "t"}}}}
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 1 || !slices.Contains(x.plan(t).Skipped, baseline.ProjectPart) {
+	if r.State != store.RunDone || r.Skipped != 1 || !x.plan(t).StepSkipped(baseline.PartProject) {
 		t.Fatalf("run = %+v plan %+v, want the refused project rewrite skipped", r, x.plan(t))
 	}
-	if why := x.plan(t).Why[baseline.ProjectPart]; why != baseline.SkipRefused {
+	if why := x.plan(t).Steps[baseline.PartProject]; why != baseline.SkipRefused {
 		t.Errorf("why = %q, want refused", why)
 	}
 }
