@@ -96,6 +96,20 @@ type Page struct {
 	// step hashed it; "" with no map. A basis that no longer matches the
 	// page's text is a map due again.
 	RepoMapBasis string
+	// Stored is the summary and texts as the revision holds them, set only
+	// when the read laid them out anew (lang.Relaid): a map basis hashed
+	// from them before the layout still matches.
+	// TRANSITIONAL(layout): Remove when every page's current revision was
+	// written after the layout.
+	Stored *StoredText
+}
+
+// StoredText is a page's summary and statement texts as stored, before a
+// read laid them out.
+// TRANSITIONAL(layout): Remove with Page.Stored.
+type StoredText struct {
+	Summary string
+	Texts   []string
 }
 
 // QueuedNote is the next note the worker folds in.
@@ -224,10 +238,21 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 		p.Statements = []Statement{}
 	}
 	// Read laid out (lang.Relaid): a revision written before the layout
-	// reads as one written now, wherever the page goes.
+	// reads as one written now, wherever the page goes; what it holds is
+	// kept beside it when that differs (Page.Stored).
+	// TRANSITIONAL(layout): Remove the relaying when every page's current
+	// revision was written after the layout.
+	stored := StoredText{Summary: p.Summary, Texts: make([]string, len(p.Statements))}
+	changed := false
 	p.Summary = lang.Relaid(p.Summary, false)
+	changed = p.Summary != stored.Summary
 	for i := range p.Statements {
+		stored.Texts[i] = p.Statements[i].Text
 		p.Statements[i].Text = lang.Relaid(p.Statements[i].Text, true)
+		changed = changed || p.Statements[i].Text != stored.Texts[i]
+	}
+	if changed {
+		p.Stored = &stored
 	}
 	if p.Map, err = diagramOf(drawn); err != nil {
 		return Page{}, false, err

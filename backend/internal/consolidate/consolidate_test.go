@@ -120,6 +120,7 @@ func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) 
 	}
 	p, ok := f.pages[pageKey(scope, project, repo)]
 	// The store's read relays text, as store.CurrentPage does.
+	// TRANSITIONAL(layout): Remove with lang.Relaid.
 	p.Summary = lang.Relaid(p.Summary, false)
 	p.Statements = slices.Clone(p.Statements)
 	for i := range p.Statements {
@@ -267,6 +268,7 @@ func TestFoldLayoutIsNoChange(t *testing.T) {
 // A statement stored before the layout, echoed as it stood while another
 // changes, keeps its sources, check and diagram: its text is only laid out
 // anew on the way in.
+// TRANSITIONAL(layout): Remove with lang.Relaid.
 func TestFoldLegacyStatementEchoedKeepsSources(t *testing.T) {
 	st := newFakeStore()
 	page := existingRepoPage()
@@ -684,6 +686,7 @@ func TestFoldIdenticalNoRevision(t *testing.T) {
 // Text stored before the layout, an indent or a "* " item in it, returned
 // as it stands is no new revision: only its whitespace and marks would
 // change.
+// TRANSITIONAL(layout): Remove with lang.Relaid.
 func TestFoldLegacyTextEchoedNoRevision(t *testing.T) {
 	st := newFakeStore()
 	page := existingRepoPage()

@@ -34,6 +34,10 @@ func TestNormalize(t *testing.T) {
 		{"a text only a fence's word keeps it", "```yaml", true, "yaml"},
 		{"two bold runs in a title stay two", "## **Lesen** und **Schreiben**", true, "#### **Lesen** und **Schreiben**"},
 		{"a rule is no item, a block's end", "Eins.\n* * *\nZwei.\n- - -", true, "Eins.\n\nZwei."},
+		{"a blank line between items keeps one list", "- a\n\n- b\n\nDanach.", true, "- a\n- b\n\nDanach."},
+		{"an item that would read as a rule is text", "* --", true, "* --"},
+		{"a fence never closed keeps a word that is no language", "```Hinweis:\nText", true, "Hinweis:\nText"},
+		{"a summary heading only of a fence is gone", "## ```", false, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := Normalize(c.in, c.headings)
@@ -116,4 +120,21 @@ func TestWords(t *testing.T) {
 			t.Errorf("%q and %q differ in a symbol, not in layout", c[0], c[1])
 		}
 	}
+}
+
+// Normalize of its own output is that output: Relaid reads every stored
+// text through it, and a second pass that changed a text would lose an
+// item or write a revision per fold.
+func FuzzNormalizeIdempotent(f *testing.F) {
+	for _, s := range []string{"* --", "+ - -", "## ```", "## ~~~", "- a\n\n- b", "```\nx ``` y\n```", "~~~ ~~~ x", "## **a** b **c**",
+		"Fälle:\n* eins\n  weiter\n\n1) zwei", "```go\nfoo", "# Titel\n---\nText", "- # x\n> y", "````md\n```\n# x\n```\n````", "```Hinweis:\nText"} {
+		f.Add(s, true)
+		f.Add(s, false)
+	}
+	f.Fuzz(func(t *testing.T, s string, headings bool) {
+		once := Normalize(s, headings)
+		if twice := Normalize(once, headings); twice != once {
+			t.Errorf("Normalize(%q) = %q, again %q", s, once, twice)
+		}
+	})
 }

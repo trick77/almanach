@@ -27,17 +27,42 @@ const Heading = "#### "
 // `code` spans: a "# comment" in it never turns into a heading. What was
 // dropped is the text when nothing else is: a summary that is only a
 // heading keeps its title, never empty for the page check to refuse.
-// Normalize of its own output is that output.
+// Normalize of its own output is that output: one pass is repeated until
+// nothing changes (a pass only drops and joins, so few do), for marks the
+// first pass leaves that the next reads anew ("* -" and "-" joined are
+// "- - -", a rule) would otherwise drop an item on a later read.
 func Normalize(s string, headings bool) string {
+	out := normalizeOnce(s, headings)
+	for range 8 {
+		next := normalizeOnce(out, headings)
+		if next == out {
+			break
+		}
+		out = next
+	}
+	return out
+}
+
+// normalizeOnce is one pass of Normalize.
+func normalizeOnce(s string, headings bool) string {
 	var blocks []string
 	var dropped []string // titles and fence words left out
 	var cur []string     // the open paragraph's or list's lines
 	list := false        // cur is a list
+	gap := false         // a blank line in an open list: an item next goes on
+	lastList := false    // the last block written is a list
 	flush := func() {
-		if len(cur) > 0 {
+		switch {
+		case len(cur) == 0:
+		case list && lastList:
+			// Two lists with nothing between (a dropped heading, a
+			// blank line) are one: the next read would join them.
+			blocks[len(blocks)-1] += "\n" + strings.Join(cur, "\n")
+		default:
 			blocks = append(blocks, strings.Join(cur, "\n"))
+			lastList = list
 		}
-		cur, list = nil, false
+		cur, list, gap = nil, false, false
 	}
 	fence := ""
 	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
@@ -69,12 +94,28 @@ func Normalize(s string, headings bool) string {
 			if line == "" {
 				continue
 			}
-			if !strings.ContainsAny(line, " \t") {
+			if infoWord(line) {
 				dropped = append(dropped, line)
 				continue
 			}
 		}
-		if line == "" || isRule(line) {
+		if line == "" {
+			// A blank line between items keeps one list, as CommonMark
+			// reads it (a loose list): the UI's blocks keeps it one too.
+			if list {
+				gap = true
+			} else {
+				flush()
+			}
+			continue
+		}
+		if gap {
+			if _, ok := ListItem(line); !ok {
+				flush()
+			}
+			gap = false
+		}
+		if isRule(line) {
 			flush()
 			continue
 		}
@@ -84,6 +125,7 @@ func Normalize(s string, headings bool) string {
 			flush()
 			if headings {
 				blocks = append(blocks, Heading+title)
+				lastList = false
 			} else {
 				dropped = append(dropped, title)
 			}
@@ -106,9 +148,28 @@ func Normalize(s string, headings bool) string {
 	}
 	flush()
 	if len(blocks) == 0 {
-		return strings.Join(dropped, "\n")
+		// Only what reads back as itself: a title "```" or "---" kept as a
+		// line would be a fence or a rule on the next read, and gone.
+		kept := slices.DeleteFunc(dropped, func(d string) bool {
+			_, h := heading(d)
+			_, item := ListItem(d)
+			return h || item || isRule(d) || FenceOf(d) != ""
+		})
+		return strings.Join(kept, "\n")
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+// infoWord reports whether what is left of a fence never closed is its
+// info string, a language's name ("go", "yaml", "c++"), dropped with the
+// fence; anything else ("Hinweis:", a sentence) is text and stays.
+func infoWord(s string) bool {
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("+-._#", r) {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // isRule reports whether a line is a thematic break as CommonMark reads
@@ -130,7 +191,8 @@ func ListItem(line string) (string, bool) {
 		return "", false
 	}
 	if len(line) > 2 && strings.ContainsRune("-*+", rune(line[0])) && line[1] == ' ' {
-		if rest := strings.TrimSpace(line[2:]); rest != "" {
+		// "* --" stored as "- --" would be a rule on the next read: no item.
+		if rest := strings.TrimSpace(line[2:]); rest != "" && !isRule("- "+rest) {
 			return "- " + rest, true
 		}
 		return "", false
@@ -161,7 +223,8 @@ func heading(line string) (string, bool) {
 		return "", false
 	}
 	t := strings.TrimSpace(line[n:])
-	if c := strings.TrimRight(t, "#"); c == "" || strings.HasSuffix(c, " ") {
+	// Every closing run: one left would be closing on the next read.
+	for c := strings.TrimRight(t, "#"); c != t && (c == "" || strings.HasSuffix(c, " ")); c = strings.TrimRight(t, "#") {
 		t = strings.TrimSpace(c)
 	}
 	if strings.HasPrefix(t, "**") && strings.HasSuffix(t, "**") && len(t) > 4 && !strings.Contains(t[2:len(t)-2], "**") {
@@ -253,9 +316,10 @@ func StoredItem(line string) (marker, text string, ok bool) {
 	return "- ", item[2:], true
 }
 
-// Plain is stored text without its layout, as ui/src/format.ts plain has
-// it: the marks of a stored sub-heading and list item gone and every **
-// that pairs (bolds), the words and code spans as they are.
+// Plain is stored text without its layout, line by line: the marks of a
+// stored sub-heading and list item gone and every ** that pairs (bolds,
+// as format.ts runs reads them), the words and code spans, backticks and
+// all, as they are. format.ts plain, the search's, drops the backticks too.
 func Plain(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {

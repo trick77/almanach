@@ -102,11 +102,19 @@ export function blocks(text: string, headings: boolean): Block[] {
     para = [];
     list = null;
   };
+  // A blank line in a list keeps it open for a next item, as
+  // markup.Normalize and CommonMark read it; any other line closes it.
+  let gap = false;
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "") {
-      close();
+      if (list === null) close();
+      else gap = true;
       continue;
+    }
+    if (gap) {
+      gap = false;
+      if (listItem(line) === null) close();
     }
     if (
       headings &&

@@ -118,6 +118,8 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 		if err := rows.Scan(&r.Slug, &r.Summary); err != nil {
 			return nil, err
 		}
+		// TRANSITIONAL(layout): Remove when every page's current revision was
+		// written after the layout.
 		r.Summary = lang.Relaid(r.Summary, false)
 		out = append(out, r)
 	}
@@ -151,6 +153,8 @@ func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]Repo
 		if err := rows.Scan(&r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge)); err != nil {
 			return nil, err
 		}
+		// TRANSITIONAL(layout): Remove when every page's current revision was
+		// written after the layout.
 		r.Summary = lang.Relaid(r.Summary, false)
 		out = append(out, r)
 	}

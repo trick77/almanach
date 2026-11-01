@@ -1354,6 +1354,27 @@ func TestMapBasis(t *testing.T) {
 	}
 }
 
+// A map hashed from text stored before the layout stands when a read only
+// laid that text out anew; a real change still makes it due.
+// TRANSITIONAL(layout): Remove with store.Page.Stored.
+func TestMapStandsOverRelaidText(t *testing.T) {
+	stored := store.Page{Summary: "Ein Dienst.\n\n\n  Mehr.", Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "* eins"}}}
+	read := stored
+	read.RepoMap, read.RepoMapBasis = drawnRepoMap(), mapBasis(stored)
+	read.Summary, read.Statements = "Ein Dienst.\n\nMehr.", []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "- eins"}}
+	if mapStands(read) {
+		t.Fatal("without what was stored, a relaid page's old basis cannot stand")
+	}
+	read.Stored = &store.StoredText{Summary: stored.Summary, Texts: []string{"* eins"}}
+	if !mapStands(read) {
+		t.Error("a map over text only laid out anew is due again")
+	}
+	read.Statements[0].Name = "S"
+	if mapStands(read) {
+		t.Error("a renamed statement left the map standing")
+	}
+}
+
 // A map step whose write a busy database refuses holds like any step; past
 // maxFoldAttempts the run ends done without the map, never failed: the
 // description and the project are written, the map is optional. The basis

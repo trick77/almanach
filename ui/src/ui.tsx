@@ -191,10 +191,11 @@ export function Inline({
   const hits = bold
     ? matchRanges(parts.map((p) => p.text).join(""), query)
     : [];
-  // Each run's offset in the runs' text as one.
+  // Each run's offset in the runs' text as one; bold's alone needs them.
   const starts: number[] = [];
-  for (let j = 0, at = 0; j < parts.length; at += parts[j].text.length, j++)
-    starts.push(at);
+  if (bold)
+    for (let j = 0, at = 0; j < parts.length; at += parts[j].text.length, j++)
+      starts.push(at);
   return (
     <>
       {parts.map((s, j) => {

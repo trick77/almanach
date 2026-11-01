@@ -73,6 +73,12 @@ describe("blocks", () => {
       { kind: "p", text: "Danach." },
     ]);
   });
+  it("keeps one list over a blank line between items, as markup.Normalize", () => {
+    expect(blocks("- a\n\n- b\n\nDanach.", true)).toEqual([
+      { kind: "ul", items: ["a", "b"] },
+      { kind: "p", text: "Danach." },
+    ]);
+  });
   it("starts a list under a paragraph line, a new one on a change of kind", () => {
     expect(blocks("Fälle:\n- a\n1. b", true)).toEqual([
       { kind: "p", text: "Fälle:" },

@@ -1542,7 +1542,25 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 // mapStands reports whether a repository page's map was drawn from its
 // description as it stands: then a run has nothing new to draw from.
 func mapStands(p store.Page) bool {
-	return p.RepoMap != nil && p.RepoMapBasis == mapBasis(p)
+	if p.RepoMap == nil {
+		return false
+	}
+	if p.RepoMapBasis == mapBasis(p) {
+		return true
+	}
+	// A map drawn before the layout was hashed from the text as stored; a
+	// read that only laid it out anew is no reason for a paid redraw.
+	// TRANSITIONAL(layout): Remove with store.Page.Stored.
+	if p.Stored == nil {
+		return false
+	}
+	raw := p
+	raw.Summary = p.Stored.Summary
+	raw.Statements = slices.Clone(p.Statements)
+	for i := range raw.Statements {
+		raw.Statements[i].Text = p.Stored.Texts[i]
+	}
+	return p.RepoMapBasis == mapBasis(raw)
 }
 
 // mapBasis is the description a repository map is drawn from, as a hash:
