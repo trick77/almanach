@@ -198,6 +198,7 @@ describe("SourcesPage", () => {
     const writes = serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     expect(screen.queryByText("Token senden als")).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("SHOP"), {
       target: { value: "neu" },
@@ -235,12 +236,13 @@ describe("SourcesPage", () => {
     serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
-    expect(screen.getByText(/privates Bitbucket-Projekt/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    // A single repository is the default, the first option.
     expect(screen.getByText(/«Contents: read»/)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/privates Bitbucket-Projekt/),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    expect(screen.getByText(/privates Bitbucket-Projekt/)).toBeInTheDocument();
+    expect(screen.queryByText(/«Contents: read»/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Einzelnes Repository/));
+    expect(screen.getByText(/«Contents: read»/)).toBeInTheDocument();
   });
 
   it("creates a source on the configured host", async () => {
@@ -249,6 +251,7 @@ describe("SourcesPage", () => {
     });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     fireEvent.change(screen.getByPlaceholderText("SHOP"), {
       target: { value: "neu" },
     });
@@ -263,12 +266,11 @@ describe("SourcesPage", () => {
     expect(body).not.toHaveProperty("system");
   });
 
-  it("creates a static folder with its first repository, the slug from the URL", async () => {
+  it("creates a project with its first repository, the slug from the URL", async () => {
     const writes = serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
-    fireEvent.click(screen.getByText(/^Statischer Ordner/));
-    // No switch any more: a folder of one repository is a project of one.
+    // No switch any more: a project of one repository is a project of one.
     expect(screen.queryByRole("switch")).toBeNull();
     const create = screen.getByText("Anlegen und synchronisieren");
     expect(create).toBeDisabled();

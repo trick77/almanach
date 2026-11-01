@@ -211,14 +211,15 @@ function NewSourceForm({
   onDone: (created: SourceDetail) => void;
   onCancel: () => void;
 }) {
-  const [kind, setKind] = useState<SourceKind>("bitbucket");
+  // One repository by its clone URL comes first: the usual case.
+  const [kind, setKind] = useState<SourceKind>("static");
   const [key, setKey] = useState("");
   const [host, setHost] = useState(defaultHost);
   const [token, setToken] = useState("");
-  const [auth, setAuth] = useState<TokenAuth>("bearer");
+  const [auth, setAuth] = useState<TokenAuth>("basic");
   const [user, setUser] = useState("");
-  // A static folder comes with its first repository; the slug follows the
-  // URL until it is typed by hand.
+  // A hand-filled project comes with its first repository; the slug follows
+  // the URL until it is typed by hand.
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [keyTyped, setKeyTyped] = useState(false);
@@ -243,7 +244,7 @@ function NewSourceForm({
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
-        // The first repository: its slug is the folder's, empty is its
+        // The first repository: its slug is the project's, empty is its
         // name from the URL (the server's rule too).
         ...(isStatic
           ? { clone_url: url.trim(), slug: key.trim(), branch: branch.trim() }
@@ -271,8 +272,8 @@ function NewSourceForm({
             value={kind}
             onChange={pickKind}
             options={[
-              { value: "bitbucket", label: S.sources.kindLabel.bitbucket },
               { value: "static", label: S.sources.kindLabel.static },
+              { value: "bitbucket", label: S.sources.kindLabel.bitbucket },
             ]}
           />
           <span className={fieldHint}>{S.sources.kindHint[kind]}</span>
