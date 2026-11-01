@@ -3,6 +3,8 @@ import {
   ApiError,
   send,
   type Baseline,
+  type SkippedPart,
+  type SkipReason,
   type SourceDetail,
   type SourceRepo,
   type TokenAuth,
@@ -624,7 +626,10 @@ function BaselineCell({ b }: { b: Baseline | null }) {
         : money(b.cost_usd)
       : "",
     !open && b.finished_at !== null ? day(b.finished_at) : "",
-    b.state === "done" && b.skipped > 0 ? S.baseline.skipped(b.skipped) : "",
+    // The parts, each once; a run from before they were named has its count.
+    b.state === "done" && b.skipped > 0
+      ? S.baseline.skipped(b.skipped_parts.length || b.skipped)
+      : "",
   ].filter((s) => s !== "");
   return (
     <>
@@ -636,8 +641,51 @@ function BaselineCell({ b }: { b: Baseline | null }) {
           {parts.join(` ${S.common.sep} `)}
         </div>
       )}
+      {b.state === "done" &&
+        skipGroups(b.skipped_parts).map(([reason, names]) => (
+          <div
+            key={reason}
+            className="mt-0.5 max-w-[190px] text-[11.5px] text-muted"
+          >
+            {S.baseline.skipLine(
+              reasonLabel(reason),
+              names.slice(0, maxSkipNames),
+              names.length - maxSkipNames,
+            )}
+          </div>
+        ))}
     </>
   );
+}
+
+/** maxSkipNames is how many names a reason's line shows before it counts
+ *  the rest: a page at its ceiling skips every part left, and the cell is
+ *  190px wide. */
+const maxSkipNames = 3;
+
+/** reasonLabel words a skip code; one the bundle does not know yet (a
+ *  server newer than the page) reads as an unrecorded reason. */
+function reasonLabel(reason: string): string {
+  const known: Partial<Record<string, string>> = S.baseline.skipReason;
+  return known[reason] ?? S.baseline.skipReason[""];
+}
+
+/** partName is a skipped part's name: a subject's own, the overview or
+ *  the project step in German, an unknown kind as sent. */
+function partName(p: SkippedPart): string {
+  if (p.part === "subject") return p.name;
+  const known: Partial<Record<string, string>> = S.baseline.skippedPart;
+  return known[p.part] ?? p.part;
+}
+
+/** skipGroups is a run's skipped parts by reason, each reason once in the
+ *  order the run first hit it: one line per reason rather than per part. */
+function skipGroups(parts: SkippedPart[]): [SkipReason, string[]][] {
+  const groups = new Map<SkipReason, string[]>();
+  for (const p of parts) {
+    groups.set(p.reason, [...(groups.get(p.reason) ?? []), partName(p)]);
+  }
+  return [...groups];
 }
 
 /** AccessForm edits the host (Bitbucket) and the token: an omitted token

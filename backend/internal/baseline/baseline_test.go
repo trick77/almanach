@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -192,6 +193,50 @@ func TestBuildPlan_HoldsTheCatalogueToTheTree(t *testing.T) {
 	}
 	if empty := BuildPlan(nil, files, 3); empty.Subjects == nil || len(empty.Subjects) != 0 {
 		t.Errorf("no proposal = %+v, want an empty, non-nil plan", empty)
+	}
+}
+
+// A part is named once with the first reason that hit it; the overview and
+// the project list without a name, and a run from before reasons has none.
+func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
+	var p Plan
+	p.Skip(OverviewPart, SkipCeiling)
+	p.Skip("Auth", SkipFailed)
+	p.Skip("Auth", SkipCalls)
+	p.Skip(ProjectPart, SkipNoPage)
+	want := []SkippedPart{
+		{Part: "overview", Name: "", Reason: SkipCeiling},
+		{Part: "subject", Name: "Auth", Reason: SkipFailed},
+		{Part: "project", Name: "", Reason: SkipNoPage},
+	}
+	if got := p.SkippedParts(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("parts = %+v\nwant %+v", got, want)
+	}
+	old := Plan{Skipped: []string{"Auth"}}
+	if got := old.SkippedParts(); !reflect.DeepEqual(got, []SkippedPart{{Part: "subject", Name: "Auth", Reason: ""}}) {
+		t.Errorf("old plan parts = %+v", got)
+	}
+	if got := (Plan{}).SkippedParts(); got == nil || len(got) != 0 {
+		t.Errorf("no skips = %#v, want an empty list", got)
+	}
+}
+
+// RunSkips reads a stored plan's skips the way the worker wrote them,
+// through Plan's own JSON.
+func TestRunSkips_ReadsAStoredPlan(t *testing.T) {
+	var p Plan
+	p.Subjects = []Subject{{Name: "Auth", Purpose: "p", Files: []File{{"auth/a.go", 1}}}}
+	p.Skip("Auth", SkipBytes)
+	raw, _ := json.Marshal(p)
+	got, err := RunSkips(raw)
+	if err != nil || !reflect.DeepEqual(got, []SkippedPart{{Part: "subject", Name: "Auth", Reason: SkipBytes}}) {
+		t.Fatalf("RunSkips = %+v, %v", got, err)
+	}
+	if got, err := RunSkips(nil); err != nil || len(got) != 0 {
+		t.Errorf("no plan = %+v, %v", got, err)
+	}
+	if _, err := RunSkips(json.RawMessage(`{"skipped":7}`)); err == nil {
+		t.Error("a malformed plan decoded")
 	}
 }
 

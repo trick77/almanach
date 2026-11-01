@@ -429,7 +429,7 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	if !strings.Contains(x.models.prompts[1], "rests on code, which the overview does not read") {
 		t.Errorf("overview prompt does not mark s1:\n%s", x.models.prompts[1])
 	}
-	if p := x.plan(t); slices.Contains(p.Skipped, overviewName) {
+	if p := x.plan(t); slices.Contains(p.Skipped, baseline.OverviewPart) {
 		t.Errorf("skipped = %v, want the overview applied", p.Skipped)
 	}
 	page := x.st.pages[key]
@@ -705,6 +705,8 @@ func TestRun_SkipsAndCeiling(t *testing.T) {
 	}
 	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A", "B"}) {
 		t.Errorf("skipped = %v, want A (failed) and B (ceiling)", p.Skipped)
+	} else if want := map[string]baseline.Skip{"A": baseline.SkipFailed, "B": baseline.SkipOverCeiling}; !reflect.DeepEqual(p.Why, want) {
+		t.Errorf("why = %v, want %v", p.Why, want)
 	}
 	if page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; len(page.Statements) != 1 || page.Statements[0].Name != "Kurz" {
 		t.Errorf("page = %+v, want B's rewrite rejected and C's statement taken", page.Statements)
@@ -736,8 +738,10 @@ func TestRun_PageAtItsCeilingMakesNoCall(t *testing.T) {
 		if r.State != store.RunDone || r.Calls != 2 || r.Skipped != 2 || len(x.models.prompts) != 2 {
 			t.Errorf("%s: run = %+v, %d prompts; want the catalogue and the project only", name, r, len(x.models.prompts))
 		}
-		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{overviewName, "A"}) {
+		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{baseline.OverviewPart, "A"}) {
 			t.Errorf("%s: skipped = %v", name, p.Skipped)
+		} else if p.Why[baseline.OverviewPart] != baseline.SkipCeiling || p.Why["A"] != baseline.SkipCeiling {
+			t.Errorf("%s: why = %v, want the ceiling for both", name, p.Why)
 		}
 	}
 }
@@ -791,7 +795,7 @@ func TestRun_Reconcile(t *testing.T) {
 	// The same quiet reconcile after a run that skipped its project step
 	// folds the project nonetheless.
 	q := newWorld(t, 16)
-	skipped := runPlan{Plan: baseline.Plan{Subjects: old.Subjects, Skipped: []string{projectName}}}
+	skipped := runPlan{Plan: baseline.Plan{Subjects: old.Subjects, Skipped: []string{baseline.ProjectPart}}}
 	raw, _ = json.Marshal(skipped)
 	q.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
 	q.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
@@ -1071,7 +1075,7 @@ func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
 	if got := page.Statements[1].Files; !reflect.DeepEqual(got, []string{"auth/login.go", "./README.md"}) {
 		t.Errorf("files = %v, want the invented path dropped", got)
 	}
-	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{overviewName}) {
+	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{baseline.OverviewPart}) {
 		t.Errorf("skipped = %v, want the overview named for the next reconcile", p.Skipped)
 	}
 }
@@ -1083,7 +1087,7 @@ func TestRun_ReconcileRetriesWhatTheLastRunSkipped(t *testing.T) {
 	x := newWorld(t, 16)
 	old := runPlan{Plan: baseline.Plan{
 		Subjects: []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 300}}}},
-		Skipped:  []string{overviewName, projectName},
+		Skipped:  []string{baseline.OverviewPart, baseline.ProjectPart},
 	}}
 	raw, _ := json.Marshal(old)
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
@@ -1117,8 +1121,11 @@ func TestRun_ProjectSkippedWhenRefused(t *testing.T) {
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "x", Statements: []inference.Statement{{Kind: "nope", Name: "n", Text: "t"}}}}
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 1 || !slices.Contains(x.plan(t).Skipped, projectName) {
+	if r.State != store.RunDone || r.Skipped != 1 || !slices.Contains(x.plan(t).Skipped, baseline.ProjectPart) {
 		t.Fatalf("run = %+v plan %+v, want the refused project rewrite skipped", r, x.plan(t))
+	}
+	if why := x.plan(t).Why[baseline.ProjectPart]; why != baseline.SkipRefused {
+		t.Errorf("why = %q, want refused", why)
 	}
 }
 

@@ -136,7 +136,8 @@ func TestSourceBody_Baseline(t *testing.T) {
 	cost := int64(2_418_000_000)
 	finished := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
 	fs.runs["svc"] = store.RepoRuns{
-		Last:     store.BaselineRun{ID: 7, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerFirstReady, State: store.RunDone, Commit: "c0ffee", Step: 5, Steps: 5, Skipped: 1, FinishedAt: &finished},
+		Last: store.BaselineRun{ID: 7, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerFirstReady, State: store.RunDone, Commit: "c0ffee", Step: 5, Steps: 5, Skipped: 1, FinishedAt: &finished,
+			Plan: json.RawMessage(`{"subjects":[],"skipped":["Auth"],"why":{"Auth":"calls"}}`)},
 		LastCost: &cost, Documented: "c0ffee", DocumentedAt: &finished,
 	}
 	h, _, _ := sourcesHandler(t, fs, false)
@@ -162,6 +163,9 @@ func TestSourceBody_Baseline(t *testing.T) {
 	if field(t, b, "state") != "done" || field(t, b, "cost_usd") != "2.418" || field(t, b, "documented_commit") != "c0ffee" ||
 		string(b["skipped"]) != "1" || field(t, b, "trigger") != "first_ready" || string(b["run_id"]) != "7" {
 		t.Errorf("baseline = %v", b)
+	}
+	if got := string(b["skipped_parts"]); got != `[{"part":"subject","name":"Auth","reason":"calls"}]` {
+		t.Errorf("skipped_parts = %s", got)
 	}
 
 	// A key noergler spells otherwise would have every note ignored.
