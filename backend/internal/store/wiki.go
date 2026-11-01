@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/lang"
 )
 
 // Scopes of a description.
@@ -221,6 +222,12 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	}
 	if p.Statements == nil {
 		p.Statements = []Statement{}
+	}
+	// Read laid out (lang.Relaid): a revision written before the layout
+	// reads as one written now, wherever the page goes.
+	p.Summary = lang.Relaid(p.Summary, false)
+	for i := range p.Statements {
+		p.Statements[i].Text = lang.Relaid(p.Statements[i].Text, true)
 	}
 	if p.Map, err = diagramOf(drawn); err != nil {
 		return Page{}, false, err

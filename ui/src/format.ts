@@ -79,7 +79,8 @@ function listItem(
   line: string,
 ): { kind: "ul" | "ol"; n: number; text: string } | null {
   // Exactly the stored form, as markup.StoredItem: one blank after the
-  // marker, the text starting right after it.
+  // marker, the text starting right after it; a rule ("- - -") is none.
+  if (/^([-*_])(\s*\1){2,}\s*$/.test(line)) return null;
   const u = /^- (\S.*)$/.exec(line);
   if (u) return { kind: "ul", n: 0, text: u[1] };
   const m = /^(\d{1,9})\. (\S.*)$/.exec(line);
@@ -237,7 +238,15 @@ export function codeSpans(p: string): Span[] {
         text(line.slice(open));
         break;
       }
-      out.push({ text: line.slice(j, close), code: true });
+      // CommonMark's padding: one blank either side, as markup.CodeSpan
+      // writes around code holding a backtick, is not the code's.
+      const code = line.slice(j, close);
+      const padded =
+        code.length > 2 &&
+        code.startsWith(" ") &&
+        code.endsWith(" ") &&
+        code.trim() !== "";
+      out.push({ text: padded ? code.slice(1, -1) : code, code: true });
       i = close + run.length;
     }
   }

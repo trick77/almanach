@@ -424,7 +424,7 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		return nil
 	}
 	logLeftOut(ctx, w.log, "consolidate: "+scope, leftOut)
-	if sameLaidOut(current.Summary, summary, false) && sameStatements(current.Statements, statements) {
+	if current.Summary == summary && sameStatements(current.Statements, statements) {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description identical, no revision")
 		return nil
 	}
@@ -654,29 +654,12 @@ func cleanStatement(p inference.Statement) store.Statement {
 // sub-heading (lang.Laid).
 func proseSummary(s string) string { return lang.Laid(s, false) }
 
-// relaid is stored text as lang.Laid would store it now: laid out, then
-// Swiss. Redaction is not redone: what is stored was redacted. Text stored
-// before the layout was its whitespace, a "* " item or a ß an old fence
-// rule kept apart from it.
-func relaid(stored string, headings bool) string {
-	return lang.SwissSS(markup.Normalize(stored, headings))
-}
-
-// sameLaidOut reports whether a stored text and a returned one read the
-// same: equal, or equal once the stored one is relaid. Returned as it
-// stood, text stored before the layout is no new revision.
-func sameLaidOut(stored, returned string, headings bool) bool {
-	return stored == returned || relaid(stored, headings) == returned
-}
-
 // sameText reports whether a statement's new text says what its old one
 // did: umlauts spelled in (lang.SameButSpelling) or only laid out anew,
 // a paragraph turned into a list, a term set in bold (markup.Words). The
-// old text is relaid first: text stored before the layout, returned as it
-// stood, says nothing new.
+// old text is read laid out (store, lang.Relaid), as the new one is.
 func sameText(old, text string) bool {
-	return lang.SameButSpelling(old, text) ||
-		lang.SameButSpelling(markup.Words(relaid(old, true)), markup.Words(text))
+	return lang.SameButSpelling(old, text) || lang.SameButSpelling(markup.Words(old), markup.Words(text))
 }
 
 // diagramLimits is what a page's statement diagrams are held to: the caps
@@ -879,11 +862,11 @@ func fieldCap(s store.Statement) string {
 }
 
 // sameStatement compares what a reader sees of a stored statement and a
-// returned one: id, kind, name, text (sameLaidOut), files and diagram,
-// not sources or last check.
+// returned one: id, kind, name, text (both laid out: a store read relays
+// the stored one), files and diagram, not sources or last check.
 func sameStatement(stored, returned store.Statement) bool {
 	return stored.ID == returned.ID && stored.Kind == returned.Kind && stored.Name == returned.Name &&
-		sameLaidOut(stored.Text, returned.Text, true) &&
+		stored.Text == returned.Text &&
 		slices.Equal(stored.Files, returned.Files) && diagram.Equal(stored.Diagram, returned.Diagram)
 }
 

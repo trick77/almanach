@@ -22,13 +22,17 @@ const Heading = "#### "
 // a paragraph's lines as written, their indents dropped (so the Swiss rule
 // skips none as code); a list item one "- " or "N. " line, its
 // continuation lines joined to it; a heading, any level, a "#### " line
-// where headings is set and dropped where not (a summary). A
-// fenced block's lines become `code` spans: a "# comment" in it never
-// turns into a heading. Normalize of its own output is that output.
+// where headings is set and dropped where not (a summary); a rule
+// ("* * *", "---") dropped, a block's end. A fenced block's lines become
+// `code` spans: a "# comment" in it never turns into a heading. What was
+// dropped is the text when nothing else is: a summary that is only a
+// heading keeps its title, never empty for the page check to refuse.
+// Normalize of its own output is that output.
 func Normalize(s string, headings bool) string {
 	var blocks []string
-	var cur []string // the open paragraph's or list's lines
-	list := false    // cur is a list
+	var dropped []string // titles and fence words left out
+	var cur []string     // the open paragraph's or list's lines
+	list := false        // cur is a list
 	flush := func() {
 		if len(cur) > 0 {
 			blocks = append(blocks, strings.Join(cur, "\n"))
@@ -56,14 +60,21 @@ func Normalize(s string, headings bool) string {
 				fence = f
 				continue
 			}
-			// A fence never closed is no block: its marker goes, what
-			// follows it on the line and the lines after stay text, not one
-			// column of code to the end.
-			if line = strings.TrimSpace(line[len(f):]); line == "" {
+			// A fence never closed is no block: its markers go, a fence's
+			// word ("go", "yaml") with them; prose after them on the line
+			// and the lines after stay text, not one column of code.
+			for ; f != ""; f = FenceOf(line) {
+				line = strings.TrimSpace(line[len(f):])
+			}
+			if line == "" {
+				continue
+			}
+			if !strings.ContainsAny(line, " \t") {
+				dropped = append(dropped, line)
 				continue
 			}
 		}
-		if line == "" {
+		if line == "" || isRule(line) {
 			flush()
 			continue
 		}
@@ -73,6 +84,8 @@ func Normalize(s string, headings bool) string {
 			flush()
 			if headings {
 				blocks = append(blocks, Heading+title)
+			} else {
+				dropped = append(dropped, title)
 			}
 			continue
 		}
@@ -92,13 +105,30 @@ func Normalize(s string, headings bool) string {
 		cur = append(cur, line)
 	}
 	flush()
+	if len(blocks) == 0 {
+		return strings.Join(dropped, "\n")
+	}
 	return strings.Join(blocks, "\n\n")
+}
+
+// isRule reports whether a line is a thematic break as CommonMark reads
+// one: three or more of one of - * _, blanks between allowed.
+func isRule(line string) bool {
+	for _, c := range []string{"-", "*", "_"} {
+		if strings.Trim(line, c+" \t") == "" && strings.Count(line, c) >= 3 {
+			return true
+		}
+	}
+	return false
 }
 
 // ListItem reports whether a line, indent dropped, is a list item, and
 // returns it in the stored form: "- item" for -, * or + and "N. item" for
-// N. or N).
+// N. or N). A rule ("* * *", "- - -") is none.
 func ListItem(line string) (string, bool) {
+	if isRule(line) {
+		return "", false
+	}
 	if len(line) > 2 && strings.ContainsRune("-*+", rune(line[0])) && line[1] == ' ' {
 		if rest := strings.TrimSpace(line[2:]); rest != "" {
 			return "- " + rest, true
@@ -123,7 +153,8 @@ func ordered(line string) (string, string, bool) {
 
 // heading reports whether a line is a heading of any level and returns
 // its title: markers, a closing run of #s after a blank (as CommonMark
-// reads one: "C#" keeps its #) and the title's own ** dropped.
+// reads one: "C#" keeps its #) and the title's own ** dropped when one
+// bold run is the whole title ("**Lesen** und **Schreiben**" is two).
 func heading(line string) (string, bool) {
 	n := len(line) - len(strings.TrimLeft(line, "#"))
 	if n == 0 || n > 6 || n >= len(line) || line[n] != ' ' {
@@ -133,7 +164,7 @@ func heading(line string) (string, bool) {
 	if c := strings.TrimRight(t, "#"); c == "" || strings.HasSuffix(c, " ") {
 		t = strings.TrimSpace(c)
 	}
-	if strings.HasPrefix(t, "**") && strings.HasSuffix(t, "**") && len(t) > 4 {
+	if strings.HasPrefix(t, "**") && strings.HasSuffix(t, "**") && len(t) > 4 && !strings.Contains(t[2:len(t)-2], "**") {
 		t = strings.TrimSpace(t[2 : len(t)-2])
 	}
 	return t, t != ""
@@ -280,11 +311,11 @@ func unbold(l string) string {
 }
 
 // Words is what a text says, its layout aside: its words, a sub-heading's
-// title among them (a changed title is a change), its symbols (> is not
-// <, -5 not 5) and its code spans whole, one space apart. A . , ; : ends a
-// word, as a sentence's mark a list drops; inside one ("1,5",
-// "config.yaml") it is the word's. Two texts with the same words differ
-// only in how they are laid out.
+// title and a numbered item's number among them (a changed title, a step
+// renumbered is a change), its symbols (> is not <, -5 not 5) and its code
+// spans whole, one space apart. A . , ; : ends a word, as a sentence's
+// mark a list drops; inside one ("1,5", "config.yaml") it is the word's.
+// Two texts with the same words differ only in how they are laid out.
 func Words(s string) string {
 	var out []string
 	var word strings.Builder
@@ -294,7 +325,13 @@ func Words(s string) string {
 			word.Reset()
 		}
 	}
-	p := Plain(s)
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if marker, text, ok := StoredItem(strings.TrimSpace(l)); ok && marker != "- " {
+			lines[i] = strings.TrimSuffix(marker, ". ") + " " + text
+		}
+	}
+	p := Plain(strings.Join(lines, "\n"))
 	inWord := func(i int) bool {
 		r, _ := utf8.DecodeRuneInString(p[i:])
 		return unicode.IsLetter(r) || unicode.IsDigit(r)

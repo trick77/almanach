@@ -16,6 +16,7 @@ import (
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/llmwire"
@@ -118,6 +119,12 @@ func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) 
 		return store.Page{}, false, f.pageErr
 	}
 	p, ok := f.pages[pageKey(scope, project, repo)]
+	// The store's read relays text, as store.CurrentPage does.
+	p.Summary = lang.Relaid(p.Summary, false)
+	p.Statements = slices.Clone(p.Statements)
+	for i := range p.Statements {
+		p.Statements[i].Text = lang.Relaid(p.Statements[i].Text, true)
+	}
 	return p, ok, nil
 }
 

@@ -278,7 +278,7 @@ export function Doc({
           }
           default:
             return (
-              <p key={i} className={block}>
+              <p key={i} className={block + " whitespace-pre-line"}>
                 <Inline text={b.text} query={query} bold />
               </p>
             );
@@ -311,31 +311,12 @@ export function Summary({
 /** Marked is text with every match of a search set off, case-insensitive;
  *  the text itself unchanged, never markup from it. */
 export function Marked({ text, query }: { text: string; query: string }) {
-  const q = query.trim();
-  if (q === "") return <>{text}</>;
-  // A split on a capturing group keeps the matches at the odd places, in
-  // the text's own case; offsets never come from a lower-cased copy.
-  const parts = text.split(new RegExp(`(${escapeRegExp(q)})`, "gi"));
-  return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 === 1 ? (
-          <mark
-            key={i}
-            className="rounded-[2px] bg-ochre-wash px-px text-ochre"
-          >
-            {p}
-          </mark>
-        ) : (
-          p
-        ),
-      )}
-    </>
-  );
+  return <Ranged text={text} from={0} hits={matchRanges(text, query)} />;
 }
 
 /** matchRanges is every case-insensitive match of a search in a text, as
- *  [start, end) offsets: Marked's pattern, for marks that cross runs. */
+ *  [start, end) offsets: the one search pattern, Marked's and Inline's
+ *  marks that cross runs. */
 function matchRanges(text: string, query: string): [number, number][] {
   const q = query.trim();
   if (q === "") return [];

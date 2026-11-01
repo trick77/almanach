@@ -145,6 +145,8 @@ describe("plain", () => {
     expect(blocks("-  zwei Blanks\n1.  auch", true)).toEqual([
       { kind: "p", text: "-  zwei Blanks\n1.  auch" },
     ]);
+    // A rule is no item.
+    expect(blocks("- - -", true)).toEqual([{ kind: "p", text: "- - -" }]);
   });
 });
 
@@ -179,6 +181,12 @@ describe("codeSpans", () => {
       { text: "x `` y `z`\n", code: false },
       { text: "w", code: true },
     ]);
+  });
+  it("drops CommonMark's one-blank padding, as markup.CodeSpan writes it", () => {
+    expect(codeSpans("`` make `x` ``")).toEqual([
+      { text: "make `x`", code: true },
+    ]);
+    expect(codeSpans("`  `")).toEqual([{ text: "  ", code: true }]);
   });
 });
 

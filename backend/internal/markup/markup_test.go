@@ -28,6 +28,12 @@ func TestNormalize(t *testing.T) {
 		{"a title's own # stays", "## Warum C#\n### F# Interop ##", true, "#### Warum C#\n\n#### F# Interop"},
 		{"a fence never closed is no block", "Vorher.\n```\nText danach.\n- eins", true, "Vorher.\nText danach.\n\n- eins"},
 		{"a fence never closed keeps its line's text", "~~~ Achtung: nie zweimal\nDanach.", true, "Achtung: nie zweimal\nDanach."},
+		{"a fence never closed drops its word", "```go\nfoo()", true, "foo()"},
+		{"fences never closed, one after another", "~~~ ~~~ x y\nDanach.", true, "x y\nDanach."},
+		{"a summary only a heading keeps its title", "## Überblick", false, "Überblick"},
+		{"a text only a fence's word keeps it", "```yaml", true, "yaml"},
+		{"two bold runs in a title stay two", "## **Lesen** und **Schreiben**", true, "#### **Lesen** und **Schreiben**"},
+		{"a rule is no item, a block's end", "Eins.\n* * *\nZwei.\n- - -", true, "Eins.\n\nZwei."},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := Normalize(c.in, c.headings)
@@ -104,7 +110,8 @@ func TestWords(t *testing.T) {
 		t.Error("a word dropped is a change")
 	}
 	for _, c := range [][2]string{{"Timeout > 30 s", "Timeout < 30 s"}, {"Wert -5", "Wert 5"}, {"ab 50%", "ab 50"},
-		{"Timeout 1,5 Sekunden", "Timeout 1 5 Sekunden"}, {"liest config.yaml", "liest config yaml"}} {
+		{"Timeout 1,5 Sekunden", "Timeout 1 5 Sekunden"}, {"liest config.yaml", "liest config yaml"},
+		{"3. Deploy\n4. Rollback", "1. Deploy\n2. Rollback"}} {
 		if Words(c[0]) == Words(c[1]) {
 			t.Errorf("%q and %q differ in a symbol, not in layout", c[0], c[1])
 		}
