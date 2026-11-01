@@ -431,7 +431,7 @@ func TestApplyPatch_EditsDropsConfirmsAppends(t *testing.T) {
 		Drop:      []string{"s3"},
 		Confirmed: []string{"s1"},
 	}
-	a := ApplyPatch(page(), p, inTree("auth/login.go", "jobs/retry.go", "billing/invoice.go"))
+	a := ApplyPatch(page(), p, inTree("auth/login.go", "jobs/retry.go", "billing/invoice.go"), anyKind)
 	var got []string
 	for i, st := range a.Statements {
 		sid := "new"
@@ -448,8 +448,36 @@ func TestApplyPatch_EditsDropsConfirmsAppends(t *testing.T) {
 		t.Errorf("Summary = %v", a.Summary)
 	}
 	blank := "  "
-	if a := ApplyPatch(page(), inference.Patch{Summary: &blank}, inTree()); a.Summary != nil || len(a.Statements) != 4 {
+	if a := ApplyPatch(page(), inference.Patch{Summary: &blank}, inTree(), anyKind); a.Summary != nil || len(a.Statements) != 4 {
 		t.Errorf("blank summary, empty patch = %+v, want the page kept whole", a)
+	}
+}
+
+// anyKind takes every statement: the kind rules are consolidate's.
+func anyKind(inference.Statement) string { return "" }
+
+// A statement valid refuses costs only itself: an edit is left out, the
+// statement as stored and unchecked, a drop of it beside the edit left out
+// too (two answers keep it); a new one is left out.
+func TestApplyPatch_InvalidItemsLeftOut(t *testing.T) {
+	noTutorials := func(s inference.Statement) string {
+		if s.Kind == "tutorial" {
+			return "kind tutorial"
+		}
+		return ""
+	}
+	a := ApplyPatch(page(), inference.Patch{
+		Statements: []inference.Statement{{ID: id("s3"), Kind: "tutorial", Name: "Anders", Text: "x"}},
+		Added:      []inference.Statement{{Kind: "tutorial", Name: "Neu", Text: "x"}, {Kind: "rule", Name: "Gut", Text: "y"}},
+		Drop:       []string{"s3"},
+	}, inTree("auth/login.go", "jobs/retry.go", "billing/invoice.go"), noTutorials)
+	if !reflect.DeepEqual(a.BadEdits, []string{"s3 (kind tutorial), kept as stored"}) ||
+		!reflect.DeepEqual(a.BadNew, []string{`"Neu" (kind tutorial)`}) ||
+		!reflect.DeepEqual(a.BadDrops, []string{"s3 (an edit of it left out too, kept as stored)"}) {
+		t.Fatalf("left out: edits %q new %q drops %q", a.BadEdits, a.BadNew, a.BadDrops)
+	}
+	if len(a.Statements) != 5 || a.Statements[2].Name != "Invoice" || a.Checked[2] || a.Statements[4].Name != "Gut" {
+		t.Errorf("statements = %+v checked %v; want s3 as stored and unchecked, Gut added", a.Statements, a.Checked)
 	}
 }
 
@@ -490,30 +518,30 @@ func TestApplyPatch_ItemsCostOnlyThemselves(t *testing.T) {
 			Text: "Moved.", Files: []string{"elsewhere.go"}}}}, everything,
 			[]string{"s1 (taught by a pull request, drops its file auth/login.go the tree still has)"}, nil, stored},
 	} {
-		a := ApplyPatch(page(), c.p, c.exists)
+		a := ApplyPatch(page(), c.p, c.exists, anyKind)
 		if !reflect.DeepEqual(a.BadEdits, c.edits) || !reflect.DeepEqual(a.BadDrops, c.drops) || !reflect.DeepEqual(names(a), c.want) {
 			t.Errorf("%s: edits %q drops %q statements %v; want %q %q %v", name, a.BadEdits, a.BadDrops, names(a), c.edits, c.drops, c.want)
 		}
 	}
 	// A good item beside a bad one is taken.
 	a := ApplyPatch(page(), inference.Patch{Statements: []inference.Statement{{Name: "ohne", Text: "y"},
-		{ID: id("s3"), Kind: "rule", Name: "Rechnung", Text: "Monatlich."}}, Drop: []string{"s1", "s2"}}, inTree("auth/login.go"))
+		{ID: id("s3"), Kind: "rule", Name: "Rechnung", Text: "Monatlich."}}, Drop: []string{"s1", "s2"}}, inTree("auth/login.go"), anyKind)
 	if want := []string{"s1:Auth", "s3:Rechnung", "s4:Once"}; !reflect.DeepEqual(names(a), want) {
 		t.Errorf("good beside bad = %v, want %v", names(a), want)
 	}
-	if a := ApplyPatch(page(), inference.Patch{Drop: []string{"s1"}}, inTree("jobs/retry.go")); len(a.Statements) != 3 {
+	if a := ApplyPatch(page(), inference.Patch{Drop: []string{"s1"}}, inTree("jobs/retry.go"), anyKind); len(a.Statements) != 3 {
 		t.Errorf("PR fact whose files are gone: %d statements, want it dropped", len(a.Statements))
 	}
 	// An unknown id to drop or confirm refers to nothing: left out, named,
 	// and the rest of the patch applies.
-	a = ApplyPatch(page(), inference.Patch{Drop: []string{"s9", "s3"}, Confirmed: []string{"8b0d8f4a", "s1"}}, everything)
+	a = ApplyPatch(page(), inference.Patch{Drop: []string{"s9", "s3"}, Confirmed: []string{"8b0d8f4a", "s1"}}, everything, anyKind)
 	if !reflect.DeepEqual(a.Unknown, []string{"s9", "8b0d8f4a"}) || len(a.Statements) != 3 || !a.Checked[0] {
 		t.Errorf("unknown drop and confirm ids: unknown %v, %d statements, checked %v", a.Unknown, len(a.Statements), a.Checked)
 	}
 	// An edit of an id the page lacks, or of one already edited, costs only
 	// itself: the first edit of s3 counts.
 	a = ApplyPatch(page(), inference.Patch{Statements: []inference.Statement{
-		{ID: id("s9"), Name: "x", Text: "y"}, {ID: id("s3"), Name: "Erste", Text: "y"}, {ID: id("s3"), Name: "Zweite", Text: "y"}}}, everything)
+		{ID: id("s9"), Name: "x", Text: "y"}, {ID: id("s3"), Name: "Erste", Text: "y"}, {ID: id("s3"), Name: "Zweite", Text: "y"}}}, everything, anyKind)
 	if !reflect.DeepEqual(a.BadEdits, []string{"s9 (unknown id)", "s3 (id used twice)"}) || len(a.Statements) != 4 || a.Statements[2].Name != "Erste" {
 		t.Errorf("bad edits: left out %v, statements %+v", a.BadEdits, a.Statements)
 	}
@@ -521,18 +549,18 @@ func TestApplyPatch_ItemsCostOnlyThemselves(t *testing.T) {
 	// has, however spelled; a file that left the tree may go.
 	kept := inference.Patch{Statements: []inference.Statement{{ID: id("s1"), Kind: "component", Name: "Auth", Text: "Login, two steps.",
 		Files: []string{"./auth/login.go", "auth/otp.go"}}}}
-	if a := ApplyPatch(page(), kept, everything); len(a.BadEdits) != 0 || a.Statements[0].Text != "Login, two steps." {
+	if a := ApplyPatch(page(), kept, everything, anyKind); len(a.BadEdits) != 0 || a.Statements[0].Text != "Login, two steps." {
 		t.Errorf("edit keeping the file: left out %v", a.BadEdits)
 	}
 	moved := inference.Patch{Statements: []inference.Statement{{ID: id("s2"), Kind: "rule", Name: "Retry", Text: "Moved.",
 		Files: []string{"jobs/backoff.go"}}}}
-	if a := ApplyPatch(page(), moved, inTree("auth/login.go")); len(a.BadEdits) != 0 || a.Statements[1].Text != "Moved." {
+	if a := ApplyPatch(page(), moved, inTree("auth/login.go"), anyKind); len(a.BadEdits) != 0 || a.Statements[1].Text != "Moved." {
 		t.Errorf("edit away from a file that left the tree: left out %v", a.BadEdits)
 	}
 	// A statement whose file is named as its directory still rests on code.
 	dir := page()
 	dir[0].Files = []string{"auth/"}
-	if a := ApplyPatch(dir, inference.Patch{Drop: []string{"s1"}}, everything); len(a.BadDrops) != 1 || len(a.Statements) != 4 {
+	if a := ApplyPatch(dir, inference.Patch{Drop: []string{"s1"}}, everything, anyKind); len(a.BadDrops) != 1 || len(a.Statements) != 4 {
 		t.Errorf("drop of a PR fact named by its directory: left out %v, %d statements", a.BadDrops, len(a.Statements))
 	}
 }

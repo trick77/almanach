@@ -17,11 +17,14 @@ import (
 // find it resting on nothing and drop it after all. A patch is never
 // refused whole: an item that breaks a rule costs only itself (user,
 // 2026-11-01). An edit without an id, of an id the page does not have, of
-// one an earlier edit already took, or of a PR-taught statement that sheds
-// a file the tree still has is left out, named in BadEdits, the statement
-// as stored or as first edited. A drop of a statement the patch also edits
-// or confirms, or of a PR-taught one whose files still exist, is left out,
-// named in BadDrops, the statement kept. An unknown id to drop or confirm
+// one an earlier edit already took, of a PR-taught statement that sheds a
+// file the tree still has, or one valid refuses (a kind the page cannot
+// hold, an empty name or text) is left out, named in BadEdits, the
+// statement as stored (unchecked) or as first edited. A new statement valid
+// refuses is left out, named in BadNew. A drop of a statement the patch
+// also edits, tries to edit or confirms, or of a PR-taught one whose files
+// still exist, is left out, named in BadDrops, the statement kept: two
+// answers about one statement keep it. An unknown id to drop or confirm
 // refers to nothing: it is left out, named in Unknown.
 
 // Applied is a patch turned into the whole proposal a fold checks: every
@@ -29,27 +32,32 @@ import (
 // then the new ones (ID nil). Checked says per statement that the step read
 // the code behind it (edited, new or confirmed); Summary nil keeps the
 // summary. Unknown is the drop and confirmed ids the page does not have;
-// BadEdits the edits left out, BadDrops the drops left out, by id and
-// reason.
+// BadEdits the edits left out, BadNew the new statements left out,
+// BadDrops the drops left out, each with its reason.
 type Applied struct {
 	Statements []inference.Statement
 	Checked    []bool
 	Summary    *string
 	Unknown    []string
 	BadEdits   []string
+	BadNew     []string
 	BadDrops   []string
 }
 
 // ApplyPatch applies a step's patch to the current statements. exists says
-// whether a path is in the tree at the run's commit. It never refuses: what
-// breaks a rule is left out and named.
-func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path string) bool) Applied {
+// whether a path is in the tree at the run's commit; valid is why a
+// statement as returned may not stand on the page ("" when it may). It
+// never refuses: what breaks a rule is left out and named.
+func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path string) bool, valid func(inference.Statement) string) Applied {
 	byID := make(map[string]store.Statement, len(current))
 	for _, s := range current {
 		byID[s.ID] = s
 	}
 	edits := map[string]inference.Statement{}
-	var unknown, bad, badDrops []string
+	// tried is every page id an edit named, taken or not: a drop of one is
+	// a second answer about it, and the statement stays.
+	tried := map[string]bool{}
+	var unknown, bad, badNew, badDrops []string
 	for _, st := range p.Statements {
 		if st.ID == nil || *st.ID == "" {
 			bad = append(bad, NoIDEdit(st.Name))
@@ -60,8 +68,13 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 			bad = append(bad, UnknownEdit(id))
 			continue
 		}
+		tried[id] = true
 		if _, twice := edits[id]; twice {
 			bad = append(bad, TwiceEdit(id))
+			continue
+		}
+		if why := valid(st); why != "" {
+			bad = append(bad, id+" ("+why+"), kept as stored")
 			continue
 		}
 		if old := byID[id]; FromPR(old) {
@@ -90,9 +103,12 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 			unknown = append(unknown, id)
 			continue
 		}
-		switch _, edited := edits[id]; {
+		_, edited := edits[id]
+		switch {
 		case edited:
 			badDrops = append(badDrops, id+" (edited too, the edit taken)")
+		case tried[id]:
+			badDrops = append(badDrops, id+" (an edit of it left out too, kept as stored)")
 		case confirmed[id]:
 			badDrops = append(badDrops, id+" (confirmed too, kept)")
 		case FromPR(s) && !gone(s.Files, exists):
@@ -121,10 +137,15 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 		out.Checked = append(out.Checked, confirmed[s.ID])
 	}
 	for _, st := range p.Added {
+		if why := valid(st); why != "" {
+			badNew = append(badNew, strconv.Quote(st.Name)+" ("+why+")")
+			continue
+		}
 		st.ID = nil
 		out.Statements = append(out.Statements, st)
 		out.Checked = append(out.Checked, true)
 	}
+	out.BadNew = badNew
 	return out
 }
 

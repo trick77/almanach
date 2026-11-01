@@ -425,10 +425,12 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 			plan.Unplaced = append(plan.Unplaced, f.Path)
 		}
 	}
-	// Touched over the merged plan with the last run's skipped names, the
-	// new plan starting with none of its own.
-	touched, _ := baseline.Touched(baseline.Plan{Subjects: merged.Subjects, Skipped: old.Skipped}, reading)
-	merged.Skipped, merged.Why, merged.Steps = nil, nil, nil
+	// Touched over the merged plan with the last run's skipped names and
+	// those it read but must read again (Again), the new plan starting with
+	// none of its own.
+	again := append(slices.Clone(old.Skipped), old.Again...)
+	touched, _ := baseline.Touched(baseline.Plan{Subjects: merged.Subjects, Skipped: again}, reading)
+	merged.Skipped, merged.Why, merged.Steps, merged.Again, merged.AgainOverview = nil, nil, nil, nil, false
 	plan.Plan, plan.Read = merged, touched
 	changed := changes.Paths()
 	for p := range changed {
@@ -436,8 +438,9 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	}
 	slices.Sort(plan.Changed)
 	// The overview reads the docs again when one changed or the last run's
-	// failed; the project step folds again when the last run's did not.
-	plan.Overview = old.StepSkipped(baseline.PartOverview)
+	// failed or left a held statement alone; the project step folds again
+	// when the last run's did not.
+	plan.Overview = old.StepSkipped(baseline.PartOverview) || old.AgainOverview
 	plan.SummaryChanged = old.StepSkipped(baseline.PartProject)
 	for _, d := range baseline.Docs(files, baseline.DocsMaxBytes) {
 		if changed[d.Path] {
@@ -626,20 +629,28 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if len(problems) == 0 {
 		res.Patch.Added = unbackedPitfalls(ctx, w.log, "baseline: "+name, res.Patch.Added)
 	}
-	return w.foldPatch(ctx, r, &plan, name, page, res.Patch, baseline.Exists(tree), newer)
+	return w.foldPatch(ctx, r, &plan, name, overview, page, res.Patch, baseline.Exists(tree), newer)
 }
 
 // foldPatch applies a step's patch to the page under the rules of a fold
 // and writes the revision with the run's progress in one transaction.
-func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string) error {
+func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runPlan, name string, overview bool, page store.Page, patch inference.Patch, exists func(string) bool, newer map[string]string) error {
 	// A statement the step leaves alone (a newer PR taught it, its merge
 	// commit unplaced, or code backs it on the overview) is struck from the
-	// patch, not the patch refused: one item costs only itself.
-	patch, leftAlone := strikeHeld(patch, newer)
+	// patch, not the patch refused: one item costs only itself. One the run
+	// cannot judge yet has its part read again by the next reconcile.
+	patch, leftAlone, again := strikeHeld(patch, newer)
 	if len(leftAlone) > 0 {
 		w.log.InfoContext(ctx, "baseline: "+name+": left alone: "+strings.Join(leftAlone, ", "))
 	}
-	applied := baseline.ApplyPatch(page.Statements, patch, exists)
+	if again {
+		if overview {
+			plan.AgainOverview = true
+		} else if !slices.Contains(plan.Again, name) {
+			plan.Again = append(plan.Again, name)
+		}
+	}
+	applied := baseline.ApplyPatch(page.Statements, patch, exists, validFor(store.ScopeRepository))
 	if len(applied.Unknown) > 0 {
 		w.log.WarnContext(ctx, "baseline: "+name+": unknown ids left out", slog.Any("ids", applied.Unknown))
 	}
@@ -655,21 +666,21 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	// ApplyPatch left out unknown and repeated ids, so attach refuses
-	// nothing here; a reason would be a bug, and costs the part.
-	statements, leftOut, reason := attach(store.ScopeRepository, page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits), true)
+	// ApplyPatch left out what attach would refuse, so a reason here is a
+	// bug, and costs the part.
+	statements, leftOut, reason := attach(store.ScopeRepository, page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits))
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, baseline.SkipRefused, "patch refused: "+reason)
 	}
 	leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
-	leftOut.badDrops = applied.BadDrops
+	leftOut.badNew, leftOut.badDrops = applied.BadNew, applied.BadDrops
 	summary := page.Summary
 	if applied.Summary != nil {
 		summary = proseSummary(*applied.Summary)
 	}
 	// Checked travels by id, never by position: a statement this step wrote
-	// or confirmed was read against the commit; an edit left out, the
-	// statement kept as stored, was not.
+	// or confirmed was read against the commit; one whose edit was left out
+	// comes back as stored, unchecked, and was not.
 	checked, stored := map[string]bool{}, map[string]bool{}
 	for i, s := range applied.Statements {
 		if s.ID != nil {
@@ -681,15 +692,16 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	}
 	for i := range statements {
 		id := statements[i].ID
-		if (!stored[id] || checked[id]) && !slices.Contains(leftOut.keptStored, id) {
+		if !stored[id] || checked[id] {
 			statements[i].Checked = r.Commit
 		}
 	}
-	// No ceiling: a description is documentation, never cut to a size
-	// (user, 2026-11-01). Only an empty summary is refused.
-	chars, reason := check(summary, statements)
-	if reason != "" {
-		return w.skipPart(ctx, r, plan, baseline.SkipRefused, "patch refused: "+reason)
+	// No ceiling, and no summary required of a step: a page whose summary
+	// is not written yet (the overview failed) takes the statements all
+	// the same, the summary left to a later step (user, 2026-11-01).
+	chars := prose(summary, statements)
+	if strings.TrimSpace(summary) == "" {
+		w.log.WarnContext(ctx, "baseline: "+name+": no summary yet, the statements taken without one")
 	}
 	grown, added := growth(page, summary, statements)
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s: page grew by %d chars of prose; %s; %d returned unchanged",
@@ -769,20 +781,23 @@ func codeBacked(statements []store.Statement, newer map[string]string) map[strin
 // strikeHeld takes the ids a step leaves alone out of a patch, edits, drops
 // and confirmations alike, and names each with why (byNewerPR, byUnplaced,
 // byCode): the rest of the patch applies (user, 2026-11-01: an item costs
-// only itself).
-func strikeHeld(p inference.Patch, newer map[string]string) (inference.Patch, []string) {
-	var struck []string
+// only itself). again reports a struck id the code may show otherwise once
+// the run reads its PR (byNewerPR, byUnplaced): the part is read again by
+// the next reconcile. One code backs is the overview's never to touch.
+func strikeHeld(p inference.Patch, newer map[string]string) (_ inference.Patch, struck []string, again bool) {
 	held := func(id string) bool {
-		if why := newer[id]; why != "" {
-			struck = append(struck, id+" ("+heldWhy[why]+")")
-			return true
+		why := newer[id]
+		if why == "" {
+			return false
 		}
-		return false
+		struck = append(struck, id+" ("+heldWhy[why]+")")
+		again = again || why != byCode
+		return true
 	}
 	p.Statements = slices.DeleteFunc(slices.Clone(p.Statements), func(s inference.Statement) bool { return s.ID != nil && held(*s.ID) })
 	p.Drop = slices.DeleteFunc(slices.Clone(p.Drop), held)
 	p.Confirmed = slices.DeleteFunc(slices.Clone(p.Confirmed), held)
-	return p, struck
+	return p, struck, again
 }
 
 // heldWhy words why a step leaves a statement alone, for the log.
@@ -1242,46 +1257,42 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	for _, s := range page.Statements {
 		taught[s.ID] = baseline.FromPR(s)
 	}
-	var drop, kept, unknown []string
+	// No tree decides a project drop: a PR-taught one is kept here, before
+	// ApplyPatch (which would judge its files against noTree). Unknown ids
+	// pass on to ApplyPatch, which names them.
+	var drop, kept []string
 	for _, id := range d.Drop {
-		pr, on := taught[id]
-		switch {
-		case !on:
-			unknown = append(unknown, id)
-		case pr:
+		if taught[id] {
 			kept = append(kept, id)
-		default:
-			drop = append(drop, id)
+			continue
 		}
-	}
-	if len(unknown) > 0 {
-		w.log.WarnContext(ctx, "baseline: "+projectLabel+": unknown ids left out", slog.Any("ids", unknown))
+		drop = append(drop, id)
 	}
 	if len(kept) > 0 {
 		w.log.WarnContext(ctx, "baseline: "+projectLabel+": drop of statements a pull request taught left out", slog.Any("ids", kept))
 	}
 	summary := proseSummary(d.Summary)
 	// An empty summary costs only itself: the stored one stays, the rest of
-	// the answer is taken. A first page with none is still refused.
-	if strings.TrimSpace(summary) == "" && page.Summary != "" {
+	// the answer is taken; a first page takes its statements without one.
+	if strings.TrimSpace(summary) == "" {
 		w.log.WarnContext(ctx, "baseline: "+projectLabel+": empty summary left out, the stored one kept")
 		summary = page.Summary
 	}
-	applied := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: d.Added, Drop: drop}, noTree)
-	// ApplyPatch left out unknown and repeated ids, so attach refuses
-	// nothing here; a reason would be a bug, and costs the step.
-	statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits), true)
+	applied := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: d.Added, Drop: drop}, noTree, validFor(store.ScopeProject))
+	if len(applied.Unknown) > 0 {
+		w.log.WarnContext(ctx, "baseline: "+projectLabel+": unknown ids left out", slog.Any("ids", applied.Unknown))
+	}
+	// ApplyPatch left out what attach would refuse, so a reason here is a
+	// bug, and costs the step.
+	statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits))
 	if reason != "" {
 		return nil, reason, nil
 	}
 	leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
-	leftOut.badDrops = applied.BadDrops
+	leftOut.badNew, leftOut.badDrops = applied.BadNew, applied.BadDrops
 	// No ceiling: a description is documentation, never cut to a size
-	// (user, 2026-11-01). Only an empty summary is refused.
-	chars, reason := check(summary, statements)
-	if reason != "" {
-		return nil, reason, nil
-	}
+	// (user, 2026-11-01).
+	chars := prose(summary, statements)
 	logLeftOut(ctx, w.log, "baseline: "+projectLabel, leftOut)
 	drawn := w.revisionMap(ctx, page, d.Map, slugs)
 	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {

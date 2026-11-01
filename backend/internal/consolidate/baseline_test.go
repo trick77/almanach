@@ -1014,10 +1014,11 @@ func TestNewerIDs_AncestryThenTheClock(t *testing.T) {
 	if x.code.asked != 2+2*4 {
 		t.Errorf("git asked %d times, want 10", x.code.asked)
 	}
-	// A patch touching one is not refused: that id is struck, the rest kept.
-	if p, struck := strikeHeld(inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}, want); !slices.Equal(p.Confirmed, []string{"held again"}) ||
-		!slices.Equal(struck, []string{"no commit, past the slack (taught by a pull request newer than the commit read)"}) {
-		t.Errorf("strikeHeld = %v, struck %v", p.Confirmed, struck)
+	// A patch touching one is not refused: that id is struck, the rest kept,
+	// and the part read again by the next reconcile.
+	if p, struck, again := strikeHeld(inference.Patch{Confirmed: []string{"held again", "no commit, past the slack"}}, want); !slices.Equal(p.Confirmed, []string{"held again"}) ||
+		!slices.Equal(struck, []string{"no commit, past the slack (taught by a pull request newer than the commit read)"}) || !again {
+		t.Errorf("strikeHeld = %v, struck %v, again %v", p.Confirmed, struck, again)
 	}
 	// A commit that first fails later in the run gets its own wait.
 	late := strings.Repeat("f", 40)
@@ -1127,8 +1128,48 @@ func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
 	if got := page.Statements[1].Files; !reflect.DeepEqual(got, []string{"auth/login.go", "./README.md"}) {
 		t.Errorf("files = %v, want the invented path dropped", got)
 	}
-	if p := x.plan(t); len(p.Skipped) != 0 || p.StepSkipped(baseline.PartOverview) {
-		t.Errorf("skipped = %v, steps = %v, want nothing skipped", p.Skipped, p.Steps)
+	if p := x.plan(t); len(p.Skipped) != 0 || p.StepSkipped(baseline.PartOverview) || !p.AgainOverview {
+		t.Errorf("skipped = %v, steps = %v, again %v; want nothing skipped, the overview read again", p.Skipped, p.Steps, p.AgainOverview)
+	}
+}
+
+// A part that left a newer PR's statement alone is read again by the next
+// reconcile, at the same commit too, though it was no skip.
+func TestRun_ReconcileReadsAgainWhatWasHeld(t *testing.T) {
+	subjects := []baseline.Subject{
+		{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 300}}},
+		{Name: "B", Purpose: "p", Files: []baseline.File{{Path: "billing/run.go", Size: 40}}},
+	}
+	raw, _ := json.Marshal(runPlan{Plan: baseline.Plan{Format: baseline.PlanFormat, Subjects: subjects, Again: []string{"A"}, AgainOverview: true}})
+	x := newWorld(t, 16)
+	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.queue(store.RunReconcile, older40)
+	x.models.patches = []inference.PatchResult{{Call: called}, {Call: called}}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	if p := x.plan(t); !reflect.DeepEqual(p.Read, []string{"A"}) || !p.Overview || len(p.Again) != 0 || p.AgainOverview {
+		t.Fatalf("plan read %v, overview %v, again %v/%v; want A and the overview read, nothing carried", p.Read, p.Overview, p.Again, p.AgainOverview)
+	}
+}
+
+// A repository page with no summary yet (the overview failed) takes a
+// subject's statements all the same: a missing summary is no reason to
+// throw them away.
+func TestRun_SubjectWithoutSummaryTaken(t *testing.T) {
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: inference.Call{Outcome: inference.OutcomeUnparseable}},
+		{Call: called, Patch: inference.Patch{Added: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
+	if r := x.run(); r.State != store.RunDone || len(p.Statements) != 1 || p.Summary != "" || slices.Contains(x.plan(t).Skipped, "Anmeldung") {
+		t.Fatalf("run = %+v page = %+v plan %+v; want the statement taken without a summary", r, p, x.plan(t))
 	}
 }
 
@@ -1421,8 +1462,8 @@ func TestRun_DescribeStepsCarryTheRepoMap(t *testing.T) {
 
 // A project answer's bad item costs only itself (user, 2026-11-01): a
 // statement of a kind the page cannot hold is left out, the rest taken; an
-// empty summary keeps the stored one. Only a first page without a summary
-// is refused, and counts as a skipped part.
+// empty summary keeps the stored one; a first page takes its statements
+// without one, nothing skipped.
 func TestRun_ProjectItemCostsOnlyItself(t *testing.T) {
 	project := func(stored store.Page, d *inference.Description) world {
 		x := newWorld(t, 3)
@@ -1453,8 +1494,9 @@ func TestRun_ProjectItemCostsOnlyItself(t *testing.T) {
 	}
 	x = project(store.Page{}, &inference.Description{Summary: " ", Added: []inference.Statement{stmt(nil, "rule", "Neu", "Auch.", "x.go")}})
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 1 || x.plan(t).Steps[baseline.PartProject] != baseline.SkipRefused {
-		t.Fatalf("first page without a summary: run = %+v plan %+v, want the step refused, skipped", r, x.plan(t))
+	p = x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	if r.State != store.RunDone || r.Skipped != 0 || p.Summary != "" || len(p.Statements) != 1 {
+		t.Fatalf("first page without a summary: run = %+v page %+v, want the statement taken, nothing skipped", r, p)
 	}
 }
 
@@ -1661,8 +1703,8 @@ func TestRun_SubjectItemCostsOnlyItself(t *testing.T) {
 		p.Statements[1].ID != "s2" || p.Statements[1].Checked != head || p.Statements[2].Name != "Gut" {
 		t.Fatalf("page = %+v; want s1 as stored and unchecked, s2 kept and confirmed, Gut added", p.Statements)
 	}
-	for _, want := range []string{"statement breaking a rule left out: edit of s1 (statement kind opinion not on a repository page), kept as stored",
-		`new \"Leer\" (empty statement)`, "drop left out: s2 (confirmed too, kept)"} {
+	for _, want := range []string{"edit left out: s1 (statement kind opinion not on a repository page), kept as stored",
+		`new statement left out: \"Leer\" (empty statement)`, "drop left out: s2 (confirmed too, kept)"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("log lacks %q:\n%s", want, logs.String())
 		}

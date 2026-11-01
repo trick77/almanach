@@ -481,41 +481,43 @@ func TestFoldProjectExtensionRefused(t *testing.T) {
 			}
 		}
 	}
-	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits), false); reason == "" {
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason == "" {
 		t.Error("attach took an unknown kind on the project page")
 	}
 	project.Statements[0].Kind = "extension"
-	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits), false); !strings.Contains(reason, "extension not on a project page") {
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); !strings.Contains(reason, "extension not on a project page") {
 		t.Errorf("reason = %q", reason)
 	}
-	if _, _, reason := attach(store.ScopeRepository, nil, project.Statements, store.Source{}, 1, limitsOf(limits), false); reason != "" {
+	if _, _, reason := attach(store.ScopeRepository, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason != "" {
 		t.Errorf("repository extension refused: %q", reason)
 	}
 }
 
-// A step's patch is never refused for a statement's kind or an empty one:
-// a new one is left out, an edit keeps the statement as stored, both named;
-// the rest is taken (user, 2026-11-01). A merge, a whole page, still is.
-func TestAttach_PatchItemCostsOnlyItself(t *testing.T) {
-	current := []store.Statement{{ID: "s1", Kind: "component", Name: "Schnittstelle", Text: "Bleibt.", Checked: "old"}}
-	proposed := []inference.Statement{
-		{ID: str("s1"), Kind: "extension", Name: "Schnittstelle", Text: "Geändert."},
-		{Kind: "rule", Name: "Gut", Text: "Gilt."},
-		{Kind: "tutorial", Name: "Schlecht", Text: "x"},
-		{Kind: "rule", Name: " ", Text: "leer"},
+// validFor holds a returned statement to its page's kinds and a name and
+// text. attach refuses a new or changed one that fails it, never one
+// returned as stored: a statement written before a rule stays (a step's
+// patch passes every unnamed statement through as stored).
+func TestValidFor_StoredStatementsNeverHeld(t *testing.T) {
+	valid := validFor(store.ScopeProject)
+	for want, s := range map[string]inference.Statement{
+		"": {Kind: "rule", Name: "Gut", Text: "Gilt."},
+		"statement kind extension not on a project page": {Kind: "extension", Name: "n", Text: "t"},
+		"statement kind tutorial not on a project page":  {Kind: "tutorial", Name: "n", Text: "t"},
+		"empty statement": {Kind: "rule", Name: " ", Text: "t"},
+	} {
+		if got := valid(s); got != want {
+			t.Errorf("validFor(%+v) = %q, want %q", s, got, want)
+		}
 	}
-	out, leftOut, reason := attach(store.ScopeProject, current, proposed, store.Source{PRKey: "x"}, 2, limitsOf(limits), true)
-	if reason != "" {
-		t.Fatalf("patch refused: %s", reason)
+	legacy := []store.Statement{{ID: "s1", Kind: "extension", Name: "Alt", Text: "Von früher.", Checked: "old"}}
+	out, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Von früher."}},
+		store.Source{PRKey: "x"}, 2, limitsOf(limits))
+	if reason != "" || len(out) != 1 || out[0].Checked != "old" {
+		t.Fatalf("stored legacy kind: out %+v, reason %q; want it kept as is", out, reason)
 	}
-	if len(out) != 2 || out[0].Text != "Bleibt." || out[0].Checked != "old" || out[1].Name != "Gut" || out[1].ID != "s2" {
-		t.Fatalf("out = %+v, want s1 as stored and the good new one as s2", out)
-	}
-	if len(leftOut.badItems) != 3 || !slices.Equal(leftOut.keptStored, []string{"s1"}) {
-		t.Errorf("left out %v, kept %v", leftOut.badItems, leftOut.keptStored)
-	}
-	if _, _, reason := attach(store.ScopeProject, current, proposed, store.Source{PRKey: "x"}, 2, limitsOf(limits), false); reason == "" {
-		t.Error("a merge took a statement of a kind its page cannot hold")
+	if _, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Geändert."}},
+		store.Source{PRKey: "x"}, 2, limitsOf(limits)); reason == "" {
+		t.Error("a merge took a changed statement of a kind its page cannot hold")
 	}
 }
 
