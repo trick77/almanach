@@ -87,7 +87,7 @@ type Worker struct {
 	// for the whole run. nil until read.
 	problemsRun int64
 	problems    []store.RepoProblem
-	// libs is run libsRun's repository's libraries as its describe steps
+	// libs is run libsRun's repository's shared repositories as its describe steps
 	// show them, read at the first step this process runs: a saving of
 	// reads, not a pin. A restart mid-run reads them again, and the project
 	// step reads its own; a summary that changed between is context, not

@@ -10,8 +10,8 @@ import (
 	"github.com/trick77/almanach/internal/store"
 )
 
-func lib(project, slug, summary string, users ...string) store.Library {
-	l := store.Library{RepoRef: store.RepoRef{ProjectKey: project, Slug: slug}, Summary: summary}
+func lib(project, slug, summary string, users ...string) store.SharedRepo {
+	l := store.SharedRepo{RepoRef: store.RepoRef{ProjectKey: project, Slug: slug}, Summary: summary}
 	for _, u := range users {
 		l.UsedBy = append(l.UsedBy, store.RepoRef{ProjectKey: "tools", Slug: u})
 	}
@@ -23,7 +23,7 @@ func lib(project, slug, summary string, users ...string) store.Library {
 // their users.
 func TestRun_LibrariesAsContext(t *testing.T) {
 	x := newWorld(t, 16)
-	x.st.libs = map[string][]store.Library{
+	x.st.libs = map[string][]store.SharedRepo{
 		"svc": {lib("libs", "wire", "Ein Client für Modelle.", "svc")},
 		"":    {lib("libs", "wire", "Ein Client für Modelle.", "svc", "cli")},
 	}
@@ -42,12 +42,12 @@ func TestRun_LibrariesAsContext(t *testing.T) {
 	var describe, project int
 	for _, p := range x.models.prompts {
 		switch {
-		case strings.Contains(p, "## Libraries this repository uses"):
+		case strings.Contains(p, "## Repositories this repository depends on"):
 			describe++
 			if !strings.Contains(p, "### libs/wire\n\nEin Client für Modelle.") {
 				t.Errorf("describe prompt without the library's summary:\n%s", p)
 			}
-		case strings.Contains(p, "## Libraries of other projects"):
+		case strings.Contains(p, "## Repositories of other projects"):
 			project++
 			if !strings.Contains(p, "### libs/wire (used by svc, cli)\n\nEin Client für Modelle.") {
 				t.Errorf("project prompt without the library and its users:\n%s", p)
@@ -65,11 +65,11 @@ func TestRun_LibrariesAsContext(t *testing.T) {
 // The model is left room on the map for what code adds: a node per
 // library, an edge per user; never less than the repositories need.
 func TestMapRoom(t *testing.T) {
-	nodes, edges := mapRoom([]store.Library{lib("libs", "a", "", "x", "y"), lib("libs", "b", "", "x")}, 3)
+	nodes, edges := mapRoom([]store.SharedRepo{lib("libs", "a", "", "x", "y"), lib("libs", "b", "", "x")}, 3)
 	if nodes != 14 || edges != 21 {
 		t.Errorf("room = %d nodes, %d edges; want 14 and 21", nodes, edges)
 	}
-	if nodes, edges := mapRoom(make([]store.Library, 30), 5); nodes != 5 || edges != 24 {
+	if nodes, edges := mapRoom(make([]store.SharedRepo, 30), 5); nodes != 5 || edges != 24 {
 		t.Errorf("room with many libraries = %d, %d; want the repositories' 5 and all edges", nodes, edges)
 	}
 }
@@ -95,11 +95,11 @@ func TestRun_LibrariesReadFailurePauses(t *testing.T) {
 }
 
 func TestLibrariesRender(t *testing.T) {
-	if got := libraries(nil, false); got != "_None._" {
+	if got := sharedRepos(nil, false); got != "_None._" {
 		t.Errorf("no libraries = %q", got)
 	}
-	got := libraries([]store.Library{lib("libs", "wire", "Kurz."), lib("libs", "fetch", "")}, false)
-	if got != "### libs/wire\n\nKurz.\n\nAlso used, without a summary here: libs/fetch.\n" {
+	got := sharedRepos([]store.SharedRepo{lib("libs", "wire", "Kurz."), lib("libs", "fetch", "")}, false)
+	if got != "### libs/wire\n\nKurz.\n\nAlso depended on, without a summary here: libs/fetch.\n" {
 		t.Errorf("render = %q", got)
 	}
 }

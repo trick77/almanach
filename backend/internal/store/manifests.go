@@ -197,24 +197,25 @@ func less(a, b RepoRef) bool {
 	return a.Slug < b.Slug
 }
 
-// Library is a source repository others use, with the summary of its
+// SharedRepo is a source repository others depend on (by their manifests:
+// a build dependency, whatever the repository is), with the summary of its
 // current description ("" before the first) and the users the question
 // was asked for.
-type Library struct {
+type SharedRepo struct {
 	RepoRef
 	Summary string
 	UsedBy  []RepoRef
 }
 
-// Libraries is what a repository uses (slug set), or what a project's
-// repositories use of other projects' (slug ""): the context a step reads
-// beside its own code. In the graph's order, each once.
-func (s *Store) Libraries(ctx context.Context, key, slug string) ([]Library, error) {
+// Shared is what a repository depends on (slug set), or what a project's
+// repositories depend on of other projects' (slug ""): the context a step
+// reads beside its own code. In the graph's order, each once.
+func (s *Store) Shared(ctx context.Context, key, slug string) ([]SharedRepo, error) {
 	g, err := s.Dependencies(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := []Library{}
+	out := []SharedRepo{}
 	at := map[RepoRef]int{}
 	for _, e := range g.Edges {
 		if e.From.ProjectKey != key {
@@ -224,14 +225,14 @@ func (s *Store) Libraries(ctx context.Context, key, slug string) ([]Library, err
 			continue
 		}
 		if slug == "" && e.To.ProjectKey == key {
-			// A project's own repository is no library of it.
+			// A project's own repository is not shared with it.
 			continue
 		}
 		i, ok := at[e.To]
 		if !ok {
 			i = len(out)
 			at[e.To] = i
-			out = append(out, Library{RepoRef: e.To})
+			out = append(out, SharedRepo{RepoRef: e.To})
 		}
 		out[i].UsedBy = append(out[i].UsedBy, e.From)
 	}

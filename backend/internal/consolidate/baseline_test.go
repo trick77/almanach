@@ -54,12 +54,12 @@ type runStore struct {
 	mapWrites int
 	// libs is what Libraries answers, by slug ("" the project's); libsErr
 	// fails it.
-	libs     map[string][]store.Library
+	libs     map[string][]store.SharedRepo
 	libsErr  error
 	libReads map[string]int
 }
 
-func (s *runStore) Libraries(_ context.Context, _, slug string) ([]store.Library, error) {
+func (s *runStore) Shared(_ context.Context, _, slug string) ([]store.SharedRepo, error) {
 	s.libReads[slug]++
 	return s.libs[slug], s.libsErr
 }

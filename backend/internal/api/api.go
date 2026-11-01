@@ -56,7 +56,7 @@ type Store interface {
 	ProjectKeyOf(ctx context.Context, key string) (string, bool, error)
 	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
 	Dependencies(ctx context.Context) (store.Graph, error)
-	Libraries(ctx context.Context, key, slug string) ([]store.Library, error)
+	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 }
 
 // Waker is poked when a note was queued.
@@ -458,9 +458,9 @@ type projectDetailBody struct {
 	// accepted: no map, and none promised for the next run either.
 	MapDeclined bool       `json:"map_declined"`
 	Repos       []repoBody `json:"repos"`
-	// Libraries are the repositories of other projects this project's
-	// repositories use: the system map's libraries zone.
-	Libraries   []libraryBody `json:"libraries"`
+	// Shared are the repositories of other projects this project's
+	// repositories depend on: the architecture overview's shared zone.
+	Shared      []sharedBody  `json:"shared"`
 	Problems    []problemBody `json:"problems"`
 	ProblemDays int           `json:"problem_window_days"`
 	Notes       []noteBody    `json:"recent_notes"`
@@ -535,11 +535,11 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	out.Repos = repoBodies(repos)
-	// The libraries are the map's zone: no map, none asked for.
-	out.Libraries = []libraryBody{}
+	// The shared repositories are the map's zone: no map, none asked for.
+	out.Shared = []sharedBody{}
 	if drawn != nil {
-		if out.Libraries, err = d.libraries(ctx, key); err != nil {
-			httpx.ServerError(w, r, err, "libraries")
+		if out.Shared, err = d.shared(ctx, key); err != nil {
+			httpx.ServerError(w, r, err, "shared repositories")
 			return
 		}
 	}

@@ -315,7 +315,7 @@ func TestLibraries(t *testing.T) {
 	saveRead(t, s, "apps", "fetch", "1", manifest.Read{Provides: []string{"go:f"}})
 	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:f"}, {Coord: "go:w"}}})
 	saveRead(t, s, "apps", "rongo", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:w"}}})
-	libs, err := s.Libraries(ctx, "apps", "loom")
+	libs, err := s.Shared(ctx, "apps", "loom")
 	if err != nil || len(libs) != 2 || libs[0].Slug != "fetch" || libs[1].Slug != "wire" {
 		t.Fatalf("loom's libraries = %+v %v, want fetch and wire", libs, err)
 	}
@@ -330,11 +330,11 @@ func TestLibraries(t *testing.T) {
 		VALUES ('repository', ?, ?, 900, '2026-11-01T17:00:00.000000000Z')`, pid, rid); err != nil {
 		t.Fatal(err)
 	}
-	libs, err = s.Libraries(ctx, "apps", "")
+	libs, err = s.Shared(ctx, "apps", "")
 	if err != nil || len(libs) != 1 || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 || libs[0].Summary != "Ein Client." {
 		t.Fatalf("apps' libraries = %+v %v, want wire, described, used by loom and rongo", libs, err)
 	}
-	if libs, err := s.Libraries(ctx, "libs", "wire"); err != nil || len(libs) != 0 {
+	if libs, err := s.Shared(ctx, "libs", "wire"); err != nil || len(libs) != 0 {
 		t.Fatalf("wire's libraries = %+v %v, want none", libs, err)
 	}
 }

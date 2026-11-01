@@ -54,13 +54,13 @@ type fakeStore struct {
 	graph    store.Graph
 	graphErr error
 	// libs is what Libraries answers, by project key.
-	libs map[string][]store.Library
+	libs map[string][]store.SharedRepo
 }
 
 func (f *fakeStore) Dependencies(context.Context) (store.Graph, error) { return f.graph, f.graphErr }
 
 // Libraries answers libs by project key; graphErr fails it.
-func (f *fakeStore) Libraries(_ context.Context, key, _ string) ([]store.Library, error) {
+func (f *fakeStore) Shared(_ context.Context, key, _ string) ([]store.SharedRepo, error) {
 	return f.libs[key], f.graphErr
 }
 
