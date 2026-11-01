@@ -51,27 +51,29 @@ const (
 type Skip string
 
 const (
-	// SkipGone: the subject left the catalogue mid-run.
+	// SkipGone is when the subject left the catalogue mid-run.
 	SkipGone Skip = "gone"
-	// SkipCalls: the run's calls were spent.
+	// SkipCalls is when the run's calls were spent.
 	SkipCalls Skip = "calls"
-	// SkipBytes: the part would take the run over its byte budget.
+	// SkipBytes is when the part would take the run over its byte budget.
 	SkipBytes Skip = "bytes"
-	// SkipCeiling: the page was at a ceiling before the call.
+	// SkipCeiling is when the page was at a ceiling before the call.
 	SkipCeiling Skip = "ceiling"
-	// SkipFailed: the model call failed.
+	// SkipFailed is when the model call failed.
 	SkipFailed Skip = "failed"
-	// SkipRefused: the answer broke a fold rule and was thrown away.
+	// SkipRefused is when the answer broke a fold rule and was thrown away.
 	SkipRefused Skip = "refused"
-	// SkipOverCeiling: the rewrite would take the page over a ceiling.
+	// SkipOverCeiling is when the rewrite would take the page over a ceiling.
 	SkipOverCeiling Skip = "over_ceiling"
-	// SkipNoPage: no change asked of a project that has no page yet.
+	// SkipNoPage is when the model asked no change of a project that has no
+	// page yet.
 	SkipNoPage Skip = "no_page"
 )
 
 // Part is which kind of part a run skipped, as the source page names it.
 type Part string
 
+// The parts: the docs read first, a catalogue subject, the project step.
 const (
 	PartOverview Part = "overview"
 	PartSubject  Part = "subject"
