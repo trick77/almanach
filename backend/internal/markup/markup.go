@@ -69,12 +69,13 @@ func FromBlocks(bs []Block) string {
 			}
 			var lines []string
 			for _, it := range b.Items {
-				it = strings.Join(strings.Fields(it), " ")
-				if li, ok := ListItem(it); ok {
-					it = li[strings.IndexByte(li, ' ')+1:]
-				}
+				it = unmarked(strings.Join(strings.Fields(it), " "), b.Kind)
 				if it == "" {
 					continue
+				}
+				if isRule("- " + it) {
+					// "---" as an item would be a rule, dropped on the read.
+					it = CodeSpan(it)
 				}
 				if b.Kind == BlockList {
 					lines = append(lines, "- "+it)
@@ -92,6 +93,22 @@ func FromBlocks(bs []Block) string {
 		}
 	}
 	return strings.Join(out, "\n\n")
+}
+
+// unmarked is a list item without the marker of its own block's kind a
+// model wrote anyway ("- " in a list, "2. " in a numbered one); a number
+// in a bullet item ("2. Stufe") is its text and stays.
+func unmarked(it, kind string) string {
+	if kind == BlockNumbered {
+		if _, rest, ok := ordered(it); ok {
+			return rest
+		}
+		return it
+	}
+	if len(it) > 2 && strings.ContainsRune("-*+", rune(it[0])) && it[1] == ' ' {
+		return strings.TrimSpace(it[2:])
+	}
+	return it
 }
 
 // brTag is an HTML line break as models write one.
@@ -139,24 +156,56 @@ func breaks(s string) string {
 }
 
 // LayoutLost reports whether stored text lost its layout on the way in: a
-// heading's or a break's marks inside a line (" #### ", "<br>"), or a
-// text of an essay's length on one line. Such a text is a model's whole
-// answer on one line; the prompt asks for it again, laid out.
+// heading's or a break's marks inside a line (" #### ", "<br>"), outside
+// code. Such a text is a model's whole answer on one line, written before
+// the schema carried blocks; the prompt asks for it again, laid out. A
+// long paragraph is no such mark: one paragraph block is stored as one.
+//
+// TRANSITIONAL(lost-layout): Remove when no current revision's text is
+// LayoutLost.
 func LayoutLost(s string) bool {
-	if brTag.MatchString(s) {
-		return true
-	}
-	for _, l := range strings.Split(s, "\n") {
-		if strings.Contains(strings.TrimSpace(l), " "+Heading) {
+	lines := strings.Split(s, "\n")
+	fence := ""
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if fence != "" {
+			if ClosesFence(t, fence) {
+				fence = ""
+			}
+			continue
+		}
+		if f := FenceOf(t); f != "" && slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), f) }) {
+			fence = f
+			continue
+		}
+		prose := outsideCode(t)
+		if brTag.MatchString(prose) || strings.Contains(prose, " "+Heading) {
 			return true
 		}
 	}
-	return !strings.Contains(s, "\n") && utf8.RuneCountInString(s) > lostLength
+	return false
 }
 
-// lostLength is the length past which one line is a text that lost its
-// layout: a single paragraph that long is no documentation anyone writes.
-const lostLength = 1200
+// outsideCode is a line with its code spans blanked out: what of it is
+// prose. A backtick run nothing closes is prose, as SpanAt reads it.
+func outsideCode(l string) string {
+	var b strings.Builder
+	for i := 0; i < len(l); {
+		if l[i] != '`' {
+			b.WriteByte(l[i])
+			i++
+			continue
+		}
+		end, ok := SpanAt(l, i)
+		if ok {
+			b.WriteByte(' ')
+		} else {
+			b.WriteString(l[i:end])
+		}
+		i = end
+	}
+	return b.String()
+}
 
 // Normalize is model text in the stored form: blocks one blank line apart;
 // a paragraph's lines as written, their indents dropped (so the Swiss rule
@@ -175,7 +224,8 @@ const lostLength = 1200
 func Normalize(s string) string {
 	out := normalizeOnce(breaks(s))
 	for range 8 {
-		next := normalizeOnce(out)
+		// breaks each pass: joining a list item's lines can make a <br>.
+		next := normalizeOnce(breaks(out))
 		if next == out {
 			break
 		}

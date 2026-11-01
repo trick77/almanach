@@ -285,7 +285,7 @@ func (s *Store) sourceSummaries(ctx context.Context, refs []RepoRef) (map[RepoRe
 		if err := rows.Scan(&r.ProjectKey, &r.Slug, &sum); err != nil {
 			return nil, err
 		}
-		out[r] = relaid(sum)
+		out[r] = sum
 	}
 	return out, rows.Err()
 }

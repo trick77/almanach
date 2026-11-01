@@ -12,12 +12,18 @@ import (
 // inside one JSON string. A model writing a whole text on one line (loom's
 // summary, 2026-11-01) or breaking it with "<br>" (webfetch's) lost every
 // heading and list; here the code writes the newlines (markup.FromBlocks).
+//
+// Two shapes, so neither can come back empty, as minLength on the one
+// string guaranteed: a paragraph or heading with text, a list with items
+// (its text an optional lead-in). An empty summary rejects a whole fold.
 func blocks() map[string]any {
-	b := array(object(map[string]any{
-		"kind":  enum(markup.BlockKinds...),
-		"text":  str(),
-		"items": array(str()),
-	}))
+	nonEmpty := map[string]any{"type": "string", "minLength": 1}
+	items := array(nonEmpty)
+	items["minItems"] = 1
+	b := array(map[string]any{"anyOf": []any{
+		object(map[string]any{"kind": enum(markup.BlockParagraph, markup.BlockHeading), "text": nonEmpty}),
+		object(map[string]any{"kind": enum(markup.BlockList, markup.BlockNumbered), "text": str(), "items": items}),
+	}})
 	b["minItems"] = 1
 	return b
 }
@@ -30,8 +36,9 @@ func nullableBlocks() map[string]any {
 }
 
 // laid is a laid-out text as the model returned it, in the text form
-// lang.Laid takes: blocks through markup.FromBlocks; a plain string (an
-// answer of the schema before blocks, a test's) as it is; null as ok false.
+// lang.Laid takes: blocks through markup.FromBlocks; a plain string (a
+// provider that answers outside the schema, a test's fake) as it is; null
+// as ok false.
 func laid(raw json.RawMessage) (string, bool, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", false, nil

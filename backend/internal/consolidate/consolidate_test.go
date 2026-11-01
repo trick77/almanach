@@ -930,6 +930,11 @@ func TestDescribe(t *testing.T) {
 	if got := describeRead(p); strings.Contains(got, lostSummary) || strings.Contains(got, lostText) {
 		t.Errorf("describeRead marks a lost layout: %q", got)
 	}
+	// A statement the step must leave alone is never asked for: its edit
+	// would be struck, the call paid for nothing.
+	if got := describePage(p, pageView{newer: map[string]string{"s2": byNewerPR}}); strings.Contains(got, lostText) {
+		t.Errorf("a statement left alone is asked for again: %q", got)
+	}
 }
 
 // A statement and a page are as long as their subject needs: a repository

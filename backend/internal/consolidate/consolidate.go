@@ -1004,6 +1004,9 @@ const (
 	noStatementsYet = "\n_No statements yet: " + allNew + "._\n"
 )
 
+// TRANSITIONAL(lost-layout): Remove when no current revision's text is
+// markup.LayoutLost.
+//
 // lostSummary and lostText mark a stored text that lost its layout
 // (markup.LayoutLost): written on one line by a model before the schema
 // carried blocks. The step that sees one writes it anew, its content
@@ -1065,7 +1068,9 @@ func describePage(p store.Page, v pageView) string {
 	// every second paragraph outside any id.
 	for _, s := range p.Statements {
 		fmt.Fprintf(&b, "\n### [%s] %s: %s\n\n%s\n", s.ID, s.Kind, s.Name, s.Text)
-		if !v.read && markup.LayoutLost(s.Text) {
+		// A statement the step must leave alone is not asked for: its edit
+		// would be struck.
+		if !v.read && v.newer[s.ID] == "" && markup.LayoutLost(s.Text) {
 			b.WriteString(lostText)
 		}
 		if len(s.Files) > 0 {

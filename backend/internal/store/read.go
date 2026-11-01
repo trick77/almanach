@@ -117,7 +117,6 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 		if err := rows.Scan(&r.Slug, &r.Summary); err != nil {
 			return nil, err
 		}
-		r.Summary = relaid(r.Summary)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -150,7 +149,6 @@ func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]Repo
 		if err := rows.Scan(&r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge)); err != nil {
 			return nil, err
 		}
-		r.Summary = relaid(r.Summary)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -185,7 +183,6 @@ func (s *Store) SingleRepos(ctx context.Context) (map[string]RepoRow, error) {
 		if err := rows.Scan(&key, &r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge), &n); err != nil {
 			return nil, err
 		}
-		r.Summary = relaid(r.Summary)
 		// The one rule, not a copy of it in SQL.
 		if Single(n) {
 			out[key] = r

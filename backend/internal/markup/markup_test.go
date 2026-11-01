@@ -11,10 +11,12 @@ func TestFromBlocks(t *testing.T) {
 		{Kind: BlockHeading, Text: "## Woraus es besteht"},
 		{Kind: BlockList, Text: "Drei Teile:", Items: []string{"`backend/`: die API", "- `ui/`: die SPA", " ", "`docs/`"}},
 		{Kind: BlockNumbered, Items: []string{"1. bauen", "testen"}},
+		{Kind: BlockParagraph, Text: "Stufen:"},
+		{Kind: BlockList, Items: []string{"2. Stufe: Signieren", "---"}},
 		{Kind: BlockHeading, Text: "  "},
 		{Kind: BlockParagraph, Text: "Zeile eins<br>Zeile zwei"},
 	}))
-	want := "`loom` ist ein **Chat** für viele.\n\n#### Woraus es besteht\n\nDrei Teile:\n\n- `backend/`: die API\n- `ui/`: die SPA\n- `docs/`\n1. bauen\n2. testen\n\nZeile eins\nZeile zwei"
+	want := "`loom` ist ein **Chat** für viele.\n\n#### Woraus es besteht\n\nDrei Teile:\n\n- `backend/`: die API\n- `ui/`: die SPA\n- `docs/`\n1. bauen\n2. testen\n\nStufen:\n\n- 2. Stufe: Signieren\n- `---`\n\nZeile eins\nZeile zwei"
 	if got != want {
 		t.Errorf("FromBlocks = %q, want %q", got, want)
 	}
@@ -32,9 +34,13 @@ func TestLayoutLost(t *testing.T) {
 		{"Ein Absatz.\n\n#### Teil\n\nNoch einer.", false},
 		{"Zweck und Abgrenzung `loom` ist ein Chat. #### Struktur Das Repository besteht aus Teilen.", true},
 		{"Zweck und Grenze<br>webfetch ist eine Bibliothek.", true},
-		{long, true},
 		{"Ein kurzer Absatz auf einer Zeile.", false},
-		{long[:600], false},
+		// One paragraph block is stored on one line, however long.
+		{long, false},
+		// Marks in code are code: a statement documenting them is laid out.
+		{"Ein `<br>` im Alias ist ein Zeilenumbruch.", false},
+		{"Sucht mit `grep ' #### '` nach Titeln.", false},
+		{"So:\n```\na #### b<br>\n```", false},
 	} {
 		if got := LayoutLost(c.in); got != c.want {
 			t.Errorf("LayoutLost(%.40q) = %v, want %v", c.in, got, c.want)
@@ -170,7 +176,7 @@ func TestWords(t *testing.T) {
 // Normalize of its own output is that output: a second pass that changed
 // a stored text would lose an item or write a revision per fold.
 func FuzzNormalizeIdempotent(f *testing.F) {
-	for _, s := range []string{"* --", "+ - -", "## ```", "## ~~~", "- a\n\n- b", "```\nx ``` y\n```", "~~~ ~~~ x", "## **a** b **c**",
+	for _, s := range []string{"* --", "+ - -", "## ```", "## ~~~", "- a\n\n- b", "```\nx ``` y\n```", "~~~ ~~~ x", "## **a** b **c**", "- a <br\n/>b", "- a `b\nc `<br>` d`",
 		"Fälle:\n* eins\n  weiter\n\n1) zwei", "```go\nfoo", "# Titel\n---\nText", "- # x\n> y", "````md\n```\n# x\n```\n````", "```Hinweis:\nText"} {
 		f.Add(s)
 	}

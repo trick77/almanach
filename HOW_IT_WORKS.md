@@ -1100,8 +1100,10 @@ so the choice is not undone as a cleanup.
   newlines (`markup.FromBlocks`). A text as one JSON string lost them: one
   model wrote whole summaries on one line, another broke them with `<br>`,
   and every heading and list came out as one paragraph. A step that sees
-  such a stored text (`markup.LayoutLost`) is told to write it anew, so a
-  rerun lays it out again; a `<br>` stored is read as a newline. The backend
+  such a stored text (`markup.LayoutLost`: `####` or `<br>` inside a line,
+  outside code) is told to write it anew, so a rerun lays it out again; a
+  `<br>` a model still writes becomes a newline. A private key split across
+  blocks or by a `<br>` is still a key to the redaction. The backend
   (`lang.Laid`, `internal/markup`) puts what the model writes into that
   stored form after redaction (a key's PEM shape holds only as written)
   and before the Swiss rule reads it: any heading level becomes `####`,

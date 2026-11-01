@@ -17,11 +17,12 @@ import (
 // a PEM header, a digit in a token), because the model's prose is stored and
 // a sentence cut by a false match stays cut.
 
-// pemBlock is a private key with its key material: the header, then a line
-// of base64 (a real newline, or "\n" written inside a string literal), up to
-// the footer or, cut off, the end. A header alone is a name: a loader's
-// prefix check or a sentence about the format keeps it.
-var pemBlock = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\r?\n|\\n)[A-Za-z0-9+/=]{16,}(?s:.*?)(?:-----END [A-Z ]*PRIVATE KEY-----|\z)`)
+// pemBlock is a private key with its key material: the header, then base64
+// after any run of breaks (newlines, a blank line between two of a
+// model's blocks, "\n" written inside a string literal, a <br>, blanks on
+// one line), up to the footer or, cut off, the end. A header alone is a
+// name: a loader's prefix check or a sentence about the format keeps it.
+var pemBlock = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\s|\\n|(?i:<br\s*/?>))+[A-Za-z0-9+/=]{16,}(?s:.*?)(?:-----END [A-Z ]*PRIVATE KEY-----|\z)`)
 
 // fixedShapes need no second look: a JWT, an AWS access key id, an AWS
 // secret under its own name, a jasypt value with a cipher text in it (the
