@@ -200,10 +200,13 @@ func TestBuildPlan_HoldsTheCatalogueToTheTree(t *testing.T) {
 // the project list without a name, and a run from before reasons has none.
 func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
 	var p Plan
-	p.Skip(OverviewPart, SkipCeiling)
-	p.Skip("Auth", SkipFailed)
-	p.Skip("Auth", SkipCalls)
-	p.Skip(ProjectPart, SkipNoPage)
+	p.SkipStep(PartProject, SkipNoPage)
+	p.SkipSubject("Auth", SkipFailed)
+	p.SkipSubject("Auth", SkipCalls)
+	p.SkipStep(PartOverview, SkipCeiling)
+	p.SkipStep(PartOverview, SkipCalls)
+	// The run's order, whatever order they were marked in: overview,
+	// subjects, project.
 	want := []SkippedPart{
 		{Part: "overview", Name: "", Reason: SkipCeiling},
 		{Part: "subject", Name: "Auth", Reason: SkipFailed},
@@ -211,6 +214,9 @@ func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
 	}
 	if got := p.SkippedParts(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("parts = %+v\nwant %+v", got, want)
+	}
+	if !p.StepSkipped(PartOverview) || !p.StepSkipped(PartProject) || (Plan{}).StepSkipped(PartProject) {
+		t.Errorf("StepSkipped wrong: %+v", p.Steps)
 	}
 	old := Plan{Skipped: []string{"Auth"}}
 	if got := old.SkippedParts(); !reflect.DeepEqual(got, []SkippedPart{{Part: "subject", Name: "Auth", Reason: ""}}) {
@@ -226,7 +232,7 @@ func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
 func TestRunSkips_ReadsAStoredPlan(t *testing.T) {
 	var p Plan
 	p.Subjects = []Subject{{Name: "Auth", Purpose: "p", Files: []File{{"auth/a.go", 1}}}}
-	p.Skip("Auth", SkipBytes)
+	p.SkipSubject("Auth", SkipBytes)
 	raw, _ := json.Marshal(p)
 	got, err := RunSkips(raw)
 	if err != nil || !reflect.DeepEqual(got, []SkippedPart{{Part: "subject", Name: "Auth", Reason: SkipBytes}}) {
@@ -237,6 +243,62 @@ func TestRunSkips_ReadsAStoredPlan(t *testing.T) {
 	}
 	if _, err := RunSkips(json.RawMessage(`{"skipped":7}`)); err == nil {
 		t.Error("a malformed plan decoded")
+	}
+}
+
+// A subject the model names like a step stays a subject: the steps are
+// held by Part, never by name.
+func TestPlan_SubjectNamedLikeAStepStaysASubject(t *testing.T) {
+	p := Plan{Format: PlanFormat}
+	p.SkipSubject("the project", SkipBytes)
+	p.SkipSubject("the overview", SkipFailed)
+	raw, _ := json.Marshal(p)
+	got, err := RunSkips(raw)
+	want := []SkippedPart{
+		{Part: "subject", Name: "the project", Reason: SkipBytes},
+		{Part: "subject", Name: "the overview", Reason: SkipFailed},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("RunSkips = %+v, %v\nwant %+v", got, err, want)
+	}
+	if p.StepSkipped(PartProject) || p.StepSkipped(PartOverview) {
+		t.Errorf("a subject marked a step: %+v", p.Steps)
+	}
+}
+
+// A plan stored before Steps held the two steps by name in Skipped:
+// Upgrade moves them, with their reasons, and leaves the subjects.
+func TestPlan_UpgradeMovesTheLegacyStepNames(t *testing.T) {
+	raw := json.RawMessage(`{"subjects":[],"skipped":["the overview","Auth","the project"],"why":{"the overview":"ceiling","Auth":"ceiling"}}`)
+	var p Plan
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	p.Upgrade()
+	if !reflect.DeepEqual(p.Skipped, []string{"Auth"}) || !reflect.DeepEqual(p.Why, map[string]Skip{"Auth": SkipCeiling}) ||
+		!reflect.DeepEqual(p.Steps, map[Part]Skip{PartOverview: SkipCeiling, PartProject: ""}) {
+		t.Fatalf("upgraded = %+v", p)
+	}
+	got, err := RunSkips(raw)
+	want := []SkippedPart{
+		{Part: "overview", Reason: SkipCeiling},
+		{Part: "subject", Name: "Auth", Reason: SkipCeiling},
+		{Part: "project", Reason: ""},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("RunSkips = %+v, %v", got, err)
+	}
+	// A plan with nothing to move is left as it was.
+	q := Plan{Skipped: []string{"Auth"}}
+	q.Upgrade()
+	if !reflect.DeepEqual(q.Skipped, []string{"Auth"}) || q.Steps != nil || q.Format != PlanFormat {
+		t.Errorf("no legacy names: %+v", q)
+	}
+	// A current plan's subjects are never read as steps, whatever their name.
+	c := Plan{Format: PlanFormat, Skipped: []string{"the project"}}
+	c.Upgrade()
+	if !reflect.DeepEqual(c.Skipped, []string{"the project"}) || c.Steps != nil {
+		t.Errorf("current plan upgraded: %+v", c)
 	}
 }
 

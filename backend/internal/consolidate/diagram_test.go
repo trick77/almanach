@@ -496,7 +496,7 @@ func TestRun_ProjectWithoutAMap(t *testing.T) {
 	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
-	if r := x.run(); r.State != store.RunDone || r.Skipped != 1 || !strings.Contains(string(r.Plan), "the project") {
+	if r := x.run(); r.State != store.RunDone || r.Skipped != 1 || !x.plan(t).StepSkipped(baseline.PartProject) {
 		t.Fatalf("run = %+v, want the project skipped", r)
 	}
 	if _, ok := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; ok {

@@ -32,19 +32,62 @@ func (s Subject) Bytes() int64 {
 // Skipped names the subjects the run could not fold (a ceiling, a failed
 // call), so the next reconcile reads them again; Why is each one's Skip
 // code, the first that hit it. A run from before Why has names alone.
+// Steps is the overview and the project step when the run skipped them,
+// by Part, never by a name: a subject's name is the model's, any string.
 type Plan struct {
+	// Format is PlanFormat on every plan the worker writes; 0 is a plan
+	// from before Steps, which Upgrade reads.
+	Format   int             `json:"format,omitempty"`
 	Subjects []Subject       `json:"subjects"`
 	Skipped  []string        `json:"skipped,omitempty"`
 	Why      map[string]Skip `json:"why,omitempty"`
+	Steps    map[Part]Skip   `json:"steps,omitempty"`
 }
 
-// The overview and the project step by name in Skipped, beside the
-// subjects: the next reconcile reads the docs again, or folds the project
-// again, when the last run could not.
+// PlanFormat is the plan as written now: the steps in Steps.
+const PlanFormat = 2
+
+// The overview and the project step as plans from before Steps named them
+// in Skipped, beside the subjects. Upgrade moves them.
 const (
-	OverviewPart = "the overview"
-	ProjectPart  = "the project"
+	legacyOverview = "the overview"
+	legacyProject  = "the project"
 )
+
+// Upgrade moves the overview and the project step out of Skipped into
+// Steps, for a plan stored before Steps (Format 0), and marks it current.
+// A subject such a plan names "the overview" or "the project" reads as
+// that step this once; a current plan is left as it is, its subjects named
+// anything.
+func (p *Plan) Upgrade() {
+	if p.Format >= PlanFormat {
+		return
+	}
+	p.Format = PlanFormat
+	var kept []string
+	moved := false
+	for _, name := range p.Skipped {
+		switch name {
+		case legacyOverview:
+			p.SkipStep(PartOverview, p.Why[name])
+		case legacyProject:
+			p.SkipStep(PartProject, p.Why[name])
+		default:
+			kept = append(kept, name)
+			continue
+		}
+		delete(p.Why, name)
+		moved = true
+	}
+	if !moved {
+		return
+	}
+	// Nil, not empty, when nothing is left: a plan as the worker builds one.
+	p.Skipped = kept
+	if len(p.Why) == 0 {
+		p.Why = nil
+	}
+}
 
 // Skip is why a run left a part out, a code the page words; the log line
 // carries the detail.
@@ -89,41 +132,48 @@ type SkippedPart struct {
 	Reason Skip
 }
 
-// RunSkips is the parts a stored run plan left out. It keeps the two
-// fields alone, by Plan's own tags (TestRunSkips_ReadsAStoredPlan holds
-// them together): the subjects are still scanned, never built, and the
-// source page asks for every repository on every poll.
+// RunSkips is the parts a stored run plan left out, a plan from before
+// Steps upgraded. It keeps format, skipped, why and steps alone, by Plan's
+// own tags (TestRunSkips_ReadsAStoredPlan and
+// TestPlan_UpgradeMovesTheLegacyStepNames hold them together): the
+// subjects are still scanned, never built, and the source page asks for
+// every repository on every poll.
 func RunSkips(raw json.RawMessage) ([]SkippedPart, error) {
 	var p struct {
+		Format  int             `json:"format"`
 		Skipped []string        `json:"skipped"`
 		Why     map[string]Skip `json:"why"`
+		Steps   map[Part]Skip   `json:"steps"`
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return nil, err
 		}
 	}
-	return Plan{Skipped: p.Skipped, Why: p.Why}.SkippedParts(), nil
+	plan := Plan{Format: p.Format, Skipped: p.Skipped, Why: p.Why, Steps: p.Steps}
+	plan.Upgrade()
+	return plan.SkippedParts(), nil
 }
 
-// SkippedParts is the plan's skipped parts in the order the run hit them.
+// SkippedParts is the plan's skipped parts in the order a run reads them:
+// the overview, the subjects as the run hit them, the project step.
 func (p Plan) SkippedParts() []SkippedPart {
-	out := make([]SkippedPart, 0, len(p.Skipped))
+	out := make([]SkippedPart, 0, len(p.Skipped)+len(p.Steps))
+	if why, ok := p.Steps[PartOverview]; ok {
+		out = append(out, SkippedPart{Part: PartOverview, Reason: why})
+	}
 	for _, name := range p.Skipped {
-		s := SkippedPart{Part: PartSubject, Name: name, Reason: p.Why[name]}
-		switch name {
-		case OverviewPart:
-			s.Part, s.Name = PartOverview, ""
-		case ProjectPart:
-			s.Part, s.Name = PartProject, ""
-		}
-		out = append(out, s)
+		out = append(out, SkippedPart{Part: PartSubject, Name: name, Reason: p.Why[name]})
+	}
+	if why, ok := p.Steps[PartProject]; ok {
+		out = append(out, SkippedPart{Part: PartProject, Reason: why})
 	}
 	return out
 }
 
-// Skip names a part skipped for why, once: the first reason stays.
-func (p *Plan) Skip(name string, why Skip) {
+// SkipSubject names a subject skipped for why, once: the first reason
+// stays.
+func (p *Plan) SkipSubject(name string, why Skip) {
 	if slices.Contains(p.Skipped, name) {
 		return
 	}
@@ -132,6 +182,25 @@ func (p *Plan) Skip(name string, why Skip) {
 		p.Why = map[string]Skip{}
 	}
 	p.Why[name] = why
+}
+
+// SkipStep marks the overview or the project step skipped for why, once:
+// the first reason stays.
+func (p *Plan) SkipStep(part Part, why Skip) {
+	if _, ok := p.Steps[part]; ok {
+		return
+	}
+	if p.Steps == nil {
+		p.Steps = map[Part]Skip{}
+	}
+	p.Steps[part] = why
+}
+
+// StepSkipped reports whether the run skipped the overview or the project
+// step.
+func (p Plan) StepSkipped(part Part) bool {
+	_, ok := p.Steps[part]
+	return ok
 }
 
 // Bytes is the file content of every subject.
