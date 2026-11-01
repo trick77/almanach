@@ -653,6 +653,8 @@ func TestLead(t *testing.T) {
 		"**Zweck**\n\nDer **Dienst** liest\nNotizen. Mehr.": "Der Dienst liest Notizen. Mehr.",
 		"- **eins**\n- zwei": "eins",
 		"**Nur Titel**":      "",
+		// A bolded opening sentence is the opening, not a heading.
+		"**Der Dienst wird ersetzt.**\n\nEr liest.": "Der Dienst wird ersetzt.",
 		// An opening that starts and ends in bold is text, not a heading.
 		"**Almanach** ist das Wiki, das **lebt**\n\nZweiter.": "Almanach ist das Wiki, das lebt",
 		"Eins.\n\nZwei.": "Eins.",

@@ -39,20 +39,20 @@ func Normalize(s string, headings bool) string {
 	for i, raw := range lines {
 		line := strings.TrimSpace(raw)
 		if fence != "" {
-			if closesFence(line, fence) {
+			if ClosesFence(line, fence) {
 				fence = ""
 				flush()
 				continue
 			}
 			if line != "" {
-				cur = append(cur, codeSpan(line))
+				cur = append(cur, CodeSpan(line))
 			}
 			continue
 		}
-		if f := fenceOf(line); f != "" {
+		if f := FenceOf(line); f != "" {
 			// A fence never closed is no block: its line goes, the rest
 			// stays text, not one column of code to the end.
-			if slices.ContainsFunc(lines[i+1:], func(l string) bool { return closesFence(strings.TrimSpace(l), f) }) {
+			if slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), f) }) {
 				flush()
 				fence = f
 			}
@@ -134,30 +134,36 @@ func heading(line string) (string, bool) {
 	return t, t != ""
 }
 
-// closesFence reports whether a line, trimmed, closes an open fence: the
-// fence's characters alone, at least as many.
-func closesFence(line, fence string) bool {
+// ClosesFence reports whether a line, trimmed, closes the fence FenceOf
+// returned: the fence's character alone, at least as many.
+func ClosesFence(line, fence string) bool {
 	return strings.HasPrefix(line, fence) && strings.Trim(line, fence[:1]) == ""
 }
 
-// fenceOf is the fence a line opens, "```" or "~~~", or "". A backtick
-// fence's info string holds no backtick, as in CommonMark: a code span
-// codeSpan wrote around a line with ``` in it opens nothing.
-func fenceOf(line string) string {
-	switch {
-	case strings.HasPrefix(line, "~~~"):
-		return "~~~"
-	case strings.HasPrefix(line, "```") && !strings.Contains(strings.TrimLeft(line, "`"), "`"):
-		return "```"
+// FenceOf is the fence a line, trimmed, opens: its whole run of three or
+// more backticks or tildes, or "". As in CommonMark, a backtick fence's
+// info string holds no backtick: a code span CodeSpan wrote around a line
+// with ``` in it opens nothing. The one fence rule here and in lang's
+// Swiss spelling, so what one reads as code the other does too.
+func FenceOf(line string) string {
+	for _, c := range []string{"`", "~"} {
+		run := line[:len(line)-len(strings.TrimLeft(line, c))]
+		if len(run) < 3 {
+			continue
+		}
+		if c == "`" && strings.Contains(line[len(run):], "`") {
+			return ""
+		}
+		return run
 	}
 	return ""
 }
 
-// codeSpan quotes a line as one `code` span, its backtick run one longer
-// than the longest inside.
-func codeSpan(line string) string {
+// CodeSpan is s as one inline code span, its backtick run one longer than
+// the longest inside, set off by a blank when s holds one.
+func CodeSpan(s string) string {
 	longest, run := 0, 0
-	for _, r := range line {
+	for _, r := range s {
 		if r == '`' {
 			run++
 			longest = max(longest, run)
@@ -167,9 +173,9 @@ func codeSpan(line string) string {
 	}
 	tick := strings.Repeat("`", longest+1)
 	if longest > 0 {
-		return tick + " " + line + " " + tick
+		return tick + " " + s + " " + tick
 	}
-	return tick + line + tick
+	return tick + s + tick
 }
 
 // StoredHeading reports whether a line, trimmed, is a sub-heading in the
@@ -255,11 +261,12 @@ func unbold(l string) string {
 	return b.String()
 }
 
-// Words is what a text says, its layout aside: its words, its symbols
-// (> is not <, -5 not 5) and its code spans whole, one space apart; a
-// sentence's . , ; : and a sub-heading's title left out (a list drops the
-// one, the other names a part and teaches nothing). Two texts with the
-// same words differ only in how they are laid out.
+// Words is what a text says, its layout aside: its words, a sub-heading's
+// title among them (a changed title is a change), its symbols (> is not
+// <, -5 not 5) and its code spans whole, one space apart. A . , ; : ends a
+// word, as a sentence's mark a list drops; inside one ("1,5",
+// "config.yaml") it is the word's. Two texts with the same words differ
+// only in how they are laid out.
 func Words(s string) string {
 	var out []string
 	var word strings.Builder
@@ -269,13 +276,11 @@ func Words(s string) string {
 			word.Reset()
 		}
 	}
-	var kept []string
-	for _, l := range strings.Split(s, "\n") {
-		if _, ok := StoredHeading(strings.TrimSpace(l)); !ok {
-			kept = append(kept, l)
-		}
+	p := Plain(s)
+	inWord := func(i int) bool {
+		r, _ := utf8.DecodeRuneInString(p[i:])
+		return unicode.IsLetter(r) || unicode.IsDigit(r)
 	}
-	p := Plain(strings.Join(kept, "\n"))
 	for i := 0; i < len(p); {
 		if p[i] == '`' {
 			// A code span is one token, its punctuation kept: != is not ==.
@@ -293,6 +298,8 @@ func Words(s string) string {
 		r, size := utf8.DecodeRuneInString(p[i:])
 		switch {
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			word.WriteString(p[i : i+size])
+		case strings.ContainsRune(".,;:", r) && word.Len() > 0 && i+size < len(p) && inWord(i+size):
 			word.WriteString(p[i : i+size])
 		case unicode.IsSpace(r) || strings.ContainsRune(".,;:", r):
 			end()

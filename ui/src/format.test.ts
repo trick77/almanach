@@ -126,8 +126,8 @@ describe("runs", () => {
 // spans' backticks dropped here (Doc draws them as mono, never as `).
 describe("plain", () => {
   it("drops the layout's marks, code's text kept", () => {
-    expect(plain("#### Ablauf\n\n- **eins**\n12. zwei `a**b`\nText.")).toBe(
-      "Ablauf\n\neins\nzwei a**b\nText.",
+    expect(plain("#### Ablauf\n\n- **eins**\n12. zwei `a**b`\n\nText.")).toBe(
+      "Ablauf\neins\nzwei a**b\nText.",
     );
     expect(plain("## Zwei\n* Stern\n1) Klammer")).toBe(
       "## Zwei\n* Stern\n1) Klammer",
@@ -136,6 +136,10 @@ describe("plain", () => {
       "a ** b\nleer **** hier\n**a\nb**",
     );
     expect(plain("**`strict`** gilt, **x")).toBe("strict gilt, **x");
+  });
+  it("reads as Doc renders: an item with its continuation, no #### in a summary", () => {
+    expect(plain("- Bilder\nund Texte")).toBe("Bilder und Texte");
+    expect(plain("#### x", false)).toBe("#### x");
   });
   it("reads only the stored item form, as markup.StoredItem", () => {
     expect(blocks("-  zwei Blanks\n1.  auch", true)).toEqual([

@@ -141,7 +141,7 @@ func writeStatement(b *strings.Builder, s store.Statement) {
 	if len(s.Files) > 0 {
 		files := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
-			files = append(files, codeSpan(f))
+			files = append(files, markup.CodeSpan(f))
 		}
 		fmt.Fprintf(b, "Dateien: %s\n", strings.Join(files, ", "))
 	}
@@ -248,17 +248,6 @@ func blockStart(t string) bool {
 // block: nothing, or a blank.
 func markerEnds(rest string) bool {
 	return rest == "" || rest[0] == ' ' || rest[0] == '\t'
-}
-
-// codeSpan is s as inline code, its delimiter longer than any run of
-// backticks in s.
-func codeSpan(s string) string {
-	n := longestRun(s, '`')
-	if n == 0 {
-		return "`" + s + "`"
-	}
-	tick := strings.Repeat("`", n+1)
-	return tick + " " + s + " " + tick
 }
 
 func longestRun(s string, c byte) int {

@@ -664,9 +664,12 @@ func sameLaidOut(stored, returned string, headings bool) bool {
 
 // sameText reports whether a statement's new text says what its old one
 // did: umlauts spelled in (lang.SameButSpelling) or only laid out anew,
-// a paragraph turned into a list, a term set in bold (markup.Words).
+// a paragraph turned into a list, a term set in bold (markup.Words). The
+// old text is laid out first as the new one was: text stored before the
+// layout ("* " items, "## " lines) returned as it stood says nothing new.
 func sameText(old, text string) bool {
-	return lang.SameButSpelling(old, text) || lang.SameButSpelling(markup.Words(old), markup.Words(text))
+	return lang.SameButSpelling(old, text) ||
+		lang.SameButSpelling(markup.Words(markup.Normalize(old, true)), markup.Words(text))
 }
 
 // diagramLimits is what a page's statement diagrams are held to: the caps

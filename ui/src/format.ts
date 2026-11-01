@@ -140,23 +140,18 @@ export function blocks(text: string, headings: boolean): Block[] {
 }
 
 /** plain is laid-out text as Doc shows it, what a search reads, so a
- *  statement kept is one with a mark: the heading and list markers gone
- *  and the ** that pair, as markup.Plain has it, and the code spans'
- *  backticks too, which Doc draws as the mono face. */
-export function plain(text: string): string {
-  return text
-    .split("\n")
-    .map((raw) => {
-      const line = raw.trim();
-      const body =
-        line.startsWith(headingMark) &&
-        line.slice(headingMark.length).trim() !== ""
-          ? line.slice(headingMark.length).trim()
-          : (listItem(line)?.text ?? line);
-      return runs(body)
+ *  statement kept is one with a mark: read by blocks itself (an item's
+ *  continuation joined to it, a #### only where headings is set), each
+ *  block's text as runs leaves it (the ** that pair and the code spans'
+ *  backticks gone), one block a line. */
+export function plain(text: string, headings = true): string {
+  return blocks(text, headings)
+    .flatMap((b) => (b.kind === "p" || b.kind === "h" ? [b.text] : b.items))
+    .map((t) =>
+      runs(t)
         .map((r) => r.text)
-        .join("");
-    })
+        .join(""),
+    )
     .join("\n");
 }
 

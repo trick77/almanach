@@ -690,14 +690,17 @@ var abbreviations = map[string]bool{
 
 // lead is a summary's opening as plain text, for a list: its first block
 // that is not a heading set in bold (markup.Normalize's form for one: one
-// line, one bold run, nothing else), the layout's marks gone, its lines
-// one line; of a list, its first item.
+// line, one bold run, nothing else, no sentence's end: a bolded sentence
+// "… ersetzt." is the opening), the layout's marks gone, its lines one
+// line; of a list, its first item.
 func lead(s string) string {
 	for _, b := range strings.Split(strings.TrimSpace(s), "\n\n") {
 		b = strings.TrimSpace(b)
 		inner, bold := strings.CutPrefix(b, "**")
 		inner, closed := strings.CutSuffix(inner, "**")
-		if b == "" || bold && closed && inner != "" && !strings.ContainsAny(inner, "\n") && !strings.Contains(inner, "**") {
+		title := bold && closed && inner != "" && !strings.ContainsAny(inner, "\n") && !strings.Contains(inner, "**") &&
+			!strings.ContainsAny(inner[len(inner)-1:], ".!?")
+		if b == "" || title {
 			continue
 		}
 		first, _, _ := strings.Cut(b, "\n")

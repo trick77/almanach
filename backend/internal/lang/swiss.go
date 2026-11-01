@@ -43,15 +43,17 @@ func SwissSS(s string) string {
 	b.Grow(len(s) + 8)
 	fence := ""
 	for _, line := range strings.SplitAfter(s, "\n") {
-		trimmed := strings.TrimLeft(line, " \t")
+		// markup's fence rule: a code span markup.CodeSpan wrote, ``` and all,
+		// opens no fence here either, or every ß after it would stay.
+		trimmed := strings.TrimSpace(line)
 		if fence != "" {
-			if strings.HasPrefix(trimmed, fence) {
+			if markup.ClosesFence(trimmed, fence) {
 				fence = ""
 			}
 			b.WriteString(line)
 			continue
 		}
-		if f := fenceOf(trimmed); f != "" {
+		if f := markup.FenceOf(trimmed); f != "" {
 			fence = f
 			b.WriteString(line)
 			continue
@@ -63,19 +65,6 @@ func SwissSS(s string) string {
 		b.WriteString(swissLine(line))
 	}
 	return b.String()
-}
-
-func fenceOf(trimmed string) string {
-	for _, c := range []byte{'`', '~'} {
-		n := 0
-		for n < len(trimmed) && trimmed[n] == c {
-			n++
-		}
-		if n >= 3 {
-			return trimmed[:n]
-		}
-	}
-	return ""
 }
 
 func swissLine(line string) string {

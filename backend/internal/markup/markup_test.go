@@ -52,8 +52,27 @@ func TestNormalizeFenceInsideCode(t *testing.T) {
 	}
 }
 
-// Plain reads the stored form alone and pairs ** as format.ts runs does:
-// the cases mirror format.test.ts "plain".
+// A fence closes only with at least its own run: a ```` block quoting a
+// ``` one stays code to its end, its # and - lines no heading, no list.
+func TestNormalizeLongFence(t *testing.T) {
+	got := Normalize("````md\n```\n# Titel\n- x\n```\n````\nDanach.", true)
+	if want := "```` ``` ````\n`# Titel`\n`- x`\n```` ``` ````\n\nDanach."; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// FenceOf is CommonMark's: a backtick run with a backtick after it is a
+// code span, not a fence; the whole run is the fence.
+func TestFenceOf(t *testing.T) {
+	for line, want := range map[string]string{"```go": "```", "````": "````", "~~~~ x": "~~~~", "```` a ``` b ````": "", "`` x ``": "", "x ```": ""} {
+		if got := FenceOf(line); got != want {
+			t.Errorf("FenceOf(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
+// Plain reads the stored form alone and pairs ** as format.ts runs does
+// (format.test.ts "plain" has these cases, read as Doc renders them).
 func TestPlain(t *testing.T) {
 	for in, want := range map[string]string{
 		"#### Ablauf\n\n- **eins**\n12. zwei `a**b`\nText.": "Ablauf\n\neins\nzwei `a**b`\nText.",
@@ -74,8 +93,8 @@ func TestWords(t *testing.T) {
 	if Words(prose) != Words(listed) {
 		t.Errorf("a reformat changed the words: %q vs %q", Words(prose), Words(listed))
 	}
-	if Words("#### Fälle\n\n"+listed) != Words(prose) {
-		t.Error("a sub-heading set over a text changed its words")
+	if Words("#### Fehlerfall\n\nDer Job bricht ab.") == Words("#### Erfolgsfall\n\nDer Job bricht ab.") {
+		t.Error("a changed sub-heading title is a change")
 	}
 	if Words("`a != b`") == Words("`a == b`") {
 		t.Error("a code span's operator is part of what the text says")
@@ -83,7 +102,8 @@ func TestWords(t *testing.T) {
 	if Words("nicht erlaubt") == Words("erlaubt") {
 		t.Error("a word dropped is a change")
 	}
-	for _, c := range [][2]string{{"Timeout > 30 s", "Timeout < 30 s"}, {"Wert -5", "Wert 5"}, {"ab 50%", "ab 50"}} {
+	for _, c := range [][2]string{{"Timeout > 30 s", "Timeout < 30 s"}, {"Wert -5", "Wert 5"}, {"ab 50%", "ab 50"},
+		{"Timeout 1,5 Sekunden", "Timeout 1 5 Sekunden"}, {"liest config.yaml", "liest config yaml"}} {
 		if Words(c[0]) == Words(c[1]) {
 			t.Errorf("%q and %q differ in a symbol, not in layout", c[0], c[1])
 		}
