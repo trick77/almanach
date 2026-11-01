@@ -147,6 +147,7 @@ const detail: SourceDetail = {
         finished_at: when,
         documented_commit: "5c3b2a1abcdef",
         documented_at: when,
+        left_parts: false,
         auto_retry: false,
       },
     },
@@ -317,6 +318,7 @@ describe("SourcePage baseline", () => {
         baseline: {
           ...run,
           skipped: 8,
+          left_parts: true,
           auto_retry: true,
           // A run from before pages lost their ceiling.
           // TRANSITIONAL(ceilings): Remove when SkipReason drops "ceiling".
@@ -367,7 +369,7 @@ describe("SourcePage baseline", () => {
     ).toBeInTheDocument();
     // When the skipped parts are read again.
     expect(
-      screen.getByText("Wird nach etwa einem Tag von selbst erneut gelesen."),
+      screen.getByText("Wird von selbst erneut gelesen."),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Beschreibung fehlgeschlagen: the catalogue failed/),
@@ -423,6 +425,7 @@ describe("SourcePage baseline", () => {
           skipped: 1,
           skipped_parts: skipped,
           trigger: "retry" as const,
+          left_parts: true,
         },
       },
       {
@@ -433,6 +436,8 @@ describe("SourcePage baseline", () => {
           documented_commit: head,
           skipped: 1,
           skipped_parts: gone,
+          // The server's rule: a subject gone is nothing to read again.
+          left_parts: false,
         },
       },
     ];
@@ -442,16 +447,17 @@ describe("SourcePage baseline", () => {
     const [done, goneBtn, left] = await screen.findAllByText("Aktualisieren");
     expect(done).toBeDisabled();
     expect(left).toBeEnabled();
-    // A subject gone has nothing to read again.
     expect(goneBtn).toBeDisabled();
     expect(
       screen.getByText("Fehler: Antwort regelwidrig, verworfen: Auth"),
     ).toBeInTheDocument();
-    // No retry on its own (auto_retry false): the button is the way, and
-    // only once, not under the gone subject.
-    expect(screen.getAllByText("Aktualisieren liest sie erneut.")).toHaveLength(
-      1,
-    );
+    // No retry on its own (auto_retry false): the next run or the button,
+    // said once, not under the gone subject.
+    expect(
+      screen.getAllByText(
+        "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
+      ),
+    ).toHaveLength(1);
   });
 
   it("saves the access form without a switch for the runs", async () => {

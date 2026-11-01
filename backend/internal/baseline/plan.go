@@ -175,6 +175,23 @@ func (p Plan) SkippedParts() []SkippedPart {
 	return out
 }
 
+// ReadAgain reports whether a part skipped for s is worth an automatic
+// run: not a subject gone (nothing to read), nor a project the model left
+// unchanged without a page (the same answer again; the next run asks).
+func (s Skip) ReadAgain() bool {
+	return s != SkipGone && s != SkipNoPage
+}
+
+// LeftParts reports whether a run left a part worth reading again, from
+// its parts; a run from before they were named, from its skipped count.
+// The poller and the source page ask it alike.
+func LeftParts(parts []SkippedPart, skipped int) bool {
+	if len(parts) == 0 {
+		return skipped > 0
+	}
+	return slices.ContainsFunc(parts, func(p SkippedPart) bool { return p.Reason.ReadAgain() })
+}
+
 // SkipSubject names a subject skipped for why, once: the first reason
 // stays.
 func (p *Plan) SkipSubject(name string, why Skip) {

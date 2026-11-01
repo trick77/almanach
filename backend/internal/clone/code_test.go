@@ -155,6 +155,7 @@ func TestDescribe_RetriesWhatADoneRunLeft(t *testing.T) {
 	stale.Summary = "Ein Dienst, neu beschrieben."
 	failed := json.RawMessage(`{"format":2,"skipped":["A"],"why":{"A":"failed"}}`)
 	gone := json.RawMessage(`{"format":2,"skipped":["A"],"why":{"A":"gone"}}`)
+	noPage := json.RawMessage(`{"format":2,"steps":{"project":"no_page"}}`)
 	for name, c := range map[string]struct {
 		ago       time.Duration
 		skipped   int
@@ -173,6 +174,7 @@ func TestDescribe_RetriesWhatADoneRunLeft(t *testing.T) {
 		"third retry":                {25 * time.Hour, 1, failed, 2, drawn, "d0", month, "tools cli reconcile retry d0 d0"},
 		"past the retries":           {25 * time.Hour, 1, failed, 3, drawn, "d0", month, ""},
 		"only a subject gone":        {25 * time.Hour, 1, gone, 0, drawn, "d0", month, ""},
+		"only a project left as is":  {25 * time.Hour, 1, noPage, 0, drawn, "d0", month, ""},
 		"head moved":                 {25 * time.Hour, 1, failed, 0, described, "h1", month, ""},
 		"buttons only":               {25 * time.Hour, 1, failed, 0, described, "d0", 0, ""},
 		"an hour ago":                {time.Hour, 1, failed, 0, described, "d0", month, ""},

@@ -852,6 +852,15 @@ func TestFoldKeepsAStoredFileList(t *testing.T) {
 	if len(st.revisions) != 1 || !slices.Equal(st.revisions[0].Statements[0].Files, []string{"docs/Design Notes.md"}) {
 		t.Fatalf("revisions = %+v, want the stored file kept", st.revisions)
 	}
+	// An edit whose every new path is bad keeps the stored list, never none.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+		{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an.", Files: []string{"a/b.go (handler)"}}},
+		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#43"))
+	if len(st.revisions) != 1 || !slices.Equal(st.revisions[0].Statements[0].Files, []string{"internal/files/upload.go"}) {
+		t.Fatalf("revisions = %+v, want the stored files kept", st.revisions)
+	}
 }
 
 func TestFoldLongDescriptionsTaken(t *testing.T) {

@@ -973,7 +973,7 @@ components:
     Baseline:
       type: object
       description: The repository's newest baseline run and the commit last documented.
-      required: [run_id, state, map_step, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at, auto_retry]
+      required: [run_id, state, map_step, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at, left_parts, auto_retry]
       properties:
         run_id:
           type: integer
@@ -1036,9 +1036,12 @@ components:
         documented_at:
           type: [string, "null"]
           format: date-time
+        left_parts:
+          type: boolean
+          description: The done run skipped a part worth reading again (any but a subject gone or a project left unchanged without a page), the rule the poller retries by.
         auto_retry:
           type: boolean
-          description: The poller reads what a done run skipped again on its own, about a day after it ended (the reconcile interval on, fewer than three retries in a row, the head the documented commit); false, only a button does.
+          description: left_parts, and the poller reads them again on its own, a day after the run ended or the reconcile interval when shorter (the interval on, fewer than three retries in a row, the head the documented commit); false, only the next run or a button does.
 
     Describe:
       type: object

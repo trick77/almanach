@@ -368,7 +368,9 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 
 // diagramOf reads a stored diagram column; NULL is nil.
 func diagramOf(raw []byte) (*diagram.Diagram, error) {
-	if raw == nil {
+	// The JSON text null is no map either: a write before SetRepoMap kept
+	// a nil map as SQL NULL stored it so.
+	if raw == nil || string(raw) == "null" {
 		return nil, nil
 	}
 	d := &diagram.Diagram{}

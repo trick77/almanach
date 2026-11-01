@@ -8,8 +8,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
   browser write. Statements paragraphs, no markdown but `backtick` code spans (UI mono, user,
   2026-11-01); diagrams only validated JSON, drawn by rongo's code.
-- Gate = `make check` (`SHIP_CMD=<binary>` locally); `make hooks` per clone. GitHub never first to
-  find failure.
+- Gate = `make check` (`SHIP_CMD=<binary>` locally). GitHub never first to find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.
 - Fresh clone: `ship hooks` before the first push (check, conform and init install it too); without the pre-push hook a push skips the gate.
 - Release: `gh workflow run Release`, GitHub-hosted runners only.
@@ -29,9 +28,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
   read (rows verbatim), `lang.Prose`. Shapes need a value's mark, prose stays. New shape → test.
 - Description = documentation, no one-liners: statement as long as subject needs, no
-  sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size: no page ceiling, step
-  budget, name/file-count cap (user, 2026-11-01: "we cannot just randomly drop stuff"); bad path
-  leaves file list only. Identical rewrite = no revision. Flow: self/repeated edges dropped first.
+  sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
+  (user, 2026-11-01); bad path leaves file list only. Same rewrite = no revision. Flow:
+  self/repeated edges dropped first.
 - Provenance is code's: `sources` carried by id, current PR appended on text change. Edit of an
   unknown id (invented) or one already edited: merge (whole page) rejected; step's patch leaves
   that edit out, logged, first edit counts (user, 2026-11-01). Page without statements: edits
@@ -68,4 +67,4 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  Skipped part / missing map at head: poller retries ≤3 in a row, interval on; UI names errors, retry.
+  Left part/no map at head: ≤3 auto retries (interval on), rule `LeftParts`.

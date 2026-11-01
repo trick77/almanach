@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -470,12 +469,14 @@ func RetriesOnItsOwn(reconcile time.Duration, retried int, documented, head stri
 	return reconcile > 0 && retried < maxRetries && documented != "" && documented == head
 }
 
-// unfinished reports whether a done run left work behind: a part skipped
-// for any reason but a subject gone (nothing to read again), or a
-// repository page whose map was not drawn from its text. Asked after the
-// cheap checks, and once per run: a run's verdict is kept by repository,
-// so the page is read once, not every cycle. A failed read counts as
-// finished and is not kept: the next cycle asks again.
+// unfinished reports whether a done run left work behind: a part worth
+// reading again (baseline.LeftParts), or a repository page without a map
+// answer for its text. Asked after the cheap checks, and once per run: a
+// run's verdict is kept by repository, so the page is read once, not every
+// cycle. The verdict is the run's: a page a merge rewrote since stays as
+// judged, and the merge's commit moved the head, so the interval's
+// reconcile draws its map. A failed read counts as finished and is not
+// kept: the next cycle asks again.
 func (p *Poller) unfinished(ctx context.Context, last store.BaselineRun, key, slug string) bool {
 	if leftParts(last) {
 		return true
@@ -507,15 +508,14 @@ type verdict struct {
 	unfinished bool
 }
 
-// leftParts reports whether a run skipped a part worth reading again: any
-// but a subject gone. A plan that does not read, or one from before its
-// parts were named, counts its skipped number.
+// leftParts is baseline.LeftParts of a run; a plan that does not read
+// counts its skipped number.
 func leftParts(r store.BaselineRun) bool {
 	parts, err := baseline.RunSkips(r.Plan)
-	if err != nil || len(parts) == 0 {
+	if err != nil {
 		return r.Skipped > 0
 	}
-	return slices.ContainsFunc(parts, func(s baseline.SkippedPart) bool { return s.Reason != baseline.SkipGone })
+	return baseline.LeftParts(parts, r.Skipped)
 }
 
 // retryWait is how long a failed run waits before it is queued again:

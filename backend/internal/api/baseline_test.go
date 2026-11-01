@@ -172,6 +172,9 @@ func TestSourceBody_Baseline(t *testing.T) {
 	if got := string(b["auto_retry"]); got != "false" {
 		t.Errorf("auto_retry = %s, want false with the interval off", got)
 	}
+	if got := string(b["left_parts"]); got != "true" {
+		t.Errorf("left_parts = %s, want true: a part skipped for its calls", got)
+	}
 
 	// A key noergler spells otherwise would have every note ignored.
 	fs.noerglerKeys = []string{"PLAT"}

@@ -580,11 +580,17 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 		// out for its size (user, 2026-11-01). A path no tree can hold
 		// leaves a new or changed file list, the statement kept; a list
 		// stored so stays as it is.
+		// An edit whose every path is bad keeps the stored list rather than
+		// lose all its files.
 		if old == nil || !slices.Equal(old.Files, s.Files) {
-			var bad []string
-			if s.Files, bad = splitPaths(s.Files); len(bad) > 0 {
+			kept, bad := splitPaths(s.Files)
+			if len(bad) > 0 {
 				leftOut.paths = append(leftOut.paths, fmt.Sprintf("%q (%s)", s.Name, strings.Join(bad, ", ")))
 			}
+			if len(kept) == 0 && len(bad) > 0 && old != nil {
+				kept = old.Files
+			}
+			s.Files = kept
 		}
 		// A returned flow loses its self and repeated edges first, as the
 		// map does: one such edge cost a whole diagram.

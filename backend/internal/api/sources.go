@@ -229,8 +229,11 @@ type baselineBody struct {
 	FinishedAt       *time.Time        `json:"finished_at"`
 	DocumentedCommit string            `json:"documented_commit"`
 	DocumentedAt     *time.Time        `json:"documented_at"`
-	// AutoRetry: the poller reads what a done run skipped again on its own
-	// (clone.RetriesOnItsOwn); else only a button does.
+	// LeftParts: a done run skipped a part worth reading again
+	// (baseline.LeftParts), the rule the poller retries by.
+	LeftParts bool `json:"left_parts"`
+	// AutoRetry: LeftParts, and the poller reads them again on its own
+	// (clone.RetriesOnItsOwn); else only the next run or a button does.
 	AutoRetry bool `json:"auto_retry"`
 }
 
@@ -239,10 +242,11 @@ type baselineBody struct {
 // whole.
 func baselineOf(rr store.RepoRuns) (*baselineBody, error) {
 	r := rr.Last
-	parts, err := skippedOf(r.Plan)
+	parts, skipped, err := skippedOf(r.Plan)
 	return &baselineBody{RunID: r.ID, State: r.State, MapStep: inMapStep(r), Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, Step: r.Step, Steps: r.Steps,
 		Skipped: r.Skipped, SkippedParts: parts, CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
-		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt}, err
+		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt,
+		LeftParts: r.State == store.RunDone && baseline.LeftParts(skipped, r.Skipped)}, err
 }
 
 // inMapStep reports whether a run in state project has its project step
@@ -301,7 +305,8 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 				d.Log.WarnContext(ctx, "source page: run plan does not decode, its skipped parts left out",
 					"repo", rp.Slug, "run_id", rr.Last.ID, logging.Err(err))
 			}
-			body.Baseline.AutoRetry = clone.RetriesOnItsOwn(d.Sources.Reconcile, rr.Retried, rr.Documented, rp.HeadCommit)
+			b := body.Baseline
+			b.AutoRetry = b.LeftParts && clone.RetriesOnItsOwn(d.Sources.Reconcile, rr.Retried, rr.Documented, rp.HeadCommit)
 		}
 		out.Repos = append(out.Repos, body)
 	}
@@ -1007,14 +1012,14 @@ type skippedPartBody struct {
 // skippedOf is the parts a run left out, named, from its plan. The plan is
 // the worker's own JSON; one that does not decode lists none (the caller
 // logs it), and the count beside it still says how many.
-func skippedOf(raw json.RawMessage) ([]skippedPartBody, error) {
+func skippedOf(raw json.RawMessage) ([]skippedPartBody, []baseline.SkippedPart, error) {
 	out := []skippedPartBody{}
 	parts, err := baseline.RunSkips(raw)
 	if err != nil {
-		return out, err
+		return out, nil, err
 	}
 	for _, p := range parts {
 		out = append(out, skippedPartBody{Part: string(p.Part), Name: p.Name, Reason: string(p.Reason)})
 	}
-	return out, nil
+	return out, parts, nil
 }

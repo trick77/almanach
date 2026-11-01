@@ -432,9 +432,10 @@ export const S = {
       "": "Grund nicht erfasst",
     } satisfies Record<SkipReason, string>,
     // Under the skipped parts: when they are read again, on its own (the
-    // poller, auto_retry) or by the button alone.
-    retryAuto: "Wird nach etwa einem Tag von selbst erneut gelesen.",
-    retryManual: "Aktualisieren liest sie erneut.",
+    // poller, auto_retry: a day after the run, or the reconcile interval
+    // when shorter) or with the next run, sooner by the button.
+    retryAuto: "Wird von selbst erneut gelesen.",
+    retryManual: "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
     failedRun: "Beschreibung fehlgeschlagen:",
     upToDate:
       "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",

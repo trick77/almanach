@@ -697,7 +697,8 @@ run that ends with skipped parts is shown as partial and still records
 its commit; the next reconcile reads the skipped parts again, the docs and
 the project included, a reconcile at the documented commit too. That next
 run is never left to a head that may not move: a done run at the head
-that skipped parts (a subject gone aside: nothing to read again), or left
+that skipped a part worth reading again (`baseline.LeftParts`: not a
+subject gone, nor a project left unchanged without a page), or left
 the repository page without a map answer for its text, gets a reconcile
 at the same commit (trigger `retry`) from the poller a day after it ended
 (the reconcile interval when shorter), at most three retries in a row,
@@ -708,7 +709,8 @@ reads a run's page for that once, not every cycle. Past the retries, or
 with the interval off, the button is the way, kept open at a documented
 head while a part is left. The source page names each skip's reason, an
 error as one, and says whether the parts are read again on their own
-(`auto_retry`) or by the button. A clone
+(`auto_retry`) or with the next run, sooner by the button; the server
+sends the rule's answer (`left_parts`), the page has no copy of it. A clone
 the poller holds (a long
 clone or fetch) defers the step to the next drain rather than holding the
 worker behind it; the reads take the poller's disk lock for the read only,

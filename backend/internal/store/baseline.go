@@ -163,12 +163,19 @@ type RunStreak struct {
 	Failed, Retried int
 }
 
-// retriedSQL counts run b's repository's newest runs in a row that are
-// retries.
-const retriedSQL = `(SELECT COUNT(*) FROM baseline_runs t
+// retriedB and retriedL count the newest runs in a row that are retries of
+// the repository of run row b (LastRun) or l (SourceRuns). Constants, one
+// per alias: SQL is never built at run time.
+const (
+	retriedB = `(SELECT COUNT(*) FROM baseline_runs t
 	  WHERE t.repo_id = b.repo_id AND t.trigger = 'retry'
 	    AND t.id > COALESCE((SELECT MAX(n.id) FROM baseline_runs n
 	                          WHERE n.repo_id = b.repo_id AND n.trigger <> 'retry'), 0))`
+	retriedL = `(SELECT COUNT(*) FROM baseline_runs t
+	  WHERE t.repo_id = l.repo_id AND t.trigger = 'retry'
+	    AND t.id > COALESCE((SELECT MAX(n.id) FROM baseline_runs n
+	                          WHERE n.repo_id = l.repo_id AND n.trigger <> 'retry'), 0))`
+)
 
 // LastRun is a repository's newest run, open or not, and its streak, read
 // in the same query.
@@ -184,7 +191,7 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, Run
 		         WHERE f.repo_id = b.repo_id AND f.state = 'failed'
 		           AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
 		                                 WHERE d.repo_id = b.repo_id AND d.state = 'done'), 0)),
-		       `+retriedSQL+`
+		       `+retriedB+`
 		  FROM `+runsFrom+`
 		 WHERE b.repo_id = ? ORDER BY b.id DESC LIMIT 1`, rid), &st.Failed, &st.Retried)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -257,14 +264,20 @@ func (s *Store) ApplyBaselineStep(ctx context.Context, rev NewRevision, r Baseli
 // and the run's end, in one transaction. No revision of its own: the text
 // did not change ("identical rewrite = no revision"). ok false, and nothing
 // written, when the run is over or gone. A page that vanished meanwhile
-// (the repository removed) takes nothing.
+// (the repository removed) takes nothing. A nil map (the model drew none)
+// is SQL NULL beside its basis, never the JSON text null: that would read
+// back as an empty map.
 func (s *Store) SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r BaselineRun) (bool, error) {
-	drawn, err := jsonOf(m)
-	if err != nil {
-		return false, err
+	var drawn any
+	if m != nil {
+		raw, err := jsonOf(m)
+		if err != nil {
+			return false, err
+		}
+		drawn = raw
 	}
 	var ok bool
-	err = s.inTx(ctx, func(tx *sql.Tx) error {
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		if ok, err = saveRun(ctx, tx, r); err != nil || !ok {
 			return err
@@ -310,8 +323,8 @@ func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+lColumns+`,
 		       (SELECT SUM(c.cost_nano_usd) FROM llm_calls c WHERE c.baseline_run_id = l.id),
-		       d."commit", d.finished_at, l.retried
-		  FROM (SELECT `+runColumns+`, `+retriedSQL+` AS retried, ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
+		       d."commit", d.finished_at, `+retriedL+`
+		  FROM (SELECT `+runColumns+`, ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
 		          FROM `+runsFrom+` WHERE r.project_id = ?1) l
 		  LEFT JOIN (SELECT b.repo_id, b."commit", b.finished_at,
 		                    ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn

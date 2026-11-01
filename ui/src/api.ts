@@ -306,8 +306,11 @@ export interface Baseline {
   finished_at: string | null;
   documented_commit: string;
   documented_at: string | null;
-  /** The poller reads what a done run skipped again on its own; false,
-   *  only a button does. */
+  /** A done run skipped a part worth reading again; the server's rule,
+   *  the one the poller retries by. */
+  left_parts: boolean;
+  /** left_parts, and the poller reads them again on its own; false, only
+   *  the next run or a button does. */
   auto_retry: boolean;
 }
 
