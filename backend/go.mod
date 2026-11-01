@@ -12,7 +12,7 @@ require (
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.7 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.4.35401 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
