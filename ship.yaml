@@ -8,8 +8,10 @@ ui:
 steps:
   - { name: openapi lint, run: npx --yes @stoplight/spectral-cli@6.15.0 lint backend/api/openapi.yaml --ruleset .spectral.yaml }
   # The wire contract is noergler's golden payload; our copy must be its
-  # master's byte for byte, or a regeneration there went uncopied.
-  - { name: golden in step with noergler, run: curl -fsSL https://raw.githubusercontent.com/trick77/noergler/master/backend/internal/almanach/testdata/pr_merged_note.json | diff - backend/internal/ingest/testdata/noergler_pr_merged_note.json }
+  # master's byte for byte, or a regeneration there went uncopied. Downloaded
+  # to a file: macOS diff spools stdin to a hardcoded /tmp, which sandboxes deny.
+  - name: golden in step with noergler
+    run: f=$(mktemp "${TMPDIR:-/tmp}/golden.XXXXXX") && curl -fsSL https://raw.githubusercontent.com/trick77/noergler/master/backend/internal/almanach/testdata/pr_merged_note.json -o "$f" && diff "$f" backend/internal/ingest/testdata/noergler_pr_merged_note.json; rc=$?; rm -f "$f"; exit $rc
 images:
   - {}
 allow:
