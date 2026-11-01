@@ -29,7 +29,8 @@ export default function OverlayShell({
   children,
 }: {
   label: string;
-  /** The sheet's own grid and width. */
+  /** The sheet itself: its layout (DiagramView: a flex column, the body
+   *  flex-1 so a tall drawing scrolls) and its size. */
   dialogClassName: string;
   headerClassName: string;
   /** What sits in the header before the × . */

@@ -42,6 +42,7 @@ import {
   fieldLabel,
   h2,
   input,
+  measure,
   meta,
   mono,
   page,
@@ -270,7 +271,10 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         {error !== "" && (
           <span
             role="alert"
-            className="self-center text-[13px] text-danger-ink"
+            className={
+              "min-w-0 self-center text-[13px] text-danger-ink wrap-break-word " +
+              measure
+            }
           >
             {error}
           </span>

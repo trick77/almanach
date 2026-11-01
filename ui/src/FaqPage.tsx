@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { S } from "./strings";
-import { column, eyebrow, h2, page } from "./ui";
+import { column, eyebrow, h2, page, Prose } from "./ui";
 
 export function FaqPage() {
   useEffect(() => {
@@ -19,9 +19,10 @@ export function FaqPage() {
         {qa.map(([q, a]) => (
           <section key={q}>
             <div className={eyebrow}>{q}</div>
-            <p className="max-w-[66ch] font-serif text-[16px] leading-[1.6] text-ink-prose">
-              {a}
-            </p>
+            <Prose
+              text={a}
+              className="font-serif text-[16px] leading-[1.6] text-ink-prose"
+            />
           </section>
         ))}
       </div>
