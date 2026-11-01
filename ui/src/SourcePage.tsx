@@ -42,6 +42,7 @@ import {
   fieldLabel,
   h2,
   input,
+  measure,
   meta,
   mono,
   page,
@@ -52,7 +53,6 @@ import {
   tdMono,
   tdNum,
   th,
-  measure,
 } from "./ui";
 
 /** pollEvery is how often the page refetches while a clone runs. */

@@ -117,13 +117,13 @@ function Body({ n }: { n: NoteDetail }) {
             }
           >
             <dl className="m-0 text-[13.5px]">
-              <Fact label={S.note.symptom} text>
+              <Fact label={S.note.symptom} aligned>
                 {bugfix.symptom}
               </Fact>
-              <Fact label={S.note.cause} text>
+              <Fact label={S.note.cause} aligned>
                 {bugfix.cause}
               </Fact>
-              <Fact label={S.note.causeKind} text last>
+              <Fact label={S.note.causeKind} aligned last>
                 <Pill tone="warn">{causeLabel(bugfix.cause_kind)}</Pill>
               </Fact>
             </dl>
@@ -243,31 +243,39 @@ function Body({ n }: { n: NoteDetail }) {
   );
 }
 
-/** Fact is a label/value row: a value at the right edge, or, with `text`, a
- *  sentence (symptom, cause) read left-aligned beside a label column, never
- *  a right-ragged paragraph. */
+/** Fact is a label/value row: a short value at the right edge, or, with
+ *  `aligned`, every value of the box in one left-aligned column beside a
+ *  label column: the bugfix box, whose symptom and cause are sentences and
+ *  read badly right-ragged. minmax(0,1fr) and wrap-break-word: a long path
+ *  in a cause breaks inside the box instead of past its border. */
 function Fact({
   label,
   last = false,
-  text = false,
+  aligned = false,
   children,
 }: {
   label: string;
   last?: boolean;
-  text?: boolean;
+  aligned?: boolean;
   children: React.ReactNode;
 }) {
+  const row = aligned
+    ? // A phone stacks the label over the value: beside an 8.5rem label a
+      // sentence had 168px.
+      "grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-[8.5rem_minmax(0,1fr)]"
+    : "flex justify-between gap-4";
   return (
     <div
       className={
-        (text
-          ? "grid grid-cols-[8.5rem_1fr] gap-4 py-[7px] "
-          : "flex justify-between gap-4 py-[7px] ") +
-        (last ? "" : "border-b border-border-soft")
+        row + " py-[7px]" + (last ? "" : " border-b border-border-soft")
       }
     >
       <dt className="text-muted">{label}</dt>
-      <dd className={"m-0 text-ink-dim " + (text ? "" : "text-right")}>
+      <dd
+        className={
+          "m-0 text-ink-dim " + (aligned ? "wrap-break-word" : "text-right")
+        }
+      >
         {children}
       </dd>
     </div>

@@ -44,10 +44,12 @@ export default function DiagramView({
       onClose={onClose}
       header={
         <>
-          <span className="min-w-0 truncate text-[13.5px] text-ink">
+          {/* contain: inline-size: the title adds no width to the sheet,
+              which is sized to the drawing; it takes the room there is and
+              truncates. */}
+          <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink [contain:inline-size]">
             {title}
           </span>
-          <span className="ml-auto" />
           <button
             type="button"
             onClick={save}
