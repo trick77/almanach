@@ -90,7 +90,8 @@ function listItem(
   line: string,
 ): { kind: "ul" | "ol"; n: number; text: string } | null {
   // Exactly the stored form, as markup.StoredItem: one blank after the
-  // marker, the text starting right after it.
+  // marker, the text starting right after it; a rule ("- - -") is none.
+  if (/^([-*_])(\s*\1){2,}\s*$/.test(line)) return null;
   const u = /^- (\S.*)$/.exec(line);
   if (u) return { kind: "ul", n: 0, text: u[1] };
   const m = /^(\d{1,9})\. (\S.*)$/.exec(line);
@@ -112,11 +113,19 @@ export function blocks(text: string, headings: boolean): Block[] {
     para = [];
     list = null;
   };
+  // A blank line in a list keeps it open for a next item, as
+  // markup.Normalize and CommonMark read it; any other line closes it.
+  let gap = false;
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "") {
-      close();
+      if (list === null) close();
+      else gap = true;
       continue;
+    }
+    if (gap) {
+      gap = false;
+      if (listItem(line) === null) close();
     }
     if (
       headings &&
@@ -151,23 +160,18 @@ export function blocks(text: string, headings: boolean): Block[] {
 }
 
 /** plain is laid-out text as Doc shows it, what a search reads, so a
- *  statement kept is one with a mark: the heading and list markers gone
- *  and the ** that pair, as markup.Plain has it, and the code spans'
- *  backticks too, which Doc draws as the mono face. */
-export function plain(text: string): string {
-  return text
-    .split("\n")
-    .map((raw) => {
-      const line = raw.trim();
-      const body =
-        line.startsWith(headingMark) &&
-        line.slice(headingMark.length).trim() !== ""
-          ? line.slice(headingMark.length).trim()
-          : (listItem(line)?.text ?? line);
-      return runs(body)
+ *  statement kept is one with a mark: read by blocks itself (an item's
+ *  continuation joined to it, a #### only where headings is set), each
+ *  block's text as runs leaves it (the ** that pair and the code spans'
+ *  backticks gone), one block a line. */
+export function plain(text: string, headings = true): string {
+  return blocks(text, headings)
+    .flatMap((b) => (b.kind === "p" || b.kind === "h" ? [b.text] : b.items))
+    .map((t) =>
+      runs(t)
         .map((r) => r.text)
-        .join("");
-    })
+        .join(""),
+    )
     .join("\n");
 }
 
@@ -253,7 +257,15 @@ export function codeSpans(p: string): Span[] {
         text(line.slice(open));
         break;
       }
-      out.push({ text: line.slice(j, close), code: true });
+      // CommonMark's padding: one blank either side, as markup.CodeSpan
+      // writes around code holding a backtick, is not the code's.
+      const code = line.slice(j, close);
+      const padded =
+        code.length > 2 &&
+        code.startsWith(" ") &&
+        code.endsWith(" ") &&
+        code.trim() !== "";
+      out.push({ text: padded ? code.slice(1, -1) : code, code: true });
       i = close + run.length;
     }
   }

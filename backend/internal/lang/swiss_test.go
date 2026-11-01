@@ -44,4 +44,10 @@ func TestLaidRedactsFirst(t *testing.T) {
 	if got, want := Laid("## Grösse\n* **Maße**", true), "#### Grösse\n\n- **Masse**"; got != want {
 		t.Errorf("Laid = %q, want %q", got, want)
 	}
+	// A code line with ``` in it becomes a ```` span, which the Swiss rule
+	// reads as a span too, never as a fence that keeps every ß after it.
+	got := Laid("```\nx ``` y\n```\n\nDie Größe.", true)
+	if want := "```` x ``` y ````\n\nDie Grösse."; got != want {
+		t.Errorf("Laid = %q, want %q", got, want)
+	}
 }

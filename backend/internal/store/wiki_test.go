@@ -365,3 +365,24 @@ func itoa(v int64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+// A basis hashed from text stored before the layout stands when a read
+// only laid that text out anew; a real change still makes the map due.
+// TRANSITIONAL(layout): Remove with Page.Stored.
+func TestMapStandsOverRelaidText(t *testing.T) {
+	stored := Page{Summary: "Ein Dienst.\n\n\n  Mehr.", Statements: []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "* eins"}}}
+	read := stored
+	read.RepoMapBasis = stored.MapBasis()
+	read.Summary, read.Statements = "Ein Dienst.\n\nMehr.", []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "- eins"}}
+	if read.MapStands() {
+		t.Fatal("without what was stored, a relaid page's old basis cannot stand")
+	}
+	read.Stored = &StoredText{Summary: stored.Summary, Texts: []string{"* eins"}}
+	if !read.MapStands() {
+		t.Error("a map over text only laid out anew is due again")
+	}
+	read.Statements[0].Name = "S"
+	if read.MapStands() {
+		t.Error("a renamed statement left the map standing")
+	}
+}

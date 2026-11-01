@@ -23,6 +23,17 @@ func Laid(s string, headings bool) string {
 	return SwissSS(markup.Normalize(redact.Text(strings.TrimSpace(s)), headings))
 }
 
+// Relaid is stored text as Laid stores text now, redaction aside (what is
+// stored was redacted): every read of a page's text and summary passes
+// it, so text stored before the layout ("* " items, "## " lines, a ß an
+// older fence rule kept) reads as new text does, to the UI, the export
+// and the fold's comparisons alike. Of Laid's output it is that output.
+// TRANSITIONAL(layout): Remove when every page's current revision was
+// written after the layout.
+func Relaid(s string, headings bool) string {
+	return SwissSS(markup.Normalize(s, headings))
+}
+
 var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")
 
 // SameButSpelling reports whether a and b say the same, umlauts written
@@ -43,15 +54,17 @@ func SwissSS(s string) string {
 	b.Grow(len(s) + 8)
 	fence := ""
 	for _, line := range strings.SplitAfter(s, "\n") {
-		trimmed := strings.TrimLeft(line, " \t")
+		// markup's fence rule: a code span markup.CodeSpan wrote, ``` and all,
+		// opens no fence here either, or every ß after it would stay.
+		trimmed := strings.TrimSpace(line)
 		if fence != "" {
-			if strings.HasPrefix(trimmed, fence) {
+			if markup.ClosesFence(trimmed, fence) {
 				fence = ""
 			}
 			b.WriteString(line)
 			continue
 		}
-		if f := fenceOf(trimmed); f != "" {
+		if f := markup.FenceOf(trimmed); f != "" {
 			fence = f
 			b.WriteString(line)
 			continue
@@ -65,35 +78,18 @@ func SwissSS(s string) string {
 	return b.String()
 }
 
-func fenceOf(trimmed string) string {
-	for _, c := range []byte{'`', '~'} {
-		n := 0
-		for n < len(trimmed) && trimmed[n] == c {
-			n++
-		}
-		if n >= 3 {
-			return trimmed[:n]
-		}
-	}
-	return ""
-}
-
 func swissLine(line string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); {
 		if line[i] == '`' {
-			j := i
-			for j < len(line) && line[j] == '`' {
-				j++
-			}
-			run := line[i:j]
-			end := strings.Index(line[j:], run)
-			if end < 0 {
+			// markup's span rule; a run never closed leaves the rest as is.
+			j, ok := markup.SpanAt(line, i)
+			if !ok {
 				b.WriteString(line[i:])
 				return b.String()
 			}
-			b.WriteString(line[i : j+end+len(run)])
-			i = j + end + len(run)
+			b.WriteString(line[i:j])
+			i = j
 			continue
 		}
 		next := strings.IndexByte(line[i:], '`')

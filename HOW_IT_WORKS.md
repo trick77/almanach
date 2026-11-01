@@ -1013,11 +1013,14 @@ so the choice is not undone as a cleanup.
   (`lang.Laid`, `internal/markup`) puts what the model writes into that
   stored form after redaction (a key's PEM shape holds only as written)
   and before the Swiss rule reads it: any heading level becomes `####`
-  (bold in a summary), `*` bullets `-`, a closed fence code spans. The UI
+  (dropped in a summary), `*` bullets `-`, a closed fence code spans. The UI
   (`format.ts` `blocks`) reads only that form, so markup beyond it (a
-  quote, a table, HTML) stays text and cannot change the page's shape. A
-  text only laid out anew says nothing new and credits no source. Note
-  text is noergler's and stays paragraphs.
+  quote, a table, HTML) stays text and cannot change the page's shape.
+  Every store read of a page's text and summary passes `lang.Relaid`, so
+  a revision written before the layout reads as a new one does, to the
+  UI, the export and the fold alike. A text only laid out anew says
+  nothing new and credits no source. Note text is noergler's and stays
+  paragraphs.
 - **Almanach clones, noergler reviews.** noergler is the pull request
   agent; it never indexes a repository, that would make no sense for a
   review tool. The code lives with Almanach, which is the one that will

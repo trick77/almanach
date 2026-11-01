@@ -208,6 +208,16 @@ func TestMarkdownEscapesItemText(t *testing.T) {
 	}
 }
 
+// A code span markup.Normalize wrote around a code line with ``` in it is
+// no fence: the export keeps it as written, no backslash to garble it.
+func TestMarkdownKeepsWideCodeSpan(t *testing.T) {
+	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt,
+		Statements: []store.Statement{{Kind: "rule", Name: "R", Text: "```` x ``` y ````\n```go"}}}, true)
+	if want := "\n```` x ``` y ````\n\\```go\n"; !strings.Contains(md, want) {
+		t.Errorf("export lacks %q:\n%s", want, md)
+	}
+}
+
 // The export's kinds are the UI's: the same order as Description.tsx's
 // KINDS, each heading the label strings.ts gives the kind.
 func TestMarkdownKindsMatchTheUI(t *testing.T) {

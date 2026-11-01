@@ -82,6 +82,12 @@ describe("blocks", () => {
       { kind: "p", text: "Danach." },
     ]);
   });
+  it("keeps one list over a blank line between items, as markup.Normalize", () => {
+    expect(blocks("- a\n\n- b\n\nDanach.", true)).toEqual([
+      { kind: "ul", items: ["a", "b"] },
+      { kind: "p", text: "Danach." },
+    ]);
+  });
   it("starts a list under a paragraph line, a new one on a change of kind", () => {
     expect(blocks("Fälle:\n- a\n1. b", true)).toEqual([
       { kind: "p", text: "Fälle:" },
@@ -135,8 +141,8 @@ describe("runs", () => {
 // spans' backticks dropped here (Doc draws them as mono, never as `).
 describe("plain", () => {
   it("drops the layout's marks, code's text kept", () => {
-    expect(plain("#### Ablauf\n\n- **eins**\n12. zwei `a**b`\nText.")).toBe(
-      "Ablauf\n\neins\nzwei a**b\nText.",
+    expect(plain("#### Ablauf\n\n- **eins**\n12. zwei `a**b`\n\nText.")).toBe(
+      "Ablauf\neins\nzwei a**b\nText.",
     );
     expect(plain("## Zwei\n* Stern\n1) Klammer")).toBe(
       "## Zwei\n* Stern\n1) Klammer",
@@ -146,10 +152,16 @@ describe("plain", () => {
     );
     expect(plain("**`strict`** gilt, **x")).toBe("strict gilt, **x");
   });
+  it("reads as Doc renders: an item with its continuation, no #### in a summary", () => {
+    expect(plain("- Bilder\nund Texte")).toBe("Bilder und Texte");
+    expect(plain("#### x", false)).toBe("#### x");
+  });
   it("reads only the stored item form, as markup.StoredItem", () => {
     expect(blocks("-  zwei Blanks\n1.  auch", true)).toEqual([
       { kind: "p", text: "-  zwei Blanks\n1.  auch" },
     ]);
+    // A rule is no item.
+    expect(blocks("- - -", true)).toEqual([{ kind: "p", text: "- - -" }]);
   });
 });
 
@@ -184,6 +196,12 @@ describe("codeSpans", () => {
       { text: "x `` y `z`\n", code: false },
       { text: "w", code: true },
     ]);
+  });
+  it("drops CommonMark's one-blank padding, as markup.CodeSpan writes it", () => {
+    expect(codeSpans("`` make `x` ``")).toEqual([
+      { text: "make `x`", code: true },
+    ]);
+    expect(codeSpans("`  `")).toEqual([{ text: "  ", code: true }]);
   });
 });
 

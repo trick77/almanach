@@ -16,6 +16,7 @@ import (
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/llmwire"
@@ -117,6 +118,13 @@ func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) 
 		return store.Page{}, false, f.pageErr
 	}
 	p, ok := f.pages[pageKey(scope, project, repo)]
+	// The store's read relays text, as store.CurrentPage does.
+	// TRANSITIONAL(layout): Remove with lang.Relaid.
+	p.Summary = lang.Relaid(p.Summary, false)
+	p.Statements = slices.Clone(p.Statements)
+	for i := range p.Statements {
+		p.Statements[i].Text = lang.Relaid(p.Statements[i].Text, true)
+	}
 	return p, ok, nil
 }
 
@@ -238,21 +246,43 @@ func TestFoldLayoutIsNoChange(t *testing.T) {
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
 	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "## Zweck\nDer Dienst.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader",
-			Text: "## Annahme\nNimmt **Dateien** an:\n* Bilder\n* Texte\n  und Archive", Files: []string{"internal/files/upload.go"}}},
+			Text: "Nimmt **Dateien** an:\n* Bilder\n* Texte\n  und Archive", Files: []string{"internal/files/upload.go"}}},
 		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.revisions) != 1 {
 		t.Fatalf("revisions = %+v", st.revisions)
 	}
 	r := st.revisions[0]
-	if want := "**Zweck**\n\nDer Dienst."; r.Summary != want {
+	if want := "Der Dienst."; r.Summary != want {
 		t.Errorf("summary = %q, want %q", r.Summary, want)
 	}
 	s := r.Statements[0]
-	if want := "#### Annahme\n\nNimmt **Dateien** an:\n\n- Bilder\n- Texte und Archive"; s.Text != want {
+	if want := "Nimmt **Dateien** an:\n\n- Bilder\n- Texte und Archive"; s.Text != want {
 		t.Errorf("text = %q, want %q", s.Text, want)
 	}
 	if len(s.Sources) != 1 {
 		t.Errorf("sources = %+v, want the old one alone: a new layout teaches nothing", s.Sources)
+	}
+}
+
+// A statement stored before the layout, echoed as it stood while another
+// changes, keeps its sources, check and diagram: its text is only laid out
+// anew on the way in.
+// TRANSITIONAL(layout): Remove with lang.Relaid.
+func TestFoldLegacyStatementEchoedKeepsSources(t *testing.T) {
+	st := newFakeStore()
+	page := existingRepoPage()
+	flow := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}}}
+	page.Statements[0].Text, page.Statements[0].Checked, page.Statements[0].Diagram = "Nimmt an:\n* Bilder\n## Regeln\nNur PNG.", "c0ffee", flow
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst, neu.",
+		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: page.Statements[0].Text, Files: []string{"internal/files/upload.go"}}},
+		Added:      []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("revisions = %+v", st.revisions)
+	}
+	s := st.revisions[0].Statements[0]
+	if len(s.Sources) != 1 || s.Checked != "c0ffee" || s.Diagram == nil {
+		t.Errorf("echoed legacy statement = %+v, want one source, the check and the diagram kept", s)
 	}
 }
 
@@ -652,6 +682,7 @@ func TestFoldIdenticalNoRevision(t *testing.T) {
 // Text stored before the layout, an indent or a "* " item in it, returned
 // as it stands is no new revision: only its whitespace and marks would
 // change.
+// TRANSITIONAL(layout): Remove with lang.Relaid.
 func TestFoldLegacyTextEchoedNoRevision(t *testing.T) {
 	st := newFakeStore()
 	page := existingRepoPage()
