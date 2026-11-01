@@ -546,8 +546,9 @@ were last read at another commit: `go.mod`, `pom.xml`, `package.json`, at
 the root or one level down (deeper ones are copies, a checked-out corpus
 or a fixture). `internal/manifest` turns them into coordinates: what the
 repository provides (`go:<module>`, `maven:<group>:<artifact>`,
-`npm:<name>`) and what it requires, with the version as written. A
-`${...}` coordinate is left out, a `${...}` version is empty. Every body
+`npm:<name>`) and what it requires, with the version as written; a POM's
+parent counts as required, and an ISO-8859-1 POM is read. A `${...}`
+coordinate is left out, a `${...}` version is empty. Every body
 passes `redact.File` first, since a version is shown. One row per source
 repository in `repo_manifests`, replaced on a new head, gone with the row.
 
@@ -556,7 +557,9 @@ provides at read time over the current source rows: a repository added,
 removed or moved changes the graph with nothing to keep in step. A use of
 itself (a monorepo's modules) is no edge; a coordinate two repositories
 provide (a fork, a copy) gives no edge to either and is listed as
-ambiguous. A repository's body carries `uses` (with the library's other
+ambiguous; when the providers share one clone URL (two sources cloned it
+before the rule) it says so, and removing all but one row gives the edges
+back. A repository's body carries `uses` (with the library's other
 users, `also`) and `used_by`, a project's `libraries` (repositories of
 other projects its repositories use), the `.md` export an
 `Abhängigkeiten` section, and `GET /api/dependencies` the whole graph,

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"io"
 	"path"
 	"sort"
 	"strings"
@@ -140,11 +141,9 @@ func unquote(s string) string { return strings.Trim(s, "\"`") }
 
 // pomXML is the part of a pom.xml read here.
 type pomXML struct {
-	GroupID    string `xml:"groupId"`
-	ArtifactID string `xml:"artifactId"`
-	Parent     struct {
-		GroupID string `xml:"groupId"`
-	} `xml:"parent"`
+	GroupID      string   `xml:"groupId"`
+	ArtifactID   string   `xml:"artifactId"`
+	Parent       pomDep   `xml:"parent"`
 	Dependencies []pomDep `xml:"dependencies>dependency"`
 	Managed      []pomDep `xml:"dependencyManagement>dependencies>dependency"`
 }
@@ -156,12 +155,15 @@ type pomDep struct {
 }
 
 // pom is a pom.xml's own coordinate (groupId from its parent when it has
-// none) and its dependencies, managed ones included. A coordinate built of
-// a property (`${...}`) is left out: unresolved, it would match nothing or
-// the wrong thing.
+// none) and its dependencies, managed ones included, and its parent: a
+// parent POM is what most services of one platform share. A coordinate
+// built of a property (`${...}`) is left out: unresolved, it would match
+// nothing or the wrong thing.
 func pom(body []byte) ([]string, []Dep) {
 	var p pomXML
-	if err := xml.Unmarshal(body, &p); err != nil {
+	dec := xml.NewDecoder(bytes.NewReader(body))
+	dec.CharsetReader = charsetReader
+	if err := dec.Decode(&p); err != nil {
 		return nil, nil
 	}
 	var prov []string
@@ -173,7 +175,7 @@ func pom(body []byte) ([]string, []Dep) {
 		prov = append(prov, c)
 	}
 	var reqs []Dep
-	for _, d := range append(p.Dependencies, p.Managed...) {
+	for _, d := range append(append([]pomDep{p.Parent}, p.Dependencies...), p.Managed...) {
 		if c, ok := mavenCoord(d.GroupID, d.ArtifactID); ok {
 			v := strings.TrimSpace(d.Version)
 			if strings.Contains(v, "${") {
@@ -183,6 +185,26 @@ func pom(body []byte) ([]string, []Dep) {
 		}
 	}
 	return prov, reqs
+}
+
+// charsetReader reads a pom.xml that declares another encoding than
+// UTF-8, as older Maven projects do: ISO-8859-1 and windows-1252 byte by
+// byte to their code points (the coordinates are ASCII either way), any
+// other label as it stands.
+func charsetReader(label string, in io.Reader) (io.Reader, error) {
+	switch strings.ToLower(label) {
+	case "iso-8859-1", "iso8859-1", "latin1", "latin-1", "windows-1252", "cp1252":
+		b, err := io.ReadAll(in)
+		if err != nil {
+			return nil, err
+		}
+		r := make([]rune, len(b))
+		for i, c := range b {
+			r[i] = rune(c)
+		}
+		return strings.NewReader(string(r)), nil
+	}
+	return in, nil
 }
 
 func mavenCoord(group, artifact string) (string, bool) {

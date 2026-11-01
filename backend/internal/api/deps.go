@@ -53,6 +53,8 @@ type edgeBody struct {
 type ambiguousBody struct {
 	Coord     string        `json:"coord"`
 	Providers []repoRefBody `json:"providers"`
+	// ClonedTwice: the providers are one repository two sources clone.
+	ClonedTwice bool `json:"cloned_twice"`
 }
 
 type dependenciesBody struct {
@@ -92,7 +94,7 @@ func (d Deps) dependencies(w http.ResponseWriter, r *http.Request) {
 		for _, rp := range a.Providers {
 			p = append(p, refBody(rp))
 		}
-		out.Ambiguous = append(out.Ambiguous, ambiguousBody{Coord: a.Coord, Providers: p})
+		out.Ambiguous = append(out.Ambiguous, ambiguousBody{Coord: a.Coord, Providers: p, ClonedTwice: a.Twice})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

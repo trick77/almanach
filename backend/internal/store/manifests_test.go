@@ -110,8 +110,8 @@ func TestDependencies(t *testing.T) {
 	if !reflect.DeepEqual(g.Edges, want) {
 		t.Fatalf("edges = %+v\nwant %+v", g.Edges, want)
 	}
-	if len(g.Ambiguous) != 1 || g.Ambiguous[0].Coord != "npm:shared" || len(g.Ambiguous[0].Providers) != 2 {
-		t.Fatalf("ambiguous = %+v, want npm:shared with two providers", g.Ambiguous)
+	if len(g.Ambiguous) != 1 || g.Ambiguous[0].Coord != "npm:shared" || len(g.Ambiguous[0].Providers) != 2 || g.Ambiguous[0].Twice {
+		t.Fatalf("ambiguous = %+v, want npm:shared with two providers, two repositories", g.Ambiguous)
 	}
 	if len(g.Repos) != 6 {
 		t.Fatalf("repos = %v, want the six read", g.Repos)
@@ -127,6 +127,33 @@ func TestDependencies(t *testing.T) {
 	}
 	if len(g.Edges) != 1 || g.Edges[0].To != fetch {
 		t.Fatalf("edges after the removal = %+v, want loom → fetch alone", g.Edges)
+	}
+}
+
+// One repository two sources cloned before the rule is told apart from a
+// fork: the ambiguity says it is cloned twice.
+func TestDependencies_ClonedTwice(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, k := range []string{"apps", "libs"} {
+		if err := s.CreateSource(ctx, staticSource(k)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addRepos(t, s,
+		SourceRepo{ProjectKey: "libs", Slug: "wire", CloneURL: "https://forge.example.invalid/x/wire"},
+		SourceRepo{ProjectKey: "apps", Slug: "wire", CloneURL: "https://forge.example.invalid/x/other"},
+	)
+	// The second row as it was written before the rule.
+	if _, err := s.db.ExecContext(ctx, `UPDATE source_repos SET clone_url = 'https://forge.example.invalid/x/wire.git' WHERE repo_id = ?`,
+		repoIDOf(t, s, "apps", "wire")); err != nil {
+		t.Fatal(err)
+	}
+	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:example.invalid/wire"}})
+	saveRead(t, s, "apps", "wire", "1", manifest.Read{Provides: []string{"go:example.invalid/wire"}})
+	g, err := s.Dependencies(ctx)
+	if err != nil || len(g.Ambiguous) != 1 || !g.Ambiguous[0].Twice {
+		t.Fatalf("ambiguous = %+v %v, want one cloned twice", g.Ambiguous, err)
 	}
 }
 

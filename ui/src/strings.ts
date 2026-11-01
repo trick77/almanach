@@ -40,6 +40,8 @@ export const S = {
     ambiguous: "Mehrdeutig",
     ambiguousHint:
       "Diese Koordinaten liefern mehrere Repositories (ein Fork, eine Kopie). Almanach kann nicht wissen, welches gemeint ist, und zieht zu keinem eine Kante.",
+    clonedTwice:
+      "Dasselbe Repository, von zwei Quellen geclont: eines entfernen, dann zählen die Kanten wieder.",
     uses: "Verwendet",
     usedBy: "Verwendet von",
     also: (names: string) => `auch ${names}`,

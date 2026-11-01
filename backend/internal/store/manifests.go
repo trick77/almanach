@@ -68,10 +68,13 @@ type Edge struct {
 
 // Ambiguous is a coordinate more than one source repository provides (a
 // fork, a copy): no edge points at any of them, since code cannot tell
-// which one a user means.
+// which one a user means. Twice: the providers are one repository cloned
+// by two sources (rows from before one clone URL was one row's), which a
+// removal of all but one resolves.
 type Ambiguous struct {
 	Coord     string
 	Providers []RepoRef
+	Twice     bool
 }
 
 // Graph is the dependency graph over the source repositories. Repos are
@@ -89,7 +92,7 @@ type Graph struct {
 // provide gives no edge and is listed as ambiguous.
 func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.key, r.slug, m.provides, m.requires
+		SELECT p.key, r.slug, sr.clone_url, m.provides, m.requires
 		  FROM repo_manifests m
 		  JOIN source_repos sr ON sr.repo_id = m.repo_id
 		  JOIN repos r ON r.id = m.repo_id
@@ -105,10 +108,11 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 	}
 	var repos []repo
 	providers := map[string][]RepoRef{}
+	clones := map[RepoRef]string{}
 	for rows.Next() {
 		var r repo
-		var provides, requires string
-		if err := rows.Scan(&r.ref.ProjectKey, &r.ref.Slug, &provides, &requires); err != nil {
+		var cloneURL, provides, requires string
+		if err := rows.Scan(&r.ref.ProjectKey, &r.ref.Slug, &cloneURL, &provides, &requires); err != nil {
 			_ = rows.Close()
 			return Graph{}, err
 		}
@@ -124,6 +128,7 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 		for _, c := range coords {
 			providers[c] = append(providers[c], r.ref)
 		}
+		clones[r.ref] = CloneKey(cloneURL)
 		repos = append(repos, r)
 	}
 	if err := rows.Close(); err != nil {
@@ -159,7 +164,11 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 	}
 	for c, p := range providers {
 		if len(p) > 1 {
-			g.Ambiguous = append(g.Ambiguous, Ambiguous{Coord: c, Providers: p})
+			twice := clones[p[0]] != ""
+			for _, o := range p[1:] {
+				twice = twice && clones[o] == clones[p[0]]
+			}
+			g.Ambiguous = append(g.Ambiguous, Ambiguous{Coord: c, Providers: p, Twice: twice})
 		}
 	}
 	sort.Slice(g.Ambiguous, func(i, j int) bool { return g.Ambiguous[i].Coord < g.Ambiguous[j].Coord })

@@ -22,7 +22,7 @@ func depsGraph() store.Graph {
 			{From: loom, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.8"},
 			{From: rongo, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6"},
 		},
-		Ambiguous: []store.Ambiguous{{Coord: "npm:shared", Providers: []store.RepoRef{fetch, wire}}},
+		Ambiguous: []store.Ambiguous{{Coord: "npm:shared", Providers: []store.RepoRef{fetch, wire}, Twice: true}},
 	}
 }
 
@@ -49,7 +49,8 @@ func TestDependencies_Route(t *testing.T) {
 	if edges[1].From.Slug != "loom" || edges[1].To.Project != "libs" || edges[1].Version != "v0.1.8" {
 		t.Errorf("edge = %+v", edges[1])
 	}
-	if !strings.Contains(string(body["ambiguous"]), "npm:shared") || !strings.Contains(string(body["repos"]), "wire") {
+	if !strings.Contains(string(body["ambiguous"]), `"coord":"npm:shared"`) || !strings.Contains(string(body["ambiguous"]), `"cloned_twice":true`) ||
+		!strings.Contains(string(body["repos"]), "wire") {
 		t.Errorf("ambiguous %s, repos %s", body["ambiguous"], body["repos"])
 	}
 

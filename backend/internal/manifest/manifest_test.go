@@ -53,7 +53,7 @@ replace github.com/trick77/webfetch => ../webfetch
 func TestParse_Pom(t *testing.T) {
 	got := Parse(map[string][]byte{"pom.xml": []byte(`<?xml version="1.0"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
-  <parent><groupId>com.acme</groupId><artifactId>parent</artifactId></parent>
+  <parent><groupId>com.acme</groupId><artifactId>parent</artifactId><version>3.1</version></parent>
   <artifactId>checkout</artifactId>
   <dependencyManagement><dependencies>
     <dependency><groupId>com.acme</groupId><artifactId>bom</artifactId><version>2.0</version></dependency>
@@ -69,11 +69,40 @@ func TestParse_Pom(t *testing.T) {
 		Requires: []Dep{
 			{Coord: "maven:com.acme:bom", Version: "2.0"},
 			{Coord: "maven:com.acme:commons", Version: ""},
+			// The parent POM is used too.
+			{Coord: "maven:com.acme:parent", Version: "3.1"},
 			{Coord: "maven:org.slf4j:slf4j-api", Version: "2.0.9"},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// An older pom declares ISO-8859-1; it is read, its non-ASCII text
+// included, not left out.
+func TestParse_PomLatin1(t *testing.T) {
+	body := append([]byte(`<?xml version="1.0" encoding="ISO-8859-1"?>
+<project><groupId>com.acme</groupId><artifactId>legacy</artifactId><name>Gr`), 0xfc)
+	body = append(body, []byte(`n</name>
+  <dependencies><dependency><groupId>com.acme</groupId><artifactId>commons</artifactId><version>1.0</version></dependency></dependencies>
+</project>`)...)
+	got := Parse(map[string][]byte{"pom.xml": body})
+	want := Read{Provides: []string{"maven:com.acme:legacy"}, Requires: []Dep{{Coord: "maven:com.acme:commons", Version: "1.0"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// A multi-module repository's modules name its own root POM as parent:
+// no requirement of itself.
+func TestParse_PomOwnParent(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"pom.xml":     []byte(`<project><groupId>com.acme</groupId><artifactId>platform</artifactId></project>`),
+		"api/pom.xml": []byte(`<project><parent><groupId>com.acme</groupId><artifactId>platform</artifactId></parent><artifactId>api</artifactId></project>`),
+	})
+	if len(got.Requires) != 0 || len(got.Provides) != 2 {
+		t.Fatalf("Parse = %+v, want two provided, none required", got)
 	}
 }
 

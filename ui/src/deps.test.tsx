@@ -57,7 +57,11 @@ const graph: Dependencies = {
     },
   ],
   ambiguous: [
-    { coord: "npm:shared", providers: [ref("tools", "a"), ref("tools", "b")] },
+    {
+      coord: "npm:shared",
+      providers: [ref("tools", "a"), ref("tools", "b")],
+      cloned_twice: true,
+    },
   ],
 };
 
@@ -120,6 +124,14 @@ describe("dependency graph", () => {
     expect(oddVersions(["v1", "v0"])).toEqual([true, true]);
     expect(oddVersions(["v1", "v1"])).toEqual([false, false]);
     expect(oddVersions([])).toEqual([]);
+    // No version written is no disagreement.
+    expect(oddVersions(["1.4.0", ""])).toEqual([false, false]);
+    expect(oddVersions(["v1", "v1", "v0", ""])).toEqual([
+      false,
+      false,
+      true,
+      false,
+    ]);
   });
 });
 
@@ -143,6 +155,15 @@ describe("DepsPage", () => {
         ?.getAttribute("href"),
     ).toBe("/projekte/tools/repos/llmwire");
     expect(screen.getByText("npm:shared")).toBeInTheDocument();
+    expect(screen.getByText(/von zwei Quellen geclont/)).toBeInTheDocument();
+  });
+
+  it("says so when the sources cannot be read, not loading for ever", async () => {
+    serve({ dependencies: graph });
+    render(<DepsPage />);
+    expect(
+      await screen.findByText(/konnte nicht geladen werden/),
+    ).toBeInTheDocument();
   });
 
   it("says when there is nothing to show, and when the sources are off", async () => {

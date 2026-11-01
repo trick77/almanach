@@ -194,7 +194,12 @@ export interface Dependencies {
   repos: RepoRef[];
   edges: { from: RepoRef; to: RepoRef; version: string; coords: string[] }[];
   /** Coordinates several repositories provide: no edge to any of them. */
-  ambiguous: { coord: string; providers: RepoRef[] }[];
+  ambiguous: {
+    coord: string;
+    providers: RepoRef[];
+    /** One repository two sources clone: removing one gives the edges. */
+    cloned_twice: boolean;
+  }[];
 }
 
 export interface Bugfix {

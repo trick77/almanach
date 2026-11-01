@@ -92,20 +92,21 @@ export function libraryRows(d: Dependencies): LibraryRow[] {
 /** oddVersions marks, among the versions one library's users name, those
  *  apart from the rest: all the same, none; otherwise every version fewer
  *  users name than the most common one, and on a tie for most common,
- *  every one, since none is the rule. */
+ *  every one, since none is the rule. A user naming no version ("", a
+ *  property the manifest leaves open) neither counts nor is marked. */
 export function oddVersions(versions: string[]): boolean[] {
   const count = new Map<string, number>();
-  for (const v of versions) count.set(v, (count.get(v) ?? 0) + 1);
+  for (const v of versions) if (v !== "") count.set(v, (count.get(v) ?? 0) + 1);
   if (count.size <= 1) return versions.map(() => false);
   const most = Math.max(...count.values());
   const tie = [...count.values()].filter((n) => n === most).length > 1;
-  return versions.map((v) => tie || count.get(v)! < most);
+  return versions.map((v) => v !== "" && (tie || count.get(v)! < most));
 }
 
 /** DepsPage is the dependency graph over the source repositories. */
 export function DepsPage() {
   const { data, failed } = useFetch<Dependencies>("dependencies");
-  const { data: sources } = useFetch<Sources>("sources");
+  const { data: sources, failed: sourcesFailed } = useFetch<Sources>("sources");
   useEffect(() => {
     document.title = `${S.deps.title} ${S.common.sep} ${S.app}`;
   }, []);
@@ -115,7 +116,7 @@ export function DepsPage() {
       <div className={column}>
         <h2 className={h2}>{S.deps.title}</h2>
         <p className={lede}>{S.deps.lede}</p>
-        {failed ? (
+        {failed || sourcesFailed ? (
           <Failed what={S.deps.what} />
         ) : data === null || sources === null ? (
           <Skeleton />
@@ -208,6 +209,9 @@ function DepsBody({ data }: { data: Dependencies }) {
                     <RepoLink r={p} name={name} />
                   </Fragment>
                 ))}
+                {a.cloned_twice && (
+                  <span className="ml-2 text-ochre">{S.deps.clonedTwice}</span>
+                )}
               </li>
             ))}
           </ul>

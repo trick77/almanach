@@ -2291,10 +2291,16 @@ components:
           description: Coordinates more than one source repository provides; no edge points at any of them.
           items:
             type: object
-            required: [coord, providers]
+            required: [coord, providers, cloned_twice]
             properties:
               coord:
                 type: string
+              cloned_twice:
+                type: boolean
+                description: >-
+                  The providers are one repository two sources clone (rows
+                  from before a clone URL was one row's): removing all but
+                  one gives the edges back.
               providers:
                 type: array
                 items:
