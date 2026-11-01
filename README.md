@@ -126,8 +126,7 @@ runs them (`BACKEND_AUTH_MODE=none`): keep it off any network others
 reach.
 
 In production, `docker compose up -d` with `compose.yaml` alone: it
-builds the checkout (`pull_policy: build`, never a surprise pull), with
-no host port; the only way in is a Traefik router on the external
+pulls the published image, no checkout needed, with no host port; the only way in is a Traefik router on the external
 `traefik` network (entrypoint `websecure`, TLS) for `PUBLIC_FQDN`.
 Almanach signs readers in itself over OIDC at your identity provider;
 `BACKEND_AUTH_MODE=oidc` is fixed in the file, so `.env` cannot turn it
@@ -135,7 +134,7 @@ off. `.env` carries `PUBLIC_FQDN`, the OIDC block (issuer, client id and
 secret, redirect URL `https://<PUBLIC_FQDN>/api/auth/callback`) and
 `BACKEND_SESSION_SECRET`; the example leaves all six blank, and `up`
 stops naming each one still blank. The webhook and the ping stay bearer
-only. The first-run steps, running a published release instead, and
+only. The first-run steps, a new release, and
 the caveats (a shell export beats `.env`; `docker compose config` prints
 the secrets) are at the top of `compose.yaml`; see `BACKEND_AUTH_MODE`
 in [CONFIGURATION.md](CONFIGURATION.md). Needs Docker Compose 2.24.4 or
