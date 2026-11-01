@@ -38,6 +38,9 @@ func TestSources_CreateListUpdateDelete(t *testing.T) {
 	if !rows[0].HasToken() || rows[1].HasToken() || rows[1].Host != "" {
 		t.Fatalf("token/host: SHOP token=%v tools token=%v host=%q", rows[0].HasToken(), rows[1].HasToken(), rows[1].Host)
 	}
+	if rows[1].LastSyncedAt != nil {
+		t.Fatalf("a source without repos synced at %v", rows[1].LastSyncedAt)
+	}
 
 	// Keep the token when setToken is false, clear it with an empty one.
 	ok, err := s.UpdateSourceAccess(ctx, "SHOP", "https://other.example.invalid", TokenBasic, "me", nil, false)
@@ -159,6 +162,10 @@ func TestSourceRepos_ManualAndStates(t *testing.T) {
 	rows, _ := s.Sources(ctx)
 	if rows[0].Repos != 1 || rows[0].Active != 1 || rows[0].Ready != 0 {
 		t.Fatalf("counts after request: %+v", rows[0])
+	}
+	// A static source is never listed: its last run is its newest repo sync.
+	if rows[0].LastListedAt != nil || rows[0].LastSyncedAt == nil || !rows[0].LastSyncedAt.Equal(*repos[0].LastSyncedAt) {
+		t.Fatalf("last synced = %v, want the repo's %v", rows[0].LastSyncedAt, repos[0].LastSyncedAt)
 	}
 
 	ok, err := s.DeleteSourceRepo(ctx, "tools", "cli")

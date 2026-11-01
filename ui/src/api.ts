@@ -222,6 +222,9 @@ export interface SourceSummary {
   failed: number;
   missing: number;
   last_listed_at: string | null;
+  /** The newest sync of any of its repositories: a static source is never
+   *  listed, so this is its last run. */
+  last_synced_at: string | null;
   last_error: string;
   created_at: string;
   updated_at: string;

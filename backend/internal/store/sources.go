@@ -67,6 +67,10 @@ type SourceRow struct {
 	Active  int // pending or syncing
 	Failed  int
 	Missing int
+	// LastSyncedAt is the newest sync of any of its repositories, nil
+	// before the first: a static source is never listed, so this is its
+	// last run.
+	LastSyncedAt *time.Time
 }
 
 // SourceRepo is one clone.
@@ -101,7 +105,8 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 		       COUNT(r.slug) FILTER (WHERE r.state = 'ready'),
 		       COUNT(r.slug) FILTER (WHERE r.state IN ('pending', 'syncing')),
 		       COUNT(r.slug) FILTER (WHERE r.state = 'failed'),
-		       COUNT(r.slug) FILTER (WHERE r.state = 'missing')
+		       COUNT(r.slug) FILTER (WHERE r.state = 'missing'),
+		       MAX(r.last_synced_at)
 		  FROM sources s LEFT JOIN source_repos r ON r.project_key = s.project_key
 		 GROUP BY s.project_key ORDER BY s.project_key`)
 	if err != nil {
@@ -111,7 +116,8 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 	out := []SourceRow{}
 	for rows.Next() {
 		var r SourceRow
-		if err := rows.Scan(append(sourceDest(&r.ProjectSource), &r.Repos, &r.Ready, &r.Active, &r.Failed, &r.Missing)...); err != nil {
+		if err := rows.Scan(append(sourceDest(&r.ProjectSource), &r.Repos, &r.Ready, &r.Active, &r.Failed, &r.Missing,
+			timeOrNil(&r.LastSyncedAt))...); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -135,19 +135,20 @@ function SourcesTable({ sources }: { sources: SourceSummary[] }) {
               <td className={td}>
                 <StatePills s={s} />
               </td>
-              <td className={tdNum}>
-                {s.last_listed_at === null
-                  ? s.kind === "bitbucket"
-                    ? S.common.never
-                    : ""
-                  : dayTime(s.last_listed_at)}
-              </td>
+              <td className={tdNum}>{lastRun(s)}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+/** lastRun is a Bitbucket source's last listing; a static one is never
+ *  listed, so its run is the newest sync of its repositories. */
+function lastRun(s: SourceSummary): string {
+  const at = s.kind === "bitbucket" ? s.last_listed_at : s.last_synced_at;
+  return at === null ? S.common.never : dayTime(at);
 }
 
 /** StatePills is a source's repositories counted by state, the zero

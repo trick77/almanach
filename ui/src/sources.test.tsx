@@ -4,6 +4,7 @@ import App from "./App";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import type { Me, SourceDetail, Sources } from "./api";
+import { dayTime } from "./format";
 import { S } from "./strings";
 
 /** serve answers GET paths from a table and records every write. */
@@ -58,6 +59,7 @@ afterEach(() => {
 });
 
 const when = new Date(2026, 9, 30, 14, 2).toISOString();
+const synced = new Date(2026, 9, 31, 9, 5).toISOString();
 
 const sources: Sources = {
   enabled: true,
@@ -76,6 +78,7 @@ const sources: Sources = {
       failed: 0,
       missing: 0,
       last_listed_at: when,
+      last_synced_at: when,
       last_error: "",
       created_at: when,
       updated_at: when,
@@ -93,6 +96,7 @@ const sources: Sources = {
       failed: 1,
       missing: 0,
       last_listed_at: null,
+      last_synced_at: synced,
       last_error: "",
       created_at: when,
       updated_at: when,
@@ -168,6 +172,9 @@ describe("SourcesPage", () => {
     expect(screen.getByText("7 bereit")).toBeInTheDocument();
     expect(screen.getByText("1 läuft")).toBeInTheDocument();
     expect(screen.getByText("1 fehlgeschlagen")).toBeInTheDocument();
+    // Last run: SHOP's listing, the static source's newest repo sync.
+    expect(screen.getByText(dayTime(when))).toBeInTheDocument();
+    expect(screen.getByText(dayTime(synced))).toBeInTheDocument();
     expect(screen.getByText("SHOP").closest("a")).toHaveAttribute(
       "href",
       "/quellen/SHOP",
