@@ -96,6 +96,16 @@ describe("blocks", () => {
       { kind: "ol", start: 1, items: ["b"] },
     ]);
   });
+  it("starts a new numbered list at a 1., as markup.Normalize", () => {
+    expect(blocks("1. a\n2. b\n\n1. c")).toEqual([
+      { kind: "ol", start: 1, items: ["a", "b"] },
+      { kind: "ol", start: 1, items: ["c"] },
+    ]);
+  });
+  it("reads a heading of a paragraph's length as text, as markup.MaxHeading", () => {
+    const long = "Wort ".repeat(30).trim();
+    expect(blocks("#### " + long)).toEqual([{ kind: "p", text: long }]);
+  });
   it("takes nothing outside the subset", () => {
     expect(
       blocks("## Zwei\n> zitiert\n* Stern\n1) Klammer\n-5 Grad\n| a |"),

@@ -918,6 +918,9 @@ func TestDescribe(t *testing.T) {
 	if got := describe(p); !strings.Contains(got, "### [s2] rule: R\n\n#### Ablauf\n\n- eins\n- zwei\n") {
 		t.Errorf("describe with layout = %q", got)
 	}
+	// TRANSITIONAL(lost-layout): Remove when no current revision's text is
+	// markup.LayoutLost.
+	//
 	// A text stored on one line (loom's, 2026-11-01) is asked for again: the
 	// summary as none, the statement as an edit; a page only read shows it
 	// as it is.

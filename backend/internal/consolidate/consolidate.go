@@ -1050,15 +1050,13 @@ func describePage(p store.Page, v pageView) string {
 		return noneYet
 	}
 	var b strings.Builder
-	switch {
-	case v.read || !markup.LayoutLost(p.Summary):
-		b.WriteString(p.Summary)
-	case p.Summary != "":
+	if !v.read && markup.LayoutLost(p.Summary) {
 		// Stored on one line: shown as no summary, so a step writes one in
 		// blocks rather than keeping it (null). A rerun is how such a page
 		// gets its layout back.
-		b.WriteString(lostSummary + p.Summary)
+		b.WriteString(lostSummary)
 	}
+	b.WriteString(p.Summary)
 	b.WriteString("\n")
 	if len(p.Statements) == 0 && !v.read {
 		b.WriteString(noStatementsYet)

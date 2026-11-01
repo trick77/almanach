@@ -1102,8 +1102,9 @@ so the choice is not undone as a cleanup.
   and every heading and list came out as one paragraph. A step that sees
   such a stored text (`markup.LayoutLost`: `####` or `<br>` inside a line,
   outside code) is told to write it anew, so a rerun lays it out again; a
-  `<br>` a model still writes becomes a newline. A private key split across
-  blocks or by a `<br>` is still a key to the redaction. The backend
+  `<br>` a model still writes becomes a newline and a `####` inside a line
+  a line of its own, before redaction, so a credential split by a `<br>` or
+  across blocks is still one to it. The backend
   (`lang.Laid`, `internal/markup`) puts what the model writes into that
   stored form after redaction (a key's PEM shape holds only as written)
   and before the Swiss rule reads it: any heading level becomes `####`,

@@ -25,6 +25,8 @@ func TestFromBlocks(t *testing.T) {
 	}
 }
 
+// TRANSITIONAL(lost-layout): Remove when no current revision's text is
+// LayoutLost.
 func TestLayoutLost(t *testing.T) {
 	long := strings.Repeat("Ein Satz über das System. ", 60)
 	for _, c := range []struct {
@@ -41,6 +43,7 @@ func TestLayoutLost(t *testing.T) {
 		{"Ein `<br>` im Alias ist ein Zeilenumbruch.", false},
 		{"Sucht mit `grep ' #### '` nach Titeln.", false},
 		{"So:\n```\na #### b<br>\n```", false},
+		{"#### " + strings.Repeat("Ein Satz. ", 20), true},
 	} {
 		if got := LayoutLost(c.in); got != c.want {
 			t.Errorf("LayoutLost(%.40q) = %v, want %v", c.in, got, c.want)
@@ -88,7 +91,12 @@ func TestNormalize(t *testing.T) {
 			"#### Zweck und Grenze\n\n`webfetch` ist eine Bibliothek.\n\n#### Aufbau\n\n- `fetch.go`\n- `cache.go`"},
 		{"a br in code stays", "Schreibt `<br>` nie.\n```\na<br>b\n```", "Schreibt `<br>` nie.\n\n`a<br>b`"},
 		{"a whole text on one line behind #### is text", "#### Zweck und Abgrenzung `loom` ist ein selbst gehostetes Multi-User-LLM-Chat: ein Go-Backend mit JSON/SSE-API und eine eingebettete React-SPA. #### Struktur Das Repository besteht aus wenigen Teilen.\n\nDanach.",
-			"Zweck und Abgrenzung `loom` ist ein selbst gehostetes Multi-User-LLM-Chat: ein Go-Backend mit JSON/SSE-API und eine eingebettete React-SPA. #### Struktur Das Repository besteht aus wenigen Teilen.\n\nDanach."},
+			"Zweck und Abgrenzung `loom` ist ein selbst gehostetes Multi-User-LLM-Chat: ein Go-Backend mit JSON/SSE-API und eine eingebettete React-SPA.\n\n#### Struktur Das Repository besteht aus wenigen Teilen.\n\nDanach."},
+		{"a heading inside a line gets its own, a code span's stays", "Erst dies. #### Teil zwei\nund `a #### b`.",
+			"Erst dies.\n\n#### Teil zwei\n\nund `a #### b`."},
+		{"a long heading after a list item is no continuation", "- a\n#### " + strings.Repeat("lang ", 30),
+			"- a\n\n" + strings.TrimSpace(strings.Repeat("lang ", 30))},
+		{"a numbered list after a numbered list stays two", "1. a\n2. b\n\n1. c\n2. d", "1. a\n2. b\n\n1. c\n2. d"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := Normalize(c.in)

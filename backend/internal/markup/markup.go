@@ -33,9 +33,6 @@ const (
 	BlockNumbered  = "numbered"
 )
 
-// BlockKinds is every kind a Block may have, the schema's enum.
-var BlockKinds = []string{BlockParagraph, BlockHeading, BlockList, BlockNumbered}
-
 // Block is one block of a laid-out text as the model returns it. The
 // schema carries the layout, not newlines inside a JSON string: a model
 // that writes a whole text on one line (or breaks it with "<br>") still
@@ -111,60 +108,68 @@ func unmarked(it, kind string) string {
 	return it
 }
 
-// brTag is an HTML line break as models write one.
-var brTag = regexp.MustCompile(`(?i)<br\s*/?>`)
+// restarts reports whether a list item starts a list of its own after the
+// block or item before it: a "1." after a numbered item. Two numbered
+// blocks of a model's stay two lists, as the UI's blocks reads them.
+func restarts(before, item string) bool {
+	last := before[strings.LastIndexByte(before, '\n')+1:]
+	n, _, ok := ordered(item)
+	_, _, prevOrdered := ordered(last)
+	return ok && n == "1" && prevOrdered
+}
 
-// breaks is s with every <br> outside code a newline: a model that will
-// not write a newline into a JSON string writes the tag instead. Inside a
-// code span or a closed fence it is code and stays.
-func breaks(s string) string {
-	if !brTag.MatchString(s) {
-		return s
-	}
+// brTag is an HTML line break as models write one; inlineHeading a
+// heading's marks inside a line, a sub-heading a model wrote without the
+// newline before it.
+var (
+	brTag         = regexp.MustCompile(`(?i)<br\s*/?>`)
+	inlineHeading = regexp.MustCompile(`[ \t]+#{4,6}[ \t]`)
+)
+
+// Breaks is s with every <br> outside code a newline and every heading
+// mark inside a line on a line of its own: a model that will not write a
+// newline into a JSON string writes the tag, or nothing. Inside a code
+// span or a closed fence it is code and stays. lang.Laid runs it before
+// redaction, so a credential split by a <br> is one to the redaction.
+func Breaks(s string) string {
 	lines := strings.Split(s, "\n")
-	fence := ""
-	for i, l := range lines {
-		t := strings.TrimSpace(l)
-		if fence != "" {
-			if ClosesFence(t, fence) {
-				fence = ""
-			}
-			continue
-		}
-		if f := FenceOf(t); f != "" && slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), f) }) {
-			fence = f
-			continue
-		}
-		var b strings.Builder
-		for j := 0; j < len(l); {
-			if l[j] == '`' {
-				end, _ := SpanAt(l, j)
-				b.WriteString(l[j:end])
-				j = end
-				continue
-			}
-			next := strings.IndexByte(l[j:], '`')
-			if next < 0 {
-				next = len(l) - j
-			}
-			b.WriteString(brTag.ReplaceAllString(l[j:j+next], "\n"))
-			j += next
-		}
-		lines[i] = b.String()
-	}
+	proseLines(lines, func(i int) {
+		lines[i] = mapProse(lines[i], func(p string) string {
+			return inlineHeading.ReplaceAllString(brTag.ReplaceAllString(p, "\n"), "\n"+Heading)
+		})
+	})
 	return strings.Join(lines, "\n")
 }
 
-// LayoutLost reports whether stored text lost its layout on the way in: a
-// heading's or a break's marks inside a line (" #### ", "<br>"), outside
-// code. Such a text is a model's whole answer on one line, written before
-// the schema carried blocks; the prompt asks for it again, laid out. A
-// long paragraph is no such mark: one paragraph block is stored as one.
+// LayoutLost reports whether stored text lost its layout on the way in:
+// a heading's or a break's marks inside a line (" #### ", "<br>") outside
+// code, or a heading line of a paragraph's length. Such a text is a
+// model's whole answer on one line, written before the schema carried
+// blocks and Breaks; the prompt asks for it again, laid out. A long
+// paragraph is no such mark: one paragraph block is stored as one.
 //
 // TRANSITIONAL(lost-layout): Remove when no current revision's text is
 // LayoutLost.
 func LayoutLost(s string) bool {
+	lost := false
 	lines := strings.Split(s, "\n")
+	proseLines(lines, func(i int) {
+		t := strings.TrimSpace(lines[i])
+		if title, ok := StoredHeading(t); ok && utf8.RuneCountInString(title) > MaxHeading {
+			lost = true
+		}
+		mapProse(t, func(p string) string {
+			lost = lost || brTag.MatchString(p) || inlineHeading.MatchString(p)
+			return p
+		})
+	})
+	return lost
+}
+
+// proseLines calls f with the index of every line outside a closed fence,
+// the fence's own lines left out: Normalize's fence rule, for Breaks and
+// LayoutLost.
+func proseLines(lines []string, f func(i int)) {
 	fence := ""
 	for i, l := range lines {
 		t := strings.TrimSpace(l)
@@ -174,35 +179,35 @@ func LayoutLost(s string) bool {
 			}
 			continue
 		}
-		if f := FenceOf(t); f != "" && slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), f) }) {
-			fence = f
+		if fc := FenceOf(t); fc != "" && slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), fc) }) {
+			fence = fc
 			continue
 		}
-		prose := outsideCode(t)
-		if brTag.MatchString(prose) || strings.Contains(prose, " "+Heading) {
-			return true
-		}
+		f(i)
 	}
-	return false
 }
 
-// outsideCode is a line with its code spans blanked out: what of it is
-// prose. A backtick run nothing closes is prose, as SpanAt reads it.
-func outsideCode(l string) string {
+// mapProse is a line with f applied to each run of it outside code spans;
+// a backtick run nothing closes is prose, as SpanAt reads it.
+func mapProse(l string, f func(string) string) string {
 	var b strings.Builder
-	for i := 0; i < len(l); {
-		if l[i] != '`' {
-			b.WriteByte(l[i])
-			i++
+	for j := 0; j < len(l); {
+		if l[j] == '`' {
+			end, ok := SpanAt(l, j)
+			if ok {
+				b.WriteString(l[j:end])
+			} else {
+				b.WriteString(f(l[j:end]))
+			}
+			j = end
 			continue
 		}
-		end, ok := SpanAt(l, i)
-		if ok {
-			b.WriteByte(' ')
-		} else {
-			b.WriteString(l[i:end])
+		next := strings.IndexByte(l[j:], '`')
+		if next < 0 {
+			next = len(l) - j
 		}
-		i = end
+		b.WriteString(f(l[j : j+next]))
+		j += next
 	}
 	return b.String()
 }
@@ -222,10 +227,10 @@ func outsideCode(l string) string {
 // first pass leaves that the next reads anew ("* -" and "-" joined are
 // "- - -", a rule) would otherwise drop an item on a later read.
 func Normalize(s string) string {
-	out := normalizeOnce(breaks(s))
+	out := normalizeOnce(Breaks(s))
 	for range 8 {
 		// breaks each pass: joining a list item's lines can make a <br>.
-		next := normalizeOnce(breaks(out))
+		next := normalizeOnce(Breaks(out))
 		if next == out {
 			break
 		}
@@ -246,7 +251,7 @@ func normalizeOnce(s string) string {
 	flush := func() {
 		switch {
 		case len(cur) == 0:
-		case list && lastList:
+		case list && lastList && !restarts(blocks[len(blocks)-1], cur[0]):
 			// Two lists with nothing between (a blank line) are one: the
 			// next read would join them.
 			blocks[len(blocks)-1] += "\n" + strings.Join(cur, "\n")
@@ -317,6 +322,7 @@ func normalizeOnce(s string) string {
 			// one line: its marks go, it stays text, never one long title.
 			// Every run of marks at once: one left would be a heading on the
 			// next read.
+			flush()
 			line = title
 			for t, more := heading(line); more; t, more = heading(line) {
 				line = t
@@ -329,7 +335,7 @@ func normalizeOnce(s string) string {
 			continue
 		}
 		if item, ok := ListItem(line); ok {
-			if !list {
+			if !list || restarts(cur[len(cur)-1], item) {
 				flush()
 				list = true
 			}

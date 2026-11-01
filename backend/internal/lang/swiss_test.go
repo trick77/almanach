@@ -35,7 +35,9 @@ func TestProse(t *testing.T) {
 // one in a list item one joined line, and the PEM shape gone either way.
 func TestLaidRedactsFirst(t *testing.T) {
 	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIEinventedAAAAAAAAAAAA\n-----END RSA PRIVATE KEY-----" // ship:allow-secret: invented fixture
-	for _, in := range []string{"Schlüssel:\n```\n" + pem + "\n```", "- Schlüssel\n" + pem} {
+	// A model's <br> breaks a key, a bearer token, as a newline would.
+	brPem := "-----BEGIN PRIVATE KEY-----<br>MIIEinventedAAAAAAAAAAAA<BR/>-----END PRIVATE KEY-----" // ship:allow-secret: invented fixture
+	for _, in := range []string{"Schlüssel:\n```\n" + pem + "\n```", "- Schlüssel\n" + pem, brPem, "Authorization: Bearer<br>MIIEinventedAAAAAAAAAAAA0123"} {
 		got := Laid(in)
 		if strings.Contains(got, "MIIE") || !strings.Contains(got, "<redacted>") {
 			t.Errorf("Laid(%q) = %q, want the key redacted", in, got)
