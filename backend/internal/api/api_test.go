@@ -505,6 +505,19 @@ func TestRepo(t *testing.T) {
 	if err := json.Unmarshal(body["description"], &desc); err != nil || field(t, desc, "summary") != "Repo." {
 		t.Errorf("description = %s", body["description"])
 	}
+	// No map drawn yet is null, not absent; a drawn one comes as stored.
+	if string(body["map"]) != "null" {
+		t.Errorf("map before any was drawn = %s", body["map"])
+	}
+	page := st.pages[store.ScopeRepository+"|PLAT|files"]
+	page.RepoMap = &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "api", Label: "HTTP-API", Shape: "step", Zone: "entry"}},
+		Zones: []diagram.Zone{{ID: "entry", Title: "Eingang"}}}
+	st.pages[store.ScopeRepository+"|PLAT|files"] = page
+	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files", "", "", nil)
+	var drawn diagram.Diagram
+	if err := json.Unmarshal(body["map"], &drawn); err != nil || !diagram.Equal(&drawn, page.RepoMap) {
+		t.Errorf("map = %s", body["map"])
+	}
 }
 
 // A URL under an old key or slug finds the project or repository and

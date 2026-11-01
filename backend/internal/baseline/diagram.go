@@ -84,23 +84,13 @@ func CheckDiagram(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 // zone named by a source repository's slug, and a slug nowhere else. A map
 // without a repository is no map of the project.
 func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, string) {
-	if d == nil {
-		return nil, "no map"
-	}
-	if d.Kind != ir.KindFlow {
-		return nil, fmt.Sprintf("the map is a %q, not a flow", d.Kind)
-	}
-	for _, z := range d.Zones {
-		if !slices.Contains(ir.MapZones, z.ID) {
-			return nil, fmt.Sprintf("zone %q is none of %s", z.ID, strings.Join(ir.MapZones, ", "))
-		}
+	if why := checkZoned(d, ir.MapZones); why != "" {
+		return nil, why
 	}
 	repos := 0
 	for _, n := range d.Nodes {
 		isSlug := slices.Contains(slugs, n.ID)
 		switch {
-		case n.Zone == "":
-			return nil, fmt.Sprintf("node %q sits in no zone", n.ID)
 		case n.Zone == ir.ZoneRepositories && !isSlug:
 			return nil, fmt.Sprintf("repository node %q is no source repository of the project", n.ID)
 		case n.Zone != ir.ZoneRepositories && isSlug:
@@ -113,6 +103,38 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 		return nil, "the map holds no repository"
 	}
 	return checkFlow(d, caps)
+}
+
+// CheckRepoMap holds a repository's map to the rules of a flow and to its
+// own: the four zones only, every node in one. No slug rule: its nodes are
+// the repository's parts, not repositories.
+func CheckRepoMap(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
+	if why := checkZoned(d, ir.RepoMapZones); why != "" {
+		return nil, why
+	}
+	return checkFlow(d, caps)
+}
+
+// checkZoned is the rules both maps share before their own: a flow, its
+// zones only the ones given, every node in one. checkFlow does the rest.
+func checkZoned(d *ir.Diagram, zones []string) string {
+	if d == nil {
+		return "no map"
+	}
+	if d.Kind != ir.KindFlow {
+		return fmt.Sprintf("the map is a %q, not a flow", d.Kind)
+	}
+	for _, z := range d.Zones {
+		if !slices.Contains(zones, z.ID) {
+			return fmt.Sprintf("zone %q is none of %s", z.ID, strings.Join(zones, ", "))
+		}
+	}
+	for _, n := range d.Nodes {
+		if n.Zone == "" {
+			return fmt.Sprintf("node %q sits in no zone", n.ID)
+		}
+	}
+	return ""
 }
 
 // RepairEdges takes out of a proposed flow, the map or a statement's, the

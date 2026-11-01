@@ -30,6 +30,12 @@ var markdownKinds = []struct{ kind, heading string }{
 	{"entity", "Entitäten"},
 }
 
+// projectEntityHeading is the entity kind's heading on a project's export:
+// there the kind holds the entities that cross repositories, their system
+// of record and how their ids travel. The UI's label (strings.ts
+// S.projectKinds), held to it by a test.
+const projectEntityHeading = "Geteilte Daten"
+
 const markdownType = "text/markdown; charset=utf-8"
 
 // projectMarkdown serves GET /api/projects/{key}.md: 404 for an unknown
@@ -50,7 +56,7 @@ func (d Deps) projectMarkdown(w http.ResponseWriter, r *http.Request, key string
 		httpx.ServerError(w, r, err, "project page")
 		return
 	}
-	writeMarkdown(w, renderMarkdown("Projekt "+key, page, found))
+	writeMarkdown(w, renderMarkdown("Projekt "+key, store.ScopeProject, page, found))
 }
 
 // repoMarkdown serves GET /api/projects/{key}/repos/{slug}.md: 404 for an
@@ -71,7 +77,7 @@ func (d Deps) repoMarkdown(w http.ResponseWriter, r *http.Request, key, slug str
 		httpx.ServerError(w, r, err, "repo page")
 		return
 	}
-	writeMarkdown(w, renderMarkdown("Repository "+slug+" (Projekt "+key+")", page, found))
+	writeMarkdown(w, renderMarkdown("Repository "+slug+" (Projekt "+key+")", store.ScopeRepository, page, found))
 }
 
 func writeMarkdown(w http.ResponseWriter, body string) {
@@ -81,11 +87,13 @@ func writeMarkdown(w http.ResponseWriter, body string) {
 }
 
 // renderMarkdown is a page's current revision as Markdown: the title, the
-// revision, the summary, the project's map, then the statements grouped by
-// kind in markdownKinds' order, each with its files, its PR keys and its
-// diagram. A kind without statements has no heading. A page without a
-// revision yet says so under its title.
-func renderMarkdown(title string, p store.Page, found bool) string {
+// revision, the summary, the page's map (the project's system map, a
+// repository's Aufbau), then the statements grouped by kind in
+// markdownKinds' order, each with its files, its PR keys and its diagram.
+// A kind without statements has no heading; a project's entities are
+// headed projectEntityHeading. A page without a revision yet says so under
+// its title.
+func renderMarkdown(title, scope string, p store.Page, found bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", title)
 	if !found {
@@ -101,7 +109,15 @@ func renderMarkdown(title string, p store.Page, found bool) string {
 		b.WriteString("## Systemkarte\n\n")
 		writeJSONBlock(&b, p.Map)
 	}
+	if p.RepoMap != nil {
+		b.WriteString("## Aufbau\n\n")
+		writeJSONBlock(&b, p.RepoMap)
+	}
 	for _, k := range markdownKinds {
+		heading := k.heading
+		if k.kind == "entity" && scope == store.ScopeProject {
+			heading = projectEntityHeading
+		}
 		var list []store.Statement
 		for _, s := range p.Statements {
 			if s.Kind == k.kind {
@@ -111,7 +127,7 @@ func renderMarkdown(title string, p store.Page, found bool) string {
 		if len(list) == 0 {
 			continue
 		}
-		fmt.Fprintf(&b, "## %s\n\n", k.heading)
+		fmt.Fprintf(&b, "## %s\n\n", heading)
 		for _, s := range list {
 			writeStatement(&b, s)
 		}

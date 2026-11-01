@@ -48,6 +48,9 @@ type runStore struct {
 	// problemReads counts the reads.
 	problemsUntil time.Time
 	problemReads  int
+	// mapErr fails the map step's write; mapWrites counts the writes tried.
+	mapErr    error
+	mapWrites int
 }
 
 func (s *runStore) RepoProblems(_ context.Context, _, _ string, until time.Time) ([]store.RepoProblem, error) {
@@ -92,9 +95,35 @@ func (s *runStore) ApplyBaselineStep(ctx context.Context, rev store.NewRevision,
 		return 0, ok, err
 	}
 	n, err := s.InsertRevision(ctx, rev)
-	s.pages[pageKey(rev.Scope, rev.ProjectKey, rev.RepoSlug)] = store.Page{RevisionID: int64(n), Revision: n, Summary: rev.Summary,
-		Statements: rev.Statements, SourceKind: rev.SourceKind, SourceCommit: rev.SourceCommit, Map: rev.Map}
+	// A repository revision carries the page's map and basis, as the
+	// store's insertRevision does.
+	key := pageKey(rev.Scope, rev.ProjectKey, rev.RepoSlug)
+	var repoMap *diagram.Diagram
+	var basis string
+	if rev.Scope == store.ScopeRepository {
+		repoMap, basis = s.pages[key].RepoMap, s.pages[key].RepoMapBasis
+	}
+	s.pages[key] = store.Page{RevisionID: int64(n), Revision: n, Summary: rev.Summary,
+		Statements: rev.Statements, SourceKind: rev.SourceKind, SourceCommit: rev.SourceCommit, Map: rev.Map, RepoMap: repoMap, RepoMapBasis: basis}
 	return n, true, err
+}
+
+// SetRepoMap sets the page's map and basis in place, with the run's save,
+// as the store does; mapErr fails it.
+func (s *runStore) SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r store.BaselineRun) (bool, error) {
+	if s.mapErr != nil {
+		s.mapWrites++
+		return false, s.mapErr
+	}
+	if ok, err := s.SaveRun(ctx, r); !ok || err != nil {
+		return ok, err
+	}
+	key := pageKey(store.ScopeRepository, project, repo)
+	p := s.pages[key]
+	p.RepoMap, p.RepoMapBasis = m, basis
+	s.pages[key] = p
+	s.mapWrites++
+	return true, nil
 }
 
 func (s *runStore) DocumentedRun(context.Context, string, string) (store.BaselineRun, bool, error) {
@@ -171,12 +200,19 @@ func (c *fakeCode) ReadFiles(_ context.Context, _, _, _ string, files []baseline
 	return out, nil
 }
 
-// fakeModels answers the catalogue, the patches in order and the project.
+// fakeModels answers the catalogue, the patches in order, the project and
+// the repository map. repoMap's zero value answers "no change".
 type fakeModels struct {
 	catalogue []inference.CatalogueResult
 	patches   []inference.PatchResult
 	project   inference.DescriptionResult
+	repoMap   inference.RepoMapResult
 	prompts   []string
+}
+
+func (m *fakeModels) RepoMap(_ context.Context, prompt string) inference.RepoMapResult {
+	m.prompts = append(m.prompts, prompt)
+	return m.repoMap
 }
 
 func (m *fakeModels) Catalogue(_ context.Context, prompt string) inference.CatalogueResult {
@@ -223,6 +259,16 @@ func drawnMap(slugs ...string) *diagram.Diagram {
 		diagram.Node{ID: "forge", Label: "Forge", Shape: "step", Zone: "external"})
 	d.Edges = []diagram.Edge{{From: slugs[0], To: "pg", Label: "DB", Head: "end"}, {From: "forge", To: slugs[0], Label: "HTTP: Webhook", Head: "end"}}
 	return d
+}
+
+// drawnRepoMap is a repository map: the API entered, a part behind it, the
+// database it writes.
+func drawnRepoMap() *diagram.Diagram {
+	return &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR",
+		Nodes: []diagram.Node{{ID: "api", Label: "HTTP-API", Shape: "step", Zone: "entry"}, {ID: "billing", Label: "Abrechnung", Shape: "step", Zone: "parts"},
+			{ID: "db", Label: "Datenbank", Shape: "step", Zone: "stores"}},
+		Edges: []diagram.Edge{{From: "api", To: "billing", Label: "call", Head: "end"}, {From: "billing", To: "db", Label: "DB", Head: "end"}},
+		Zones: []diagram.Zone{{ID: "entry", Title: "Eingang"}, {ID: "parts", Title: "Teile"}, {ID: "stores", Title: "Datenspeicher"}}}
 }
 
 type world struct {
@@ -292,11 +338,12 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	}
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.", Statements: []inference.Statement{},
 		Map: drawnMap("svc", "portal")}}
+	x.models.repoMap = inference.RepoMapResult{Call: called, Map: drawnRepoMap()}
 	x.st.others = []store.RepoSummary{{Slug: "portal", Summary: "Das Portal ruft svc auf."}, {Slug: "svc", Summary: "Alte Fassung."}}
 	x.w.drain(context.Background())
 
 	r := x.run()
-	if r.State != store.RunDone || r.Commit != head || r.Calls != 5 || r.Skipped != 0 || r.Steps != 4 || r.FinishedAt == nil {
+	if r.State != store.RunDone || r.Commit != head || r.Calls != 6 || r.Skipped != 0 || r.Steps != 4 || r.FinishedAt == nil {
 		t.Fatalf("run = %+v", r)
 	}
 	if r.Bytes != 5+20+30+40 {
@@ -313,15 +360,25 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 			t.Errorf("ledger row = %+v", c)
 		}
 	}
-	if !reflect.DeepEqual(purposes, []string{"catalogue", "overview", "subject", "subject", "project"}) {
+	if !reflect.DeepEqual(purposes, []string{"catalogue", "overview", "subject", "subject", "project", "repo_map"}) {
 		t.Errorf("ledger = %v", purposes)
 	}
 	if len(x.st.revisions) != 4 {
-		t.Fatalf("revisions = %d, want three repository steps and the project", len(x.st.revisions))
+		t.Fatalf("revisions = %d, want three repository steps and the project; the map takes none", len(x.st.revisions))
 	}
 	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
 	if page.Summary != "Ein Dienst für Werkzeuge." || len(page.Statements) != 2 {
 		t.Fatalf("page = %+v", page)
+	}
+	// The map is set on the page's current revision in place, with the
+	// basis of its text.
+	if page.Revision != 3 || !diagram.Equal(page.RepoMap, drawnRepoMap()) || page.RepoMapBasis != mapBasis(page) || x.st.mapWrites != 1 {
+		t.Errorf("repository map: revision %d, map %+v, basis %q, writes %d", page.Revision, page.RepoMap, page.RepoMapBasis, x.st.mapWrites)
+	}
+	mapPrompt := x.models.prompts[len(x.models.prompts)-1]
+	if !strings.Contains(mapPrompt, "Ein Dienst für Werkzeuge.") || !strings.Contains(mapPrompt, "_None yet: draw it._") ||
+		!strings.Contains(mapPrompt, "At most 16 nodes and 24 edges") || strings.Contains(mapPrompt, "{repo") {
+		t.Errorf("repository map prompt:\n%s", mapPrompt)
 	}
 	login := page.Statements[1]
 	if login.ID != "s2" || login.Text != "Zweistufig, mit Sperre." || login.Checked != head || len(login.Sources) != 1 ||
@@ -349,7 +406,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		!strings.Contains(auth, "[s1] component: Dienst") {
 		t.Errorf("subject prompt:\n%s", auth)
 	}
-	proj := x.models.prompts[len(x.models.prompts)-1]
+	proj := x.models.prompts[len(x.models.prompts)-2]
 	if !strings.Contains(proj, "### portal\n\nDas Portal ruft svc auf.") || strings.Contains(proj, "Alte Fassung.") ||
 		!strings.Contains(proj, "Ein Dienst für Werkzeuge.") || strings.Contains(proj, "{other_repos}") {
 		t.Errorf("project prompt:\n%s", proj)
@@ -626,7 +683,7 @@ func TestRun_GatewayHoldThenResume(t *testing.T) {
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
-	if r := x.run(); r.State != store.RunDone || r.Attempts != 0 || r.Calls != 4 {
+	if r := x.run(); r.State != store.RunDone || r.Attempts != 0 || r.Calls != 5 {
 		t.Fatalf("after the hold: %+v", r)
 	}
 }
@@ -700,7 +757,7 @@ func TestRun_SkipsAndCeiling(t *testing.T) {
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Skipped != 2 || r.Calls != 6 {
+	if r.State != store.RunDone || r.Skipped != 2 || r.Calls != 7 {
 		t.Fatalf("run = %+v", r)
 	}
 	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A", "B"}) {
@@ -735,8 +792,8 @@ func TestRun_PageAtItsCeilingMakesNoCall(t *testing.T) {
 		x.models.project = inference.DescriptionResult{Call: called}
 		x.w.drain(context.Background())
 		r := x.run()
-		if r.State != store.RunDone || r.Calls != 2 || r.Skipped != 2 || len(x.models.prompts) != 2 {
-			t.Errorf("%s: run = %+v, %d prompts; want the catalogue and the project only", name, r, len(x.models.prompts))
+		if r.State != store.RunDone || r.Calls != 3 || r.Skipped != 2 || len(x.models.prompts) != 3 {
+			t.Errorf("%s: run = %+v, %d prompts; want the catalogue, the project and the map only", name, r, len(x.models.prompts))
 		}
 		if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{baseline.OverviewPart, "A"}) {
 			t.Errorf("%s: skipped = %v", name, p.Skipped)
@@ -766,7 +823,7 @@ func TestRun_Reconcile(t *testing.T) {
 		stmt(ref("s1"), "rule", "Login", "Zweistufig.", "auth/login.go")}}}}
 	x.w.drain(context.Background())
 	r := x.run()
-	if r.State != store.RunDone || r.Mode != store.RunReconcile || r.Calls != 1 {
+	if r.State != store.RunDone || r.Mode != store.RunReconcile || r.Calls != 2 {
 		t.Fatalf("run = %+v", r)
 	}
 	if p := x.plan(t); !reflect.DeepEqual(p.Read, []string{"A"}) || p.Overview || len(p.Subjects) != 2 {
@@ -803,8 +860,22 @@ func TestRun_Reconcile(t *testing.T) {
 	q.queue(store.RunReconcile, older40)
 	q.models.project = inference.DescriptionResult{Call: called}
 	q.w.drain(context.Background())
-	if r := q.run(); r.State != store.RunDone || r.Calls != 1 || q.st.calls[0].Purpose != store.PurposeProject {
+	if r := q.run(); r.State != store.RunDone || r.Calls != 2 || q.st.calls[0].Purpose != store.PurposeProject || q.st.calls[1].Purpose != store.PurposeRepoMap {
 		t.Fatalf("quiet reconcile after a skipped project = %+v", r)
+	}
+
+	// The same quiet reconcile of a repository page without its map yet:
+	// the project's call still skipped, the map step taken.
+	m := newWorld(t, 16)
+	m.st.documented = x.st.documented
+	m.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	m.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
+	m.queue(store.RunReconcile, older40)
+	m.models.repoMap = inference.RepoMapResult{Call: called, Map: drawnRepoMap()}
+	m.w.drain(context.Background())
+	if r := m.run(); r.State != store.RunDone || r.Calls != 1 || m.st.calls[0].Purpose != store.PurposeRepoMap ||
+		!diagram.Equal(m.st.pages[pageKey(store.ScopeRepository, "tools", "svc")].RepoMap, drawnRepoMap()) {
+		t.Fatalf("quiet reconcile without a repository map = %+v, calls %v", r, m.st.calls)
 	}
 
 	// A rewritten branch: the documented commit is gone, a full read.
@@ -815,7 +886,7 @@ func TestRun_Reconcile(t *testing.T) {
 	z.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Neu."), Statements: []inference.Statement{}}}}
 	z.models.project = inference.DescriptionResult{Call: called}
 	z.w.drain(context.Background())
-	if r := z.run(); r.State != store.RunDone || r.Mode != store.RunFull || r.Calls != 3 {
+	if r := z.run(); r.State != store.RunDone || r.Mode != store.RunFull || r.Calls != 4 {
 		t.Fatalf("rewritten branch = %+v", r)
 	}
 }
@@ -1107,8 +1178,229 @@ func TestRun_ReconcileRetriesWhatTheLastRunSkipped(t *testing.T) {
 	for _, c := range x.st.calls {
 		purposes = append(purposes, c.Purpose)
 	}
-	if !reflect.DeepEqual(purposes, []string{"catalogue", "overview", "project"}) {
+	if !reflect.DeepEqual(purposes, []string{"catalogue", "overview", "project", "repo_map"}) {
 		t.Errorf("calls = %v", purposes)
+	}
+}
+
+// The repository map step, the run's last: taken after the project step
+// is over (a restart takes it, never the project's call again), it calls
+// only when the map is missing or its basis is not the page's text. What it
+// keeps (a new map, the stored one confirmed by null or the same map) is
+// set on the current revision in place with the new basis; a refused map,
+// a failed call or a spent budget write nothing, the basis stale for the
+// next run. Never a revision of its own, never on the skipped list.
+func TestRun_RepoMapStep(t *testing.T) {
+	stored := drawnRepoMap()
+	stored.Nodes[1].Label = "Alt"
+	broken := drawnRepoMap()
+	broken.Zones[0].ID = diagram.ZoneRepositories
+	for name, c := range map[string]struct {
+		calls int
+		page  bool
+		// current: the stored basis is the page's text; else a stale one.
+		current bool
+		stored  *diagram.Diagram
+		answer  inference.RepoMapResult
+		called  bool
+		// written: the map and the basis set in place.
+		written bool
+		want    *diagram.Diagram
+		wantLog string
+	}{
+		"new map":        {16, true, false, stored, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, true, true, drawnRepoMap(), "repository map: drawn"},
+		"null keeps":     {16, true, false, stored, inference.RepoMapResult{Call: called}, true, true, stored, "repository map: no change"},
+		"same map":       {16, true, false, stored, inference.RepoMapResult{Call: called, Map: stored}, true, true, stored, "repository map: no change"},
+		"refused":        {16, true, false, stored, inference.RepoMapResult{Call: called, Map: broken}, true, false, stored, "repository map refused (zone"},
+		"call failed":    {16, true, false, stored, inference.RepoMapResult{Call: inference.Call{Outcome: inference.OutcomeUnparseable}}, true, false, stored, "skipped: the call failed"},
+		"calls spent":    {3, true, false, stored, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, stored, "skipped: the run's calls are spent"},
+		"no description": {16, false, false, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, nil, "no repository description"},
+		// Drawn from the text as it stands: no call. Missing: drawn.
+		"stands":        {16, true, true, stored, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, stored, "drawn from the description as it stands"},
+		"no map yet":    {16, true, false, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, true, true, drawnRepoMap(), "repository map: drawn"},
+		"none, no map":  {16, true, false, nil, inference.RepoMapResult{Call: called}, true, false, nil, "repository map: none drawn"},
+		"stale on null": {16, true, false, stored, inference.RepoMapResult{Call: called}, true, true, stored, "no change"},
+	} {
+		x := newWorld(t, c.calls)
+		var logs strings.Builder
+		x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+		key := pageKey(store.ScopeRepository, "tools", "svc")
+		if c.page {
+			p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.",
+				Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T"}}, RepoMap: c.stored}
+			if c.stored != nil {
+				p.RepoMapBasis = "drawn from an older text"
+				if c.current {
+					p.RepoMapBasis = mapBasis(p)
+				}
+			}
+			x.st.pages[key] = p
+		}
+		plan, _ := json.Marshal(runPlan{ProjectDone: true})
+		x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
+			Commit: head, State: store.RunProject, Plan: plan, Calls: 3})
+		x.models.repoMap = c.answer
+		x.w.drain(context.Background())
+		r := x.run()
+		if r.State != store.RunDone || r.Skipped != 0 || len(x.plan(t).Skipped) != 0 {
+			t.Errorf("%s: run = %+v", name, r)
+		}
+		for _, call := range x.st.calls {
+			if call.Purpose != store.PurposeRepoMap {
+				t.Errorf("%s: a %s call; the project step is over", name, call.Purpose)
+			}
+		}
+		if c.called != (len(x.st.calls) == 1) {
+			t.Errorf("%s: calls = %d, want a call %v", name, len(x.st.calls), c.called)
+		}
+		if len(x.st.revisions) != 0 {
+			t.Errorf("%s: revisions = %+v, want none: the map is set in place", name, x.st.revisions)
+		}
+		if c.written != (x.st.mapWrites == 1) {
+			t.Errorf("%s: map writes = %d, want written %v", name, x.st.mapWrites, c.written)
+		}
+		p := x.st.pages[key]
+		if !diagram.Equal(p.RepoMap, c.want) {
+			t.Errorf("%s: page map = %+v, want %+v", name, p.RepoMap, c.want)
+		}
+		if c.written && (p.RepoMapBasis != mapBasis(p) || p.Revision != 4) {
+			t.Errorf("%s: basis %q on revision %d, want the page's text on revision 4", name, p.RepoMapBasis, p.Revision)
+		}
+		if c.page && !c.written && !c.current && c.stored != nil && p.RepoMapBasis == mapBasis(p) {
+			t.Errorf("%s: basis made current without a write", name)
+		}
+		if !strings.Contains(logs.String(), c.wantLog) {
+			t.Errorf("%s: log lacks %q:\n%s", name, c.wantLog, logs.String())
+		}
+	}
+}
+
+// A full run's subjects leave room for the catalogue, the overview, the
+// project and the repository map: the map is never the call a large
+// repository's subjects spent.
+func TestMaxSubjects_KeepsTheMapCall(t *testing.T) {
+	for calls, want := range map[int]int{16: 12, 5: 1, 4: 0, 3: 0} {
+		if got := newWorld(t, calls).w.maxSubjects(); got != want {
+			t.Errorf("MaxCalls %d: maxSubjects = %d, want %d", calls, got, want)
+		}
+	}
+}
+
+// The basis is the text the map is drawn from: a statement's sources or
+// last check move without it, its text, name, kind or files and the
+// summary move it.
+func TestMapBasis(t *testing.T) {
+	base := store.Page{Summary: "Ein Dienst.", Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Files: []string{"a.go"}}}}
+	b := mapBasis(base)
+	same := base
+	same.Statements = []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Files: []string{"a.go"}, Checked: "abc",
+		Sources: []store.Source{{Kind: store.FromBaseline, Commit: "abc"}}}}
+	if mapBasis(same) != b {
+		t.Error("a check or a source moved the basis")
+	}
+	for name, change := range map[string]func(p *store.Page){
+		"summary": func(p *store.Page) { p.Summary = "Zwei Dienste." },
+		"text":    func(p *store.Page) { p.Statements[0].Text = "U" },
+		"name":    func(p *store.Page) { p.Statements[0].Name = "S" },
+		"kind":    func(p *store.Page) { p.Statements[0].Kind = "invariant" },
+		"files":   func(p *store.Page) { p.Statements[0].Files = []string{"b.go"} },
+		"added": func(p *store.Page) {
+			p.Statements = append(p.Statements, store.Statement{ID: "s2", Kind: "rule", Name: "X", Text: "Y"})
+		},
+	} {
+		p := base
+		p.Statements = []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Files: []string{"a.go"}}}
+		change(&p)
+		if mapBasis(p) == b {
+			t.Errorf("%s: the basis did not move", name)
+		}
+	}
+}
+
+// A map step whose write a busy database refuses holds like any step; past
+// maxFoldAttempts the run ends done without the map, never failed: the
+// description and the project are written, the map is optional. The basis
+// stays stale, so the next run draws again.
+func TestRun_RepoMapBusyEndsDone(t *testing.T) {
+	x := newWorld(t, 16)
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	x.st.pages[key] = store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	plan, _ := json.Marshal(runPlan{ProjectDone: true})
+	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
+		Commit: head, State: store.RunProject, Plan: plan, Calls: 3})
+	x.models.repoMap = inference.RepoMapResult{Call: called, Map: drawnRepoMap()}
+	x.st.mapErr = errors.Join(errors.New("set"), store.ErrBusy)
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunProject || !x.w.holding() {
+		t.Fatalf("busy once: %+v holding %v, want the run at its map step, held", r, x.w.holding())
+	}
+	for i := 1; i < maxFoldAttempts; i++ {
+		x.w.retryAt = time.Time{}
+		x.w.drain(context.Background())
+	}
+	r := x.run()
+	if r.State != store.RunDone || r.Error != "" || x.st.mapWrites != maxFoldAttempts {
+		t.Fatalf("busy %d times: %+v, %d writes; want the run done without the map", maxFoldAttempts, r, x.st.mapWrites)
+	}
+	if p := x.st.pages[key]; p.RepoMap != nil || p.RepoMapBasis != "" {
+		t.Errorf("page = %+v, want no map", p)
+	}
+}
+
+// A map step skipped in the run that changed the text (calls spent)
+// leaves the basis stale: the next run, a quiet reconcile, draws it, the
+// project's call still skipped. A merge that changed the text since does
+// the same.
+func TestRun_StaleMapRedrawnByQuietReconcile(t *testing.T) {
+	quiet := func(basis func(store.Page) string) world {
+		x := newWorld(t, 16)
+		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Statements: []store.Statement{},
+			Map: drawnMap("svc")}
+		p := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst, nach dem Merge.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
+		p.RepoMapBasis = basis(p)
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = p
+		planned, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p",
+			Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
+		x.st.documented = &store.BaselineRun{Commit: older40, Plan: planned, State: store.RunDone}
+		x.st.others = []store.RepoSummary{{Slug: "svc"}}
+		x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
+		x.queue(store.RunReconcile, older40)
+		x.models.repoMap = inference.RepoMapResult{Call: called}
+		x.w.drain(context.Background())
+		return x
+	}
+	if x := quiet(mapBasis); x.run().State != store.RunDone || len(x.st.calls) != 0 {
+		t.Errorf("basis current: run %+v, %d calls; want done without one", x.run(), len(x.st.calls))
+	}
+	x := quiet(func(store.Page) string { return "drawn from the text before the merge" })
+	if x.run().State != store.RunDone || len(x.st.calls) != 1 || x.st.calls[0].Purpose != store.PurposeRepoMap {
+		t.Fatalf("basis stale: run %+v, calls %+v; want the map step alone", x.run(), x.st.calls)
+	}
+	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; p.RepoMapBasis != mapBasis(p) || !diagram.Equal(p.RepoMap, drawnRepoMap()) {
+		t.Errorf("after the redraw: basis %q, map %+v", p.RepoMapBasis, p.RepoMap)
+	}
+}
+
+// A run's describe steps write repository revisions without a map: the
+// stored one rides along on each, never erased.
+func TestRun_DescribeStepsCarryTheRepoMap(t *testing.T) {
+	x := newWorld(t, 16)
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
+		Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst, neu."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunDone || len(x.st.revisions) < 2 {
+		t.Fatalf("run = %+v, revisions %d", r, len(x.st.revisions))
+	}
+	// The map step ran on the new text (its basis stale) and kept the map.
+	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; p.Summary != "Ein Dienst, neu." || !diagram.Equal(p.RepoMap, drawnRepoMap()) {
+		t.Errorf("page = %+v, want the new text and the stored map", p)
 	}
 }
 

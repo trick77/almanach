@@ -24,11 +24,15 @@ export default function DiagramView({
   kind,
   svg,
   onClose,
+  overlay,
 }: {
   title: string;
   kind: "flow" | "sequence" | "er";
   svg: string;
   onClose: () => void;
+  /** overlay is laid over the drawing, sized to it: Almanach's node
+   *  links. */
+  overlay?: ReactNode;
 }) {
   const body = useRef<HTMLDivElement>(null);
 
@@ -69,8 +73,11 @@ export default function DiagramView({
         ref={body}
         className="grid min-h-0 flex-1 place-items-center overflow-auto p-6"
       >
-        <div className="w-full">
+        {/* As wide as the drawing, so the overlay's percent boxes land on
+            its nodes; the grid centres it. */}
+        <div className="relative w-max max-w-full">
           <DiagramSvg svg={svg} title={title} />
+          {overlay}
         </div>
       </div>
     </OverlayShell>

@@ -2,6 +2,8 @@ package consolidate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,7 @@ type RunStore interface {
 	NextRun(ctx context.Context) (store.BaselineRun, bool, error)
 	SaveRun(ctx context.Context, r store.BaselineRun) (bool, error)
 	ApplyBaselineStep(ctx context.Context, rev store.NewRevision, r store.BaselineRun) (int, bool, error)
+	SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r store.BaselineRun) (bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
@@ -60,10 +63,12 @@ type Cataloguer interface {
 	Catalogue(ctx context.Context, prompt string) inference.CatalogueResult
 }
 
-// Describer is the model that writes: the patch of a step, the project.
+// Describer is the model that writes: the patch of a step, the project,
+// the repository's map.
 type Describer interface {
 	Patch(ctx context.Context, prompt string) inference.PatchResult
 	Describe(ctx context.Context, prompt string) inference.DescriptionResult
+	RepoMap(ctx context.Context, prompt string) inference.RepoMapResult
 }
 
 // Baseline is the runs' part of the worker; without it (the sources off)
@@ -97,6 +102,10 @@ type runPlan struct {
 	// call left, the call failed): the next reconcile places them, since
 	// its diff will not name them again.
 	Unplaced []string `json:"unplaced,omitempty"`
+	// ProjectDone: the project step is over, written or skipped; the run,
+	// still in its project state, has the repository map step left. A
+	// restart takes the map step, never the project's call again.
+	ProjectDone bool `json:"project_done,omitempty"`
 }
 
 // steps is the reading steps of the plan: the overview, then the subjects.
@@ -300,9 +309,9 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 }
 
 // maxSubjects is how many subjects a full run's calls can read: the cap
-// less the catalogue, the overview and the project.
+// less the catalogue, the overview, the project and the repository map.
 func (w *Worker) maxSubjects() int {
-	return max(w.base.Limits.MaxCalls-3, 0)
+	return max(w.base.Limits.MaxCalls-4, 0)
 }
 
 // catalogue is a run's catalogue step: one call to the catalogue model for
@@ -482,8 +491,20 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 			if err != nil {
 				return err
 			}
+			// A repository page whose map is missing (described before
+			// maps existed) or drawn from text that moved on since (a
+			// merge, a run whose map step was skipped) goes on to the map
+			// step, the project's call still skipped (projectStands says
+			// so again there).
 			if skip {
-				return w.finish(ctx, r, plan)
+				repo, ok, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
+				if err != nil {
+					w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
+					return errStop
+				}
+				if !ok || mapStands(repo) {
+					return w.finish(ctx, r, plan)
+				}
 			}
 		}
 		r.State = store.RunProject
@@ -969,6 +990,10 @@ func (w *Worker) endReading(ctx context.Context, r *store.BaselineRun, plan *run
 	return w.save(ctx, *r)
 }
 
+// repoMapName names the map step in the log; never on the skipped list: a
+// stale map is redrawn by the next run, no reconcile needs it.
+const repoMapName = "the repository map"
+
 func partName(plan runPlan, i int) string {
 	if plan.Overview {
 		if i == 0 {
@@ -1057,6 +1082,9 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return fmt.Errorf("the run's plan: %w", err)
 	}
+	if plan.ProjectDone {
+		return w.repoMapStep(ctx, r, plan)
+	}
 	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
@@ -1067,7 +1095,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		return err
 	}
 	if skip {
-		return w.finish(ctx, r, plan)
+		return w.projectOver(ctx, r, plan)
 	}
 	if r.Calls >= w.base.Limits.MaxCalls {
 		return w.skipProject(ctx, r, plan, baseline.SkipCalls, "the run's calls are spent")
@@ -1079,7 +1107,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	if !ok {
 		w.log.InfoContext(ctx, "baseline: no repository description to fold into the project")
-		return w.finish(ctx, r, plan)
+		return w.projectOver(ctx, r, plan)
 	}
 	if repos == nil {
 		if repos, err = w.repoSummaries(ctx, r); err != nil {
@@ -1113,12 +1141,13 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		}
 	}
 	if rev == nil {
-		return w.finish(ctx, r, plan)
+		return w.projectOver(ctx, r, plan)
 	}
-	// The project revision and the run's end in one transaction: a crash
+	// The project revision and the step's end in one transaction: a crash
 	// between them would pay for the project call again and write it twice.
 	prev := *r
-	if err := w.markDone(ctx, r, plan); err != nil {
+	plan.ProjectDone = true
+	if err := encodeInto(r, plan); err != nil {
 		return err
 	}
 	n, ok, err := w.base.Store.ApplyBaselineStep(ctx, *rev, *r)
@@ -1376,7 +1405,127 @@ func (w *Worker) skipProject(ctx context.Context, r *store.BaselineRun, plan run
 	w.log.WarnContext(ctx, "baseline: "+baseline.ProjectPart+" skipped: "+why)
 	r.Skipped++
 	plan.Skip(baseline.ProjectPart, code)
-	return w.finish(ctx, r, plan)
+	return w.projectOver(ctx, r, plan)
+}
+
+// projectOver ends the project step without a revision of it and saves
+// the run on to its repository map step, the run's last.
+func (w *Worker) projectOver(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
+	plan.ProjectDone = true
+	if err := encodeInto(r, plan); err != nil {
+		return err
+	}
+	return w.save(ctx, *r)
+}
+
+// repoMapStep is a run's last step, after the project's: one call draws
+// the repository's map from its description as it stands, or keeps the
+// map it has (null). Last because it is the first thing a tight budget
+// drops: with the run's calls spent it is skipped and the stored map
+// stays. A map whose basis is the page's text as it stands is due no
+// call. A map off its rules or the drawing's limits is not stored, with
+// the reason logged; the description is never touched. What the step
+// keeps (a new map, or the stored one confirmed) is set on the page's
+// current revision in place, with its basis, and the run's end, in one
+// transaction: no revision of its own, the text did not change. A skip,
+// a failed call or a refused map writes nothing, so the basis stays stale
+// and the next run draws again. The map is optional: a database busy past
+// its attempts ends the run done without it, never failed.
+func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
+	at := "baseline: " + repoMapName
+	if r.Calls >= w.base.Limits.MaxCalls {
+		w.log.WarnContext(ctx, at+" skipped: the run's calls are spent, the stored one kept")
+		return w.finish(ctx, r, plan)
+	}
+	page, ok, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
+		return errStop
+	}
+	if !ok {
+		w.log.InfoContext(ctx, at+" skipped: no repository description to draw it from")
+		return w.finish(ctx, r, plan)
+	}
+	if mapStands(page) {
+		w.log.InfoContext(ctx, at+" skipped: drawn from the description as it stands, the stored one kept")
+		return w.finish(ctx, r, plan)
+	}
+	res := w.base.Describer.RepoMap(ctx, renderRepoMap(*r, page))
+	okCall, err := w.call(ctx, r, store.PurposeRepoMap, res.Call)
+	if err != nil {
+		return err
+	}
+	if !okCall {
+		w.log.WarnContext(ctx, at+" skipped: the call failed: "+res.Outcome.String()+", the stored one kept")
+		return w.finish(ctx, r, plan)
+	}
+	keep := page.RepoMap
+	switch {
+	case res.Map == nil && keep == nil:
+		w.log.InfoContext(ctx, at+": none drawn")
+		return w.finish(ctx, r, plan)
+	case res.Map == nil:
+		w.log.InfoContext(ctx, at+": no change")
+	default:
+		repaired, dropped := baseline.RepairEdges(res.Map)
+		if len(dropped) > 0 {
+			w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
+		}
+		drawn, why := baseline.CheckRepoMap(repaired, baseline.DrawCaps)
+		if why != "" {
+			w.log.WarnContext(ctx, at+" refused ("+why+"), the stored one kept")
+			return w.finish(ctx, r, plan)
+		}
+		if diagram.Equal(drawn, keep) {
+			w.log.InfoContext(ctx, at+": no change")
+		} else {
+			keep = drawn
+			w.log.InfoContext(ctx, fmt.Sprintf("%s: drawn (%d nodes, %d edges)", at, len(drawn.Nodes), len(drawn.Edges)))
+		}
+	}
+	prev := *r
+	if err := w.markDone(ctx, r, plan); err != nil {
+		return err
+	}
+	if _, err := w.base.Store.SetRepoMap(ctx, r.ProjectKey, r.Slug, keep, mapBasis(page), *r); err != nil {
+		w.log.WarnContext(ctx, "baseline: repository map write failed", logging.Err(err))
+		err = w.stepBusy(ctx, r, prev, repoMapName, err)
+		if err == nil || errors.Is(err, errStop) {
+			return err
+		}
+		// The attempts are spent: the map is optional, the run ends done
+		// without it, the basis stale for the next run.
+		w.log.WarnContext(ctx, at+" skipped: "+err.Error()+", the stored one kept")
+		return w.finish(ctx, r, plan)
+	}
+	w.stepWritten()
+	return nil
+}
+
+// mapStands reports whether a repository page's map was drawn from its
+// description as it stands: then a run has nothing new to draw from.
+func mapStands(p store.Page) bool {
+	return p.RepoMap != nil && p.RepoMapBasis == mapBasis(p)
+}
+
+// mapBasis is the description a repository map is drawn from, as a hash:
+// the summary and each statement's kind, name, text and files, never its
+// sources or last check, which change without the text.
+func mapBasis(p store.Page) string {
+	type part struct {
+		Kind, Name, Text string
+		Files            []string
+	}
+	parts := make([]part, 0, len(p.Statements))
+	for _, s := range p.Statements {
+		parts = append(parts, part{s.Kind, s.Name, s.Text, s.Files})
+	}
+	raw, _ := json.Marshal(struct {
+		Summary    string
+		Statements []part
+	}{p.Summary, parts})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // runSource is the source a run attaches: its commit, the commit's time and
@@ -1630,6 +1779,27 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 		"{project_map}", projectMap(projectPage), "{repo_slugs}", strings.Join(repoSlugs, ", "), "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),
 	).Replace(prompts.Project)
+}
+
+func renderRepoMap(r store.BaselineRun, page store.Page) string {
+	return strings.NewReplacer(
+		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
+		"{repo_map}", repoMap(page), "{repo_description}", describeRead(page),
+		"{map_max_nodes}", fmt.Sprint(diagram.DrawMaxNodes), "{map_max_edges}", fmt.Sprint(diagram.DrawMaxEdges),
+	).Replace(prompts.RepoMap)
+}
+
+// repoMap is the repository's current map as the JSON the model returns,
+// so the map step can say it stands.
+func repoMap(p store.Page) string {
+	if p.RepoMap == nil {
+		return "_None yet: draw it._"
+	}
+	j, err := json.Marshal(p.RepoMap)
+	if err != nil {
+		return "_None yet: draw it._"
+	}
+	return string(j)
 }
 
 // mapDue says whether this project's rewrite carries a map: always, unless

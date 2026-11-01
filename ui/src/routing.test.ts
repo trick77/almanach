@@ -3,6 +3,7 @@ import {
   notePath,
   notePathFor,
   projectPath,
+  replaceTo,
   repoPath,
   routeFromPath,
   sourcePath,
@@ -64,5 +65,15 @@ describe("routeFromPath", () => {
     expect(notePathFor("PLAT/~x#3")).toBeNull();
     // Builders encode, so a bad key is a visible 404 rather than a silent miss.
     expect(repoPath("a b", "files")).toBe("/projekte/a%20b/repos/files");
+  });
+});
+
+describe("replaceTo", () => {
+  it("swaps the path for the current name and keeps the tab's hash", () => {
+    window.history.replaceState({}, "", "/projekte/OLD#beschreibung");
+    replaceTo("/projekte/NEW");
+    expect(window.location.pathname).toBe("/projekte/NEW");
+    expect(window.location.hash).toBe("#beschreibung");
+    window.history.replaceState({}, "", "/");
   });
 });

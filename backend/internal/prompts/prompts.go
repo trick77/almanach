@@ -26,6 +26,12 @@ var Describe string
 //go:embed almanach_project.txt
 var Project string
 
+// RepoMap draws a repository's map from its description, the last step of
+// a baseline run, after the project.
+//
+//go:embed almanach_repo_map.txt
+var RepoMap string
+
 // Diagrams is the diagram rules the merge, describe and project prompts
 // share, rendered into their {diagram_rules}.
 //

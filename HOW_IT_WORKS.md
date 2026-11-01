@@ -533,7 +533,8 @@ resumes after a restart. The run pins the clone's head when it starts.
    from the listing (directories over 4000 files) and the docs. Code holds
    the answer to the tree: invented paths dropped, directories expanded,
    each subject within 240 kB, at most `BACKEND_BASELINE_MAX_CALLS` less
-   three. A reconcile starts from the documented run's plan instead: the
+   four (the catalogue, the overview, the project, the repository map). A
+   reconcile starts from the documented run's plan instead: the
    diff since its commit (`diff-tree`, files that left the readable set
    counted as gone) maps onto the subjects, and only files no subject
    holds go to the catalogue model to be placed; files it cannot place
@@ -601,8 +602,26 @@ resumes after a restart. The run pins the clone's head when it starts.
    as fit are kept in the order written and the rest left out and logged,
    the summary, map, edits and drops kept: a full project page is never
    frozen, and a first page of 25 against 24 keeps its first 24. A first
-   page is never written without statements. Its revision and the run's
-   end land in one transaction.
+   page is never written without statements. Its revision and the step's
+   end (`project_done` in the run's plan) land in one transaction, so a
+   restart never pays the project call twice.
+5. *Repository map.* Last, after the project step, so a tight budget
+   drops the map before the project page: one call reads the repository's
+   finished description (summary and statements, no code) and its current
+   map, and returns the repository from inside as a flow (`{"map": …}`,
+   null keeps the stored one). The map's basis (`repo_map_basis`, a hash of
+   the summary and each statement's kind, name, text and files, never its
+   sources or check) says which text it was drawn from: when it matches
+   the page as it stands the step makes no call, whatever the run did;
+   when the map is missing or the text moved on (this run's steps, a merge
+   since, a map step skipped or refused before) a run draws it, a quiet
+   reconcile included, the project's call still skipped. What the step
+   keeps, a new map or the stored one confirmed, is set with its basis on
+   the page's current revision in place, with the run's end in one
+   transaction: no revision of its own, the text did not change. A
+   refused map, a failed call or spent calls write nothing, the basis
+   stays stale for the next run. The map is optional: a database busy past
+   its attempts ends the run done without it, never failed.
 
 **Diagrams.** The model never writes a diagram language: it returns
 rongo's intermediate form as strict JSON (`internal/diagram`), a flow, a
@@ -651,7 +670,18 @@ carries the map forward unchanged. The API serves the sentinel as no map
 with `map_declined`, and the project page shows its placeholder only
 where `map_expected` holds and no map was declined. The UI draws both
 with rongo's copied layout, drawing and theme, no Mermaid; the map's
-repository nodes link to their pages.
+repository nodes link to their pages, in the full view too.
+Every repository page carries a map of its own, the repository map step's
+alone (`revisions.repo_map`, repository revisions only): the repository
+from inside, zones `entry`, `parts`, `stores`, `external`, an edge
+labelled HTTP, event, DB, library, file or call, the same drawing limits
+and the same repairs as the system map. No statement diagram, it counts
+toward none. A map that breaks a rule, or none returned, keeps the stored
+one, logged; there is no sentinel, and the page shows no placeholder.
+Every new repository revision (a describe step's, a note's fold) takes
+the page's current map and basis in the store, so neither a merge nor the
+next run's first step drops it; nothing removes one. Its nodes are parts,
+not pages: none links.
 
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none
@@ -1141,6 +1171,19 @@ the reason in the log and the page unchanged:
   newest first. The project page shows the twenty most recent notes of the
   project, a repository page its hundred most recent notes and fifty
   revisions.
+- Both pages have two tabs and a rail beside them. The project page opens
+  on Übersicht (system map, repositories, problem areas, recent notes),
+  the hub's job, then Beschreibung; a repository page opens on
+  Beschreibung (its map, the summary, its own problem areas, the
+  statements), its content, then Verlauf (notes, revisions). The hash
+  holds the tab (`#beschreibung`, `#verlauf`, none for the start tab),
+  replaced on a switch, never pushed. The rail lists both tabs' sections
+  and, on a repository page, the project's repositories; its search
+  filters this page's description (names, texts, files) in the browser.
+  A repository page's problem areas and repository list come from the
+  project endpoint, filtered by `repo_slug`; without it the page goes
+  without them. The project page names its entities „Geteilte Daten“:
+  they are the ones that cross repositories.
 - A repository's summary on the project page is its description's first
   sentence: cut at the first `.`, `!` or `?` followed by a space or the
   end, except after an abbreviation (`z.B.`, `bzw.`, `usw.`, ...) or a

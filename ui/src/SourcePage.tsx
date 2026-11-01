@@ -662,6 +662,12 @@ function baselineState(b: Baseline): { label: string; tone: Tone } {
         ),
         tone: "warn",
       };
+    case "project":
+      // The repository map is the run's last step, still in state project.
+      return {
+        label: b.map_step ? S.baseline.state.repoMap : S.baseline.state.project,
+        tone: "warn",
+      };
     default:
       return { label: S.baseline.state[b.state], tone: "warn" };
   }

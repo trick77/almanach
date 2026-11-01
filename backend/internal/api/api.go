@@ -523,8 +523,11 @@ type repoDetailBody struct {
 	ProjectKey  string           `json:"project_key"`
 	Slug        string           `json:"slug"`
 	Description *descriptionBody `json:"description"`
-	Revisions   []revisionBody   `json:"revisions"`
-	Notes       []noteBody       `json:"notes"`
+	// Map is the repository's map of itself (Aufbau), null before a
+	// baseline run's map step drew one.
+	Map       *diagram.Diagram `json:"map"`
+	Revisions []revisionBody   `json:"revisions"`
+	Notes     []noteBody       `json:"notes"`
 	// NotesTotal is every note of the repository; Notes lists the newest
 	// hundred.
 	NotesTotal int        `json:"notes_total"`
@@ -579,7 +582,7 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "repos")
 		return
 	}
-	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Notes: noteBodies(notes),
+	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Map: page.RepoMap, Notes: noteBodies(notes),
 		Revisions: make([]revisionBody, 0, len(revisions))}
 	for _, rp := range repos {
 		if rp.Slug == slug {

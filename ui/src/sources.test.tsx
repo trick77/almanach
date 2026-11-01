@@ -132,6 +132,7 @@ const detail: SourceDetail = {
       baseline: {
         run_id: 7,
         state: "done",
+        map_step: false,
         mode: "full",
         trigger: "first_ready",
         commit: "7e1d9a0abcdef",
@@ -368,6 +369,26 @@ describe("SourcePage baseline", () => {
     // theirs.
     expect(screen.getByText("Beschreiben")).toBeDisabled();
     expect(screen.getAllByText("Aktualisieren")[0]).toBeEnabled();
+  });
+
+  it("names the project step and the repository map apart", async () => {
+    const run = detail.repos[0]!.baseline!;
+    const repos = [
+      {
+        ...detail.repos[0],
+        slug: "a",
+        baseline: { ...run, state: "project" as const, map_step: false },
+      },
+      {
+        ...detail.repos[0],
+        slug: "b",
+        baseline: { ...run, state: "project" as const, map_step: true },
+      },
+    ];
+    serve({ "sources/werkzeuge": { ...detail, repos } });
+    render(<SourcePage projectKey="werkzeuge" />);
+    expect(await screen.findByText("Projekt")).toBeInTheDocument();
+    expect(screen.getByText("Aufbau")).toBeInTheDocument();
   });
 
   it("saves the access form without a switch for the runs", async () => {

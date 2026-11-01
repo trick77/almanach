@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { DiagramIR } from "./diagramIR";
+import type { DiagramIR, FlowIR } from "./diagramIR";
 import { fits } from "./diagramIR";
 import { layoutFlow, type Elk, type FlowLayout } from "./diagramLayout";
 import { drawER, drawFlow, drawSequence } from "./diagramDraw";
@@ -54,6 +54,18 @@ export async function drawIR(ir: DiagramIR, ids: string): Promise<Drawn> {
     return { svg: drawER(await layoutER(ir, e), palette()), layout: null };
   const layout = await layoutFlow(ir, e);
   return { svg: drawFlow(layout, palette(), ids), layout };
+}
+
+/** titledZones is a map with its zones titled by id from strings.ts, not
+ *  by the model: the system map's and a repository's, each its own set. */
+export function titledZones(
+  map: FlowIR,
+  titles: Record<string, string>,
+): FlowIR {
+  return {
+    ...map,
+    zones: map.zones.map((z) => ({ ...z, title: titles[z.id] ?? z.title })),
+  };
 }
 
 let seq = 0;
@@ -141,6 +153,15 @@ export function Diagram({
             kind={ir.kind}
             svg={svg}
             onClose={() => setFull(false)}
+            overlay={
+              layout !== null && links ? (
+                <NodeLinks
+                  layout={layout}
+                  links={links}
+                  onFollow={() => setFull(false)}
+                />
+              ) : undefined
+            }
           />
         )}
       </div>
@@ -149,17 +170,28 @@ export function Diagram({
 }
 
 /** NodeLinks lays an anchor over every node links names a page for, placed
- * by the layout's own box so it scales with the drawing. */
+ * by the layout's own box so it scales with the drawing. onFollow closes
+ * the full view a link is followed from. */
 function NodeLinks({
   layout,
   links,
+  onFollow,
 }: {
   layout: FlowLayout;
   links: (id: string) => string | null;
+  onFollow?: () => void;
 }) {
   const pct = (v: number, of: number) => `${(v / of) * 100}%`;
   return (
-    <>
+    // contents: the anchors stay placed by the drawing's box. A plain click
+    // is the one the app follows (its handler prevents the default); a new
+    // tab leaves the full view open.
+    <span
+      className="contents"
+      onClick={(e) => {
+        if (e.defaultPrevented) onFollow?.();
+      }}
+    >
       {layout.nodes.map((n) => {
         const to = links(n.id);
         if (to === null) return null;
@@ -168,7 +200,7 @@ function NodeLinks({
             key={n.id}
             to={to}
             title={S.diagram.repoLink(n.id)}
-            className="absolute rounded-[6px] hover:bg-ink/5 focus-visible:outline-2 focus-visible:outline-accent-strong"
+            className="absolute rounded-[6px] hover:bg-accent/10 hover:outline-2 hover:outline-accent-strong focus-visible:outline-2 focus-visible:outline-accent-strong"
             style={{
               left: pct(n.x, layout.width),
               top: pct(n.y, layout.height),
@@ -180,6 +212,6 @@ function NodeLinks({
           </Link>
         );
       })}
-    </>
+    </span>
   );
 }

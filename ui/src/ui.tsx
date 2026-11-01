@@ -147,19 +147,22 @@ export function Pill({
 /** Prose renders a text as paragraphs, split on blank lines, with a
  *  backtick-quoted identifier in the mono face (codeSpans): the wiki is
  *  prose, no other markdown. Held at measure, in the font size the
- *  caller's className sets; a caller sets no max-w of its own. */
+ *  caller's className sets; a caller sets no max-w of its own. query sets
+ *  off a search's matches. */
 export function Prose({
   text,
   className = "",
+  query = "",
 }: {
   text: string;
   className?: string;
+  query?: string;
 }) {
   return (
     <div className={measure + " " + className}>
       {paragraphs(text).map((p, i) => (
         <p key={i} className="mb-3.5 last:mb-0">
-          <Inline text={p} />
+          <Inline text={p} query={query} />
         </p>
       ))}
     </div>
@@ -167,8 +170,9 @@ export function Prose({
 }
 
 /** Inline is a line of model text with its backtick-quoted identifiers in
- *  the mono face (codeSpans): a paragraph of Prose, a statement's name. */
-export function Inline({ text }: { text: string }) {
+ *  the mono face (codeSpans): a paragraph of Prose, a statement's name.
+ *  query sets off a search's matches, in the code spans too. */
+export function Inline({ text, query = "" }: { text: string; query?: string }) {
   return (
     <>
       {codeSpans(text).map((s, j) =>
@@ -177,10 +181,12 @@ export function Inline({ text }: { text: string }) {
             key={j}
             className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink"
           >
-            {s.text}
+            <Marked text={s.text} query={query} />
           </code>
         ) : (
-          <Fragment key={j}>{s.text}</Fragment>
+          <Fragment key={j}>
+            <Marked text={s.text} query={query} />
+          </Fragment>
         ),
       )}
     </>
@@ -189,13 +195,54 @@ export function Inline({ text }: { text: string }) {
 
 /** Summary is a description's or a note's prose in the serif, ../rongo's
  *  answer column. */
-export function Summary({ text }: { text: string }) {
+export function Summary({ text, query }: { text: string; query?: string }) {
   return (
     <Prose
       text={text}
+      query={query}
       className="font-serif text-[17px] leading-[1.6] text-ink-prose"
     />
   );
+}
+
+/** Marked is text with every match of a search set off, case-insensitive;
+ *  the text itself unchanged, never markup from it. */
+export function Marked({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (q === "") return <>{text}</>;
+  // A split on a capturing group keeps the matches at the odd places, in
+  // the text's own case; offsets never come from a lower-cased copy.
+  const parts = text.split(new RegExp(`(${escapeRegExp(q)})`, "gi"));
+  return (
+    <>
+      {parts.map((p, i) =>
+        i % 2 === 1 ? (
+          <mark
+            key={i}
+            className="rounded-[2px] bg-ochre-wash px-px text-ochre"
+          >
+            {p}
+          </mark>
+        ) : (
+          p
+        ),
+      )}
+    </>
+  );
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** matchesQuery is a search's test, the same one Marked sets off: every
+ *  text given, case-insensitive. */
+export function matchesQuery(query: string, ...texts: string[]): boolean {
+  const q = query.trim();
+  if (q === "") return true;
+  // Marked's own pattern, so a text kept is a text with a mark.
+  const re = new RegExp(escapeRegExp(q), "i");
+  return texts.some((t) => re.test(t));
 }
 
 /** Tables scroll inside their box on a narrow screen rather than widening

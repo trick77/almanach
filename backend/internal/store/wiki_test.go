@@ -3,10 +3,13 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/ship/kit/migrate"
 )
 
 // The queue hands out the oldest unconsolidated note; marking it takes it
@@ -206,6 +209,141 @@ func TestInsertRevision_Diagrams(t *testing.T) {
 	}
 	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "r", SourcePR: "PRJ/svc#1", Map: m}); err == nil {
 		t.Error("a repository revision with a map was stored")
+	}
+}
+
+// The repository map: set by the map step on the current revision in
+// place (no revision of its own), with its basis and the run's end; carried
+// with its basis by every repository revision after it (a describe step, a
+// merge); replaced only by the map step again. A project revision never
+// holds one, and the carry never reaches it.
+func TestSetRepoMap_InPlaceAndCarried(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "PRJ", "svc")
+	r := enqueue(t, s, "PRJ", "svc")
+	m1 := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR",
+		Nodes: []diagram.Node{{ID: "api", Label: "HTTP-API", Shape: "step", Zone: "entry"}, {ID: "db", Label: "Datenbank", Shape: "step", Zone: "stores"}},
+		Edges: []diagram.Edge{{From: "api", To: "db", Label: "DB", Head: "end"}},
+		Zones: []diagram.Zone{{ID: "entry", Title: "Eingang"}, {ID: "stores", Title: "Datenspeicher"}}}
+	m2 := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "cli", Label: "Befehle", Shape: "step", Zone: "entry"}},
+		Zones: []diagram.Zone{{ID: "entry", Title: "Eingang"}}}
+	repoRev := NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "r", SourceKind: FromBaseline, SourceCommit: "abc"}
+	if _, err := s.InsertRevision(ctx, repoRev); err != nil {
+		t.Fatal(err)
+	}
+	if p, _, _ := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc"); p.RepoMap != nil || p.RepoMapBasis != "" {
+		t.Fatalf("map before any was drawn = %+v, basis %q", p.RepoMap, p.RepoMapBasis)
+	}
+	page := func() Page {
+		t.Helper()
+		p, ok, err := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc")
+		if err != nil || !ok {
+			t.Fatalf("CurrentPage: ok=%v err=%v", ok, err)
+		}
+		return p
+	}
+	// In place: the revision stays 1, the run ends with it.
+	r.State = RunDone
+	if ok, err := s.SetRepoMap(ctx, "PRJ", "svc", m1, "b1", r); err != nil || !ok {
+		t.Fatalf("SetRepoMap: ok=%v err=%v", ok, err)
+	}
+	if p := page(); p.Revision != 1 || !diagram.Equal(p.RepoMap, m1) || p.RepoMapBasis != "b1" {
+		t.Errorf("after SetRepoMap: revision %d, map %+v, basis %q", p.Revision, p.RepoMap, p.RepoMapBasis)
+	}
+	if got, _, _ := s.RunByID(ctx, r.ID); got.State != RunDone {
+		t.Errorf("run state = %q, want done with the map", got.State)
+	}
+	// A describe step and a merge carry map and basis.
+	for i, rev := range []NewRevision{repoRev, {Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "merge", SourcePR: "PRJ/svc#9"}} {
+		if _, err := s.InsertRevision(ctx, rev); err != nil {
+			t.Fatalf("revision %d: %v", i, err)
+		}
+		if p := page(); !diagram.Equal(p.RepoMap, m1) || p.RepoMapBasis != "b1" {
+			t.Errorf("after revision %d: map %+v, basis %q", i, p.RepoMap, p.RepoMapBasis)
+		}
+	}
+	// Replaced in place on the current revision, the earlier ones as they were.
+	r2 := enqueue(t, s, "PRJ", "svc")
+	r2.State = RunDone
+	if ok, err := s.SetRepoMap(ctx, "PRJ", "svc", m2, "b2", r2); err != nil || !ok {
+		t.Fatalf("SetRepoMap again: ok=%v err=%v", ok, err)
+	}
+	if p := page(); p.Revision != 3 || !diagram.Equal(p.RepoMap, m2) || p.RepoMapBasis != "b2" {
+		t.Errorf("after the second map: revision %d, map %+v, basis %q", p.Revision, p.RepoMap, p.RepoMapBasis)
+	}
+	var older int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM revisions WHERE scope = 'repository' AND repo_map_basis = 'b1'`).Scan(&older); err != nil || older != 2 {
+		t.Errorf("revisions keeping the first map = %d, err %v; want revisions 1 and 2", older, err)
+	}
+	// A run over or gone writes nothing.
+	if ok, err := s.SetRepoMap(ctx, "PRJ", "svc", m1, "b3", r2); err != nil || ok {
+		t.Errorf("SetRepoMap of a done run: ok=%v err=%v", ok, err)
+	}
+	if p := page(); p.RepoMapBasis != "b2" {
+		t.Errorf("basis after a refused write = %q", p.RepoMapBasis)
+	}
+	// Another repository of the project carries nothing of svc's.
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "web", Summary: "w", SourcePR: "PRJ/web#1"}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _, _ := s.CurrentPage(ctx, ScopeRepository, "PRJ", "web"); p.RepoMap != nil || p.RepoMapBasis != "" {
+		t.Errorf("web took svc's map: %+v", p.RepoMap)
+	}
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeProject, ProjectKey: "PRJ", Summary: "p", SourcePR: "PRJ/svc#1"}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _, _ := s.CurrentPage(ctx, ScopeProject, "PRJ", ""); p.RepoMap != nil {
+		t.Errorf("project page map of a repository = %+v", p.RepoMap)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE revisions SET repo_map = '{}' WHERE scope = 'project'`); err == nil {
+		t.Error("a project revision took a repository map")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE revisions SET repo_map_basis = 'x' WHERE scope = 'project'`); err == nil {
+		t.Error("a project revision took a repository map basis")
+	}
+}
+
+// 0004 over a database holding 0001's rows (0002, 0003 between): revisions gain repo_map NULL,
+// the ledger keeps its rows and ids and takes the map step's purpose.
+func TestMigrate_RepoMapOverExistingRows(t *testing.T) {
+	s := emptyStore(t)
+	ctx := context.Background()
+	first, err := fs.ReadFile(migrations(), "0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrate.Up(ctx, s.db, fstest.MapFS{"0001_init.sql": {Data: first}}, s.migrateOptions()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO revisions (scope, project_key, repo_slug, revision, summary, statements, chars, source_pr_key, created_at)
+		VALUES ('repository', 'PRJ', 'svc', 1, 'r', '[]', 1, 'PRJ/svc#1', '2026-10-01T12:00:00.000000000Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO pages (scope, project_key, repo_slug, current_revision_id, updated_at)
+		VALUES ('repository', 'PRJ', 'svc', 1, '2026-10-01T12:00:00.000000000Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO llm_calls (id, project_key, repo_slug, source_kind, source_commit, purpose, outcome, created_at)
+		VALUES (41, 'PRJ', 'svc', 'baseline', 'abc', 'project', 'ok', '2026-10-01T12:00:00.000000000Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("0004 over 0001's rows: %v", err)
+	}
+	p, ok, err := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc")
+	if err != nil || !ok || p.RepoMap != nil || p.RepoMapBasis != "" || p.Summary != "r" {
+		t.Fatalf("page after 0004 = %+v, ok=%v, err=%v", p, ok, err)
+	}
+	if n := count(t, s, "llm_calls", "id = 41 AND purpose = 'project'"); n != 1 {
+		t.Errorf("ledger row kept = %d, want 1", n)
+	}
+	id, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "abc", Purpose: PurposeRepoMap, Outcome: "ok"})
+	if err != nil || id != 42 {
+		t.Errorf("map step's ledger row: id %d, err %v, want 42", id, err)
+	}
+	if n := count(t, s, "sqlite_master", "type = 'index' AND name = 'llm_calls_run_idx'"); n != 1 {
+		t.Errorf("ledger index after the rebuild = %d, want 1", n)
 	}
 }
 

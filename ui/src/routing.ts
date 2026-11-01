@@ -86,10 +86,11 @@ export function onNav(path: string) {
 
 /** replaceTo swaps the address for path without a history entry: a page
  *  opened under a project's or repository's old name shows its current
- *  one, the API having found it by the old. */
+ *  one, the API having found it by the old. The hash stays: it is the
+ *  page's tab. */
 export function replaceTo(path: string) {
   if (window.location.pathname === path) return;
-  window.history.replaceState({}, "", path);
+  window.history.replaceState({}, "", path + window.location.hash);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 

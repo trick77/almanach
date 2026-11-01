@@ -219,3 +219,24 @@ func TestRepo_BaselineProvenanceOnTheWire(t *testing.T) {
 		t.Errorf("baseline source = %v", base)
 	}
 }
+
+// A run in state project is in its map step once its plan says the
+// project step is over; a plan that does not read says no.
+func TestInMapStep(t *testing.T) {
+	for name, c := range map[string]struct {
+		state string
+		plan  string
+		want  bool
+	}{
+		"project step":     {store.RunProject, `{"subjects":[]}`, false},
+		"map step":         {store.RunProject, `{"project_done":true}`, true},
+		"done":             {store.RunDone, `{"project_done":true}`, false},
+		"plan unreadable":  {store.RunProject, `{`, false},
+		"describing, done": {store.RunDescribing, `{"project_done":true}`, false},
+	} {
+		r := store.BaselineRun{State: c.state, Plan: json.RawMessage(c.plan)}
+		if got := inMapStep(r); got != c.want {
+			t.Errorf("%s: inMapStep = %v, want %v", name, got, c.want)
+		}
+	}
+}
