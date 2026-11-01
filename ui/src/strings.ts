@@ -190,13 +190,14 @@ export const S = {
     >,
     kindLabel: {
       bitbucket: "Bitbucket-Projekt",
-      static: "Statischer Ordner",
+      // No-break spaces: a narrow form wraps before the bracket, never inside it.
+      static: "Statischer Ordner (z.\u00a0B.\u00a0GitHub)",
     } as Record<string, string>,
     kindHint: {
       bitbucket:
         "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Lauf neu gelistet.",
       static:
-        "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation.",
+        "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation. Das Token dafür kommt ins Feld unten.",
     } as Record<string, string>,
     tokenStored: "Hinterlegt",
     tokenNone: "Öffentlich",
@@ -226,7 +227,7 @@ export const S = {
       optional: "(optional)",
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",
       tokenHint:
-        "Nur nötig für private Repositories oder ein privates Bitbucket-Projekt. Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.",
+        "Nur nötig für private Repositories. Beim Bitbucket-Projekt listet und klont es die Repositories, beim statischen Ordner gilt das eine Token für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read». Verschlüsselt gespeichert, nie zurückgegeben, nie geloggt, landet nie in .git/config.",
       tokenAs: "Token senden als",
       bearerHint:
         "Bearer: das Token als Authorization-Header, kein Benutzername nötig. Für Bitbucket Data Center die sichere Wahl.",
