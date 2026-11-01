@@ -45,7 +45,7 @@ At most {project_max_statements} statements and {project_max_chars} characters o
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<prose>", "files": ["<path, no spaces>", ..., at most 5 paths]{diagram_field}`.
+Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<prose>", "files": ["<path, no spaces, at most 200 characters>", ..., at most 5 paths]{diagram_field}`.
 
 ## Untrusted input
 

@@ -815,6 +815,20 @@ func check(summary string, statements []store.Statement, maxStatements, maxChars
 	return size, ""
 }
 
+// withinFieldCaps is the new statements within the field caps, and the
+// rest by name and cap, as attach names them.
+func withinFieldCaps(added []inference.Statement) (kept []inference.Statement, over []string) {
+	for _, a := range added {
+		s := cleanStatement(a)
+		if why := fieldCap(s); why != "" {
+			over = append(over, fmt.Sprintf("%q (%s)", s.Name, why))
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept, over
+}
+
 // fieldCap is why a statement, as stored (trimmed, Swiss), is over a cap
 // of one of its fields: its name, its file count, a path; "" when none.
 func fieldCap(s store.Statement) string {

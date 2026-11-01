@@ -228,12 +228,21 @@ func TestFoldRespellingIsNoChange(t *testing.T) {
 	}
 }
 
+// manyFiles is n distinct paths.
+func manyFiles(n int) []string {
+	files := make([]string, n)
+	for i := range files {
+		files[i] = fmt.Sprintf("f%d.go", i)
+	}
+	return files
+}
+
 // Every prompt that asks for statements gives the name and file caps
 // fieldCap holds them to: one over a cap costs the statement (an eval's
 // first project page went whole, the file cap never stated).
 func TestPromptsStateTheFieldCaps(t *testing.T) {
 	for name, p := range map[string]string{"merge": prompts.Merge, "describe": prompts.Describe, "project": prompts.Project} {
-		for _, want := range []string{fmt.Sprintf("at most %d characters>", nameMaxChars), fmt.Sprintf(`"<path, no spaces>", ..., at most %d paths]`, filesMax)} {
+		for _, want := range []string{fmt.Sprintf("at most %d characters>", nameMaxChars), fmt.Sprintf(`"<path, no spaces, at most %d characters>", ..., at most %d paths]`, pathMaxChars, filesMax)} {
 			if !strings.Contains(p, want) {
 				t.Errorf("%s prompt lacks %q", name, want)
 			}
@@ -575,14 +584,14 @@ func TestFoldFieldCapsLeaveOneOut(t *testing.T) {
 	// refusal names each statement and its cap.
 	st := newFakeStore()
 	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{},
-		Added: []inference.Statement{{Kind: "rule", Name: "Viele", Text: "t", Files: []string{"a", "b", "c", "d", "e", "f"}}}}, nil)})
+		Added: []inference.Statement{{Kind: "rule", Name: "Viele", Text: "t", Files: manyFiles(filesMax + 1)}, {Kind: "rule", Name: strings.Repeat("n", nameMaxChars+1), Text: "t"}}}, nil)})
 	var logs strings.Builder
 	w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	w.Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.revisions) != 0 {
 		t.Errorf("every statement over a cap: revision written %+v", st.revisions)
 	}
-	if !strings.Contains(logs.String(), `every statement over a field cap: \"Viele\" (names 6 files, over 5)`) {
+	if want := fmt.Sprintf(`every statement over a field cap: \"Viele\" (names %d files, over %d), \"%s\" (name over %d characters)`, filesMax+1, filesMax, strings.Repeat("n", nameMaxChars+1), nameMaxChars); !strings.Contains(logs.String(), want) {
 		t.Errorf("refusal lacks the statements and caps:\n%s", logs.String())
 	}
 	// A statement stored over a cap and returned with its name and files

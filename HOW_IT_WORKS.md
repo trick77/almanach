@@ -1097,8 +1097,11 @@ the reason in the log and the page unchanged:
   caps. Caps that leave out every statement proposed reject the rewrite:
   they never empty a page; the refusal names each statement and its cap.
   As a rejection of the whole, one long name lost seven parts of an eval.
-  The prompts state the name and file caps: with only the name's given, an
-  eval's first project page was refused, every statement over one.
+  The prompts state the name, file and path caps: with only the name's
+  given, an eval's first project page was refused, every statement over
+  one. The project step leaves such new statements out before it looks
+  for the most that fit under its ceiling, so one among the first no
+  longer ends that search.
 - A rewrite identical to the current page (same summary, same statements
   in the same order with the same ids, kinds, names, texts and files)
   writes no revision.
