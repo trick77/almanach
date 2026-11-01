@@ -1,4 +1,4 @@
-// Hand-rolled, like ../noergler's: five routes do not need a router. The
+// Hand-rolled, like ../noergler's: a handful of routes need no router. The
 // patterns mirror backend/web/embed.go, which serves the shell for exactly
 // these paths and a 404 for everything else.
 
@@ -20,11 +20,23 @@ export type Route =
 const KEY = "[A-Za-z0-9._~-]+";
 const SLUG = "[A-Za-z0-9._-]+";
 const PR = "[1-9][0-9]{0,8}";
-const PROJECT = new RegExp(`^/projects/(${KEY})$`);
-const REPO = new RegExp(`^/projects/(${KEY})/repos/(${SLUG})$`);
-const NOTE = new RegExp(`^/projects/(${KEY})/repos/(${SLUG})/notes/(${PR})$`);
+
+// Each prefix once: the patterns below and the builders take it from here.
+export const projectsPath = "/projects";
+
+export const sourcesPath = "/sources";
+
+export const depsPath = "/dependencies";
+
+export const queuePath = "/queue";
+
+const PROJECT = new RegExp(`^${projectsPath}/(${KEY})$`);
+const REPO = new RegExp(`^${projectsPath}/(${KEY})/repos/(${SLUG})$`);
+const NOTE = new RegExp(
+  `^${projectsPath}/(${KEY})/repos/(${SLUG})/notes/(${PR})$`,
+);
 const PR_KEY = new RegExp(`^(${KEY})/(${SLUG})#(${PR})$`);
-const SOURCE = new RegExp(`^/sources/(${KEY})$`);
+const SOURCE = new RegExp(`^${sourcesPath}/(${KEY})$`);
 
 export function routeFromPath(path: string): Route {
   let m = NOTE.exec(path);
@@ -42,12 +54,6 @@ export function routeFromPath(path: string): Route {
   return { page: "projects" };
 }
 
-export const depsPath = "/dependencies";
-
-export const sourcesPath = "/sources";
-
-export const queuePath = "/queue";
-
 export function sourcePath(key: string): string {
   return `${sourcesPath}/${encodeURIComponent(key)}`;
 }
@@ -55,7 +61,7 @@ export function sourcePath(key: string): string {
 // Encoded, so a key the server would not serve becomes a visible 404
 // rather than a link that changes the URL and shows nothing.
 export function projectPath(key: string): string {
-  return `/projects/${encodeURIComponent(key)}`;
+  return `${projectsPath}/${encodeURIComponent(key)}`;
 }
 
 export function repoPath(key: string, slug: string): string {
