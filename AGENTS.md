@@ -67,4 +67,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  Left part/no map at head: ≤3 auto retries, rule `LeftParts`.
+  Left part/no map at head: ≤3 auto retries, rule `LeftParts`. Folder `system` off (sources
+  on only): no project call/page; on again = `project_due` fold; run checks: `projectStands`.

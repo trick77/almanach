@@ -68,6 +68,7 @@ const sources: Sources = {
     {
       project_key: "SHOP",
       kind: "bitbucket",
+      system: true,
       host: "https://forge.example.invalid",
       has_token: true,
       token_auth: "bearer",
@@ -86,6 +87,7 @@ const sources: Sources = {
     {
       project_key: "werkzeuge",
       kind: "static",
+      system: true,
       host: "",
       has_token: false,
       token_auth: "basic",
@@ -107,6 +109,7 @@ const sources: Sources = {
 const detail: SourceDetail = {
   project_key: "werkzeuge",
   kind: "static",
+  system: true,
   host: "",
   has_token: false,
   token_auth: "basic",
@@ -476,6 +479,39 @@ describe("SourcePage baseline", () => {
       token_auth: "basic",
       token_user: "",
     });
+  });
+
+  it("switches a static folder between one system and standalone repositories", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    const sw = await screen.findByRole("switch", { name: "Bildet ein System" });
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(/eine Projektseite und eine Systemkarte/),
+    ).toBeInTheDocument();
+    fireEvent.click(sw);
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({
+      method: "PATCH",
+      path: "sources/werkzeuge",
+      body: { system: false },
+    });
+  });
+
+  it("offers no switch for a Bitbucket project", async () => {
+    serve({
+      "sources/SHOP": {
+        ...detail,
+        project_key: "SHOP",
+        kind: "bitbucket",
+        host: "https://forge.example.invalid",
+      },
+    });
+    render(<SourcePage projectKey="SHOP" />);
+    expect(
+      await screen.findByText("https://forge.example.invalid"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 
   it("sends a token typed in the access form", async () => {

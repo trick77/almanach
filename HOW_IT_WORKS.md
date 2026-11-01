@@ -415,6 +415,26 @@ repositories of one GitHub organisation. Both land as
 key or slug; nothing else is ever written there. In compose that folder is
 the `repos` volume, in a deployment a volume claim.
 
+A source's repositories form **one system** by default: a project page
+and a system map, written by every run's project step (4b), the way a
+Bitbucket project is one product. A static folder can say otherwise
+("Bildet ein System" off, `system: false`): a folder of repositories that
+merely share a host and a token, a GitHub account's libraries and tools
+side by side, is no system, and a project page would describe one that
+does not exist. Its repositories then stand alone: each keeps its page and
+its repository map, the run makes no project call, a note's fold shows the
+model no project page and asks for null (whatever comes is not written),
+the wiki lists the repositories one by one under "Einzelne Repositories"
+and serves the project without a description, map or Markdown export. A
+project page written while the folder was a system stays in the store with
+its history; switched back on, the folder is marked due (`project_due`)
+and the next run of any of its repositories folds the project whatever a
+reconcile would skip, the mark cleared once that step got its answer, so
+the kept page catches up with repositories that came, went or changed
+meanwhile. With the sources off the word counts for nothing: every project
+is a system again. A Bitbucket project is always one system: the switch is
+a 422 there.
+
 A project and a repository are ids; the key and the slug are names. Every
 name either ever had stays a name of it, so a renamed project or repository
 keeps its pages, notes, runs and clone, and a URL, a note or a listing
@@ -596,7 +616,9 @@ resumes after a restart. The run pins the clone's head when it starts.
    or a ceiling: the page has none, and every part writes what its code
    teaches. The growth after the fold is logged.
 4. *Project.* The repository's new description folded into the project
-   page, on a full run always, on a reconcile when the summary changed.
+   page, on a full run always, on a reconcile when the summary changed;
+   never for a folder whose repositories stand alone (4a), which ends the
+   step without a call and with nothing skipped.
    Beside it the step sees the summaries of the project's other source
    repositories (80 kB with their headings; past that an even share each,
    a long summary cut at a paragraph or sentence and marked; those without

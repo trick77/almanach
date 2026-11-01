@@ -137,6 +137,15 @@ func (f *fakeSources) UpdateSourceAccess(_ context.Context, key, host, auth, use
 	f.sources[key] = s
 	return true, nil
 }
+func (f *fakeSources) SetSourceStandalone(_ context.Context, key string, standalone bool) (bool, error) {
+	s, ok := f.sources[key]
+	if !ok || s.Standalone == standalone {
+		return false, nil
+	}
+	s.Standalone = standalone
+	f.sources[key] = s
+	return true, nil
+}
 func (f *fakeSources) DeleteSource(_ context.Context, key string) (bool, error) {
 	_, ok := f.sources[key]
 	delete(f.sources, key)

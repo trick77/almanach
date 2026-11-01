@@ -38,6 +38,7 @@ type Store interface {
 	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
 	InsertLLMCall(ctx context.Context, c store.LLMCall) (int64, error)
+	ProjectSystemOf(ctx context.Context, key string) (store.ProjectSystem, error)
 }
 
 // Merger is the model call.
@@ -341,14 +342,29 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		deferred = w.deferBusy(ctx, q, err)
 		return
 	}
-	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, q.ProjectKey, "")
+	// A folder whose repositories stand alone has no project page: the
+	// prompt shows none and asks for null, and whatever comes is not folded.
+	alone, err := w.standalone(ctx, q.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: project page read failed", logging.Err(err))
+		w.log.WarnContext(ctx, "consolidate: project source read failed", logging.Err(err))
 		deferred = w.deferBusy(ctx, q, err)
 		return
 	}
+	var projectPage store.Page
+	if !alone {
+		projectPage, _, err = w.store.CurrentPage(ctx, store.ScopeProject, q.ProjectKey, "")
+		if err != nil {
+			w.log.WarnContext(ctx, "consolidate: project page read failed", logging.Err(err))
+			deferred = w.deferBusy(ctx, q, err)
+			return
+		}
+	}
 
-	prompt := render(prompts.Merge, q, repoPage, projectPage, w.limits)
+	projectDescription := describe(projectPage)
+	if alone {
+		projectDescription = standaloneProject
+	}
+	prompt := renderWith(prompts.Merge, q, repoPage, projectDescription, w.limits)
 	res := w.llm.Merge(ctx, inference.MergeRequest{Prompt: prompt})
 	callID, err := w.store.InsertLLMCall(ctx, store.LLMCall{
 		ProjectKey: q.ProjectKey, RepoSlug: q.RepoSlug, SourcePR: q.PRKey, Outcome: res.Outcome.String(),
@@ -380,11 +396,32 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		deferred = w.deferBusy(ctx, q, err)
 		return
 	}
+	if alone {
+		if res.Merge.Project != nil {
+			w.log.InfoContext(ctx, "consolidate: project rewrite left out, the repositories stand alone")
+		}
+		return
+	}
 	if err := w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, id); err != nil {
 		deferred = w.deferBusy(ctx, q, err)
 	}
 	return
 }
+
+// standalone reports whether a project's repositories stand alone: its
+// source says so, and the sources are on (the baseline with them). With
+// them off every project is a system again, a folder's old word included.
+func (w *Worker) standalone(ctx context.Context, key string) (bool, error) {
+	if w.base == nil {
+		return false, nil
+	}
+	ps, err := w.store.ProjectSystemOf(ctx, key)
+	return ps.Standalone, err
+}
+
+// standaloneProject stands in the merge prompt for the project description
+// of a folder whose repositories stand alone.
+const standaloneProject = "_None: the repositories of this project stand alone, it has no project description. Answer `\"project\": null`._"
 
 // deferNote leaves a note queued with its failed attempt counted, after a
 // hold; reports whether it stays queued: false once maxFoldAttempts is
@@ -892,6 +929,12 @@ func sameStatements(stored, returned []store.Statement) bool {
 
 // render fills the merge prompt in one pass.
 func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l config.Limits) string {
+	return renderWith(tmpl, q, repoPage, describe(projectPage), l)
+}
+
+// renderWith is render with the project description as the prompt shows
+// it: a page, or the line of a folder whose repositories stand alone.
+func renderWith(tmpl string, q store.QueuedNote, repoPage store.Page, projectDescription string, l config.Limits) string {
 	ticket := q.TicketKey
 	if ticket == "" {
 		ticket = "none"
@@ -907,7 +950,7 @@ func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l
 		"{ticket_key}", ticket,
 		"{change_kind}", kind,
 		"{repo_description}", describe(repoPage),
-		"{project_description}", describe(projectPage),
+		"{project_description}", projectDescription,
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{note}", string(q.Body),
 	).Replace(tmpl)

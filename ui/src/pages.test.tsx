@@ -55,6 +55,8 @@ const projects: Projects = {
       notes: 23,
       revision: 7,
       last_merge: mergedAt,
+      system: true,
+      repositories: [],
     },
     {
       key: "MOB",
@@ -63,6 +65,8 @@ const projects: Projects = {
       notes: 2,
       revision: 0,
       last_merge: null,
+      system: true,
+      repositories: [],
     },
   ],
 };
@@ -70,6 +74,7 @@ const projects: Projects = {
 const project: ProjectDetail = {
   key: "PAY",
   team: "platform",
+  system: true,
   description: {
     revision: 7,
     summary:
@@ -244,6 +249,98 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage />);
     expect(await screen.findByText("tools")).toBeInTheDocument();
     expect(screen.queryByText(/Team/)).not.toBeInTheDocument();
+  });
+  it("lists the repositories of a folder that is no system one by one", async () => {
+    serve({
+      projects: {
+        projects: [
+          projects.projects[0]!,
+          {
+            key: "tools",
+            team: "",
+            repos: 2,
+            notes: 0,
+            revision: 0,
+            last_merge: null,
+            system: false,
+            repositories: [
+              {
+                slug: "llmwire",
+                revision: 3,
+                summary: "Ein Client für das Gateway.",
+                notes: 0,
+                last_merge: null,
+              },
+              {
+                slug: "webfetch",
+                revision: 0,
+                summary: "",
+                notes: 0,
+                last_merge: null,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    render(<ProjectsPage />);
+    expect(await screen.findByText("Systeme")).toBeInTheDocument();
+    expect(screen.getByText("Einzelne Repositories")).toBeInTheDocument();
+    // The folder has no card of its own, each repository has one.
+    expect(
+      screen
+        .getAllByRole("link")
+        .some((a) => a.getAttribute("href") === "/projekte/tools"),
+    ).toBe(false);
+    expect(screen.getByText("llmwire").closest("a")?.getAttribute("href")).toBe(
+      "/projekte/tools/repos/llmwire",
+    );
+    expect(screen.getByText("Ein Client für das Gateway.")).toBeInTheDocument();
+    expect(screen.getByText("webfetch")).toBeInTheDocument();
+  });
+  it("keeps the card of a standalone folder without a repository yet", async () => {
+    serve({
+      projects: {
+        projects: [
+          {
+            ...projects.projects[1]!,
+            key: "tools",
+            repos: 0,
+            system: false,
+            repositories: [],
+          },
+        ],
+      },
+    });
+    render(<ProjectsPage />);
+    expect(
+      (await screen.findByText("tools")).closest("a")?.getAttribute("href"),
+    ).toBe("/projekte/tools");
+  });
+  it("lists only standalone repositories without the headings", async () => {
+    serve({
+      projects: {
+        projects: [
+          {
+            ...projects.projects[1]!,
+            key: "tools",
+            system: false,
+            repositories: [
+              {
+                slug: "vibecheck",
+                revision: 1,
+                summary: "",
+                notes: 0,
+                last_merge: null,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    render(<ProjectsPage />);
+    expect(await screen.findByText("vibecheck")).toBeInTheDocument();
+    expect(screen.queryByText("Einzelne Repositories")).toBeNull();
   });
   it("shows the empty and the failed state", async () => {
     serve({ projects: { projects: [] } });
@@ -443,6 +540,34 @@ describe("ProjectPage", () => {
     expect(screen.getByText("1 von 2 Einträgen · 1 Art")).toBeInTheDocument();
     fireEvent.keyDown(search, { key: "Escape" });
     expect(within(desc).getByText("max_size")).toBeInTheDocument();
+  });
+
+  it("shows a folder whose repositories stand alone without a description tab", async () => {
+    serve({
+      "projects/tools": {
+        ...project,
+        key: "tools",
+        system: false,
+        description: null,
+        map: null,
+        map_expected: false,
+      },
+    });
+    render(<ProjectPage projectKey="tools" />);
+    expect(
+      await screen.findByText(/stehen für sich: jedes hat seine eigene Seite/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Beschreibung/ })).toBeNull();
+    // A search does not leave the overview for a tab that is not there.
+    fireEvent.change(screen.getByRole("searchbox"), {
+      target: { value: "client" },
+    });
+    expect(window.location.hash).toBe("");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-label",
+      "Übersicht",
+    );
+    expect(screen.getByText(/Einzelne Repositories/)).toBeInTheDocument();
   });
 
   it("says so without a description and fails cleanly", async () => {

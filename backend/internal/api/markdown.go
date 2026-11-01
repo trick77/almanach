@@ -54,6 +54,15 @@ func (d Deps) projectMarkdown(w http.ResponseWriter, r *http.Request, key string
 		httpx.WriteError(w, http.StatusNotFound, "unknown project")
 		return
 	}
+	alone, err := d.standalone(ctx, key)
+	if err != nil {
+		httpx.ServerError(w, r, err, "project source")
+		return
+	}
+	if alone {
+		httpx.WriteError(w, http.StatusNotFound, "no project page: the repositories stand alone, export each repository")
+		return
+	}
 	page, found, err := d.Store.CurrentPage(ctx, store.ScopeProject, key, "")
 	if err != nil {
 		httpx.ServerError(w, r, err, "project page")

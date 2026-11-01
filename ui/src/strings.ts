@@ -10,6 +10,10 @@ import type {
   WaitReason,
 } from "./api";
 
+// The repositories of a folder that is no system: one word for the list,
+// the project header and the source.
+const standaloneRepos = "Einzelne Repositories";
+
 export const S = {
   app: "Almanach",
   nav: {
@@ -40,6 +44,10 @@ export const S = {
     firstDescription:
       "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Clone bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
+    systems: "Systeme",
+    systemsAside: "Repositories, die zusammen ein System bilden",
+    standalone: standaloneRepos,
+    standaloneAside: "jedes steht für sich, ohne Projektseite",
     problems: (n: number) =>
       n === 0
         ? "keine Problemzonen"
@@ -54,6 +62,9 @@ export const S = {
     noDescriptionHint:
       "Die erste Beschreibung entsteht, wenn Almanach ein Repository dieses Projekts aus dem Code beschreibt oder ein Pull Request gemergt wird.",
     descriptionRevision: (n: number) => `Beschreibung Revision ${n}`,
+    standalone: standaloneRepos,
+    standaloneHint:
+      "Die Repositories dieses Ordners stehen für sich: jedes hat seine eigene Seite, das Projekt keine.",
     repos: "Repositories",
     repoHeaders: ["Repository", "Beschreibung", "Notizen", "Letzter Merge"],
     noRepos: "Noch kein Repository.",
@@ -248,6 +259,18 @@ export const S = {
     listedAt: "gelistet",
     neverListed: "noch nie gelistet",
     manual: "Repositories von Hand eingetragen",
+    // A static folder's switch: one system with a project page, or
+    // repositories that each stand alone.
+    system: {
+      label: "Bildet ein System",
+      on: "An",
+      off: "Aus",
+      hintOn:
+        "Almanach beschreibt die Repositories als ein System: eine Projektseite und eine Systemkarte, wie bei einem Bitbucket-Projekt.",
+      hintOff:
+        "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln. Eine frühere Projektseite bleibt gespeichert.",
+      meta: (system: boolean) => (system ? "Ein System" : standaloneRepos),
+    },
     counts: {
       ready: (n: number) => `${n} bereit`,
       active: (n: number) => `${n} läuft`,

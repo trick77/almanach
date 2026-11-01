@@ -29,6 +29,9 @@ type ProjectRow struct {
 	Notes     int
 	Revision  int
 	LastMerge *time.Time
+	// Standalone: its source says the repositories stand alone; the wiki
+	// lists them one by one, no project page.
+	Standalone bool
 }
 
 // What the wiki lists. With the sources on (sourced), a project is a source
@@ -62,7 +65,8 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 		       (SELECT COUNT(*) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
 		       COALESCE((SELECT rv.revision FROM pages pg JOIN revisions rv ON rv.id = pg.current_revision_id
 		                  WHERE pg.scope = 'project' AND pg.project_id = p.id AND pg.repo_id = 0), 0),
-		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id)
+		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
+		       EXISTS (SELECT 1 FROM sources s WHERE s.project_id = p.id AND s.standalone)
 		  FROM `+projectsFrom(sourced)+` p ORDER BY p.key`)
 	if err != nil {
 		return nil, err
@@ -71,7 +75,7 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 	out := []ProjectRow{}
 	for rows.Next() {
 		var r ProjectRow
-		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, timeOrNil(&r.LastMerge)); err != nil {
+		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, timeOrNil(&r.LastMerge), &r.Standalone); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -157,6 +161,41 @@ func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]Repo
 		// written after the layout.
 		r.Summary = lang.Relaid(r.Summary, false)
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// StandaloneRepos is the source repositories of every project whose
+// repositories stand alone, by the project's current key, in one query:
+// what the wiki's entry lists one by one.
+func (s *Store) StandaloneRepos(ctx context.Context) (map[string][]RepoRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.key, r.slug,
+		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
+		       (SELECT COUNT(*) FROM notes n WHERE n.repo_id = r.id),
+		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.repo_id = r.id)
+		  FROM sources s
+		  JOIN projects p ON p.id = s.project_id
+		  JOIN source_repos sr ON sr.project_id = s.project_id
+		  JOIN repos r ON r.id = sr.repo_id
+		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
+		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
+		 WHERE s.standalone ORDER BY p.key, r.slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string][]RepoRow{}
+	for rows.Next() {
+		var key string
+		var r RepoRow
+		if err := rows.Scan(&key, &r.Slug, &r.Revision, &r.Summary, &r.Notes, timeOrNil(&r.LastMerge)); err != nil {
+			return nil, err
+		}
+		// TRANSITIONAL(layout): Remove when every page's current revision was
+		// written after the layout.
+		r.Summary = lang.Relaid(r.Summary, false)
+		out[key] = append(out[key], r)
 	}
 	return out, rows.Err()
 }
