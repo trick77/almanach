@@ -338,7 +338,9 @@ export function Tile({
       <div className="mt-0.5 text-[22px] font-medium tabular-nums text-ink">
         {value}
       </div>
-      {note && <div className="text-[12px] text-muted">{note}</div>}
+      {note && (
+        <div className="text-[12px] text-muted wrap-anywhere">{note}</div>
+      )}
     </div>
   );
 }

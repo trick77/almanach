@@ -246,8 +246,9 @@ function Body({ n }: { n: NoteDetail }) {
 /** Fact is a label/value row: a short value at the right edge, or, with
  *  `aligned`, every value of the box in one left-aligned column beside a
  *  label column: the bugfix box, whose symptom and cause are sentences and
- *  read badly right-ragged. minmax(0,1fr) and wrap-break-word: a long path
- *  in a cause breaks inside the box instead of past its border. */
+ *  read badly right-ragged. min-w-0 (minmax(0,1fr)) and wrap-break-word: a
+ *  path in a cause, a SHA or a model label breaks inside its row instead
+ *  of past the box. */
 function Fact({
   label,
   last = false,
@@ -273,7 +274,8 @@ function Fact({
       <dt className="text-muted">{label}</dt>
       <dd
         className={
-          "m-0 text-ink-dim " + (aligned ? "wrap-break-word" : "text-right")
+          "m-0 min-w-0 text-ink-dim wrap-break-word " +
+          (aligned ? "" : "text-right")
         }
       >
         {children}
