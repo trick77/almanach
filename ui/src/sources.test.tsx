@@ -4,6 +4,7 @@ import App from "./App";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import type { Me, SourceDetail, Sources } from "./api";
+import { S } from "./strings";
 
 /** serve answers GET paths from a table and records every write. */
 function serve(table: Record<string, unknown>) {
@@ -370,6 +371,48 @@ describe("SourcePage", () => {
         true,
       ),
     );
+  });
+
+  describe("the source's sync button", () => {
+    const [cli, legacy] = detail.repos;
+    if (!cli?.baseline || !legacy) throw new Error("fixture");
+    const run = cli.baseline;
+
+    /** sourceSync renders the page with the given repos and returns the
+     *  source's button: the ready row's own one shares its name. */
+    const sourceSync = async (repos: SourceDetail["repos"]) => {
+      serve({ "sources/werkzeuge": { ...detail, repos } });
+      render(<SourcePage projectKey="werkzeuge" />);
+      await screen.findByText("acme-cli");
+      const top = screen
+        .getAllByRole("button", { name: "Synchronisieren" })
+        .filter((b) => b.closest("table") === null);
+      expect(top).toHaveLength(1);
+      return top[0];
+    };
+
+    it("is held while a repo syncs", async () => {
+      const b = await sourceSync([cli, { ...legacy, state: "syncing" }]);
+      expect(b).toBeDisabled();
+      expect(b).toHaveAttribute("title", S.sources.actions.syncRunning);
+    });
+
+    it("stays free while a repo only waits", async () => {
+      const b = await sourceSync([cli, { ...legacy, state: "pending" }]);
+      expect(b).toBeEnabled();
+      expect(b).not.toHaveAttribute("title");
+      // The tile still says something runs.
+      expect(screen.getByText(S.sources.tiles.running)).toBeInTheDocument();
+    });
+
+    it("stays free while a run describes", async () => {
+      const b = await sourceSync([
+        { ...cli, baseline: { ...run, state: "describing" } },
+        legacy,
+      ]);
+      expect(b).toBeEnabled();
+      expect(b).not.toHaveAttribute("title");
+    });
   });
 
   it("confirms before removing", async () => {
