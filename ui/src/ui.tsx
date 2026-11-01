@@ -136,8 +136,9 @@ export function Pill({
 }
 
 /** Prose renders a text as paragraphs, split on blank lines and nothing
- *  else: the wiki is prose, never markdown. Held at 75ch, in its own font
- *  size: the page column is 1400px, and a paragraph that wide is not read. */
+ *  else: the wiki is prose, never markdown. Held at 75ch, the ch of the
+ *  font size the caller's className sets: the page column is 1400px, and a
+ *  paragraph that wide is not read. */
 export function Prose({
   text,
   className = "",

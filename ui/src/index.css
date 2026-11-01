@@ -122,6 +122,13 @@
   height: auto;
 }
 
+/* The full view (DiagramView) draws 1:1 and scrolls: the scale-down above
+   lifted, by the more specific selector. Unlayered like it, so no Tailwind
+   utility could do this: an unlayered rule beats every layered one. */
+.diagram-full .rongo-diagram svg {
+  max-width: none;
+}
+
 @font-face {
   font-family: "Anthropic Sans";
   src: url("./fonts/SansWebVariable-TextRegular.woff2") format("woff2");

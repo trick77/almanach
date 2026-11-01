@@ -1,8 +1,9 @@
 // Copied from rongo (ui/src/DiagramView.tsx), kept in step by hand.
 // Almanach: the title and the kind come in as props (rongo reads them off
 // the mermaid source), the copy is strings.ts's, and the drawing's wrapper
-// (rongo's MermaidSvg) lives here as DiagramSvg, and the sheet is 1400px,
-// not rongo's 1100px: the page column is wider than rongo's.
+// (rongo's MermaidSvg) lives here as DiagramSvg. The full view draws 1:1 on
+// a sheet as wide as the window, not scaled into rongo's 1100px: the page
+// column is 1400px, so a scaled sheet could open smaller than the page.
 import { useRef, type ReactNode } from "react";
 import { download, fileName, toSvgFile } from "./diagramExport";
 import OverlayShell from "./OverlayShell";
@@ -10,10 +11,10 @@ import { DownloadIcon } from "./icons";
 import { S } from "./strings";
 
 /**
- * DiagramView is the diagram seen whole. On the page the picture is scaled
- * into the column between the statements; here it has a sheet of its own,
- * 1400px like the page column, so it never opens smaller than it was drawn
- * on the page.
+ * DiagramView is the diagram seen whole. On the page a wide picture is
+ * scaled down into the column; here it is drawn at its own size, 1:1, and
+ * scrolls when it is wider or taller than the window, so it never opens
+ * smaller than the page showed it.
  */
 export default function DiagramView({
   title,
@@ -35,7 +36,7 @@ export default function DiagramView({
   return (
     <OverlayShell
       label={title}
-      dialogClassName="grid h-full w-full max-w-[1400px] grid-rows-[auto_1fr] overflow-hidden rounded-none border-0 bg-panel font-sans shadow-panel sm:rounded-ui-lg sm:border sm:border-elevated-border"
+      dialogClassName="grid h-full w-full grid-rows-[auto_1fr] overflow-hidden rounded-none border-0 bg-panel font-sans shadow-panel sm:rounded-ui-lg sm:border sm:border-elevated-border"
       headerClassName="flex items-center gap-2 border-b border-border px-3 py-2.5 sm:gap-3 sm:px-4.5 sm:py-3"
       onClose={onClose}
       header={
@@ -55,14 +56,14 @@ export default function DiagramView({
         </>
       }
     >
-      {/* The drawing scales to the sheet's width and no further: the SVG
-          carries its own max-width, so a small diagram stays 1:1 and is
-          centred, and a wide one fits. */}
+      {/* 1:1: the SVG's own width, the page's max-width lifted. Centred
+          while it fits; center-safe, so a wider one starts at the left edge
+          and scrolls instead of being cut off on both sides. */}
       <div
         ref={body}
-        className="grid min-h-0 place-items-center overflow-auto p-6"
+        className="grid min-h-0 place-items-center-safe overflow-auto p-6"
       >
-        <div className="w-full">
+        <div className="diagram-full w-max">
           <DiagramSvg svg={svg} title={title} />
         </div>
       </div>
