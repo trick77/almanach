@@ -8,7 +8,9 @@
 package markup
 
 import (
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,13 +20,206 @@ import (
 // export's ### statement names and the prompt frame's ### [id] lines.
 const Heading = "#### "
 
+// MaxHeading is the longest title a heading line holds, in runes: a longer
+// one is a whole text a model wrote on one line behind a "#### ", kept as
+// text without the marks.
+const MaxHeading = 120
+
+// The kinds of a Block.
+const (
+	BlockParagraph = "paragraph"
+	BlockHeading   = "heading"
+	BlockList      = "list"
+	BlockNumbered  = "numbered"
+)
+
+// Block is one block of a laid-out text as the model returns it. The
+// schema carries the layout, not newlines inside a JSON string: a model
+// that writes a whole text on one line (or breaks it with "<br>") still
+// gives paragraphs, lists and sub-headings. Text is a paragraph's or a
+// heading's, or a list's lead-in; Items a list's.
+type Block struct {
+	Kind  string   `json:"kind"`
+	Text  string   `json:"text"`
+	Items []string `json:"items"`
+}
+
+// FromBlocks is blocks as text for Normalize: a heading a "#### " line, a
+// list one item a line, numbered from 1, blocks one blank line apart.
+// Marks a model wrote anyway ("## " before a heading's text, "- " before
+// an item) are dropped, not doubled; empty blocks and items are left out.
+func FromBlocks(bs []Block) string {
+	var out []string
+	for _, b := range bs {
+		text := strings.TrimSpace(b.Text)
+		switch b.Kind {
+		case BlockHeading:
+			if t, ok := heading(text); ok {
+				text = t
+			}
+			if t := strings.Join(strings.Fields(text), " "); t != "" {
+				out = append(out, Heading+t)
+			}
+		case BlockList, BlockNumbered:
+			if text != "" {
+				out = append(out, text)
+			}
+			var lines []string
+			for _, it := range b.Items {
+				it = unmarked(strings.Join(strings.Fields(it), " "), b.Kind)
+				if it == "" {
+					continue
+				}
+				if isRule("- " + it) {
+					// "---" as an item would be a rule, dropped on the read.
+					it = CodeSpan(it)
+				}
+				if b.Kind == BlockList {
+					lines = append(lines, "- "+it)
+				} else {
+					lines = append(lines, strconv.Itoa(len(lines)+1)+". "+it)
+				}
+			}
+			if len(lines) > 0 {
+				out = append(out, strings.Join(lines, "\n"))
+			}
+		default:
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+// unmarked is a list item without the marker of its own block's kind a
+// model wrote anyway ("- " in a list, "2. " in a numbered one); a number
+// in a bullet item ("2. Stufe") is its text and stays.
+func unmarked(it, kind string) string {
+	if kind == BlockNumbered {
+		if _, rest, ok := ordered(it); ok {
+			return rest
+		}
+		return it
+	}
+	if len(it) > 2 && strings.ContainsRune("-*+", rune(it[0])) && it[1] == ' ' {
+		return strings.TrimSpace(it[2:])
+	}
+	return it
+}
+
+// restarts reports whether a list item starts a list of its own after the
+// block or item before it: a "1." after a numbered item. Two numbered
+// blocks of a model's stay two lists, as the UI's blocks reads them.
+func restarts(before, item string) bool {
+	last := before[strings.LastIndexByte(before, '\n')+1:]
+	n, _, ok := ordered(item)
+	_, _, prevOrdered := ordered(last)
+	return ok && n == "1" && prevOrdered
+}
+
+// brTag is an HTML line break as models write one; inlineHeading a
+// heading's marks inside a line, a sub-heading a model wrote without the
+// newline before it.
+var (
+	brTag         = regexp.MustCompile(`(?i)<br\s*/?>`)
+	inlineHeading = regexp.MustCompile(`[ \t]+#{4,6}[ \t]`)
+)
+
+// Breaks is s with every <br> outside code a newline and every heading
+// mark inside a line on a line of its own: a model that will not write a
+// newline into a JSON string writes the tag, or nothing. Inside a code
+// span or a closed fence it is code and stays. lang.Laid runs it before
+// redaction, so a credential split by a <br> is one to the redaction.
+func Breaks(s string) string {
+	lines := strings.Split(s, "\n")
+	proseLines(lines, func(i int) {
+		lines[i] = mapProse(lines[i], func(p string) string {
+			return inlineHeading.ReplaceAllString(brTag.ReplaceAllString(p, "\n"), "\n"+Heading)
+		})
+	})
+	return strings.Join(lines, "\n")
+}
+
+// LayoutLost reports whether stored text lost its layout on the way in:
+// a heading's or a break's marks inside a line (" #### ", "<br>") outside
+// code, or a heading line of a paragraph's length. Such a text is a
+// model's whole answer on one line, written before the schema carried
+// blocks and Breaks; the prompt asks for it again, laid out. A long
+// paragraph is no such mark: one paragraph block is stored as one.
+//
+// TRANSITIONAL(lost-layout): Remove when no current revision's text is
+// LayoutLost.
+func LayoutLost(s string) bool {
+	lost := false
+	lines := strings.Split(s, "\n")
+	proseLines(lines, func(i int) {
+		t := strings.TrimSpace(lines[i])
+		if title, ok := StoredHeading(t); ok && utf8.RuneCountInString(title) > MaxHeading {
+			lost = true
+		}
+		mapProse(t, func(p string) string {
+			lost = lost || brTag.MatchString(p) || inlineHeading.MatchString(p)
+			return p
+		})
+	})
+	return lost
+}
+
+// proseLines calls f with the index of every line outside a closed fence,
+// the fence's own lines left out: Normalize's fence rule, for Breaks and
+// LayoutLost.
+func proseLines(lines []string, f func(i int)) {
+	fence := ""
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if fence != "" {
+			if ClosesFence(t, fence) {
+				fence = ""
+			}
+			continue
+		}
+		if fc := FenceOf(t); fc != "" && slices.ContainsFunc(lines[i+1:], func(l string) bool { return ClosesFence(strings.TrimSpace(l), fc) }) {
+			fence = fc
+			continue
+		}
+		f(i)
+	}
+}
+
+// mapProse is a line with f applied to each run of it outside code spans;
+// a backtick run nothing closes is prose, as SpanAt reads it.
+func mapProse(l string, f func(string) string) string {
+	var b strings.Builder
+	for j := 0; j < len(l); {
+		if l[j] == '`' {
+			end, ok := SpanAt(l, j)
+			if ok {
+				b.WriteString(l[j:end])
+			} else {
+				b.WriteString(f(l[j:end]))
+			}
+			j = end
+			continue
+		}
+		next := strings.IndexByte(l[j:], '`')
+		if next < 0 {
+			next = len(l) - j
+		}
+		b.WriteString(f(l[j : j+next]))
+		j += next
+	}
+	return b.String()
+}
+
 // Normalize is model text in the stored form: blocks one blank line apart;
 // a paragraph's lines as written, their indents dropped (so the Swiss rule
 // skips none as code); a list item one "- " or "N. " line, its
 // continuation lines joined to it; a heading, any level, a "#### " line;
 // a rule ("* * *", "---") dropped, a block's end. A fenced block's lines
 // become `code` spans: a "# comment" in it never turns into a heading.
-// What was dropped is the text when nothing else is: a text that is only
+// A <br> outside code is a newline; a heading longer than MaxHeading is
+// text. What was dropped is the text when nothing else is: a text that is only
 // headings or a fence's word keeps the titles or the word as lines, never
 // empty headings to show or an empty text for the page check to refuse.
 // Normalize of its own output is that output: one pass is repeated until
@@ -32,9 +227,10 @@ const Heading = "#### "
 // first pass leaves that the next reads anew ("* -" and "-" joined are
 // "- - -", a rule) would otherwise drop an item on a later read.
 func Normalize(s string) string {
-	out := normalizeOnce(s)
+	out := normalizeOnce(Breaks(s))
 	for range 8 {
-		next := normalizeOnce(out)
+		// breaks each pass: joining a list item's lines can make a <br>.
+		next := normalizeOnce(Breaks(out))
 		if next == out {
 			break
 		}
@@ -55,7 +251,7 @@ func normalizeOnce(s string) string {
 	flush := func() {
 		switch {
 		case len(cur) == 0:
-		case list && lastList:
+		case list && lastList && !restarts(blocks[len(blocks)-1], cur[0]):
 			// Two lists with nothing between (a blank line) are one: the
 			// next read would join them.
 			blocks[len(blocks)-1] += "\n" + strings.Join(cur, "\n")
@@ -121,7 +317,17 @@ func normalizeOnce(s string) string {
 			flush()
 			continue
 		}
-		if title, ok := heading(line); ok {
+		if title, ok := heading(line); ok && utf8.RuneCountInString(title) > MaxHeading {
+			// A "heading" of a paragraph's length is a model's whole text on
+			// one line: its marks go, it stays text, never one long title.
+			// Every run of marks at once: one left would be a heading on the
+			// next read.
+			flush()
+			line = title
+			for t, more := heading(line); more; t, more = heading(line) {
+				line = t
+			}
+		} else if ok {
 			flush()
 			blocks = append(blocks, Heading+title)
 			dropped = append(dropped, title)
@@ -129,7 +335,7 @@ func normalizeOnce(s string) string {
 			continue
 		}
 		if item, ok := ListItem(line); ok {
-			if !list {
+			if !list || restarts(cur[len(cur)-1], item) {
 				flush()
 				list = true
 			}

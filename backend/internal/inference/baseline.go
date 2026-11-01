@@ -185,7 +185,7 @@ func catalogueFormat() llmwire.ResponseFormat {
 func patchFormat(diagrams bool) llmwire.ResponseFormat {
 	ids := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	return strict(PatchSchemaName, map[string]any{
-		"summary":    map[string]any{"type": []any{"string", "null"}, "minLength": 1},
+		"summary":    nullableBlocks(),
 		"statements": statements(diagrams, RepoKinds),
 		"added":      added(diagrams, RepoKinds),
 		"drop":       ids,

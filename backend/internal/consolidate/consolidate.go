@@ -1004,6 +1004,18 @@ const (
 	noStatementsYet = "\n_No statements yet: " + allNew + "._\n"
 )
 
+// TRANSITIONAL(lost-layout): Remove when no current revision's text is
+// markup.LayoutLost.
+//
+// lostSummary and lostText mark a stored text that lost its layout
+// (markup.LayoutLost): written on one line by a model before the schema
+// carried blocks. The step that sees one writes it anew, its content
+// kept: a summary as if there were none, a statement as an edit.
+const (
+	lostSummary = "_No summary yet: the stored one below lost its layout. Write the summary anew, in blocks, its content kept; never `null`._\n\n"
+	lostText    = "\n_This text lost its layout: return the statement in `statements`, its text in blocks, its content kept._\n"
+)
+
 // describe renders a page the prompt writes: the summary, then one line per
 // statement with its id, so the model can keep or edit by id.
 func describe(p store.Page) string { return describePage(p, pageView{}) }
@@ -1038,6 +1050,12 @@ func describePage(p store.Page, v pageView) string {
 		return noneYet
 	}
 	var b strings.Builder
+	if !v.read && markup.LayoutLost(p.Summary) {
+		// Stored on one line: shown as no summary, so a step writes one in
+		// blocks rather than keeping it (null). A rerun is how such a page
+		// gets its layout back.
+		b.WriteString(lostSummary)
+	}
 	b.WriteString(p.Summary)
 	b.WriteString("\n")
 	if len(p.Statements) == 0 && !v.read {
@@ -1048,6 +1066,11 @@ func describePage(p store.Page, v pageView) string {
 	// every second paragraph outside any id.
 	for _, s := range p.Statements {
 		fmt.Fprintf(&b, "\n### [%s] %s: %s\n\n%s\n", s.ID, s.Kind, s.Name, s.Text)
+		// A statement the step must leave alone is not asked for: its edit
+		// would be struck.
+		if !v.read && v.newer[s.ID] == "" && markup.LayoutLost(s.Text) {
+			b.WriteString(lostText)
+		}
 		if len(s.Files) > 0 {
 			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
 		}

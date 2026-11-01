@@ -84,6 +84,9 @@ export type Block =
 /** The one sub-heading level statement text holds (markup.Heading). */
 const headingMark = "#### ";
 
+/** The longest heading title, in code points (markup.MaxHeading). */
+const maxHeading = 120;
+
 /** listItem is a line as a list item in the stored form markup.Normalize
  *  writes ("- text", "12. text"), or null. */
 function listItem(
@@ -127,17 +130,30 @@ export function blocks(text: string): Block[] {
       gap = false;
       if (listItem(line) === null) close();
     }
-    if (
-      line.startsWith(headingMark) &&
-      line.slice(headingMark.length).trim() !== ""
-    ) {
+    const title = line.startsWith(headingMark)
+      ? line.slice(headingMark.length).trim()
+      : "";
+    if (title !== "" && [...title].length <= maxHeading) {
       close();
-      out.push({ kind: "h", text: line.slice(headingMark.length).trim() });
+      out.push({ kind: "h", text: title });
+      continue;
+    }
+    if (title !== "") {
+      // A heading of a paragraph's length is text (markup.MaxHeading).
+      close();
+      para.push(title);
       continue;
     }
     const item = listItem(line);
     if (item !== null) {
-      if (list === null || list.kind !== item.kind) {
+      // A "1." after a numbered item starts a list of its own, as
+      // markup.Normalize keeps two numbered blocks two.
+      const restarts =
+        list !== null &&
+        list.kind === "ol" &&
+        item.kind === "ol" &&
+        item.n === 1;
+      if (list === null || list.kind !== item.kind || restarts) {
         close();
         list =
           item.kind === "ul"

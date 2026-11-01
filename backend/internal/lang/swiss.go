@@ -19,8 +19,11 @@ func Prose(s string) string { return SwissSS(redact.Text(strings.TrimSpace(s))) 
 // it (a PEM block's header ends its line only there), then the stored
 // layout (markup.Normalize), then Swiss spelling, which so sees no line as
 // indented code.
+//
+// A model's <br> becomes a newline first (markup.Breaks): a credential it
+// split is one to the redaction, every shape of it.
 func Laid(s string) string {
-	return SwissSS(markup.Normalize(redact.Text(strings.TrimSpace(s))))
+	return SwissSS(markup.Normalize(redact.Text(markup.Breaks(strings.TrimSpace(s)))))
 }
 
 var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")

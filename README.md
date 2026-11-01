@@ -42,7 +42,7 @@ Nothing flows back into reviews.
   each naming the files it rests on and the pull requests it was learned
   from. A coding agent pulls a repository's page as Markdown
   (`/api/projects/{key}/repos/{slug}.md`) with a team token.
-- **Project page**: the system as a whole: purpose and boundary, each
+- **Project page**: the system as a whole: its purpose, each
   repository's role, the flows across them, what runs where; then the
   components several repositories share and who owns them, the public
   interfaces one repository offers the others, the entities that cross
