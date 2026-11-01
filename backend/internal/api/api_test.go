@@ -53,31 +53,15 @@ type fakeStore struct {
 	// graph is what Dependencies answers; graphErr fails it.
 	graph    store.Graph
 	graphErr error
+	// libs is what Libraries answers, by project key.
+	libs map[string][]store.Library
 }
 
 func (f *fakeStore) Dependencies(context.Context) (store.Graph, error) { return f.graph, f.graphErr }
 
-// Libraries answers from graph as the store does: what the project's
-// repositories use of other projects'.
+// Libraries answers libs by project key; graphErr fails it.
 func (f *fakeStore) Libraries(_ context.Context, key, _ string) ([]store.Library, error) {
-	if f.graphErr != nil {
-		return nil, f.graphErr
-	}
-	var out []store.Library
-	at := map[store.RepoRef]int{}
-	for _, e := range f.graph.Edges {
-		if e.From.ProjectKey != key || e.To.ProjectKey == key {
-			continue
-		}
-		i, ok := at[e.To]
-		if !ok {
-			i = len(out)
-			at[e.To] = i
-			out = append(out, store.Library{RepoRef: e.To})
-		}
-		out[i].UsedBy = append(out[i].UsedBy, e.From)
-	}
-	return out, nil
+	return f.libs[key], f.graphErr
 }
 
 func (f *fakeStore) ProjectSystemOf(_ context.Context, key string) (store.ProjectSystem, error) {

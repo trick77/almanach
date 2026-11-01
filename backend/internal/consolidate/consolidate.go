@@ -88,8 +88,10 @@ type Worker struct {
 	problemsRun int64
 	problems    []store.RepoProblem
 	// libs is run libsRun's repository's libraries as its describe steps
-	// show them, read at its first: a library's summary changing mid-run
-	// waits for the next run, as every other input pinned at the start.
+	// show them, read at the first step this process runs: a saving of
+	// reads, not a pin. A restart mid-run reads them again, and the project
+	// step reads its own; a summary that changed between is context, not
+	// code, so the steps may see two versions of it.
 	libsRun int64
 	libs    string
 	// busyRun and busyWrites count the step writes of one run a busy

@@ -34,6 +34,8 @@ func depsStore() *fakeStore {
 	st.teams["apps"], st.teams["libs"] = "", ""
 	st.repos["apps"] = []store.RepoRow{{Slug: "fetch"}, {Slug: "loom"}, {Slug: "rongo"}}
 	st.repos["libs"] = []store.RepoRow{{Slug: "wire"}}
+	g := depsGraph()
+	st.libs = map[string][]store.Library{"apps": {{RepoRef: g.Edges[1].To, UsedBy: []store.RepoRef{g.Edges[1].From, g.Edges[2].From}}}}
 	return st
 }
 

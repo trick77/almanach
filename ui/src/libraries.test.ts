@@ -105,4 +105,47 @@ describe("withLibraries", () => {
     // "llmwire" alone names neither: the model's node stays.
     expect(ir.nodes.some((n) => n.id === "wire")).toBe(true);
   });
+
+  it("keeps a shared slug ambiguous when one of the two was cut", () => {
+    const many = [
+      llmwire,
+      ...Array.from({ length: 20 }, (_, i) => ({ ...llmwire, slug: `x${i}` })),
+      { ...llmwire, project: "other" },
+    ];
+    const ir = withLibraries(map, many);
+    expect(ir.nodes.some((n) => n.id === "library:other/llmwire")).toBe(false);
+    expect(ir.nodes.some((n) => n.id === "wire")).toBe(true);
+  });
+
+  it("draws a library edge the model drew backwards once", () => {
+    const back: FlowIR = {
+      ...map,
+      edges: [
+        map.edges[0],
+        {
+          from: "wire",
+          to: "loom",
+          label: "library",
+          dashed: false,
+          head: "end",
+        },
+      ],
+    };
+    const ir = withLibraries(back, [llmwire]);
+    const lib = "library:tools/llmwire";
+    expect(
+      ir.edges.filter(
+        (e) =>
+          (e.from === lib && e.to === "loom") ||
+          (e.from === "loom" && e.to === lib),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("leaves out a library whose users the map does not show", () => {
+    const ir = withLibraries(map, [
+      { ...llmwire, used_by: [{ project: "apps", slug: "newer" }] },
+    ]);
+    expect(ir).toBe(map);
+  });
 });
