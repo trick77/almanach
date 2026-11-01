@@ -386,3 +386,23 @@ func TestMapStandsOverRelaidText(t *testing.T) {
 		t.Error("a renamed statement left the map standing")
 	}
 }
+
+// A basis hashed while a summary's headings were dropped stands when a read
+// keeps them now; a changed word still makes the map due.
+// TRANSITIONAL(summary-headings): Remove with withoutHeadings.
+func TestMapStandsOverSummaryHeadings(t *testing.T) {
+	old := Page{Summary: "Der Dienst.\n\n- eins\n- zwei", Statements: []Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "Text."}}}
+	read := old
+	read.RepoMapBasis = old.MapBasis()
+	read.Summary = "#### Zweck\n\nDer Dienst.\n\n#### Teile\n\n- eins\n\n#### Mehr\n\n- zwei"
+	if !read.MapStands() {
+		t.Error("a summary read with its headings made the map due again")
+	}
+	read.Summary = "#### Zweck\n\nDer Dienst neu.\n\n- eins\n- zwei"
+	if read.MapStands() {
+		t.Error("a changed summary left the map standing")
+	}
+	if got := withoutHeadings("#### Nur\n\n#### Titel"); got != "#### Nur\n\n#### Titel" {
+		t.Errorf("only headings = %q, want it as it is", got)
+	}
+}

@@ -227,15 +227,18 @@ export function Inline({
  *  (blocks): paragraphs, flat lists, **bold**, code spans and #### sub-
  *  headings; anything else as written. Held at measure, in the font size
  *  the caller's className sets. query sets off a search's matches in every
- *  block. */
+ *  block. heading is the sub-headings' level, one under the text's own: a
+ *  statement's h5 under its h4 name, a summary's h3 under the page's h2. */
 export function Doc({
   text,
   className = "",
   query = "",
+  heading: H = "h5",
 }: {
   text: string;
   className?: string;
   query?: string;
+  heading?: "h3" | "h5";
 }) {
   const block = "mb-3.5 last:mb-0";
   return (
@@ -244,12 +247,12 @@ export function Doc({
         switch (b.kind) {
           case "h":
             return (
-              <h5
+              <H
                 key={i}
                 className="mt-5 mb-1.5 font-sans text-[13.5px] font-semibold tracking-[.01em] text-ink first:mt-0"
               >
                 <Inline text={b.text} query={query} bold />
-              </h5>
+              </H>
             );
           case "ul":
           case "ol": {
@@ -301,7 +304,7 @@ export function Summary({
 }) {
   const className = "font-serif text-[17px] leading-[1.6] text-ink-prose";
   return layout ? (
-    <Doc text={text} query={query} className={className} />
+    <Doc text={text} query={query} className={className} heading="h3" />
   ) : (
     <Prose text={text} query={query} className={className} />
   );

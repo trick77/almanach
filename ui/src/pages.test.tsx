@@ -438,8 +438,9 @@ describe("ProjectPage", () => {
     render(<ProjectPage projectKey="PAY" />);
     await openTab(/Beschreibung/);
     const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
-    expect(within(desc).getByText("Zweck").tagName).toBe("H5");
-    expect(within(desc).getByText("Rollen").tagName).toBe("H5");
+    // A summary's parts sit under the page's h2, a statement's under its h4.
+    expect(within(desc).getByText("Zweck").tagName).toBe("H3");
+    expect(within(desc).getByText("Rollen").tagName).toBe("H3");
     expect(within(desc).getByText("Kern").tagName).toBe("STRONG");
     expect(within(desc).getByText("Abrechnung").tagName).toBe("LI");
     expect(within(desc).getByText("Ablauf").tagName).toBe("H5");

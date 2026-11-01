@@ -18,6 +18,7 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
@@ -1874,6 +1875,15 @@ func shorten(s string, n int) string {
 		cut = cut[:i]
 	} else if i := sentenceEnd(cut); i > len(cut)/2 {
 		cut = cut[:i+1]
+	}
+	// A part's heading, whole or cut, with none of its text after it says
+	// nothing and would take the mark into its title.
+	for i := strings.LastIndex(cut, "\n\n"); i >= 0; i = strings.LastIndex(cut, "\n\n") {
+		last := cut[i+2:]
+		if _, h := markup.StoredHeading(last); !h || strings.Contains(last, "\n") {
+			break
+		}
+		cut = cut[:i]
 	}
 	return cut + shortenedMark
 }

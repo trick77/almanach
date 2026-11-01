@@ -304,15 +304,16 @@ PR keys as evidence only.
 
 An agent reads files, not JSON. `GET /api/projects/{key}.md` and
 `GET /api/projects/{key}/repos/{slug}.md` answer the current revision as
-`text/markdown; charset=utf-8`: the title and revision, the summary, the
+`text/markdown; charset=utf-8`: the title and revision, the summary under
+`## Überblick`, the
 project's system map as a fenced `json` block, then the statements
 grouped by kind in the order invariants, interfaces, rules, decisions,
 pitfalls, extensions, components, entities (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame; a statement's text and the summary
 go in in their stored layout (paragraphs, `- ` and `N. ` items, bold,
-code spans, `####` sub-headings: a statement's under its `###` name, the
-summary's above the `##` kinds),
+code spans, sub-headings a level under their text's own: a statement's
+`####` under its `###` name, the summary's `###` under `## Überblick`),
 each line's indent dropped and any other line that would read as
 structure (a heading, quote, fence, list, rule, underline, HTML) escaped
 with a backslash, and a fence or code span

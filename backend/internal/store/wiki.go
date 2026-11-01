@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/lang"
+	"github.com/trick77/almanach/internal/markup"
 )
 
 // Scopes of a description.
@@ -127,6 +129,17 @@ func (p Page) MapStands() bool {
 	if p.RepoMapBasis == p.MapBasis() {
 		return true
 	}
+	// A basis hashed while a summary's headings were dropped is of the
+	// summary without them; that a read keeps them now is no reason for a
+	// paid redraw either.
+	// TRANSITIONAL(summary-headings): Remove when every repository page's
+	// map basis was hashed after summaries kept their headings.
+	if headless := p; headless.Summary != "" {
+		headless.Summary = withoutHeadings(p.Summary)
+		if headless.Summary != p.Summary && p.RepoMapBasis == headless.MapBasis() {
+			return true
+		}
+	}
 	// A basis hashed before the layout is of the text as stored; a read
 	// that only laid it out anew is no reason for a paid redraw.
 	// TRANSITIONAL(layout): Remove with Page.Stored.
@@ -140,6 +153,32 @@ func (p Page) MapStands() bool {
 		raw.Statements[i].Text = p.Stored.Texts[i]
 	}
 	return p.RepoMapBasis == raw.MapBasis()
+}
+
+// withoutHeadings is a stored summary as the read laid it out while a
+// summary held no heading: its #### blocks gone, two lists they parted one.
+// Only headings: as it is, for that read kept their titles as this one does.
+// TRANSITIONAL(summary-headings): Remove with MapStands' headless basis.
+func withoutHeadings(s string) string {
+	var kept []string
+	lastList := false
+	for _, b := range strings.Split(s, "\n\n") {
+		if _, h := markup.StoredHeading(b); h {
+			continue
+		}
+		first, _, _ := strings.Cut(b, "\n")
+		_, _, list := markup.StoredItem(first)
+		if list && lastList {
+			kept[len(kept)-1] += "\n" + b
+			continue
+		}
+		kept = append(kept, b)
+		lastList = list
+	}
+	if len(kept) == 0 {
+		return s
+	}
+	return strings.Join(kept, "\n\n")
 }
 
 // MapBasis is the description a repository map is drawn from, as a hash:

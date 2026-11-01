@@ -775,13 +775,9 @@ var abbreviations = map[string]bool{
 // that is no sub-heading (a heading names a part, it opens nothing), the
 // layout's marks gone, its lines one line; of a list, its first item.
 func lead(s string) string {
-	blocks := strings.Split(strings.TrimSpace(s), "\n\n")
-	b := blocks[0] // only headings: the first one's title
-	for _, blk := range blocks {
-		if _, h := markup.StoredHeading(strings.TrimSpace(blk)); !h {
-			b = blk
-			break
-		}
+	b, rest, _ := strings.Cut(strings.TrimSpace(s), "\n\n")
+	for _, h := markup.StoredHeading(b); h && rest != ""; _, h = markup.StoredHeading(b) {
+		b, rest, _ = strings.Cut(rest, "\n\n")
 	}
 	first, _, _ := strings.Cut(b, "\n")
 	if _, item, ok := markup.StoredItem(strings.TrimSpace(first)); ok {

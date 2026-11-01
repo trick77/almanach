@@ -25,7 +25,8 @@ const Heading = "#### "
 // a rule ("* * *", "---") dropped, a block's end. A fenced block's lines
 // become `code` spans: a "# comment" in it never turns into a heading.
 // What was dropped is the text when nothing else is: a text that is only
-// a fence's word keeps it, never empty for the page check to refuse.
+// headings or a fence's word keeps the titles or the word as lines, never
+// empty headings to show or an empty text for the page check to refuse.
 // Normalize of its own output is that output: one pass is repeated until
 // nothing changes (a pass only drops and joins, so few do), for marks the
 // first pass leaves that the next reads anew ("* -" and "-" joined are
@@ -45,7 +46,8 @@ func Normalize(s string) string {
 // normalizeOnce is one pass of Normalize.
 func normalizeOnce(s string) string {
 	var blocks []string
-	var dropped []string // fence words left out
+	var dropped []string // fence words left out, heading titles
+	body := false        // a block that is no heading was written
 	var cur []string     // the open paragraph's or list's lines
 	list := false        // cur is a list
 	gap := false         // a blank line in an open list: an item next goes on
@@ -54,12 +56,13 @@ func normalizeOnce(s string) string {
 		switch {
 		case len(cur) == 0:
 		case list && lastList:
-			// Two lists with nothing between (a dropped heading, a
-			// blank line) are one: the next read would join them.
+			// Two lists with nothing between (a blank line) are one: the
+			// next read would join them.
 			blocks[len(blocks)-1] += "\n" + strings.Join(cur, "\n")
 		default:
 			blocks = append(blocks, strings.Join(cur, "\n"))
 			lastList = list
+			body = true
 		}
 		cur, list, gap = nil, false, false
 	}
@@ -121,6 +124,7 @@ func normalizeOnce(s string) string {
 		if title, ok := heading(line); ok {
 			flush()
 			blocks = append(blocks, Heading+title)
+			dropped = append(dropped, title)
 			lastList = false
 			continue
 		}
@@ -140,9 +144,11 @@ func normalizeOnce(s string) string {
 		cur = append(cur, line)
 	}
 	flush()
-	if len(blocks) == 0 {
-		// Only what reads back as itself: a title "```" or "---" kept as a
-		// line would be a fence or a rule on the next read, and gone.
+	if !body {
+		// Headings over nothing are no layout: their titles are the text,
+		// never an empty part to show, an empty one for the page check to
+		// refuse. Only what reads back as itself: a title "```" or "---"
+		// kept as a line would be a fence or a rule on the next read, gone.
 		kept := slices.DeleteFunc(dropped, func(d string) bool {
 			_, h := heading(d)
 			_, item := ListItem(d)
