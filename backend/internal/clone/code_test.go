@@ -233,6 +233,12 @@ func TestCode_ReadsAClone(t *testing.T) {
 	first := commit()
 	write("main.go", "package main // two\n")
 	second := commit()
+	// Credentials, all invented: a config value, a Secret manifest, a token
+	// committed into source.
+	write("application.yaml", "db:\n  host: db\n  password: s3cr3t-invented\n")
+	write("secret.yaml", "apiVersion: v1\nkind: Secret\ndata:\n  x: eQ==\n")
+	write("leak.go", "package main\n\nconst t = \"ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\"\n") // ship:allow-secret: invented fixture
+	third := commit()
 	// Where the poller keeps tools/cli: its folder named by ids.
 	run(t, root, "clone", "-q", "--bare", work, filepath.Join(root, projectSeg(idOf("tools")), repoSeg(idOf("tools/cli"))))
 
@@ -267,6 +273,18 @@ func TestCode_ReadsAClone(t *testing.T) {
 	}
 	if !reflect.DeepEqual(bodies, map[string][]byte{"main.go": []byte("package main // two\n")}) {
 		t.Fatalf("ReadFiles = %q", bodies)
+	}
+	secrets, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{{Path: "application.yaml"}, {Path: "secret.yaml"}, {Path: "leak.go"}, {Path: "main.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]byte{
+		"application.yaml": []byte("db:\n  host: db\n  password: <redacted>\n"),
+		"leak.go":          []byte("package main\n\nconst t = \"<redacted>\"\n"),
+		"main.go":          []byte("package main // two\n"),
+	}
+	if !reflect.DeepEqual(secrets, want) {
+		t.Fatalf("ReadFiles with credentials = %q, want %q", secrets, want)
 	}
 	if none, err := code.ReadFiles(ctx, "tools", "cli", second, nil); err != nil || len(none) != 0 {
 		t.Errorf("ReadFiles of nothing = %v %v", none, err)

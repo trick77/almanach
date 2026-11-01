@@ -153,7 +153,7 @@ func RepairEdges(d *ir.Diagram) (*ir.Diagram, []string) {
 	seen := map[[3]string]bool{}
 	for _, e := range d.Edges {
 		// The label as checkFlow compares it: trimmed and Swiss.
-		key := [3]string{e.From, e.To, lang.SwissSS(strings.TrimSpace(e.Label))}
+		key := [3]string{e.From, e.To, lang.Prose(e.Label)}
 		if e.From == e.To || seen[key] {
 			dropped = append(dropped, e.From+" → "+e.To)
 			continue
@@ -481,7 +481,7 @@ func checkID(what, id string, seen map[string]bool) string {
 // label is a piece of a diagram's prose as stored: trimmed, Swiss, capped,
 // and present when it must be.
 func label(at, s string, required bool) (string, string) {
-	s = lang.SwissSS(strings.TrimSpace(s))
+	s = lang.Prose(s)
 	if required && s == "" {
 		return "", at + ": empty label"
 	}

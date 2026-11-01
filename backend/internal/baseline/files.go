@@ -57,13 +57,18 @@ var blockedRootDirs = map[string]bool{"build": true, "target": true, "out": true
 
 // blockedNames are lockfiles the .lock extension does not catch: long,
 // generated and without a fact in them.
+// Below them, key material and credential stores: a body scan would leave
+// most of them out anyway, the name says it before any byte is read.
 var blockedNames = map[string]bool{
 	"package-lock.json": true, "pnpm-lock.yaml": true, "go.sum": true, "gradle.lockfile": true,
+	"id_rsa": true, "id_dsa": true, "id_ecdsa": true, "id_ed25519": true, ".netrc": true, ".pgpass": true,
+	"credentials": true, ".htpasswd": true,
 }
 
-// blockedExts are binary, media, archive and font files, and compiled or
-// minified output.
+// blockedExts are binary, media, archive and font files, compiled or
+// minified output, and key stores.
 var blockedExts = map[string]bool{
+	".pem": true, ".key": true, ".p12": true, ".pfx": true, ".jks": true, ".keystore": true, ".kdbx": true,
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".ico": true, ".webp": true, ".bmp": true, ".svg": true,
 	".pdf": true, ".zip": true, ".gz": true, ".tgz": true, ".bz2": true, ".xz": true, ".7z": true, ".jar": true,
 	".war": true, ".ear": true, ".class": true, ".so": true, ".dylib": true, ".dll": true, ".exe": true, ".bin": true,

@@ -275,6 +275,45 @@ func TestNoteByKey(t *testing.T) {
 	}
 }
 
+// A credential in a note stays in the row as noergler sent it and never
+// leaves the store: not to the fold, not to the note page, not to the list.
+func TestNoteReadsRedactCredentials(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	const token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8" // ship:allow-secret: invented fixture
+	n := bugfixFor("PRJ", "svc", 1, "internal/files", "logic", mergedBase)
+	n.PRTitle = "Token " + token + " entfernt"
+	n.Body = json.RawMessage(`{"summary":"Ersetzt ` + token + ` durch eine Variable","components":[]}`)
+	n.Bugfix = json.RawMessage(`{"symptom":"https://svc:hunter2@upstream.example.invalid/ antwortet 401","cause":"x","cause_kind":"logic"}`)
+	ingest(t, s, n)
+
+	var raw string
+	if err := s.db.QueryRowContext(ctx, `SELECT note FROM notes`).Scan(&raw); err != nil || !strings.Contains(raw, token) {
+		t.Fatalf("stored note = %q (%v), want it verbatim", raw, err)
+	}
+	q, ok, err := s.NextQueued(ctx)
+	if err != nil || !ok {
+		t.Fatalf("NextQueued: ok=%v err=%v", ok, err)
+	}
+	d, ok, err := s.NoteByKey(ctx, "PRJ", "svc", 1)
+	if err != nil || !ok {
+		t.Fatalf("NoteByKey: ok=%v err=%v", ok, err)
+	}
+	rows, err := s.Notes(ctx, "PRJ", "svc", 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("Notes = %v %v", rows, err)
+	}
+	for name, got := range map[string]string{
+		"queued title": q.PRTitle, "queued body": string(q.Body), "queued bugfix": string(q.Bugfix),
+		"detail title": d.PRTitle, "detail body": string(d.Body), "detail bugfix": string(d.Bugfix),
+		"list title": rows[0].PRTitle,
+	} {
+		if strings.Contains(got, token) || strings.Contains(got, "hunter2") || !strings.Contains(got, "<redacted>") {
+			t.Errorf("%s = %q, want the credential redacted", name, got)
+		}
+	}
+}
+
 // Problems clusters bugfixes by area within the window: three fixes in one
 // area with causes logic, logic, config; one stale fix and one feature
 // are left out.

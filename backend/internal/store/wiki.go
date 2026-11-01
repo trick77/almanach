@@ -135,7 +135,7 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 	}
 	q.TicketKey, q.IssueType, q.ChangeKind = deref(ticket), deref(issueType), deref(kind)
 	q.BugfixArea, q.BugfixComponent, q.ReviewedCommit, q.MergeCommit, q.ModelLabel = deref(area), deref(comp), deref(reviewed), deref(merge), deref(model)
-	q.Bugfix, q.Body = json.RawMessage(bugfix), json.RawMessage(note)
+	q.PRTitle, q.Bugfix, q.Body = noteOut(q.PRTitle, bugfix, note)
 	if runID != nil {
 		q.RunID = *runID
 	}

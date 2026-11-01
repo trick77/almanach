@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+// Every prompt that reads code or notes says what the redaction marker is.
+func TestPromptsStateTheRedactionMarker(t *testing.T) {
+	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project, "repo map": RepoMap} {
+		if !strings.Contains(p, Redacted) {
+			t.Errorf("%s prompt lacks the redaction sentence %q", name, Redacted)
+		}
+	}
+}
+
 // Every prompt that asks for German states the one spelling rule.
 func TestPromptsStateTheSpelling(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project, "repo map": RepoMap, "diagrams": Diagrams} {

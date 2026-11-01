@@ -9,6 +9,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/consolidate"
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/redact"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -118,6 +119,8 @@ func (c *Code) CommitTime(ctx context.Context, key, slug, sha string) (time.Time
 
 // ReadFiles reads files at sha through one batch reader. A file over
 // FileMaxBytes, gone or binary is left out; a broken reader is an error.
+// Every body passes redact.File: this is the one place code is read for a
+// model, so a credential value never leaves the machine.
 func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []baseline.File) (map[string][]byte, error) {
 	out := make(map[string][]byte, len(files))
 	err := c.locked(ctx, key, slug, func(dir string) error {
@@ -141,6 +144,11 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 			}
 			// Too large, gone at this commit, not a file, or binary: left out.
 			if err != nil || baseline.Binary(body) {
+				continue
+			}
+			body, ok := redact.File(f.Path, body)
+			if !ok {
+				c.p.Log.InfoContext(ctx, "baseline: Secret manifest left out", "project", key, "repo", slug, "path", f.Path)
 				continue
 			}
 			out[f.Path] = body

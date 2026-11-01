@@ -25,8 +25,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Envelope strict (`DisallowUnknownFields`, 422 names field; non-JSON 422, not 400); `note`,
   `review_totals` verbatim. `webhook_processed` once per request read; each 500 its own line; 401
   access log only. openapi.yaml = api.go.
-- Swiss German (`lang.SwissSS` on every prose field, never paths), generic masculine, no Eszett in
-  prose, docs.
+- Swiss German (`lang.Prose` on model prose, never paths), generic masculine, no Eszett.
+- Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
+  read (rows verbatim), `lang.Prose`. Shapes need a value's mark, prose stays. New shape → test.
 - Description = documentation, no one-liners: statement as long as subject needs, no
   sentence/paragraph quota (user, 2026-10-28). Ceilings: statement counts, page runes from config;
   name, file caps constants; checked on stored Swiss text. Statement over a field cap: left out,
