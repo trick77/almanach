@@ -531,6 +531,40 @@ source, and inline confirms for removals that name the folder that goes.
 It polls every three seconds while a clone or a baseline run is under way
 and otherwise not at all.
 
+### Dependencies between repositories
+
+One repository is cloned once, whatever uses it. A clone URL is one source
+row's across every source (`store.CloneKey`: the origin, the path lower
+case without a trailing slash or `.git`): a second add, a rename onto it
+or a listing naming it is refused (409 naming the row) or left out (the
+source's listing line says so). A row gone `missing` holds nothing, so a
+repository moved from a Bitbucket project to a folder is taken there.
+
+Who uses whom is code's, never a model's. After a sync, still under the
+clone's lock, the poller reads the build manifests at the head when they
+were last read at another commit: `go.mod`, `pom.xml`, `package.json`, at
+the root or one level down (deeper ones are copies, a checked-out corpus
+or a fixture). `internal/manifest` turns them into coordinates: what the
+repository provides (`go:<module>`, `maven:<group>:<artifact>`,
+`npm:<name>`) and what it requires, with the version as written; a POM's
+parent counts as required, and an ISO-8859-1 POM is read. A `${...}`
+coordinate is left out, a `${...}` version is empty. Every body
+passes `redact.File` first, since a version is shown. One row per source
+repository in `repo_manifests`, replaced on a new head, gone with the row.
+
+The edges are never stored. `store.Dependencies` joins requires against
+provides at read time over the current source rows: a repository added,
+removed or moved changes the graph with nothing to keep in step. A use of
+itself (a monorepo's modules) is no edge; a coordinate two repositories
+provide (a fork, a copy) gives no edge to either and is listed as
+ambiguous; when the providers share one clone URL (two sources cloned it
+before the rule) it says so, and removing all but one row gives the edges
+back. A repository's body carries `uses` (with the library's other
+users, `also`) and `used_by`, the `.md` export an
+`Abhängigkeiten` section, and `GET /api/dependencies` the whole graph,
+drawn on the page "Abhängigkeiten" as a flow from users to libraries. With
+the sources off every list is empty.
+
 ## 4b. The baseline
 
 A **run** reads one repository's clone at one commit and folds what the
@@ -829,7 +863,8 @@ one.
 | `internal/prompts` | `almanach_merge.txt`, compiled in with `go:embed`. Never configurable. | nothing |
 | `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | nothing |
 | `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only. | gitrepo (Access), store (types only) |
-| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row. Declares the `Store`, `Git` and `Lister` interfaces it needs. | gitrepo, secret, store |
+| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | gitrepo, manifest, secret, store |
+| `internal/manifest` | `Parse`: a repository's go.mod, pom.xml and package.json as the coordinates it provides and requires. Pure, no I/O. | nothing |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
 | `internal/diagram` | A diagram's shape (rongo's intermediate form), data only; `baseline/diagram.go` validates it. | nothing |
@@ -1322,6 +1357,12 @@ baseline step's patch never is: its bad items are left out one by one (see
   hand-entered row is never touched by a listing.
 - `RequestSync` moves every row but a missing one to pending and nudges the
   poller; the cycle in flight finishes first, the next one serves it.
+- One clone URL, one source row, across sources (`CloneKey`), checked in
+  the transaction that writes it; a missing row holds none.
+- Manifests at the root or one level down only, read by the poller at the
+  head under the clone's lock, redacted first; a failed read or save is a
+  log line, never the repository's state. Edges joined at read, never
+  stored; a coordinate two repositories provide is no edge.
 - The feature off (`BACKEND_REPOS_DIR` unset): no poller, `GET /api/sources`
   answers `enabled: false`, every other sources route 404, the UI hides the
   entry. On: git on PATH, the folder present and writable (a probe file),

@@ -43,6 +43,7 @@ type fakeStore struct {
 	// conflicts is what ApplyListing reports left out; listedAt whether a
 	// listing's time was recorded, by key.
 	conflicts []string
+	elsewhere []string
 	listedAt  map[string]bool
 }
 
@@ -56,7 +57,7 @@ func (f *fakeStore) ApplyListing(_ context.Context, key string, l []store.Listed
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listed[key] = l
-	return store.ListingResult{Added: len(l) - len(f.conflicts), Conflicts: f.conflicts}, nil
+	return store.ListingResult{Added: len(l) - len(f.conflicts) - len(f.elsewhere), Conflicts: f.conflicts, Elsewhere: f.elsewhere}, nil
 }
 func (f *fakeStore) MarkSourceListed(_ context.Context, key, e string, listed bool) error {
 	f.mu.Lock()
@@ -332,6 +333,13 @@ func TestList_ReportsNameConflicts(t *testing.T) {
 	}
 	if !strings.Contains(s.listErr["SHOP"], "ui") {
 		t.Fatalf("listing error = %q, want the conflicting slug named", s.listErr["SHOP"])
+	}
+	s.elsewhere = []string{"wire"}
+	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.listErr["SHOP"], "slug was another repository's: ui; left out, another source clones it already: wire") {
+		t.Fatalf("listing error = %q, want both reasons named", s.listErr["SHOP"])
 	}
 	if !s.listedAt["SHOP"] {
 		t.Error("an applied listing with conflicts did not record its time")

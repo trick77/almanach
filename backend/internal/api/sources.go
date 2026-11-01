@@ -813,7 +813,7 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrExists):
 		httpx.WriteError(w, http.StatusConflict, "a repository with this slug exists")
 		return
-	case otherHost(w, err):
+	case otherHost(w, err), clonedElsewhere(w, err):
 		return
 	case errors.Is(err, store.ErrNameTaken):
 		httpx.WriteError(w, http.StatusConflict, "slug: another repository had this slug")
@@ -849,6 +849,18 @@ func otherHost(w http.ResponseWriter, err error) bool {
 	default:
 		return false
 	}
+	return true
+}
+
+// clonedElsewhere writes the 409 of a clone URL another source row clones
+// already and reports whether err was one: one repository, one clone.
+func clonedElsewhere(w http.ResponseWriter, err error) bool {
+	var other *store.ClonedElsewhereError
+	if !errors.As(err, &other) {
+		return false
+	}
+	httpx.WriteError(w, http.StatusConflict, "clone_url: this repository is cloned as "+other.ProjectKey+"/"+other.Slug+
+		" already; a repository is cloned once, its users find it through their manifests")
 	return true
 }
 
@@ -931,7 +943,7 @@ func (d Deps) renameRepo(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrRunOpen):
 		httpx.WriteError(w, http.StatusConflict, "clone_url: a run of this repository is open, change the URL once it ends")
 		return
-	case otherHost(w, err):
+	case otherHost(w, err), clonedElsewhere(w, err):
 		return
 	case errors.Is(err, store.ErrNoRepo):
 		httpx.WriteError(w, http.StatusNotFound, "unknown repository")

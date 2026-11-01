@@ -29,7 +29,7 @@ func req(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 	h := handler(built())
 	for _, path := range []string{
-		"/", "/faq", "/warteschlange", "/projekte/PLAT", "/projekte/pay.v2/repos/pay-api", "/projekte/PLAT/repos/files/notizen/42",
+		"/", "/faq", "/warteschlange", "/abhaengigkeiten", "/projekte/PLAT", "/projekte/pay.v2/repos/pay-api", "/projekte/PLAT/repos/files/notizen/42",
 		"/projekte/PLAT/repos/files/notizen/123456789", "/projekte/~jan/repos/scratch",
 	} {
 		w := req(t, h, path)

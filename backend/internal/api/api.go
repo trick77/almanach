@@ -55,6 +55,7 @@ type Store interface {
 	// new one.
 	ProjectKeyOf(ctx context.Context, key string) (string, bool, error)
 	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
+	Dependencies(ctx context.Context) (store.Graph, error)
 }
 
 // Waker is poked when a note was queued.
@@ -97,6 +98,7 @@ func Register(s *httpapi.Server, d Deps) {
 	// Also GET /api/projects/{key}/repos/{slug}.md, the repository's.
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
+	s.HandleFunc("GET /api/dependencies", d.dependencies)
 	if d.Queue != nil {
 		s.HandleFunc("GET /api/queue", d.queue)
 		s.HandleFunc("GET /api/queue/count", d.queueCount)
@@ -592,6 +594,10 @@ type repoDetailBody struct {
 	// hundred.
 	NotesTotal int        `json:"notes_total"`
 	LastMerge  *time.Time `json:"last_merge"`
+	// Uses are the source repositories this one uses, by its manifests;
+	// UsedBy those that use it.
+	Uses   []useBody `json:"uses"`
+	UsedBy []depBody `json:"used_by"`
 }
 
 func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
@@ -642,8 +648,14 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "repos")
 		return
 	}
+	g, err := d.graph(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "dependencies")
+		return
+	}
 	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Map: page.RepoMap, Notes: noteBodies(notes),
 		Revisions: make([]revisionBody, 0, len(revisions))}
+	out.Uses, out.UsedBy = usesOf(g, store.RepoRef{ProjectKey: key, Slug: slug})
 	for _, rp := range repos {
 		if rp.Slug == slug {
 			out.NotesTotal, out.LastMerge = rp.Notes, rp.LastMerge

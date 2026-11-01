@@ -10,7 +10,8 @@ export type Route =
   | { page: "note"; key: string; slug: string; pr: number }
   | { page: "sources" }
   | { page: "source"; key: string }
-  | { page: "queue" };
+  | { page: "queue" }
+  | { page: "deps" };
 
 // A project key and a repository slug are what Bitbucket allows: letters,
 // digits, dot, dash, underscore, and the tilde of a personal project
@@ -37,8 +38,11 @@ export function routeFromPath(path: string): Route {
   if (path === "/quellen") return { page: "sources" };
   if (path === "/faq") return { page: "faq" };
   if (path === queuePath) return { page: "queue" };
+  if (path === depsPath) return { page: "deps" };
   return { page: "projects" };
 }
+
+export const depsPath = "/abhaengigkeiten";
 
 export const sourcesPath = "/quellen";
 

@@ -20,6 +20,7 @@ import (
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/urlorigin"
@@ -98,6 +99,9 @@ type Deps struct {
 	FirstDelay time.Duration
 	Log        *slog.Logger
 	Describe   Describe
+	// Manifests reads each clone's build manifests after a sync; zero:
+	// none are read.
+	Manifests Manifests
 	// Now is the clock; tests set it.
 	Now func() time.Time
 }
@@ -459,6 +463,13 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		p.current = inFlight{projectID: j.Repo.ProjectID, repoID: j.Repo.RepoID, cancel: cancel}
 		p.cur.Unlock()
 		head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
+		// The manifests are read while the clone is still locked; stored
+		// after, the lock is for the disk only.
+		var read manifest.Read
+		var readOK bool
+		if err == nil {
+			read, readOK = p.syncedManifests(jobCtx, j, head)
+		}
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()
 		p.current = inFlight{}
@@ -478,15 +489,18 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			if markErr := p.Store.MarkRepoFailed(ctx, j.Source.ProjectKey, j.Repo.Slug, err.Error()); markErr != nil {
 				p.Log.Error("recording the failure failed too", "repo", j.Repo.Slug, "err", markErr.Error())
 			}
+			continue
 		case moved:
 			synced++
 			p.Log.Info("repo_synced", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head), "took", took(repoStart))
-			p.describe(ctx, j, head)
 		default:
 			unchanged++
 			p.Log.Debug("repo_unchanged", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head), "took", took(repoStart))
-			p.describe(ctx, j, head)
 		}
+		if readOK {
+			p.saveManifests(ctx, j, head, read)
+		}
+		p.describe(ctx, j, head)
 	}
 	p.Log.Info("sync cycle finished", "checked", len(jobs), "synced", synced, "unchanged", unchanged, "failed", failed, "took", took(started))
 	return nil
@@ -704,6 +718,14 @@ func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
 					// The listing itself applied: its time still counts.
 					errText = "left out, the slug was another repository's: " + strings.Join(res.Conflicts, ", ")
 					p.Log.Warn("source_listing_conflicts", "project", s.ProjectKey, "repos", strings.Join(res.Conflicts, ","))
+				}
+				if len(res.Elsewhere) > 0 {
+					// One repository, one clone: another source has it.
+					if errText != "" {
+						errText += "; "
+					}
+					errText += "left out, another source clones it already: " + strings.Join(res.Elsewhere, ", ")
+					p.Log.Warn("source_listing_elsewhere", "project", s.ProjectKey, "repos", strings.Join(res.Elsewhere, ","))
 				}
 			}
 		}

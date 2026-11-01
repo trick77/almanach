@@ -50,7 +50,12 @@ type fakeStore struct {
 	renamed map[string]string
 	// standalone are the projects whose repositories stand alone.
 	standalone map[string]bool
+	// graph is what Dependencies answers; graphErr fails it.
+	graph    store.Graph
+	graphErr error
 }
+
+func (f *fakeStore) Dependencies(context.Context) (store.Graph, error) { return f.graph, f.graphErr }
 
 func (f *fakeStore) ProjectSystemOf(_ context.Context, key string) (store.ProjectSystem, error) {
 	return store.ProjectSystem{Standalone: f.standalone[key]}, nil

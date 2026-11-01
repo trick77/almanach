@@ -227,7 +227,8 @@ func (s *Store) RenameProject(ctx context.Context, key, to string) (int64, error
 // empty, a new clone URL, which queues a sync. The old slug stays a name of
 // the repository. Refused with ErrNameTaken when another repository of the
 // project ever had the slug, in any case; ErrRunOpen for a new clone URL
-// while a baseline run of it is open; ErrNoRepo when the source has no such
+// while a baseline run of it is open; a *ClonedElsewhereError for a clone
+// URL another source row clones; ErrNoRepo when the source has no such
 // repository.
 func (s *Store) RenameRepo(ctx context.Context, key, slug, to, cloneURL string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
@@ -265,6 +266,10 @@ func renameRepo(ctx context.Context, tx *sql.Tx, key, slug, to, cloneURL string)
 		}
 		// The folder stays on one host: the token goes to that host only.
 		if err := oneHostIn(ctx, tx, pid, rid, cloneURL); err != nil {
+			return err
+		}
+		// One repository, one clone.
+		if err := clonedElsewhere(ctx, tx, rid, cloneURL); err != nil {
 			return err
 		}
 	}

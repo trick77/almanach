@@ -396,7 +396,8 @@ func OneHost(have []SourceRepo, cloneURL string) error {
 // had before finds that repository again (its pages with it); ErrExists
 // when it is a source repository already, ErrNameTaken when another
 // repository of the project had the slug in another case, an
-// *OtherHostError when the folder's rows are on another host (OneHost).
+// *OtherHostError when the folder's rows are on another host (OneHost), a
+// *ClonedElsewhereError when another source row clones the URL already.
 // Checks and insert are one IMMEDIATE transaction, so two adds at once
 // cannot leave the folder on two hosts.
 func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
@@ -413,6 +414,9 @@ func (s *Store) AddSourceRepo(ctx context.Context, r SourceRepo) error {
 		}
 		rid, _, err := claimSlug(ctx, tx, pid, r.Slug)
 		if err != nil {
+			return err
+		}
+		if err := clonedElsewhere(ctx, tx, rid, r.CloneURL); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `
@@ -469,12 +473,14 @@ type ListedRepo struct {
 }
 
 // ListingResult counts what a listing changed. Conflicts are the listed
-// slugs left out because another repository of the project had them.
+// slugs left out because another repository of the project had them;
+// Elsewhere the ones left out because another source clones their URL.
 type ListingResult struct {
 	Added     int
 	Renamed   int
 	Missing   int
 	Conflicts []string
+	Elsewhere []string
 }
 
 // ApplyListing reconciles a Bitbucket source's repos with what the API
@@ -485,10 +491,11 @@ type ListingResult struct {
 // clone URL and, when it was missing, is pending again; a listed row the
 // API no longer names becomes missing. A slug another repository of the
 // project had (in any case) is left out and reported as a conflict: a name
-// is never given to another. Hand-entered rows are not touched (a Bitbucket
+// is never given to another. A clone URL only another project's rows hold
+// is left out and reported as elsewhere: one repository, one clone. Hand-entered rows are not touched (a Bitbucket
 // source has none, but the rule costs nothing).
 func (s *Store) ApplyListing(ctx context.Context, key string, listed []ListedRepo) (ListingResult, error) {
-	res := ListingResult{Conflicts: []string{}}
+	res := ListingResult{Conflicts: []string{}, Elsewhere: []string{}}
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		pid, ok, err := projectID(ctx, tx, key)
 		if err != nil {
@@ -496,6 +503,10 @@ func (s *Store) ApplyListing(ctx context.Context, key string, listed []ListedRep
 		}
 		if !ok {
 			return ErrNoProject
+		}
+		held, err := clonesHeld(ctx, tx)
+		if err != nil {
+			return err
 		}
 		now := nowStamp()
 		seen := make([]int64, 0, len(listed))
@@ -506,6 +517,18 @@ func (s *Store) ApplyListing(ctx context.Context, key string, listed []ListedRep
 			}
 		}
 		for _, l := range listed {
+			if elsewhere(held[CloneKey(l.CloneURL)], pid) {
+				// One repository, one clone: another source has it. A row of
+				// this project that knew it stays listed, its URL as it was.
+				h := held[CloneKey(l.CloneURL)][0]
+				res.Elsewhere = append(res.Elsewhere, l.Slug+" (as "+h.projectKey+"/"+h.slug+")")
+				if rid, ok, err := knownListed(ctx, tx, pid, l); err != nil {
+					return err
+				} else if ok {
+					seen = append(seen, rid)
+				}
+				continue
+			}
 			rid, renamed, err := listedRepo(ctx, tx, pid, l, forges)
 			if errors.Is(err, ErrNameTaken) {
 				res.Conflicts = append(res.Conflicts, l.Slug)
@@ -558,6 +581,32 @@ func (s *Store) ApplyListing(ctx context.Context, key string, listed []ListedRep
 		return nil
 	})
 	return res, err
+}
+
+// elsewhere reports whether the rows holding a clone URL are all another
+// project's. A row of this project holding it too (two sources cloned it
+// before the rule) keeps it: the listing goes on as before.
+func elsewhere(held []heldRow, pid int64) bool {
+	for _, h := range held {
+		if h.projectID == pid {
+			return false
+		}
+	}
+	return len(held) > 0
+}
+
+// knownListed is the listed source row of the project a listed entry is,
+// by forge id, else by its current slug; false when there is none.
+func knownListed(ctx context.Context, tx *sql.Tx, pid int64, l ListedRepo) (int64, bool, error) {
+	var rid int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT sr.repo_id FROM source_repos sr JOIN repos r ON r.id = sr.repo_id
+		 WHERE sr.project_id = ?1 AND sr.origin = 'listed' AND ((?2 <> 0 AND r.forge_id = ?2) OR r.slug = ?3)
+		 ORDER BY (r.forge_id IS ?2) DESC LIMIT 1`, pid, l.ForgeID, l.Slug).Scan(&rid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return rid, err == nil, err
 }
 
 // listedRepo is the repository a listed entry is: by forge id (renamed when

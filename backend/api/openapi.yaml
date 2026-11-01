@@ -313,7 +313,8 @@ paths:
       summary: A repository's page as Markdown
       description: |
         The repository's current revision as one Markdown file, framed as
-        the project's export (no map). A slug that itself ends in `.md` and
+        the project's export (no map), closed by an `Abhängigkeiten`
+        section when it uses or is used by another source repository. A slug that itself ends in `.md` and
         is listed keeps its JSON route; its export is `{slug}.md.md`. In
         oidc mode a team bearer opens it read-only, the same token the
         webhook takes.
@@ -363,6 +364,28 @@ paths:
           $ref: "#/components/responses/SignInRequired"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/dependencies:
+    get:
+      tags: [wiki]
+      summary: Which source repository uses which
+      description: >-
+        The dependency graph over the source repositories, joined at read
+        time from the build manifests the poller read after each sync
+        (go.mod, pom.xml, package.json, at the root or one level down):
+        what one requires against what another provides. Never stored,
+        never a model's. A coordinate two repositories provide gives no
+        edge and is listed under `ambiguous`. Empty with the sources off.
+      operationId: getDependencies
+      responses:
+        "200":
+          description: The graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dependencies"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
 
   /api/sources:
     get:
@@ -550,7 +573,12 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: A repository with this slug exists, or another repository of the project had the slug, in any case.
+          description: >-
+            A repository with this slug exists, another repository of the
+            project had the slug, in any case, or another source clones the
+            URL already (scheme, host and path compared without case, a
+            trailing `.git` or slash), which the message names: a
+            repository is cloned once.
           content:
             application/json:
               schema:
@@ -592,7 +620,10 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Another repository of the project had this slug, in any case, or a new clone URL while a run of this repository is open.
+          description: >-
+            Another repository of the project had this slug, in any case, a
+            new clone URL while a run of this repository is open, or a clone
+            URL another source clones already, which the message names.
           content:
             application/json:
               schema:
@@ -2128,7 +2159,7 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, map, revisions, notes, notes_total, last_merge]
+      required: [project_key, slug, description, map, revisions, notes, notes_total, last_merge, uses, used_by]
       properties:
         project_key:
           type: string
@@ -2161,6 +2192,101 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/NoteSummary"
+        uses:
+          type: array
+          description: The source repositories this one uses, by its manifests.
+          items:
+            $ref: "#/components/schemas/Use"
+        used_by:
+          type: array
+          description: The source repositories that use this one.
+          items:
+            $ref: "#/components/schemas/DependencyEnd"
+
+    DependencyEnd:
+      type: object
+      required: [project, slug, version]
+      properties:
+        project:
+          type: string
+        slug:
+          type: string
+        version:
+          type: string
+          description: The version the user's manifest names, as written; empty when it names none.
+
+    Use:
+      type: object
+      required: [project, slug, version, also]
+      properties:
+        project:
+          type: string
+        slug:
+          type: string
+        version:
+          type: string
+          description: The version this repository names, as written; empty when none.
+        also:
+          type: array
+          description: The library's other users, each with the version it names.
+          items:
+            $ref: "#/components/schemas/DependencyEnd"
+
+    RepoRef:
+      type: object
+      required: [project, slug]
+      properties:
+        project:
+          type: string
+        slug:
+          type: string
+
+    Dependencies:
+      type: object
+      required: [repos, edges, ambiguous]
+      properties:
+        repos:
+          type: array
+          description: The source repositories whose manifests were read.
+          items:
+            $ref: "#/components/schemas/RepoRef"
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to, version, coords]
+            properties:
+              from:
+                $ref: "#/components/schemas/RepoRef"
+              to:
+                $ref: "#/components/schemas/RepoRef"
+              version:
+                type: string
+                description: What `from` names for the first of the coordinates, as written; empty when none.
+              coords:
+                type: array
+                description: The coordinates `from` requires and `to` provides (`go:<module>`, `maven:<group>:<artifact>`, `npm:<name>`).
+                items:
+                  type: string
+        ambiguous:
+          type: array
+          description: Coordinates more than one source repository provides; no edge points at any of them.
+          items:
+            type: object
+            required: [coord, providers, cloned_twice]
+            properties:
+              coord:
+                type: string
+              cloned_twice:
+                type: boolean
+                description: >-
+                  The providers are one repository two sources clone (rows
+                  from before a clone URL was one row's): removing all but
+                  one gives the edges back.
+              providers:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RepoRef"
 
     NoteCallSummary:
       type: object

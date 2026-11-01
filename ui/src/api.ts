@@ -157,6 +157,41 @@ export interface RepoDetail {
   /** The repository map, the repository from inside: zones entry, parts,
    *  stores and external. null before a baseline run drew one. */
   map: FlowIR | null;
+  /** The source repositories this one uses, by its manifests. */
+  uses: Use[];
+  /** The source repositories that use this one. */
+  used_by: DependencyEnd[];
+}
+
+/** One end of a dependency: version is what the user's manifest names, as
+ *  written, "" when none. */
+export interface DependencyEnd {
+  project: string;
+  slug: string;
+  version: string;
+}
+
+/** A library a repository uses, with the library's other users. */
+export interface Use extends DependencyEnd {
+  also: DependencyEnd[];
+}
+
+export interface RepoRef {
+  project: string;
+  slug: string;
+}
+
+/** GET /api/dependencies: joined from the manifests at read time. */
+export interface Dependencies {
+  repos: RepoRef[];
+  edges: { from: RepoRef; to: RepoRef; version: string; coords: string[] }[];
+  /** Coordinates several repositories provide: no edge to any of them. */
+  ambiguous: {
+    coord: string;
+    providers: RepoRef[];
+    /** One repository two sources clone: removing one gives the edges. */
+    cloned_twice: boolean;
+  }[];
 }
 
 export interface Bugfix {

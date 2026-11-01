@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Me, QueueCount, Sources } from "./api";
+import { DepsPage } from "./DepsPage";
 import { FaqPage } from "./FaqPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
@@ -8,7 +9,13 @@ import { QueuePage } from "./QueuePage";
 import { RepoPage } from "./RepoPage";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
-import { queuePath, routeFromPath, sourcesPath, type Route } from "./routing";
+import {
+  depsPath,
+  queuePath,
+  routeFromPath,
+  sourcesPath,
+  type Route,
+} from "./routing";
 import { logout, useSession } from "./session";
 import { loginHref } from "./signin";
 import { S } from "./strings";
@@ -116,9 +123,13 @@ function Shell({ me }: { me: Me }) {
           {nav(
             S.nav.projects,
             "/",
-            route.page !== "faq" && route.page !== "queue" && !inSources,
+            route.page !== "faq" &&
+              route.page !== "queue" &&
+              route.page !== "deps" &&
+              !inSources,
           )}
           {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
+          {sourcesOn && nav(S.nav.deps, depsPath, route.page === "deps")}
           {nav(S.nav.queue, queuePath, route.page === "queue", queued)}
           {nav(S.nav.faq, "/faq", route.page === "faq")}
         </nav>
@@ -153,6 +164,7 @@ function Shell({ me }: { me: Me }) {
         {route.page === "faq" && <FaqPage />}
         {route.page === "sources" && <SourcesPage />}
         {route.page === "queue" && <QueuePage />}
+        {route.page === "deps" && <DepsPage />}
         {route.page === "source" && (
           <SourcePage key={route.key} projectKey={route.key} />
         )}

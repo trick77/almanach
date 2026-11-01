@@ -89,7 +89,19 @@ func (d Deps) repoMarkdown(w http.ResponseWriter, r *http.Request, key, slug str
 		httpx.ServerError(w, r, err, "repo page")
 		return
 	}
-	writeMarkdown(w, renderMarkdown("Repository "+slug+" (Projekt "+key+")", store.ScopeRepository, page, found))
+	// The graph names repositories by their current names.
+	ck, cs, _, err := d.Store.RepoNamesOf(ctx, key, slug)
+	if err != nil {
+		httpx.ServerError(w, r, err, "repo names")
+		return
+	}
+	g, err := d.graph(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "dependencies")
+		return
+	}
+	uses, usedBy := usesOf(g, store.RepoRef{ProjectKey: ck, Slug: cs})
+	writeMarkdown(w, renderMarkdown("Repository "+slug+" (Projekt "+key+")", store.ScopeRepository, page, found)+markdownDeps(uses, usedBy))
 }
 
 func writeMarkdown(w http.ResponseWriter, body string) {
