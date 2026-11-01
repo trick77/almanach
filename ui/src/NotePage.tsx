@@ -246,10 +246,9 @@ function Body({ n }: { n: NoteDetail }) {
 /** Fact is a label/value row: a short value at the right edge, or, with
  *  `aligned`, every value of the box in one left-aligned column beside a
  *  label column: the bugfix box, whose symptom and cause are sentences and
- *  read badly right-ragged. wrap-break-word: a path in a cause, a SHA or a
- *  model label breaks inside its row instead of past the box; the aligned
- *  column lets it shrink by minmax(0,1fr), the plain row by min-w-0 on the
- *  value, the label shrink-0 so the value gives way, not the label. */
+ *  read badly right-ragged. A long token (a path, a SHA, a model label)
+ *  breaks inside its row, never past the box, and the label never gives
+ *  way to it. */
 function Fact({
   label,
   last = false,
@@ -272,7 +271,7 @@ function Fact({
         row + " py-[7px]" + (last ? "" : " border-b border-border-soft")
       }
     >
-      <dt className="shrink-0 text-muted">{label}</dt>
+      <dt className={"text-muted " + (aligned ? "" : "shrink-0")}>{label}</dt>
       <dd
         className={
           "m-0 text-ink-dim wrap-break-word " +
