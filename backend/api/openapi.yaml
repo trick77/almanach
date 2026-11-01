@@ -393,7 +393,9 @@ paths:
     patch:
       tags: [sources]
       summary: Change a source's host or token
-      description: Every field is optional; an omitted `token` keeps the stored one, an empty one clears it.
+      description: >-
+        Every field is optional; an omitted `token` keeps the stored one, an empty one clears it. A token for a
+        static source whose repositories span more than one host is a 422: a token reaches one host only.
       operationId: updateSource
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -463,7 +465,9 @@ paths:
     post:
       tags: [sources]
       summary: Add a repository to a static source
-      description: A Bitbucket source lists its repositories itself and answers 422.
+      description: >-
+        A Bitbucket source lists its repositories itself and answers 422. A static source holds one host: a
+        `clone_url` on another scheme, host or port than its repositories' is a 422.
       operationId: addSourceRepo
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -1025,7 +1029,7 @@ components:
           type: string
         clone_url:
           type: string
-          description: https, no credentials.
+          description: https, no credentials, on the host of the source's other repositories.
         branch:
           type: string
           description: Empty resolves the remote's default branch.

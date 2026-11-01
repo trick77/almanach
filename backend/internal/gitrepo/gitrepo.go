@@ -44,11 +44,14 @@ const waitDelay = 10 * time.Second
 // (Authorization: Basic of User and Token; User defaults to x-access-token,
 // which GitHub ignores and Bitbucket DC checks). Either way a header, never
 // a URL: a URL is persisted by git, printed in its errors and shown in the
-// process list.
+// process list. Origin is the one scheme://host the token may reach (see
+// Origin): a token travels only to a URL on it, never to another host, and
+// not at all when Origin is "".
 type Access struct {
-	Token string
-	Auth  string
-	User  string
+	Token  string
+	Auth   string
+	User   string
+	Origin string
 }
 
 // Client runs git against clones under root.
@@ -313,9 +316,10 @@ func exitCode(err error) int {
 // env is the Authorization header for this one command, through git's
 // environment config rather than -c (argv shows in the process list),
 // appended after whatever GIT_CONFIG_* the process already carries.
-// Nothing for an anonymous remote or a non-http one.
+// Nothing for an anonymous remote, a non-http one or one off the access's
+// origin: the token stays home rather than reach a host it was not made for.
 func (a Access) env(cloneURL string) []string {
-	if a.Token == "" || !isHTTPURL(cloneURL) {
+	if a.Token == "" || !isHTTPURL(cloneURL) || !SameOrigin(cloneURL, a.Origin) {
 		return nil
 	}
 	n, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
@@ -342,6 +346,22 @@ func (a Access) Authorization() string {
 		return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+a.Token))
 	}
 	return "Bearer " + a.Token
+}
+
+// Origin is a URL's scheme://host, lower case, the port kept; "" when it
+// does not parse or names no host. The unit a token is bound to.
+func Origin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
+// SameOrigin reports whether a and b are on one origin; "" matches nothing.
+func SameOrigin(a, b string) bool {
+	oa := Origin(a)
+	return oa != "" && oa == Origin(b)
 }
 
 func isHTTPURL(raw string) bool {

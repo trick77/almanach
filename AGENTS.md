@@ -57,9 +57,10 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   go-git (rejected 2026-10-30). Clones only at `BACKEND_REPOS_DIR/<project>/<slug>`; key, slug
   single path segments, `filepath.Rel`-checked before `RemoveAll`. Clone URLs https, no creds. Bare
   clones. Token: per-command `GIT_CONFIG_*` header, never in URL; stderr redacted; AES-GCM-sealed,
-  not returned/logged. Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off,
-  redone. One sequential poller; repo failure on its row. Removal: poller's disk lock, folder, then
-  row. `BACKEND_REPOS_DIR` unset = off. UI copy: capital only if first char letter ("Bereit",
+  not returned/logged; reaches one origin only (static folder = one host, header bound to it).
+  Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
+  poller; repo failure on its row. Removal: poller's disk lock, folder, then row.
+  `BACKEND_REPOS_DIR` unset = off. UI copy: capital only if first char letter ("Bereit",
   "7 bereit"); "Slug", never "Schlüssel".
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at

@@ -261,6 +261,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		return err
 	}
 	p.Log.Info("sync cycle started", "sources", len(sources), "repositories", len(jobs))
+	bound := origins(jobs)
 	var synced, unchanged, failed int
 	for _, j := range jobs {
 		if ctx.Err() != nil {
@@ -281,7 +282,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		p.cur.Lock()
 		p.current = inFlight{key: j.Source.ProjectKey, slug: j.Repo.Slug, cancel: cancel}
 		p.cur.Unlock()
-		head, moved, err = p.sync(jobCtx, j)
+		head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()
 		p.current = inFlight{}
@@ -411,7 +412,7 @@ func (p *Poller) logRunCheck(err error, key, slug string) {
 
 // list reconciles one Bitbucket source's repositories with the API.
 func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
-	a, err := p.access(s)
+	a, err := p.access(s, gitrepo.Origin(s.Host))
 	if err == nil {
 		var listed []store.ListedRepo
 		listed, err = p.Lister.ListRepos(ctx, s.Host, s.ProjectKey, a)
@@ -436,9 +437,10 @@ func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
 	}
 }
 
-// access opens the source's token for one command's worth of use.
-func (p *Poller) access(s store.ProjectSource) (gitrepo.Access, error) {
-	a := gitrepo.Access{Auth: s.TokenAuth, User: s.TokenUser}
+// access opens the source's token for one command's worth of use, bound to
+// origin: git sends it nowhere else.
+func (p *Poller) access(s store.ProjectSource, origin string) (gitrepo.Access, error) {
+	a := gitrepo.Access{Auth: s.TokenAuth, User: s.TokenUser, Origin: origin}
 	if !s.HasToken() {
 		return a, nil
 	}
@@ -453,13 +455,45 @@ func (p *Poller) access(s store.ProjectSource) (gitrepo.Access, error) {
 	return a, nil
 }
 
+// origins is the one origin each source's token may reach: a Bitbucket
+// source's host; a static folder's single host, read off its rows (all of
+// them: a hand-entered row is never missing), "" when they span several.
+// The API keeps a folder on one host; rows from before that rule may not
+// be, and their token then goes nowhere rather than to a guess.
+func origins(jobs []store.SyncJob) map[string]string {
+	out := map[string]string{}
+	mixed := map[string]bool{}
+	for _, j := range jobs {
+		key := j.Source.ProjectKey
+		if j.Source.Kind != store.SourceStatic {
+			out[key] = gitrepo.Origin(j.Source.Host)
+			continue
+		}
+		o := gitrepo.Origin(j.Repo.CloneURL)
+		if seen, ok := out[key]; mixed[key] || (ok && seen != o) {
+			out[key], mixed[key] = "", true
+			continue
+		}
+		out[key] = o
+	}
+	return out
+}
+
 // sync is one repository's cycle: origin check, clone, branch, fetch,
-// head. Reports the head and whether it moved.
-func (p *Poller) sync(ctx context.Context, j store.SyncJob) (string, bool, error) {
+// head. Reports the head and whether it moved. A token bound to another
+// origin than the clone URL's fails the repository before git runs: an
+// anonymous attempt would only end in git's auth error, naming nothing.
+func (p *Poller) sync(ctx context.Context, j store.SyncJob, bound string) (string, bool, error) {
 	key, slug := j.Source.ProjectKey, j.Repo.Slug
-	a, err := p.access(j.Source)
+	a, err := p.access(j.Source, bound)
 	if err != nil {
 		return "", false, err
+	}
+	if a.Token != "" && !gitrepo.SameOrigin(j.Repo.CloneURL, bound) {
+		if bound == "" {
+			return "", false, errors.New("the folder's repositories are on more than one host; its token goes to none of them until they share one")
+		}
+		return "", false, fmt.Errorf("clone URL is on %s, the source's token belongs to %s; not sent there", gitrepo.Origin(j.Repo.CloneURL), bound)
 	}
 	dir, err := p.Git.Dir(key, slug)
 	if err != nil {

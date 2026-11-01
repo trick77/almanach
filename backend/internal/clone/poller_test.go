@@ -207,8 +207,56 @@ func TestCycle_ClonesResolvesFetchesMarksReady(t *testing.T) {
 	if got := strings.Join(g.calls, ","); got != want {
 		t.Fatalf("git calls = %s, want %s", got, want)
 	}
-	if len(g.access) != 1 || g.access[0].Token != "tok" || g.access[0].Auth != store.TokenBasic || g.access[0].User != "me" {
+	if len(g.access) != 1 || g.access[0].Token != "tok" || g.access[0].Auth != store.TokenBasic || g.access[0].User != "me" ||
+		g.access[0].Origin != "https://x" {
 		t.Fatalf("access handed to git = %+v", g.access)
+	}
+}
+
+// A token reaches one host: a static folder's rows on several hosts (from
+// before the API kept them on one) get it nowhere, a Bitbucket row off the
+// source's host does not get it, and git is never asked. Without a token
+// there is nothing to leak and a mixed folder syncs.
+func TestCycle_TokenOnlyToItsOrigin(t *testing.T) {
+	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
+	sealed, _ := k.Seal("tok")
+	static := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic, TokenEnc: sealed}
+	bb := store.ProjectSource{Kind: store.SourceBitbucket, Host: "https://forge.example.invalid", TokenAuth: store.TokenBearer, TokenEnc: sealed}
+	anon := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
+	s.jobs = []store.SyncJob{
+		job("mixed", "a", "https://github.com/acme/a.git", "main", "", static),
+		job("mixed", "b", "https://gitlab.com/acme/b.git", "main", "", static),
+		job("SHOP", "off", "https://elsewhere.example.invalid/scm/shop/off.git", "main", "", bb),
+		job("SHOP", "ui", "https://FORGE.example.invalid/scm/shop/ui.git", "main", "", bb),
+		job("open", "c", "https://github.com/acme/c.git", "main", "", anon),
+		job("open", "d", "https://gitlab.com/acme/d.git", "main", "", anon),
+	}
+	for _, dir := range []string{"/base/SHOP/ui", "/base/open/c", "/base/open/d"} {
+		g.heads[dir+"@main"] = "abc"
+	}
+	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for slug, want := range map[string]string{"a": "more than one host", "b": "more than one host", "off": "not sent there"} {
+		if s.states[slug] != store.RepoFailed || !strings.Contains(s.errs[slug], want) {
+			t.Errorf("%s: %s %q, want failed with %q", slug, s.states[slug], s.errs[slug], want)
+		}
+	}
+	for _, slug := range []string{"ui", "c", "d"} {
+		if s.states[slug] != store.RepoReady {
+			t.Errorf("%s: %s %q, want ready", slug, s.states[slug], s.errs[slug])
+		}
+	}
+	calls := strings.Join(g.calls, ",")
+	for _, dir := range []string{"/mixed/", "/SHOP/off"} {
+		if strings.Contains(calls, dir) {
+			t.Errorf("git was asked for %s with the token bound elsewhere: %s", dir, calls)
+		}
+	}
+	for _, a := range g.access {
+		if a.Token != "" && a.Origin != "https://forge.example.invalid" {
+			t.Errorf("token handed to git bound to %q", a.Origin)
+		}
 	}
 }
 
@@ -261,7 +309,7 @@ func TestCycle_ListsBitbucketSources(t *testing.T) {
 	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(l.seen) != 1 || l.seen[0].Token != "pat" || l.seen[0].Auth != store.TokenBearer {
+	if len(l.seen) != 1 || l.seen[0].Token != "pat" || l.seen[0].Auth != store.TokenBearer || l.seen[0].Origin != "https://forge.example.invalid" {
 		t.Fatalf("lister saw %+v, want one bearer call for SHOP only", l.seen)
 	}
 	if len(s.listed["SHOP"]) != 1 || s.listErr["SHOP"] != "" {

@@ -480,6 +480,23 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A token reaches one host. A static folder from before addRepo kept
+	// it on one may span several; it gets no token until it is cleaned up.
+	// Clearing one is never refused.
+	if len(sealed) > 0 && src.Kind == store.SourceStatic {
+		repos, err := d.Sources.Store.SourceRepos(ctx, src.ProjectKey)
+		if err != nil {
+			httpx.ServerError(w, r, err, "source repos")
+			return
+		}
+		for _, rp := range repos {
+			if !gitrepo.SameOrigin(rp.CloneURL, repos[0].CloneURL) {
+				httpx.WriteError(w, http.StatusUnprocessableEntity, "token: this folder's repositories are on "+gitrepo.Origin(repos[0].CloneURL)+
+					" and "+gitrepo.Origin(rp.CloneURL)+"; a token reaches one host only, remove the others first")
+				return
+			}
+		}
+	}
 	updated, err := d.Sources.Store.UpdateSourceAccess(ctx, src.ProjectKey, host, auth, user, sealed, setToken)
 	if err != nil {
 		httpx.ServerError(w, r, err, "update source")
@@ -615,7 +632,22 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "branch: not a branch name")
 		return
 	}
-	err := d.Sources.Store.AddSourceRepo(ctx, store.SourceRepo{ProjectKey: src.ProjectKey, Slug: in.Slug, CloneURL: in.CloneURL, Branch: in.Branch})
+	// One folder, one host, token or not: the token is sent on every clone
+	// of the folder, so a second host would be a second place it goes, and a
+	// token set later finds the folder already on one.
+	repos, err := d.Sources.Store.SourceRepos(ctx, src.ProjectKey)
+	if err != nil {
+		httpx.ServerError(w, r, err, "source repos")
+		return
+	}
+	for _, rp := range repos {
+		if !gitrepo.SameOrigin(in.CloneURL, rp.CloneURL) {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder's repositories are on "+gitrepo.Origin(rp.CloneURL)+
+				"; a folder holds one host, its token goes nowhere else")
+			return
+		}
+	}
+	err = d.Sources.Store.AddSourceRepo(ctx, store.SourceRepo{ProjectKey: src.ProjectKey, Slug: in.Slug, CloneURL: in.CloneURL, Branch: in.Branch})
 	if errors.Is(err, store.ErrExists) {
 		httpx.WriteError(w, http.StatusConflict, "a repository with this slug exists")
 		return

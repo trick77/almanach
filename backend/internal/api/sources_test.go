@@ -379,6 +379,48 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	}
 }
 
+// A static folder holds one host, token or not, so its token reaches one
+// host only; a folder from before the rule that spans several gets no
+// token, and clearing one is never refused.
+func TestSources_StaticFolderHoldsOneHost(t *testing.T) {
+	fs := newFakeSources()
+	h, _, _ := sourcesHandler(t, fs, true)
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"tools","kind":"static"}`, jsonHdr); code != 201 {
+		t.Fatal("create")
+	}
+	if code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos", "", `{"slug":"a","clone_url":"https://github.com/acme/a.git"}`, jsonHdr); code != 201 {
+		t.Fatalf("first repo: %d %v", code, body)
+	}
+	if code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos", "", `{"slug":"b","clone_url":"https://GitHub.COM/acme/b.git"}`, jsonHdr); code != 201 {
+		t.Fatalf("same host in another case: %d %v", code, body)
+	}
+	for _, off := range []string{"https://gitlab.com/acme/c.git", "https://github.com:8443/acme/c.git", "https://github.com.evil.example/acme/c.git"} {
+		code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos", "", `{"slug":"c","clone_url":"`+off+`"}`, jsonHdr)
+		if code != 422 || !strings.HasPrefix(field(t, body, "error"), "clone_url:") || !strings.Contains(field(t, body, "error"), "https://github.com") {
+			t.Errorf("%s: %d %v, want 422 naming clone_url and the folder's host", off, code, body)
+		}
+	}
+	if len(fs.repos["tools"]) != 2 {
+		t.Fatalf("rows after the refusals: %v", fs.repos["tools"])
+	}
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"token":"pat"}`, jsonHdr); code != 200 || string(body["has_token"]) != "true" {
+		t.Fatalf("token on a one-host folder: %d %v", code, body)
+	}
+
+	// A folder from before the rule, on two hosts: no token for it.
+	fs.repos["tools"] = append(fs.repos["tools"], store.SourceRepo{ProjectKey: "tools", Slug: "c", CloneURL: "https://gitlab.com/acme/c.git"})
+	code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"token":"other"}`, jsonHdr)
+	if code != 422 || !strings.HasPrefix(field(t, body, "error"), "token:") || !strings.Contains(field(t, body, "error"), "https://gitlab.com") {
+		t.Fatalf("token on a mixed folder: %d %v", code, body)
+	}
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"token":""}`, jsonHdr); code != 200 || string(body["has_token"]) != "false" {
+		t.Fatalf("clearing the token of a mixed folder: %d %v", code, body)
+	}
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/tools", "", `{"auto_describe":false}`, jsonHdr); code != 200 {
+		t.Fatalf("a change without a token on a mixed folder: %d %v", code, body)
+	}
+}
+
 // A map is expected with the sources on, for a project with a source
 // repository and no more of them than one map holds.
 func TestProject_MapExpected(t *testing.T) {
