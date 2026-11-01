@@ -227,6 +227,35 @@ func TestFoldRespellingIsNoChange(t *testing.T) {
 	}
 }
 
+// A statement only laid out anew, its sentence turned into a list with a
+// bold term, is stored so but keeps its sources: layout is not something
+// the fold learned. What the model wrote outside the stored layout (a *
+// bullet, a ## heading, a heading in the summary) is stored in it.
+func TestFoldLayoutIsNoChange(t *testing.T) {
+	st := newFakeStore()
+	page := existingRepoPage()
+	page.Statements[0].Text = "Nimmt Dateien an: Bilder, Texte und Archive."
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "## Zweck\nDer Dienst.",
+		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader",
+			Text: "## Annahme\nNimmt **Dateien** an:\n* Bilder\n* Texte\n  und Archive", Files: []string{"internal/files/upload.go"}}},
+		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 {
+		t.Fatalf("revisions = %+v", st.revisions)
+	}
+	r := st.revisions[0]
+	if want := "**Zweck**\n\nDer Dienst."; r.Summary != want {
+		t.Errorf("summary = %q, want %q", r.Summary, want)
+	}
+	s := r.Statements[0]
+	if want := "#### Annahme\n\nNimmt **Dateien** an:\n\n- Bilder\n- Texte und Archive"; s.Text != want {
+		t.Errorf("text = %q, want %q", s.Text, want)
+	}
+	if len(s.Sources) != 1 {
+		t.Errorf("sources = %+v, want the old one alone: a new layout teaches nothing", s.Sources)
+	}
+}
+
 // manyFiles is n distinct paths.
 func manyFiles(n int) []string {
 	files := make([]string, n)
@@ -592,6 +621,25 @@ func TestFoldIdenticalNoRevision(t *testing.T) {
 	}
 }
 
+// Text stored before the layout, an indent or a "* " item in it, returned
+// as it stands is no new revision: only its whitespace and marks would
+// change.
+func TestFoldLegacyTextEchoedNoRevision(t *testing.T) {
+	st := newFakeStore()
+	page := existingRepoPage()
+	page.Summary = "Der Dienst.\n\n\n  Speichert."
+	page.Statements[0].Text = "Nimmt an:\n* Bilder\n  * Texte"
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	m := &fakeMerger{result: okResult(&inference.Description{
+		Summary:    page.Summary,
+		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: page.Statements[0].Text, Files: []string{"internal/files/upload.go"}}},
+	}, nil)}
+	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 0 {
+		t.Errorf("revisions = %+v, want none for legacy text echoed", st.revisions)
+	}
+}
+
 func TestFoldProjectScope(t *testing.T) {
 	st := newFakeStore()
 	m := &fakeMerger{result: okResult(nil, &inference.Description{
@@ -833,6 +881,12 @@ func TestDescribe(t *testing.T) {
 	p.Statements[1].Text = "Absatz eins.\n\nAbsatz zwei."
 	if got := describe(p); !strings.Contains(got, "### [s2] rule: R\n\nAbsatz eins.\n\nAbsatz zwei.\n") {
 		t.Errorf("describe with paragraphs = %q", got)
+	}
+	// A sub-heading and a list stay inside the statement: #### under the
+	// frame's ###, never a statement of its own.
+	p.Statements[1].Text = "#### Ablauf\n\n- eins\n- zwei"
+	if got := describe(p); !strings.Contains(got, "### [s2] rule: R\n\n#### Ablauf\n\n- eins\n- zwei\n") {
+		t.Errorf("describe with layout = %q", got)
 	}
 }
 

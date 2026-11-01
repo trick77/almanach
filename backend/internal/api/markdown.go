@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/httpx"
 )
@@ -101,7 +102,7 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "Revision %d, Stand %s.\n\n", p.Revision, p.UpdatedAt.UTC().Format("2006-01-02"))
-	if s := prose(p.Summary); s != "" {
+	if s := prose(p.Summary, false); s != "" {
 		b.WriteString(s + "\n\n")
 	}
 	// The sentinel is no map: asked for, not drawn.
@@ -136,7 +137,7 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 }
 
 func writeStatement(b *strings.Builder, s store.Statement) {
-	fmt.Fprintf(b, "### %s\n\n%s\n\n", strings.Join(strings.Fields(s.Name), " "), prose(s.Text))
+	fmt.Fprintf(b, "### %s\n\n%s\n\n", strings.Join(strings.Fields(s.Name), " "), prose(s.Text, true))
 	if len(s.Files) > 0 {
 		files := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
@@ -177,25 +178,45 @@ func writeJSONBlock(b *strings.Builder, d *diagram.Diagram) {
 	b.WriteString(fence + "json\n" + j + "\n" + fence + "\n\n")
 }
 
-// prose is model-written text as text, never as the export's structure.
-// Each line loses its indent (no code block), and one that would open a
-// block as CommonMark reads it (a heading, quote, fence, list item, rule,
+// prose is model-written text in its stored layout (package markup) and
+// nothing more, never the export's structure. Each line loses its indent
+// (no code block). A "- " or "N. " list item and, where headings is set (a
+// statement's text), a "#### " sub-heading under the ### statement name
+// stay as they are; any other line that would open a block as CommonMark
+// reads it (a heading of another level, quote, fence, * or + item, rule,
 // underline or HTML) gets a backslash before the marker: a backslashed
 // ASCII punctuation mark reads as itself. Text that opens nothing, "-5" or
 // "1.5 Sekunden", stays as written, for the agent reads the raw file.
-func prose(s string) string {
+func prose(s string, headings bool) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i, l := range lines {
 		t := strings.TrimLeft(l, " \t")
-		if blockStart(t) {
-			t = `\` + t
-		} else if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n <= 9 && n < len(t) &&
-			(t[n] == '.' || t[n] == ')') && markerEnds(t[n+1:]) {
-			t = t[:n] + `\` + t[n:]
+		if _, ok := markup.StoredHeading(t); ok && headings {
+			lines[i] = t
+			continue
 		}
-		lines[i] = t
+		// An item's text is text again: "- # x" or "1. > y" opens nothing
+		// inside the item either.
+		if marker, text, ok := markup.StoredItem(t); ok {
+			lines[i] = marker + escapeBlock(text)
+			continue
+		}
+		lines[i] = escapeBlock(t)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// escapeBlock is a line, its indent dropped, with a backslash before the
+// marker of any block it would open.
+func escapeBlock(t string) string {
+	if blockStart(t) {
+		return `\` + t
+	}
+	if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n <= 9 && n < len(t) &&
+		(t[n] == '.' || t[n] == ')') && markerEnds(t[n+1:]) {
+		return t[:n] + `\` + t[n:]
+	}
+	return t
 }
 
 // blockStart reports whether a line, its indent dropped, opens a block

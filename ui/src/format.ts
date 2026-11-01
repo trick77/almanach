@@ -52,14 +52,159 @@ export function share(
   return Math.round((part / whole) * 100);
 }
 
-/** paragraphs splits a statement's text on blank lines. Never markdown:
- *  the text is prose, and a line that happens to start with a dash or a
- *  hash must not turn into a list or a heading. */
+/** paragraphs splits a text on blank lines and reads nothing else: a
+ *  note's text, which noergler wrote and no normalizer laid out, where a
+ *  line that happens to start with a dash or a hash must not turn into a
+ *  list or a heading. */
 export function paragraphs(text: string): string[] {
   return text
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
+}
+
+/** A block of laid-out text: a paragraph, a sub-heading, or a flat list. */
+export type Block =
+  | { kind: "p"; text: string }
+  | { kind: "h"; text: string }
+  | { kind: "ul"; items: string[] }
+  | { kind: "ol"; start: number; items: string[] };
+
+/** The one sub-heading level statement text holds (markup.Heading). */
+const headingMark = "#### ";
+
+/** listItem is a line as a list item in the stored form markup.Normalize
+ *  writes ("- text", "12. text"), or null. */
+function listItem(
+  line: string,
+): { kind: "ul" | "ol"; n: number; text: string } | null {
+  // Exactly the stored form, as markup.StoredItem: one blank after the
+  // marker, the text starting right after it.
+  const u = /^- (\S.*)$/.exec(line);
+  if (u) return { kind: "ul", n: 0, text: u[1] };
+  const m = /^(\d{1,9})\. (\S.*)$/.exec(line);
+  return m ? { kind: "ol", n: Number(m[1]), text: m[2] } : null;
+}
+
+/** blocks reads Almanach's laid-out text, a statement's or a summary's,
+ *  as backend/internal/markup stores it: blocks a blank line apart, a "- "
+ *  or "N. " line a list item (a line under one without a marker
+ *  continues it), a "#### " line a sub-heading where headings is set (a
+ *  statement's text), every other line paragraph text. Nothing else is
+ *  markup: a quote, a table or a "* " line stays as written. */
+export function blocks(text: string, headings: boolean): Block[] {
+  const out: Block[] = [];
+  let para: string[] = [];
+  let list: Extract<Block, { kind: "ul" | "ol" }> | null = null;
+  const close = () => {
+    if (para.length > 0) out.push({ kind: "p", text: para.join("\n") });
+    para = [];
+    list = null;
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "") {
+      close();
+      continue;
+    }
+    if (
+      headings &&
+      line.startsWith(headingMark) &&
+      line.slice(headingMark.length).trim() !== ""
+    ) {
+      close();
+      out.push({ kind: "h", text: line.slice(headingMark.length).trim() });
+      continue;
+    }
+    const item = listItem(line);
+    if (item !== null) {
+      if (list === null || list.kind !== item.kind) {
+        close();
+        list =
+          item.kind === "ul"
+            ? { kind: "ul", items: [] }
+            : { kind: "ol", start: item.n, items: [] };
+        out.push(list);
+      }
+      list.items.push(item.text);
+      continue;
+    }
+    if (list !== null) {
+      list.items[list.items.length - 1] += " " + line;
+      continue;
+    }
+    para.push(line);
+  }
+  close();
+  return out;
+}
+
+/** plain is laid-out text as Doc shows it, what a search reads, so a
+ *  statement kept is one with a mark: the heading and list markers gone
+ *  and the ** that pair, as markup.Plain has it, and the code spans'
+ *  backticks too, which Doc draws as the mono face. */
+export function plain(text: string): string {
+  return text
+    .split("\n")
+    .map((raw) => {
+      const line = raw.trim();
+      const body =
+        line.startsWith(headingMark) &&
+        line.slice(headingMark.length).trim() !== ""
+          ? line.slice(headingMark.length).trim()
+          : (listItem(line)?.text ?? line);
+      return runs(body)
+        .map((r) => r.text)
+        .join("");
+    })
+    .join("\n");
+}
+
+/** A run of a line of laid-out text: prose or code, bold or not. */
+export type Run = { text: string; code: boolean; bold: boolean };
+
+/** runs cuts a paragraph into its code spans (codeSpans) and the **bold**
+ *  around them: a ** pairs with the next one on its line, outside code,
+ *  with something between; an unpaired ** stays as written. Bold may hold
+ *  a code span ("**`strict`** gilt"). */
+export function runs(p: string): Run[] {
+  type Item = { mark: true } | { mark: false; text: string; code: boolean };
+  const items: Item[] = [];
+  for (const s of codeSpans(p)) {
+    if (s.code) {
+      items.push({ mark: false, text: s.text, code: true });
+      continue;
+    }
+    s.text.split("**").forEach((t, i) => {
+      if (i > 0) items.push({ mark: true });
+      if (t !== "") items.push({ mark: false, text: t, code: false });
+    });
+  }
+  const out: Run[] = [];
+  const push = (text: string, code: boolean, bold: boolean) => {
+    const prev = out[out.length - 1];
+    if (prev !== undefined && !code && !prev.code && prev.bold === bold)
+      prev.text += text;
+    else out.push({ text, code, bold });
+  };
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it.mark) {
+      push(it.text, it.code, false);
+      continue;
+    }
+    const j = items.findIndex((x, k) => k > i && x.mark);
+    const inner = items.slice(i + 1, j < 0 ? i + 1 : j);
+    const pairs =
+      j > i + 1 && inner.every((x) => !x.mark && !x.text.includes("\n"));
+    if (!pairs) {
+      push("**", false, false);
+      continue;
+    }
+    for (const x of inner) if (!x.mark) push(x.text, x.code, true);
+    i = j;
+  }
+  return out;
 }
 
 /** A run of a paragraph: prose, or an identifier the model quoted in

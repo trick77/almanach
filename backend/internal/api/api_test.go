@@ -645,3 +645,24 @@ func TestFirstSentence(t *testing.T) {
 		}
 	}
 }
+
+// A summary's layout never reaches the repository list: a heading set in
+// bold is passed over, bold and list marks are gone.
+func TestLead(t *testing.T) {
+	for in, want := range map[string]string{
+		"**Zweck**\n\nDer **Dienst** liest\nNotizen. Mehr.": "Der Dienst liest Notizen. Mehr.",
+		"- **eins**\n- zwei": "eins",
+		"**Nur Titel**":      "",
+		// An opening that starts and ends in bold is text, not a heading.
+		"**Almanach** ist das Wiki, das **lebt**\n\nZweiter.": "Almanach ist das Wiki, das lebt",
+		"Eins.\n\nZwei.": "Eins.",
+		"`a**b` bleibt.": "`a**b` bleibt.",
+	} {
+		if got := lead(in); got != want {
+			t.Errorf("lead(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := firstSentence(lead("**Zweck**\n\nDer Dienst. Mehr.")); got != "Der Dienst." {
+		t.Errorf("first sentence = %q", got)
+	}
+}

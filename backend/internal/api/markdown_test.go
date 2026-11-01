@@ -176,17 +176,19 @@ func TestMarkdownBearerInOIDC(t *testing.T) {
 	}
 }
 
-// Model text never becomes the export's structure: a heading, quote, fence
-// or underline line is escaped, a fence in a diagram label outlasted, a
-// backtick in a path kept inside its code span.
+// Model text never becomes the export's structure beyond its stored layout:
+// a "- " or "N. " item and a statement's "#### " stay; a heading of another
+// level, a #### in a summary, a quote, fence, * item, 1) item or underline
+// line is escaped, a fence in a diagram label outlasted, a backtick in a
+// path kept inside its code span.
 func TestMarkdownEscapesModelText(t *testing.T) {
 	label := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "x ```` y < z", Shape: "step"}}}
-	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel",
+	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Summary: "# Kein Titel\n#### Auch keiner\n- Punkt",
 		Statements: []store.Statement{{Kind: "rule", Name: "Zwei\nZeilen",
-			Text:  "Satz.\n## Regeln\n```\n> zitiert\n---\n\n    eingerückt\n***\n1. Punkt\n<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10",
+			Text:  "Satz.\n## Regeln\n#### Ablauf\n```\n> zitiert\n---\n\n    eingerückt\n***\n1. Punkt\n1) Klammer\n* Stern\n<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10",
 			Files: []string{"a`b.go"}, Diagram: label}}}, true)
-	for _, want := range []string{"\\# Kein Titel\n", "### Zwei Zeilen\n",
-		"Satz.\n\\## Regeln\n\\```\n\\> zitiert\n\\---\n\neingerückt\n\\***\n1\\. Punkt\n\\<div>\n\\- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10\n",
+	for _, want := range []string{"\\# Kein Titel\n\\#### Auch keiner\n- Punkt\n", "### Zwei Zeilen\n",
+		"Satz.\n\\## Regeln\n#### Ablauf\n\\```\n\\> zitiert\n\\---\n\neingerückt\n\\***\n1. Punkt\n1\\) Klammer\n\\* Stern\n\\<div>\n- Liste\n2026 kam\n1.5 Sekunden\n-5 ist der Default\n#3 offen\n< 10\n",
 		"Dateien: `` a`b.go ``\n", "`````json\n", `"label": "x ` + "````" + ` y < z"`} {
 		if !strings.Contains(md, want) {
 			t.Errorf("export lacks %q:\n%s", want, md)
@@ -194,6 +196,15 @@ func TestMarkdownEscapesModelText(t *testing.T) {
 	}
 	if strings.Count(md, "\n## ") != 1 {
 		t.Errorf("model text opened a heading:\n%s", md)
+	}
+}
+
+// A list item's text opens no block inside the item.
+func TestMarkdownEscapesItemText(t *testing.T) {
+	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt,
+		Statements: []store.Statement{{Kind: "rule", Name: "R", Text: "- # Titel\n- > Zitat\n1. ```go\n2. - -"}}}, true)
+	if want := "- \\# Titel\n- \\> Zitat\n1. \\```go\n2. \\- -\n"; !strings.Contains(md, want) {
+		t.Errorf("export lacks %q:\n%s", want, md)
 	}
 }
 

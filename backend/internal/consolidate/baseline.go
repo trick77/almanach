@@ -18,7 +18,6 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
-	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
@@ -673,7 +672,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
 	summary := page.Summary
 	if applied.Summary != nil {
-		summary = lang.Prose(*applied.Summary)
+		summary = proseSummary(*applied.Summary)
 	}
 	// Checked travels by id, never by position: a statement this step wrote
 	// or confirmed was read against the commit.
@@ -710,7 +709,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	if err := encodeInto(r, *plan); err != nil {
 		return err
 	}
-	if summary == page.Summary && sameStatements(statements, page.Statements) && sameChecks(statements, page.Statements) {
+	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && sameChecks(statements, page.Statements) {
 		w.log.InfoContext(ctx, "baseline: "+name+": page identical, no revision")
 		return w.save(ctx, *r)
 	}
@@ -1279,7 +1278,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if len(kept) > 0 {
 		w.log.WarnContext(ctx, "baseline: "+projectLabel+": drop of statements a pull request taught left out", slog.Any("ids", kept))
 	}
-	summary := lang.Prose(d.Summary)
+	summary := proseSummary(d.Summary)
 	applied, reason := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: d.Added, Drop: drop}, noTree)
 	if reason != "" {
 		return nil, reason, nil
@@ -1297,7 +1296,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	}
 	logLeftOut(ctx, w.log, "baseline: "+projectLabel, leftOut)
 	drawn := w.revisionMap(ctx, page, d.Map, slugs)
-	if summary == page.Summary && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
+	if sameLaidOut(page.Summary, summary, false) && sameStatements(statements, page.Statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, "", nil
 	}

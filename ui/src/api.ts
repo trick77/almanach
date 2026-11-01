@@ -48,7 +48,9 @@ export interface Statement {
   id: string;
   kind: Kind;
   name: string;
-  /** Prose, paragraphs separated by a blank line. Never markdown. */
+  /** Laid-out text (format.ts blocks): paragraphs a blank line apart,
+   *  flat "- " and "N. " lists, **bold**, code spans, "#### " sub-headings.
+   *  No other markdown. */
   text: string;
   files: string[];
   sources: Source[];
