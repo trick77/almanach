@@ -724,6 +724,15 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 		if !w.holding() || !w.retryAt.Equal(clock.Add(want)) {
 			t.Errorf("%s: hold until %v, want %v from now", name, w.retryAt, want)
 		}
+		// The queue page sees the hold, its end and its cause, and no
+		// work in flight.
+		cause := map[string]string{"timed out": HoldTimeout, "auth": HoldKeyRefused, "rate limited": HoldRateLimit}[name]
+		if cause == "" {
+			cause = HoldUnavailable
+		}
+		if s := w.Status(); s.HoldUntil == nil || !s.HoldUntil.Equal(w.retryAt) || s.HoldCause != cause || s.Busy != nil {
+			t.Errorf("%s: Status = %+v, want held until %v for %s, idle", name, s, w.retryAt, cause)
+		}
 		// A wake inside the hold folds nothing.
 		w.drain(context.Background())
 		if len(m.prompts) != 1 {
@@ -757,6 +766,9 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 	w.Fold(context.Background(), queued("PLAT/files#43"))
 	if w.holding() || w.backoff != 0 {
 		t.Errorf("a call that got through left a hold: until %v backoff %s", w.retryAt, w.backoff)
+	}
+	if s := w.Status(); s.HoldUntil != nil || s.HoldCause != "" {
+		t.Errorf("Status after a call got through = %+v, want no hold", s)
 	}
 
 	// Past maxFoldAttempts the note is given up, marked, with the rest

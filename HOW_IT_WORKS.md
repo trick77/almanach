@@ -242,6 +242,17 @@ themselves go oldest first, one to its end before the next begins.
 - `/api/projects/{key}.md` and `/api/projects/{key}/repos/{slug}.md`: a
   page as Markdown, for a coding agent (below).
 - `/api/sources` and below: the clones, read and written (section 4a).
+- `/api/queue`: the worker's queue, the page Warteschlange. The note or
+  run step in flight, then the rest in the order the worker takes it (the
+  notes it may fold, the started run's next step, the notes waiting for
+  that run, the queued runs). Why the next item waits sits on that item:
+  a hold with its cause (the model not answering, rate limited, the key
+  refused, the database busy) and its end, or a run step waiting for its
+  clone. A run lists its steps with their time and cost, from the plan
+  and the calls (`llm_calls.step`). Below, what finished in the last 24
+  hours and what the worker's calls cost. The worker's state is in
+  memory; the queue itself is the store's, so a restart shows the same
+  queue. A hold's end wakes the worker, not the next poll.
 
 ### The page model
 
@@ -448,10 +459,12 @@ any repository size, and every rule here was paid for there.
   A clone is complete only when its `HEAD` resolves to a commit; git
   writes `HEAD` before any transfer, so a clone cut off by a shutdown has
   one and no refs, fails that check, and is removed and cloned again.
-- A removal from the API goes through the poller's disk lock: never while
-  a sync touches a clone, and a row removed mid-cycle is skipped by the
-  cycle that listed it, so a deleted folder is not cloned back as an
-  orphan.
+- Work on a clone (a sync, a run's read, a removal from the API) holds
+  that repository's lock, so a run reading one repository never waits for
+  the sync of another; a removal of a whole project folder holds them
+  all. A removal never runs while a sync touches its clone, and a row
+  removed mid-cycle is skipped by the cycle that listed it, so a deleted
+  folder is not cloned back as an orphan.
 - Keys and slugs are validated as single path segments (Bitbucket's
   charset, never `.` or `..`) and the resulting path checked with
   `filepath.Rel` against the base, both on the way in and again before any
@@ -509,8 +522,11 @@ noergler delivers only by case is refused at creation, since every note
 of the project would be ignored. With the sources off, nothing changes:
 every note is taken and the wiki lists noergler's projects.
 
-**Triggers.** The poller queues a full run on a clone's first `ready` (its
-row had no head before), and queues a reconcile when the head left the
+**Triggers.** Read from the rows after every sync, never from an event:
+the poller queues a full run (trigger `first_ready`) for a ready clone that
+has no run at all, so a run whose queueing was lost (a failed write, a
+restart between the sync and the queue, the baseline off at the time) is
+queued by the next cycle. It queues a reconcile when the head left the
 documented commit and the last run ended more than
 `BACKEND_BASELINE_RECONCILE` ago. A failed run, first, reconcile or a
 button's, is queued again in its own mode (trigger `retry`) a day after it
@@ -519,8 +535,7 @@ whatever the head and even with reconciles off; past that the repository
 is back on the interval, so a failure that is permanent costs a call a
 month, not a day. The buttons on the source page queue a reconcile
 (Aktualisieren, a full run before the first) or a full run with a fresh
-catalogue (Neu beschreiben). Repositories cloned before the baseline
-existed have no documented run and wait for their button.
+catalogue (Neu beschreiben).
 
 **A run, step by step.** Each step is at most one model call, so a step is
 what the worker interleaves with notes, holds after a gateway failure and
@@ -713,10 +728,9 @@ head while a part is left. The source page names each skip's reason, an
 error as one, and says whether the parts are read again on their own
 (`auto_retry`) or with the next run, sooner by the button; the server
 sends the rule's answer (`left_parts`), the page has no copy of it. A clone
-the poller holds (a long
-clone or fetch) defers the step to the next drain rather than holding the
-worker behind it; the reads take the poller's disk lock for the read only,
-never across a model call.
+the poller holds (a long clone or fetch of this repository) defers the
+step to the next drain rather than holding the worker behind it; the reads
+take the clone's lock for the read only, never across a model call.
 
 ## 5. Operations
 
@@ -1279,8 +1293,9 @@ the reason in the log and the page unchanged:
 - A run that ends with no revision still records its commit as documented.
 - A failed or refused part is named on the plan and read by the next
   reconcile; files a reconcile could not place are too.
-- Reads take the poller's disk lock for the read only; a lock held past
-  two seconds defers the step to the next drain, never fails the run.
+- Reads take the clone's lock for the read only; a lock held past two
+  seconds (its own repository syncing) defers the step to the next drain,
+  never fails the run.
 
 ### Startup and operations
 

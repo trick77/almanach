@@ -133,6 +133,8 @@ var errStop = errors.New("stop the drain")
 // stepRun runs one step of the run. Reports whether the drain may go on.
 func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	ctx = logging.With(ctx, "project", r.ProjectKey, "repo", r.Slug, "run_id", r.ID)
+	w.setBusy(Busy{Kind: KindRun, ProjectKey: r.ProjectKey, RepoSlug: r.Slug, RunID: r.ID})
+	defer w.clearBusy()
 	var err error
 	switch r.State {
 	case store.RunQueued:
@@ -159,13 +161,16 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	// taken again at the next wake or poll, the notes meanwhile go on.
 	if errors.Is(err, ErrCloneBusy) {
 		w.log.DebugContext(ctx, "baseline: clone busy, step deferred")
+		w.setWait(r.ID, WaitClone)
 		return false
 	}
 	// Git could not place a merge commit: the same step again later, no
 	// call spent, within placeWait (newerIDs).
 	if errors.Is(err, errPlaceAgain) {
+		w.setWait(r.ID, WaitPlace)
 		return false
 	}
+	w.clearWait()
 	if err != nil {
 		w.failRun(ctx, r, err.Error())
 	}
@@ -194,7 +199,7 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 		// A busy database is held off like a gateway: no next drain at
 		// once, into the same wait.
 		if store.IsBusy(err) {
-			w.hold(ctx, holdBusy, 0)
+			w.hold(ctx, HoldBusy, 0)
 		}
 		return errStop
 	}
@@ -214,7 +219,7 @@ func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.
 	if !store.IsBusy(err) {
 		return errStop
 	}
-	w.hold(ctx, holdBusy, 0)
+	w.hold(ctx, HoldBusy, 0)
 	if w.busyRun != r.ID {
 		w.busyRun, w.busyWrites = r.ID, 0
 	}
@@ -278,16 +283,21 @@ func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
 // this call, which the step handles.
 func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string, res inference.Call) (bool, error) {
 	runID := r.ID
+	var step *int
+	if purpose == store.PurposeOverview || purpose == store.PurposeSubject {
+		i := r.Step
+		step = &i
+	}
 	if _, err := w.store.InsertLLMCall(ctx, store.LLMCall{
 		ProjectKey: r.ProjectKey, RepoSlug: r.Slug, SourceKind: store.FromBaseline, SourceCommit: r.Commit, Purpose: purpose,
-		BaselineRunID: &runID, Outcome: res.Outcome.String(), Model: res.Cost.Model, InputTokens: res.Cost.InputTokens,
+		BaselineRunID: &runID, Step: step, Outcome: res.Outcome.String(), Model: res.Cost.Model, InputTokens: res.Cost.InputTokens,
 		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
 	}); err != nil {
 		w.log.WarnContext(ctx, "baseline: call row failed", logging.Err(err))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s call %s (%s)", purpose, res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res); gateway {
-		w.hold(ctx, holdGateway, retryAfter)
+		w.hold(ctx, gatewayCause(res), retryAfter)
 		r.Attempts++
 		if r.Attempts >= maxFoldAttempts {
 			return false, fmt.Errorf("%s step given up after %d gateway failures: %s", purpose, r.Attempts, res.Outcome)

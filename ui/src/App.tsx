@@ -1,18 +1,22 @@
 import { useEffect, useState } from "react";
-import type { Me, Sources } from "./api";
+import type { Me, QueueCount, Sources } from "./api";
 import { FaqPage } from "./FaqPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
+import { QueuePage } from "./QueuePage";
 import { RepoPage } from "./RepoPage";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
-import { routeFromPath, sourcesPath, type Route } from "./routing";
+import { queuePath, routeFromPath, sourcesPath, type Route } from "./routing";
 import { logout, useSession } from "./session";
 import { loginHref } from "./signin";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
 import { btn, btnPrimary, Link } from "./ui";
+
+/** queueEvery is how often the shell refreshes the queue's count. */
+const queueEvery = 15000;
 
 /** The session gate in front of the shell: nothing that fetches renders
  *  until the session is known (see session.ts). */
@@ -70,8 +74,11 @@ function Shell({ me }: { me: Me }) {
   const { data: sources } = useFetch<Sources>("sources");
   const sourcesOn = sources?.enabled ?? false;
   const inSources = route.page === "sources" || route.page === "source";
+  // The queue's count beside its entry: work in flight and waiting.
+  const { data: queue } = useFetch<QueueCount>("queue/count", queueEvery);
+  const queued = queue?.count ?? 0;
 
-  const nav = (label: string, to: string, current: boolean) => (
+  const nav = (label: string, to: string, current: boolean, count = 0) => (
     <Link
       to={to}
       className={
@@ -82,6 +89,14 @@ function Shell({ me }: { me: Me }) {
       }
     >
       <span aria-current={current ? "page" : undefined}>{label}</span>
+      {count > 0 && (
+        <span
+          data-testid="queue-count"
+          className="ml-1.5 rounded-full bg-accent-dim px-1.5 text-[11.5px] text-ink tabular-nums"
+        >
+          {count}
+        </span>
+      )}
     </Link>
   );
 
@@ -98,8 +113,13 @@ function Shell({ me }: { me: Me }) {
           className="flex flex-1 flex-wrap items-center gap-0.5"
           aria-label={S.nav.label}
         >
-          {nav(S.nav.projects, "/", route.page !== "faq" && !inSources)}
+          {nav(
+            S.nav.projects,
+            "/",
+            route.page !== "faq" && route.page !== "queue" && !inSources,
+          )}
           {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
+          {nav(S.nav.queue, queuePath, route.page === "queue", queued)}
           {nav(S.nav.faq, "/faq", route.page === "faq")}
         </nav>
         <span
@@ -132,6 +152,7 @@ function Shell({ me }: { me: Me }) {
         {route.page === "projects" && <ProjectsPage />}
         {route.page === "faq" && <FaqPage />}
         {route.page === "sources" && <SourcesPage />}
+        {route.page === "queue" && <QueuePage />}
         {route.page === "source" && (
           <SourcePage key={route.key} projectKey={route.key} />
         )}
