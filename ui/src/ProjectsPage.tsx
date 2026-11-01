@@ -31,7 +31,13 @@ export function ProjectsPage() {
       .filter((p) => !p.system)
       .flatMap((p) => p.repositories.map((r) => ({ key: p.key, repo: r }))) ??
     [];
-  const both = systems.length > 0 && alone.length > 0;
+  // A folder without a repository yet keeps its card, or it would vanish
+  // from the list it was made for.
+  const emptyFolders =
+    data?.projects.filter((p) => !p.system && p.repositories.length === 0) ??
+    [];
+  const standalone = alone.length + emptyFolders.length;
+  const both = systems.length > 0 && standalone > 0;
   return (
     <div className={page}>
       <div className={column}>
@@ -41,7 +47,7 @@ export function ProjectsPage() {
           <Failed what={S.projects.what} />
         ) : data === null ? (
           <Skeleton />
-        ) : systems.length === 0 && alone.length === 0 ? (
+        ) : systems.length === 0 && standalone === 0 ? (
           <Empty>{S.projects.empty}</Empty>
         ) : (
           <>
@@ -60,7 +66,7 @@ export function ProjectsPage() {
                 </div>
               </section>
             )}
-            {alone.length > 0 && (
+            {standalone > 0 && (
               <section>
                 {both && (
                   <Heading
@@ -69,6 +75,9 @@ export function ProjectsPage() {
                   />
                 )}
                 <div className={grid}>
+                  {emptyFolders.map((p) => (
+                    <ProjectTile key={p.key} p={p} />
+                  ))}
                   {alone.map(({ key, repo }) => (
                     <RepoTile key={key + "/" + repo.slug} pkey={key} r={repo} />
                   ))}

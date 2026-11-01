@@ -139,7 +139,7 @@ func (f *fakeSources) UpdateSourceAccess(_ context.Context, key, host, auth, use
 }
 func (f *fakeSources) SetSourceStandalone(_ context.Context, key string, standalone bool) (bool, error) {
 	s, ok := f.sources[key]
-	if !ok {
+	if !ok || s.Standalone == standalone {
 		return false, nil
 	}
 	s.Standalone = standalone

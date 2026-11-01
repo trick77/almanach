@@ -90,7 +90,9 @@ function ProjectCrumbs({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useHashTab(TABS, OVERVIEW);
+  // Repositories that stand alone have no description: the overview is
+  // the only tab, a #beschreibung in the address the start tab.
+  const [tab, setTab] = useHashTab(data.system ? TABS : [OVERVIEW], OVERVIEW);
   const [query, setQuery] = useState("");
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
@@ -115,7 +117,8 @@ function Body({ data }: { data: ProjectDetail }) {
   // A search is over the description: typing on the overview goes there.
   function onQuery(q: string) {
     setQuery(q);
-    if (q.trim() !== "" && tab !== DESCRIPTION) openTab(DESCRIPTION);
+    if (q.trim() !== "" && data.system && tab !== DESCRIPTION)
+      openTab(DESCRIPTION);
   }
 
   const desc = descriptionRail(data.description, true, query, DESCRIPTION);
@@ -209,7 +212,7 @@ function Body({ data }: { data: ProjectDetail }) {
       />
 
       <div role="tabpanel" aria-label={tabLabel(tab)}>
-        {tab === OVERVIEW || !data.system ? (
+        {tab === OVERVIEW ? (
           <Overview data={data} showMap={showMap} />
         ) : (
           <DescriptionView

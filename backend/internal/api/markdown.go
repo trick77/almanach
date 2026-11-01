@@ -52,7 +52,7 @@ func (d Deps) projectMarkdown(w http.ResponseWriter, r *http.Request, key string
 		httpx.WriteError(w, http.StatusNotFound, "unknown project")
 		return
 	}
-	alone, err := d.Store.ProjectStandalone(ctx, key)
+	alone, err := d.standalone(ctx, key)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project source")
 		return

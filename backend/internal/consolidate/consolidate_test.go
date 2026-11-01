@@ -48,14 +48,23 @@ type fakeStore struct {
 	// page and the revisions written in the test: what NextStatementID
 	// reads off the revisions table.
 	history map[string][]string
-	// standalone are the projects whose repositories stand alone; standaloneErr
-	// fails the read.
+	// standalone are the projects whose repositories stand alone, due the
+	// ones that became a system again; standaloneErr fails the read, folded
+	// records the due marks cleared.
 	standalone    map[string]bool
+	due           map[string]bool
 	standaloneErr error
+	folded        []string
 }
 
-func (f *fakeStore) ProjectStandalone(_ context.Context, key string) (bool, error) {
-	return f.standalone[key], f.standaloneErr
+func (f *fakeStore) ProjectSystemOf(_ context.Context, key string) (store.ProjectSystem, error) {
+	return store.ProjectSystem{Standalone: f.standalone[key], Due: f.due[key]}, f.standaloneErr
+}
+
+func (f *fakeStore) ProjectFolded(_ context.Context, key string) error {
+	delete(f.due, key)
+	f.folded = append(f.folded, key)
+	return nil
 }
 
 func (f *fakeStore) NextStatementID(_ context.Context, scope, project, repo string) (int, error) {

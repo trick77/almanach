@@ -40,7 +40,8 @@ type Store interface {
 	Ingest(ctx context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	Projects(ctx context.Context, sourced bool) ([]store.ProjectRow, error)
-	ProjectStandalone(ctx context.Context, key string) (bool, error)
+	ProjectSystemOf(ctx context.Context, key string) (store.ProjectSystem, error)
+	StandaloneRepos(ctx context.Context) (map[string][]store.RepoRow, error)
 	ProjectExists(ctx context.Context, key string, sourced bool) (string, bool, error)
 	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
 	RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error)
@@ -299,17 +300,22 @@ func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "projects")
 		return
 	}
+	// Standing alone is the sources' word: with them off, every project is
+	// a system again.
+	alone := map[string][]store.RepoRow{}
+	if d.Sources != nil {
+		if alone, err = d.Store.StandaloneRepos(ctx); err != nil {
+			httpx.ServerError(w, r, err, "repos")
+			return
+		}
+	}
 	out := projectsBody{Projects: make([]projectBody, 0, len(rows))}
 	for _, p := range rows {
+		standalone := p.Standalone && d.Sources != nil
 		body := projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision, LastMerge: p.LastMerge,
-			System: !p.Standalone, Repositories: []repoBody{}}
-		if p.Standalone {
-			repos, err := d.Store.Repos(ctx, p.Key, d.Sources != nil)
-			if err != nil {
-				httpx.ServerError(w, r, err, "repos")
-				return
-			}
-			body.Repositories = repoBodies(repos)
+			System: !standalone, Repositories: []repoBody{}}
+		if standalone {
+			body.Repositories = repoBodies(alone[p.Key])
 		}
 		out.Projects = append(out.Projects, body)
 	}
@@ -388,6 +394,17 @@ type repoBody struct {
 	Summary   string     `json:"summary"`
 	Notes     int        `json:"notes"`
 	LastMerge *time.Time `json:"last_merge"`
+}
+
+// standalone reports whether a project's repositories stand alone: its
+// source says so, and the sources are on. With them off every project is
+// a system again, a folder's old word included.
+func (d Deps) standalone(ctx context.Context, key string) (bool, error) {
+	if d.Sources == nil {
+		return false, nil
+	}
+	ps, err := d.Store.ProjectSystemOf(ctx, key)
+	return ps.Standalone, err
 }
 
 // repoBodies is a project's repositories as the wire lists them.
@@ -475,7 +492,7 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "project key")
 		return
 	}
-	alone, err := d.Store.ProjectStandalone(ctx, key)
+	alone, err := d.standalone(ctx, key)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project source")
 		return

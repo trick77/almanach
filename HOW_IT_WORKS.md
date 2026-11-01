@@ -421,9 +421,13 @@ model no project page and asks for null (whatever comes is not written),
 the wiki lists the repositories one by one under "Einzelne Repositories"
 and serves the project without a description, map or Markdown export. A
 project page written while the folder was a system stays in the store with
-its history; switched back on, the next run of a repository folds it
-again. A Bitbucket project is always one system: the switch is a 422
-there.
+its history; switched back on, the folder is marked due (`project_due`)
+and the next run of any of its repositories folds the project whatever a
+reconcile would skip, the mark cleared once that step got its answer, so
+the kept page catches up with repositories that came, went or changed
+meanwhile. With the sources off the word counts for nothing: every project
+is a system again. A Bitbucket project is always one system: the switch is
+a 422 there.
 
 A project and a repository are ids; the key and the slug are names. Every
 name either ever had stays a name of it, so a renamed project or repository

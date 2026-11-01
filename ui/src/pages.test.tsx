@@ -298,6 +298,25 @@ describe("ProjectsPage", () => {
     expect(screen.getByText("Ein Client für das Gateway.")).toBeInTheDocument();
     expect(screen.getByText("webfetch")).toBeInTheDocument();
   });
+  it("keeps the card of a standalone folder without a repository yet", async () => {
+    serve({
+      projects: {
+        projects: [
+          {
+            ...projects.projects[1]!,
+            key: "tools",
+            repos: 0,
+            system: false,
+            repositories: [],
+          },
+        ],
+      },
+    });
+    render(<ProjectsPage />);
+    expect(
+      (await screen.findByText("tools")).closest("a")?.getAttribute("href"),
+    ).toBe("/projekte/tools");
+  });
   it("lists only standalone repositories without the headings", async () => {
     serve({
       projects: {
@@ -536,6 +555,15 @@ describe("ProjectPage", () => {
       await screen.findByText(/stehen für sich: jedes hat seine eigene Seite/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /Beschreibung/ })).toBeNull();
+    // A search does not leave the overview for a tab that is not there.
+    fireEvent.change(screen.getByRole("searchbox"), {
+      target: { value: "client" },
+    });
+    expect(window.location.hash).toBe("");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-label",
+      "Übersicht",
+    );
     expect(screen.getByText(/Einzelne Repositories/)).toBeInTheDocument();
   });
 

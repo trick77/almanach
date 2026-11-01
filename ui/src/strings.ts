@@ -10,6 +10,10 @@ import type {
   WaitReason,
 } from "./api";
 
+// The repositories of a folder that is no system: one word for the list,
+// the project header and the source.
+const standaloneRepos = "Einzelne Repositories";
+
 export const S = {
   app: "Almanach",
   nav: {
@@ -42,7 +46,7 @@ export const S = {
     lastMerge: "letzter Merge",
     systems: "Systeme",
     systemsAside: "Repositories, die zusammen ein System bilden",
-    standalone: "Einzelne Repositories",
+    standalone: standaloneRepos,
     standaloneAside: "jedes steht für sich, ohne Projektseite",
     problems: (n: number) =>
       n === 0
@@ -58,7 +62,7 @@ export const S = {
     noDescriptionHint:
       "Die erste Beschreibung entsteht, wenn Almanach ein Repository dieses Projekts aus dem Code beschreibt oder ein Pull Request gemergt wird.",
     descriptionRevision: (n: number) => `Beschreibung Revision ${n}`,
-    standalone: "Einzelne Repositories",
+    standalone: standaloneRepos,
     standaloneHint:
       "Die Repositories dieses Ordners stehen für sich: jedes hat seine eigene Seite, das Projekt keine.",
     repos: "Repositories",
@@ -264,8 +268,7 @@ export const S = {
         "Almanach beschreibt die Repositories als ein System: eine Projektseite und eine Systemkarte, wie bei einem Bitbucket-Projekt.",
       hintOff:
         "Jedes Repository steht für sich, mit eigener Seite und Karte. Keine Projektseite, keine Systemkarte; die Projektliste zeigt die Repositories einzeln. Eine frühere Projektseite bleibt gespeichert.",
-      meta: (system: boolean) =>
-        system ? "Ein System" : "Einzelne Repositories",
+      meta: (system: boolean) => (system ? "Ein System" : standaloneRepos),
     },
     counts: {
       ready: (n: number) => `${n} bereit`,

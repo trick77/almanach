@@ -542,7 +542,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 		d.renameSource(w, r, src, in)
 		return
 	}
-	if in.System != nil {
+	if switching(src, in) {
 		d.switchSystem(w, r, src, in)
 		return
 	}
@@ -615,7 +615,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 // is never given away.
 func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
 	ctx := r.Context()
-	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil || in.System != nil {
+	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil || switching(src, in) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a rename comes alone, the other fields in their own PATCH")
 		return
 	}
@@ -638,6 +638,13 @@ func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.Pro
 	d.writeSource(w, r, to, http.StatusOK)
 }
 
+// switching reports whether a PATCH switches the source: system given and
+// not what it is. An unchanged one (a client sending the source back
+// whole) is no switch, like an unchanged project_key is no rename.
+func switching(src store.ProjectSource, in updateSourceBody) bool {
+	return in.System != nil && *in.System == src.Standalone
+}
+
 // systemBitbucket is the 422 of a Bitbucket source asked to stand alone.
 const systemBitbucket = "system: a Bitbucket project is always one system"
 
@@ -657,16 +664,12 @@ func (d Deps) switchSystem(w http.ResponseWriter, r *http.Request, src store.Pro
 		httpx.WriteError(w, http.StatusUnprocessableEntity, systemBitbucket)
 		return
 	}
-	updated, err := d.Sources.Store.SetSourceStandalone(ctx, src.ProjectKey, !system)
+	changed, err := d.Sources.Store.SetSourceStandalone(ctx, src.ProjectKey, !system)
 	if err != nil {
 		httpx.ServerError(w, r, err, "update source")
 		return
 	}
-	if !updated {
-		httpx.WriteError(w, http.StatusNotFound, "unknown source")
-		return
-	}
-	if system == src.Standalone {
+	if changed {
 		d.Log.InfoContext(ctx, "source_system_switched", "project", src.ProjectKey, "system", system, "user", d.user(r))
 	}
 	d.writeSource(w, r, src.ProjectKey, http.StatusOK)

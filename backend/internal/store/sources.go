@@ -231,20 +231,41 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 }
 
 // SetSourceStandalone sets whether a source's repositories stand alone.
-// Reports whether the source exists.
+// Reports whether it changed: false when the source already said so, or
+// is gone. Becoming a system again marks the project due, so the next run
+// folds the page the folder kept.
 func (s *Store) SetSourceStandalone(ctx context.Context, key string, standalone bool) (bool, error) {
-	n, err := affected(s.db.ExecContext(ctx, `UPDATE sources SET standalone = ?, updated_at = ? WHERE project_id = `+projectByName,
-		standalone, nowStamp(), key))
+	n, err := affected(s.db.ExecContext(ctx, `
+		UPDATE sources SET standalone = ?1, project_due = NOT ?1, updated_at = ?2
+		 WHERE project_id = `+projectByName+` AND standalone <> ?1`, standalone, nowStamp(), key))
 	return n == 1, err
 }
 
-// ProjectStandalone reports whether a project's repositories stand alone:
-// its source says so. A project without a source is a system.
-func (s *Store) ProjectStandalone(ctx context.Context, key string) (bool, error) {
-	var alone bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sources WHERE standalone AND project_id = `+projectByName+`)`,
-		key).Scan(&alone)
-	return alone, err
+// ProjectSystem is what a project's source says of it as a system.
+type ProjectSystem struct {
+	// Standalone: the repositories stand for themselves, no project page.
+	Standalone bool
+	// Due: the folder became a system again, the project page it kept
+	// must be folded by the next run.
+	Due bool
+}
+
+// ProjectSystemOf is what a project's source says of it; a project without
+// a source is a system, nothing due.
+func (s *Store) ProjectSystemOf(ctx context.Context, key string) (ProjectSystem, error) {
+	var ps ProjectSystem
+	err := s.db.QueryRowContext(ctx, `SELECT standalone, project_due FROM sources WHERE project_id = `+projectByName,
+		key).Scan(&ps.Standalone, &ps.Due)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ProjectSystem{}, nil
+	}
+	return ps, err
+}
+
+// ProjectFolded clears a project's due mark: a project step got its answer.
+func (s *Store) ProjectFolded(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sources SET project_due = 0 WHERE project_due AND project_id = `+projectByName, key)
+	return err
 }
 
 // IsSourceRepo reports whether (key, slug) is a source repository: the

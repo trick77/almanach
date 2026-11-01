@@ -52,8 +52,18 @@ type fakeStore struct {
 	standalone map[string]bool
 }
 
-func (f *fakeStore) ProjectStandalone(_ context.Context, key string) (bool, error) {
-	return f.standalone[key], nil
+func (f *fakeStore) ProjectSystemOf(_ context.Context, key string) (store.ProjectSystem, error) {
+	return store.ProjectSystem{Standalone: f.standalone[key]}, nil
+}
+
+func (f *fakeStore) StandaloneRepos(context.Context) (map[string][]store.RepoRow, error) {
+	out := map[string][]store.RepoRow{}
+	for key, alone := range f.standalone {
+		if alone {
+			out[key] = f.repos[key]
+		}
+	}
+	return out, nil
 }
 
 func newFakeStore() *fakeStore {

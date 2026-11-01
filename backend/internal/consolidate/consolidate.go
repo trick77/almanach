@@ -38,7 +38,7 @@ type Store interface {
 	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
 	InsertLLMCall(ctx context.Context, c store.LLMCall) (int64, error)
-	ProjectStandalone(ctx context.Context, key string) (bool, error)
+	ProjectSystemOf(ctx context.Context, key string) (store.ProjectSystem, error)
 }
 
 // Merger is the model call.
@@ -344,7 +344,7 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	}
 	// A folder whose repositories stand alone has no project page: the
 	// prompt shows none and asks for null, and whatever comes is not folded.
-	alone, err := w.store.ProjectStandalone(ctx, q.ProjectKey)
+	alone, err := w.standalone(ctx, q.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: project source read failed", logging.Err(err))
 		deferred = w.deferBusy(ctx, q, err)
@@ -406,6 +406,17 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		deferred = w.deferBusy(ctx, q, err)
 	}
 	return
+}
+
+// standalone reports whether a project's repositories stand alone: its
+// source says so, and the sources are on (the baseline with them). With
+// them off every project is a system again, a folder's old word included.
+func (w *Worker) standalone(ctx context.Context, key string) (bool, error) {
+	if w.base == nil {
+		return false, nil
+	}
+	ps, err := w.store.ProjectSystemOf(ctx, key)
+	return ps.Standalone, err
 }
 
 // standaloneProject stands in the merge prompt for the project description
