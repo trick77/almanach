@@ -1062,6 +1062,21 @@ so the choice is not undone as a cleanup.
 - **A cheaper model picks, the strong one writes.** The catalogue is a
   listing and the docs, a selection task; the steps that write are the
   expensive ones. `BACKEND_BASELINE_CATALOGUE_MODEL` is optional.
+- **A page is cut for the agent, not from an architecture template.** The
+  classic architecture-documentation templates were written for people
+  explaining a system to people. Their building blocks and runtime flows
+  carry over as the summary's order, their architecture decisions as
+  `decision`, narrowed to a stated reason. Goals, stakeholders and quality
+  scenarios an agent about to change the code hardly needs; what it needs
+  most, where to change what and what broke before, they have no place
+  for: hence `extension` and `pitfall`, and the gate and test commands as
+  the summary's last part. `component`, `rule`, `invariant` and `entity`
+  mirror the lists a noergler note carries (`components`, `rules`,
+  `invariants`, `entities`). The kinds, their order and what is left out
+  are in the page model. A section taken from a template (quality goals,
+  cross-cutting concepts) has to say which question it answers for an
+  agent about to edit the code, and which evidence feeds it rather than
+  the model's guess.
 
 ## 9. Rules and invariants
 
