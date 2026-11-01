@@ -62,7 +62,7 @@ export function ProjectsPage() {
                   )}
                 </div>
                 <div className="mt-3 text-[13px] text-muted">
-                  {S.projects.lastMerge}{" "}
+                  {S.projects.lastMergeLine}{" "}
                   {p.last_merge === null ? S.common.never : day(p.last_merge)}
                 </div>
               </Link>
