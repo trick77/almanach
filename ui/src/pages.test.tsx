@@ -409,6 +409,9 @@ describe("ProjectPage", () => {
     const rail = await screen.findByRole("navigation", { name: "Inhalt" });
     expect(within(rail).getByText("Repositories")).toBeInTheDocument();
     expect(within(rail).getByText("Geteilte Daten")).toBeInTheDocument();
+    // A project page holds interfaces too: the ones between repositories.
+    expect(within(rail).getByText("Schnittstellen")).toBeInTheDocument();
+    expect(within(rail).queryByText("Erweiterungen")).toBeNull();
     // A kind without a statement is counted as none.
     expect(
       within(rail).getByText("Invarianten").closest("a")?.textContent,
