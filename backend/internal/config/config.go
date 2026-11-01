@@ -213,7 +213,7 @@ func Load(lookup func(string) string) (*App, error) {
 		Baseline: Baseline{
 			CatalogueModel: r.String("BACKEND_BASELINE_CATALOGUE_MODEL", ""),
 			MaxCalls:       positive(r, "BACKEND_BASELINE_MAX_CALLS", 16),
-			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 2_000_000),
+			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 4_000_000),
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
 		LogLevel: r.String("BACKEND_LOG_LEVEL", "INFO"),

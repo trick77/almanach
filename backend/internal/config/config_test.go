@@ -273,7 +273,7 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Baseline{MaxCalls: 16, MaxBytes: 2_000_000, Reconcile: 720 * time.Hour}
+	want := Baseline{MaxCalls: 16, MaxBytes: 4_000_000, Reconcile: 720 * time.Hour}
 	if app.Baseline != want {
 		t.Fatalf("Baseline = %+v, want %+v", app.Baseline, want)
 	}
@@ -305,7 +305,7 @@ func TestSummaryNamesTheCatalogueModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := app.Summary(); !strings.Contains(s, "baseline {catalogue gpt-x, 16 calls / 2000000 bytes a run, reconcile 720h0m0s}") {
+	if s := app.Summary(); !strings.Contains(s, "baseline {catalogue gpt-x, 16 calls / 4000000 bytes a run, reconcile 720h0m0s}") {
 		t.Errorf("Summary = %s", s)
 	}
 	env["BACKEND_BASELINE_CATALOGUE_MODEL"] = "cheap"
