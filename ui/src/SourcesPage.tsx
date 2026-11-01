@@ -199,6 +199,13 @@ export function hostOf(url: string): string {
   }
 }
 
+/** authFor is the token header a kind starts on: a Bitbucket project's
+ *  bearer, a single repository's basic (GitHub's; a Bitbucket repository's
+ *  token picks bearer by hand, as its hint says). */
+function authFor(kind: SourceKind): TokenAuth {
+  return kind === "bitbucket" ? "bearer" : "basic";
+}
+
 /** NewSourceForm is the create form: the token is optional and comes
  *  first; how it travels and the username appear only once one is typed.
  *  The host starts as BACKEND_BITBUCKET_HOST and stays editable. */
@@ -211,25 +218,32 @@ function NewSourceForm({
   onDone: (created: SourceDetail) => void;
   onCancel: () => void;
 }) {
-  const [kind, setKind] = useState<SourceKind>("bitbucket");
+  // One repository by its clone URL comes first: the usual case.
+  const [kind, setKind] = useState<SourceKind>("static");
+  // Each kind keeps its own name: a Bitbucket project's key, a single
+  // repository's slug. A switch never carries one into the other.
   const [key, setKey] = useState("");
+  const [slug, setSlug] = useState("");
   const [host, setHost] = useState(defaultHost);
   const [token, setToken] = useState("");
-  const [auth, setAuth] = useState<TokenAuth>("bearer");
+  const [auth, setAuth] = useState<TokenAuth>(authFor(kind));
   const [user, setUser] = useState("");
-  // A static folder comes with its first repository; the slug follows the
-  // URL until it is typed by hand.
+  // A hand-filled project comes with its first repository; the slug follows
+  // the URL until it is typed by hand.
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [keyTyped, setKeyTyped] = useState(false);
+  const [slugTyped, setSlugTyped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const f = S.sources.form;
   const isStatic = kind === "static";
 
+  // The kind's own token header, only on a change: a click on the
+  // selected kind keeps a header picked by hand.
   const pickKind = (k: SourceKind) => {
+    if (k === kind) return;
     setKind(k);
-    setAuth(k === "bitbucket" ? "bearer" : "basic");
+    setAuth(authFor(k));
   };
 
   const submit = async () => {
@@ -237,16 +251,16 @@ function NewSourceForm({
     setError("");
     try {
       const created = await send<SourceDetail>("POST", "sources", {
-        project_key: key.trim(),
+        project_key: isStatic ? slug.trim() : key.trim(),
         kind,
         host: kind === "bitbucket" ? host.trim() : "",
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
-        // The first repository: its slug is the folder's, empty is its
+        // The first repository: its slug is the project's, empty is its
         // name from the URL (the server's rule too).
         ...(isStatic
-          ? { clone_url: url.trim(), slug: key.trim(), branch: branch.trim() }
+          ? { clone_url: url.trim(), slug: slug.trim(), branch: branch.trim() }
           : {}),
       });
       if (created) onDone(created);
@@ -271,8 +285,8 @@ function NewSourceForm({
             value={kind}
             onChange={pickKind}
             options={[
-              { value: "bitbucket", label: S.sources.kindLabel.bitbucket },
               { value: "static", label: S.sources.kindLabel.static },
+              { value: "bitbucket", label: S.sources.kindLabel.bitbucket },
             ]}
           />
           <span className={fieldHint}>{S.sources.kindHint[kind]}</span>
@@ -298,22 +312,20 @@ function NewSourceForm({
                 value={url}
                 onChange={(e) => {
                   setUrl(e.target.value);
-                  if (!keyTyped) setKey(slugFromURL(e.target.value));
+                  if (!slugTyped) setSlug(slugFromURL(e.target.value));
                 }}
                 placeholder="https://github.com/acme/acme-api.git"
               />
               <span className={fieldHint}>{f.firstRepoHint}</span>
             </label>
             <label>
-              <span className={fieldLabel}>
-                {f.slug} <span className="text-faint">{f.optional}</span>
-              </span>
+              <span className={fieldLabel}>{f.slug}</span>
               <input
                 className={input + " " + mono}
-                value={key}
+                value={slug}
                 onChange={(e) => {
-                  setKey(e.target.value);
-                  setKeyTyped(e.target.value !== "");
+                  setSlug(e.target.value);
+                  setSlugTyped(e.target.value !== "");
                 }}
                 placeholder="acme-api"
               />
@@ -365,8 +377,9 @@ function NewSourceForm({
               value={auth}
               onChange={setAuth}
               options={[
-                { value: "bearer", label: "Bearer" },
+                // GitHub's left, Bitbucket's right, as the kinds.
                 { value: "basic", label: "Basic" },
+                { value: "bearer", label: "Bearer" },
               ]}
             />
             <span className={fieldHint}>

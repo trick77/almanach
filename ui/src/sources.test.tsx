@@ -198,6 +198,7 @@ describe("SourcesPage", () => {
     const writes = serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     expect(screen.queryByText("Token senden als")).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("SHOP"), {
       target: { value: "neu" },
@@ -235,12 +236,44 @@ describe("SourcesPage", () => {
     serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
+    // A single repository is the default, the first option.
+    expect(screen.getByText(/«Contents: read»/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     expect(screen.getByText(/privates Bitbucket-Projekt/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText(/^Statischer Ordner/));
+    expect(screen.queryByText(/«Contents: read»/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^Einzelnes Repository/));
     expect(screen.getByText(/«Contents: read»/)).toBeInTheDocument();
     expect(
       screen.queryByText(/privates Bitbucket-Projekt/),
     ).not.toBeInTheDocument();
+  });
+
+  it("never carries a repository's name into a Bitbucket project key", async () => {
+    serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      { target: { value: "https://forge.example.invalid/x/shop-api.git" } },
+    );
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop-api");
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("");
+    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
+      target: { value: "SHOP" },
+    });
+    // A click on the selected kind keeps what was typed.
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("SHOP");
+    // Back to the single repository: its slug as it was, typed by hand too.
+    fireEvent.click(screen.getByText(/^Einzelnes Repository/));
+    const slug = screen.getByPlaceholderText("acme-api");
+    expect(slug).toHaveValue("shop-api");
+    fireEvent.change(slug, { target: { value: "shop" } });
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("SHOP");
+    fireEvent.click(screen.getByText(/^Einzelnes Repository/));
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
   });
 
   it("creates a source on the configured host", async () => {
@@ -249,6 +282,7 @@ describe("SourcesPage", () => {
     });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     fireEvent.change(screen.getByPlaceholderText("SHOP"), {
       target: { value: "neu" },
     });
@@ -263,12 +297,11 @@ describe("SourcesPage", () => {
     expect(body).not.toHaveProperty("system");
   });
 
-  it("creates a static folder with its first repository, the slug from the URL", async () => {
+  it("creates a project with its first repository, the slug from the URL", async () => {
     const writes = serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
-    fireEvent.click(screen.getByText(/^Statischer Ordner/));
-    // No switch any more: a folder of one repository is a project of one.
+    // No system switch: one repository alone is a project of one.
     expect(screen.queryByRole("switch")).toBeNull();
     const create = screen.getByText("Anlegen und synchronisieren");
     expect(create).toBeDisabled();
@@ -496,7 +529,7 @@ describe("SourcePage baseline", () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     fireEvent.click(await screen.findByText("Token"));
-    // A static folder's token hint: one token, the GitHub scopes.
+    // A hand-filled project's token hint: one token, the GitHub scopes.
     expect(
       screen.getByText(/gilt für jedes Repository darin/),
     ).toBeInTheDocument();

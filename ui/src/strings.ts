@@ -247,7 +247,7 @@ export const S = {
   },
   sources: {
     title: "Quellen",
-    lede: "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Die Clones sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.",
+    lede: "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories Almanach über die API liest, oder ein Projekt, dessen Repositories von Hand eingetragen werden. Die Clones sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.",
     what: "die Quellen",
     whatOne: "die Quelle",
     empty: "Noch keine Quelle.",
@@ -262,20 +262,19 @@ export const S = {
       "Zustand",
       "Letzter Run",
     ],
-    kind: { bitbucket: "bitbucket", static: "statisch" } as Record<
+    kind: { bitbucket: "Bitbucket", static: "Von Hand" } as Record<
       string,
       string
     >,
     kindLabel: {
-      bitbucket: "Bitbucket-Projekt",
+      bitbucket: "Ganzes Projekt (Bitbucket)",
       // No-break spaces: a narrow form wraps before the bracket, never inside it.
-      static: "Statischer Ordner (z.\u00a0B.\u00a0GitHub)",
+      static: "Einzelnes Repository (z.\u00a0B.\u00a0GitHub,\u00a0Bitbucket)",
     } as Record<string, string>,
     kindHint: {
       bitbucket:
-        "Die Repositories kommen aus der Bitbucket-API und werden bei jedem Run neu gelistet.",
-      static:
-        "Ein Ordner, in den du Repositories von Hand einträgst: Slug und Clone-URL, zum Beispiel die Repos einer GitHub-Organisation. Das Token dafür kommt ins Feld unten.",
+        "Almanach liest die Repositories des Projekts aus der Bitbucket-API und listet sie bei jedem Run neu: neue kommen dazu, entfernte bleiben als verschwunden stehen, bis du sie entfernst.",
+      static: "Ein Repository per Clone-URL, von jedem Git-Host über https.",
     } as Record<string, string>,
     tokenStored: "Hinterlegt",
     tokenNone: "Öffentlich",
@@ -284,7 +283,8 @@ export const S = {
     listingFailed: "Listing fehlgeschlagen",
     listedAt: "gelistet",
     neverListed: "noch nie gelistet",
-    manual: "Repositories von Hand eingetragen",
+    // Beside the Von Hand chip, where a Bitbucket source names its host.
+    manual: "Per Clone-URL",
     counts: {
       ready: (n: number) => `${n} bereit`,
       active: (n: number) => `${n} läuft`,
@@ -298,7 +298,7 @@ export const S = {
       slug: "Slug",
       slugHint:
         "Buchstaben, Ziffern, Punkt, Strich, Unterstrich, Tilde. Lässt sich später umbenennen.",
-      // A static folder's first repository, created with it.
+      // A hand-filled project's first repository, created with it.
       firstRepo: "Clone-URL des ersten Repositories",
       firstRepoHint:
         "Weitere Repositories kommen auf der Seite der Quelle dazu. Ein Projekt aus einem Repository hat keine eigene Projektseite: die Seite des Repositories ist die des Projekts.",
@@ -316,7 +316,7 @@ export const S = {
         bitbucket:
           "Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und clont seine Repositories.",
         static:
-          "Nur nötig für private Repositories. Ein Token für den ganzen Ordner: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read».",
+          "Nur nötig für private Repositories. Ein Token für das ganze Projekt: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read»; für Bitbucket ein HTTP-Access-Token mit Leserecht, dafür Bearer wählen.",
       } as Record<string, string>,
       tokenAs: "Token senden als",
       bearerHint:
@@ -615,7 +615,7 @@ export const S = {
       "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",
     clones: "Was sind die Quellen?",
     clonesText:
-      "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories aus der API gelesen werden, oder ein statischer Ordner mit von Hand eingetragenen Repositories. Almanach liest jeden Clone und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
+      "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories Almanach über die API liest, oder ein Projekt, dessen Repositories von Hand eingetragen werden. Almanach liest jeden Clone und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
   },
   auth: {
     checking: "Sitzung wird geprüft …",

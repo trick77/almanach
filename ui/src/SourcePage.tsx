@@ -841,8 +841,9 @@ function AccessForm({
             value={auth}
             onChange={setAuth}
             options={[
-              { value: "bearer", label: "Bearer" },
+              // GitHub's left, Bitbucket's right, as the kinds.
               { value: "basic", label: "Basic" },
+              { value: "bearer", label: "Bearer" },
             ]}
           />
           <span className={fieldHint}>
@@ -1152,10 +1153,7 @@ function AddRepoForm({
           <span className={fieldHint}>{f.urlHint}</span>
         </label>
         <label>
-          <span className={fieldLabel}>
-            {f.slug}{" "}
-            <span className="text-faint">{S.sources.form.optional}</span>
-          </span>
+          <span className={fieldLabel}>{f.slug}</span>
           <input
             className={input + " " + mono}
             value={slug}

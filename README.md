@@ -104,8 +104,8 @@ container), the clones in `repos/`: two folders, the database alone in its
 own. A backup is `data/`; the clones refill from the forge. A fresh start:
 stack down, both folders emptied, up again.
 
-Open http://localhost:8081/quellen and add a Bitbucket project, or a
-static folder with its repositories entered by hand; each repository's
+Open http://localhost:8081/quellen and add a single repository by its
+clone URL (more can join it later) or a whole Bitbucket project; each repository's
 baseline runs once its clone is there. A private repository's token is
 sealed with `BACKEND_SOURCE_TOKEN_KEY`; without it only public ones clone.
 Then read the result:
