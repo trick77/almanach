@@ -587,7 +587,7 @@ export function isMapping(ir: FlowIR): boolean {
 /** Vertical space between the stacked boxes of a column. */
 const rowGap = 20;
 /** A zone's inner margin; the top holds its title. */
-const zonePad = { top: 44, side: 20, bottom: 20 };
+export const zonePad = { top: 44, side: 20, bottom: 20 };
 
 /** titleRoom is the width a zone needs for its title: the bold title, set
  * 18px in, and as much again on the right. */

@@ -340,7 +340,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	left := regexp.MustCompile(`\{[a-z_]+\}`)
 	for name, out := range map[string]string{
 		"describe": renderDescribe(r, existingRepoPage(), limits, 1, 2, "the overview", "", "_None._", "_None._", "_None._", nil),
-		"project":  renderProject(r, existingRepoPage(), store.Page{Map: drawnMap("files")}, "_None._", nil, []string{"files", "portal"}, limits, ""),
+		"project":  renderProject(r, existingRepoPage(), store.Page{Map: drawnMap("files")}, "_None._", nil, []string{"files", "portal"}, limits, nil),
 		"merge":    render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, limits),
 	} {
 		if ph := left.FindAllString(out, -1); len(ph) > 0 {
@@ -360,7 +360,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	off.MaxDiagrams = 0
 	for name, out := range map[string]string{
 		"describe": renderDescribe(r, existingRepoPage(), off, 1, 2, "the overview", "", "_None._", "_None._", "_None._", nil),
-		"project":  renderProject(r, existingRepoPage(), store.Page{}, "_None._", nil, []string{"files"}, off, ""),
+		"project":  renderProject(r, existingRepoPage(), store.Page{}, "_None._", nil, []string{"files"}, off, nil),
 		"merge":    render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, off),
 	} {
 		if ph := left.FindAllString(out, -1); len(ph) > 0 || strings.Contains(out, `"diagram"`) || !strings.Contains(out, "Statements carry no diagram here") {
@@ -370,7 +370,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 			t.Error("describe prompt with diagrams off still lists a diagram among a statement's changes")
 		}
 	}
-	if out := renderProject(r, existingRepoPage(), store.Page{}, "_None._", nil, []string{"files"}, off, ""); !strings.Contains(out, "Every rewrite carries `map`, never null") {
+	if out := renderProject(r, existingRepoPage(), store.Page{}, "_None._", nil, []string{"files"}, off, nil); !strings.Contains(out, "Every rewrite carries `map`, never null") {
 		t.Error("project prompt with diagrams off lost the map")
 	}
 }

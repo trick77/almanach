@@ -7,6 +7,8 @@ import {
   lay,
   margin,
   tidy,
+  titleRoom,
+  zonePad,
   type EdgeRoute,
   type FlowLayout,
   type LabelBox,
@@ -14,7 +16,6 @@ import {
   type Point,
   type ZoneBox,
 } from "./diagramLayout";
-import { ramp, textWidth } from "./diagramTheme";
 
 /**
  * A map, the system map or a repository's: its zones stacked as bands, top
@@ -58,8 +59,6 @@ const maxPerRow = 5;
  * the outer two 8px clear of the boxes. */
 const gutter = 40;
 const laneOffsets = [0, -12, 12, -6, 6];
-/** A frame's inner margin above (its title) and below its rows. */
-const zonePad = { top: 44, bottom: 20 };
 /** Between a frame and the tracks outside it. */
 const frameGap = 12;
 /** The shortest straight run at a box, room for an arrowhead. */
@@ -71,8 +70,6 @@ const trackStep = 12;
 /** A label's bottom above its track, and its clearance from other lines. */
 const labelGap = 8;
 const labelClear = 6;
-/** Where drawFlow sets a zone's title. */
-const titleX = 18;
 /** Ports of a box's top and bottom sit this far either side of where a
  * spread puts them, so a box's way out never lines up with the way into the
  * box under it. */
@@ -104,20 +101,26 @@ type Route = {
  * at most maxPerRow, and fewer while the map would be wider than twice its
  * height: a small map stays a block, not a strip. */
 export function layoutMap(ir: FlowIR): FlowLayout {
+  if (ir.nodes.length === 0)
+    return {
+      width: 2 * margin,
+      height: 2 * margin,
+      nodes: [],
+      edges: [],
+      zones: [],
+    };
   const w = boxWidth(ir.nodes, 160, 200);
   const fit = Math.floor((pageColumn - 2 * margin - gutter) / (w + gutter));
   const bands = bandsOf(ir);
   const widest = Math.max(1, ...bands.map((b) => b.ids.length));
-  let out: FlowLayout | null = null;
-  for (
-    let cols = clamp(Math.min(fit, widest), 1, maxPerRow);
-    cols >= 1;
-    cols--
-  ) {
-    out = place(ir, bands, w, cols);
-    if (out.width <= 2 * out.height) break;
+  // The columns are chosen without the labels, which never move a frame:
+  // they sit inside its width and in the tracks' room. Placed once, after.
+  let cols = clamp(Math.min(fit, widest), 1, maxPerRow);
+  for (; cols > 1; cols--) {
+    const l = place(ir, bands, w, cols, false);
+    if (l.width <= 2 * l.height) break;
   }
-  return out!;
+  return place(ir, bands, w, cols, true);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -188,7 +191,13 @@ function bandLayers(
     .map((l) => l.sort((a, b) => written.get(a)! - written.get(b)!));
 }
 
-function place(ir: FlowIR, bands: Band[], w: number, cols: number): FlowLayout {
+function place(
+  ir: FlowIR,
+  bands: Band[],
+  w: number,
+  cols: number,
+  labels: boolean,
+): FlowLayout {
   const pitch = w + gutter;
   const zoneW = cols * pitch + gutter;
   const colX = (c: number) => gutter + c * pitch;
@@ -207,15 +216,11 @@ function place(ir: FlowIR, bands: Band[], w: number, cols: number): FlowLayout {
   // wide wraps into rows filled column by column, so its order across still
   // reads along x. That order is as written first, then, twice, by where
   // each box's neighbours sit; a row then takes the columns nearest them.
-  // A title's run, where no lane or stub may cross it.
   const titleOf = (bi: number) => {
+    // A title's run, from the frame's edge as far as titleRoom gives it:
+    // no lane or stub crosses it.
     const t = bands[bi].zone === null ? "" : bands[bi].title;
-    return t === ""
-      ? null
-      : {
-          x0: titleX - labelClear,
-          x1: titleX + textWidth(t, ramp.bold, "sans") + labelClear,
-        };
+    return t === "" ? null : { x0: 0, x1: titleRoom(t) };
   };
   const layers = bands.map((b) => bandLayers(b.ids, ir, written));
   const cx = new Map<string, number>();
@@ -577,40 +582,40 @@ function place(ir: FlowIR, bands: Band[], w: number, cols: number): FlowLayout {
   drawn.forEach(({ route, seg }, ri) => {
     edges.push(route);
     const l = seg.label;
-    if (!l) return;
+    if (!l || !labels) return;
     const y = seg.y - labelGap - l.h;
     const a = Math.min(seg.x0, seg.x1);
     const b = Math.max(seg.x0, seg.x1);
     const base = clamp(Math.round((a + b) / 2 - l.w / 2), 0, zoneW - l.w);
-    const crossing = (x: number) =>
-      verticals.filter(
-        (v) =>
-          v.x >= x - labelClear &&
-          v.x <= x + l.w + labelClear &&
-          v.y1 > y - 2 &&
-          v.y0 < y + l.h + 2,
-      );
-    const clear = (x: number) =>
-      crossing(x).every((v) => v.route !== ri) &&
-      placed.every(
-        (o) =>
-          o.x + o.w + 4 <= x ||
-          x + l.w + 4 <= o.x ||
-          o.y + o.h <= y ||
-          y + l.h <= o.y,
-      );
-    const near = (x: number) => x + l.w >= a - 24 && x <= b + 24;
-    let best: { x: number; n: number; d: number } | null = null;
-    for (const within of [true, false]) {
-      for (let x = 0; x <= zoneW - l.w; x += 2) {
-        if ((within && !near(x)) || !clear(x)) continue;
-        const n = crossing(x).length;
-        const d = Math.abs(x - base);
-        if (!best || n < best.n || (n === best.n && d < best.d))
-          best = { x, n, d };
-      }
-      if (best) break;
+    // The lines and labels at the label's height, sought once; each x is
+    // judged once, its crossings counted once.
+    const across = verticals.filter((v) => v.y1 > y - 2 && v.y0 < y + l.h + 2);
+    const level = placed.filter((o) => o.y + o.h > y && y + l.h > o.y);
+    const judged: { x: number; n: number; d: number; near: boolean }[] = [];
+    for (let x = 0; x <= zoneW - l.w; x += 2) {
+      let n = 0;
+      let own = false;
+      for (const v of across)
+        if (v.x >= x - labelClear && v.x <= x + l.w + labelClear) {
+          n++;
+          own ||= v.route === ri;
+        }
+      if (own || level.some((o) => !(o.x + o.w + 4 <= x || x + l.w + 4 <= o.x)))
+        continue;
+      judged.push({
+        x,
+        n,
+        d: Math.abs(x - base),
+        near: x + l.w >= a - 24 && x <= b + 24,
+      });
     }
+    const pick = (cands: typeof judged) =>
+      cands.reduce<(typeof judged)[number] | null>(
+        (best, c) =>
+          !best || c.n < best.n || (c.n === best.n && c.d < best.d) ? c : best,
+        null,
+      );
+    const best = pick(judged.filter((c) => c.near)) ?? pick(judged);
     route.label = { ...l, x: best?.x ?? base, y };
     placed.push(route.label);
   });

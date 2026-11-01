@@ -312,4 +312,13 @@ describe("layoutMap", () => {
   it("is the same map every time", () => {
     expect(layoutMap(loom)).toEqual(layoutMap(loom));
   });
+
+  it("lays out a map without a node as an empty canvas", () => {
+    const l = layoutMap(map([], []));
+    expect(l.nodes).toEqual([]);
+    expect(l.edges).toEqual([]);
+    expect(l.zones).toEqual([]);
+    expect(l.width).toBeGreaterThan(0);
+    expect(l.height).toBeGreaterThan(0);
+  });
 });

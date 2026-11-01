@@ -279,14 +279,14 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 	}
 	env := minimal()
 	env["BACKEND_BASELINE_CATALOGUE_MODEL"] = "cheap"
-	env["BACKEND_BASELINE_MAX_CALLS"] = "4"
+	env["BACKEND_BASELINE_MAX_CALLS"] = "3"
 	env["BACKEND_BASELINE_RECONCILE"] = "0"
 	app, err = Load(lookup(env))
-	if err != nil || app.Baseline.CatalogueModel != "cheap" || app.Baseline.MaxCalls != 4 || app.Baseline.Reconcile != 0 {
+	if err != nil || app.Baseline.CatalogueModel != "cheap" || app.Baseline.MaxCalls != 3 || app.Baseline.Reconcile != 0 {
 		t.Fatalf("overrides = %+v %v", app.Baseline, err)
 	}
 	for name, c := range map[string]struct{ value, fault string }{
-		"BACKEND_BASELINE_MAX_CALLS": {"3", "a run needs at least 4 calls"},
+		"BACKEND_BASELINE_MAX_CALLS": {"2", "a run needs at least 3 calls"},
 		"BACKEND_BASELINE_MAX_BYTES": {"0", "must be a positive integer"},
 		"BACKEND_BASELINE_RECONCILE": {"-1h", "must not be negative"},
 	} {
