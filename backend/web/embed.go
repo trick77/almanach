@@ -34,13 +34,13 @@ var placeholderHTML []byte
 var routes = []*regexp.Regexp{
 	regexp.MustCompile(`^/$`),
 	regexp.MustCompile(`^/faq$`),
-	regexp.MustCompile(`^/projekte/[A-Za-z0-9._~-]+$`),
-	regexp.MustCompile(`^/projekte/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+$`),
-	regexp.MustCompile(`^/projekte/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+/notizen/[1-9][0-9]{0,8}$`),
-	regexp.MustCompile(`^/quellen$`),
-	regexp.MustCompile(`^/warteschlange$`),
-	regexp.MustCompile(`^/abhaengigkeiten$`),
-	regexp.MustCompile(`^/quellen/[A-Za-z0-9._~-]+$`),
+	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+$`),
+	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+$`),
+	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+/notes/[1-9][0-9]{0,8}$`),
+	regexp.MustCompile(`^/sources$`),
+	regexp.MustCompile(`^/queue$`),
+	regexp.MustCompile(`^/dependencies$`),
+	regexp.MustCompile(`^/sources/[A-Za-z0-9._~-]+$`),
 }
 
 func isRoute(p string) bool {

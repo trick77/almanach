@@ -329,7 +329,7 @@ describe("QueuePage", () => {
 
 describe("the queue's entry", () => {
   it("counts the work in the nav and opens the page", async () => {
-    window.history.replaceState({}, "", "/warteschlange");
+    window.history.replaceState({}, "", "/queue");
     const me: Me = { mode: "none", user: "" };
     serve({
       me,

@@ -20,7 +20,7 @@ token, and nothing else.
                                                   │  api: webhook, ping, │
   browser  ──GET  /api/...    (session cookie)──▶ │  read routes,        │
   agent    ──GET  /api/...md  (bearer)        ──▶ │  Markdown export,    │
-  browser  ──GET  /, /projekte/... (open)     ──▶ │  embedded UI (web)   │
+  browser  ──GET  /, /projects/... (open)     ──▶ │  embedded UI (web)   │
                                                   └──────────┬───────────┘
                                                              │ Ingest, reads
                                                              ▼
@@ -869,7 +869,7 @@ one.
 | --- | --- | --- |
 | `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
 | `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, and `/` handed to `web`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | config, httpapi, ingest, store, teamkeys, web |
-| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/faq`, `/projekte/{key}`, `.../repos/{slug}`, `.../notizen/{pr}`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
+| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/faq`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
 | `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
@@ -1305,7 +1305,7 @@ baseline step's patch never is: its bad items are left out one by one (see
   the hub's job, then Beschreibung; a repository page opens on
   Beschreibung (its map, the summary, its own problem areas, the
   statements), its content, then Verlauf (notes, revisions). The hash
-  holds the tab (`#beschreibung`, `#verlauf`, none for the start tab),
+  holds the tab (`#description`, `#history`, none for the start tab),
   replaced on a switch, never pushed. The rail lists both tabs' sections
   and, on a repository page, the project's repositories; its search
   filters this page's description (names, texts, files) in the browser.

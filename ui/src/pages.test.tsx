@@ -238,7 +238,7 @@ describe("ProjectsPage", () => {
       "first-letter:uppercase",
     );
     expect(screen.getByText("PAY").closest("a")?.getAttribute("href")).toBe(
-      "/projekte/PAY",
+      "/projects/PAY",
     );
   });
   it("leaves out the team of a project known only as a source", async () => {
@@ -288,7 +288,7 @@ describe("ProjectsPage", () => {
     });
     render(<ProjectsPage />);
     const tile = (await screen.findByText("loom")).closest("a")!;
-    expect(tile.getAttribute("href")).toBe("/projekte/loom");
+    expect(tile.getAttribute("href")).toBe("/projects/loom");
     expect(within(tile).getByText("Ein Recherche-Agent.")).toBeInTheDocument();
     expect(within(tile).getByText(/Revision 3/)).toBeInTheDocument();
     expect(within(tile).getByText("llmwire")).toBeInTheDocument();
@@ -319,7 +319,7 @@ describe("ProjectPage", () => {
     ).toBeInTheDocument();
     expect(
       within(overview).getByText("pay-lib").closest("a")?.getAttribute("href"),
-    ).toBe("/projekte/PAY/repos/pay-lib");
+    ).toBe("/projects/PAY/repos/pay-lib");
     expect(
       screen.queryByText("Das Projekt Payments nimmt Zahlungsaufträge an."),
     ).toBeNull();
@@ -352,7 +352,7 @@ describe("ProjectPage", () => {
     ).toBeInTheDocument();
     const chip = within(desc).getByText("PAY/pay-api#212");
     expect(chip.closest("a")?.getAttribute("href")).toBe(
-      "/projekte/PAY/repos/pay-api/notizen/212",
+      "/projects/PAY/repos/pay-api/notes/212",
     );
     expect(within(desc).getByText("Komponenten")).toBeInTheDocument();
     expect(within(desc).getByText("Invarianten")).toBeInTheDocument();
@@ -363,7 +363,7 @@ describe("ProjectPage", () => {
     expect(within(desc).queryByText("Entitäten")).toBeNull();
     // An extension is a repository's: the project page has no such section.
     expect(screen.queryByText("Erweiterungen")).toBeNull();
-    expect(window.location.hash).toBe("#beschreibung");
+    expect(window.location.hash).toBe("#description");
   });
 
   it("lays out a statement's text and the summary, nothing beyond the subset", async () => {
@@ -417,7 +417,7 @@ describe("ProjectPage", () => {
   });
 
   it("opens the tab the address names", async () => {
-    window.history.replaceState({}, "", "/projekte/PAY#beschreibung");
+    window.history.replaceState({}, "", "/projects/PAY#description");
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
     expect(
@@ -425,11 +425,11 @@ describe("ProjectPage", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /Übersicht/ }));
     expect(window.location.hash).toBe("");
-    expect(window.location.pathname).toBe("/projekte/PAY");
+    expect(window.location.pathname).toBe("/projects/PAY");
   });
 
   it("opens the start tab on a hash it does not know, a broken one too", async () => {
-    window.history.replaceState({}, "", "/projekte/PAY#%E0");
+    window.history.replaceState({}, "", "/projects/PAY#%E0");
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
     expect(
@@ -474,8 +474,10 @@ describe("ProjectPage", () => {
     ).toBeInTheDocument();
     // A section link scrolls, once the other tab has rendered; it never
     // writes the address, which holds the tab.
-    expect(scrolled.mock.contexts[0]).toBe(document.getElementById("art-rule"));
-    expect(window.location.hash).toBe("#beschreibung");
+    expect(scrolled.mock.contexts[0]).toBe(
+      document.getElementById("kind-rule"),
+    );
+    expect(window.location.hash).toBe("#description");
     delete (Element.prototype as Partial<Element>).scrollIntoView;
   });
 
@@ -522,14 +524,14 @@ describe("ProjectPage", () => {
         slug: "loom",
       },
     });
-    window.history.replaceState({}, "", "/projekte/loom");
+    window.history.replaceState({}, "", "/projects/loom");
     render(<ProjectPage projectKey="loom" />);
     expect(
       await screen.findByText(/Projekt aus einem Repository/),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("loom");
     // Its own path, not the repository's.
-    expect(window.location.pathname).toBe("/projekte/loom");
+    expect(window.location.pathname).toBe("/projects/loom");
   });
 
   it("says so without a description and fails cleanly", async () => {
@@ -640,7 +642,7 @@ describe("ProjectPage", () => {
     const link = screen.getByRole("link", {
       name: "Repository pay-api öffnen",
     });
-    expect(link.getAttribute("href")).toBe("/projekte/PAY/repos/pay-api");
+    expect(link.getAttribute("href")).toBe("/projects/PAY/repos/pay-api");
     expect(link.style.left).toMatch(/%$/);
     // A node outside the repositories zone, or a slug the project no longer
     // lists, links nowhere.
@@ -670,11 +672,11 @@ describe("ProjectPage", () => {
     const link = within(dialog).getByRole("link", {
       name: "Repository pay-api öffnen",
     });
-    expect(link.getAttribute("href")).toBe("/projekte/PAY/repos/pay-api");
+    expect(link.getAttribute("href")).toBe("/projects/PAY/repos/pay-api");
     // Followed, the link closes the full view.
     fireEvent.click(link);
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(window.location.pathname).toBe("/projekte/PAY/repos/pay-api");
+    expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api");
   });
 
   it("draws a statement's diagram under its paragraphs", async () => {
@@ -764,7 +766,7 @@ describe("RepoPage", () => {
     // The revisions are the history, the second tab.
     await openTab(/Verlauf/);
     expect(await screen.findByText("aktuell")).toBeInTheDocument();
-    expect(window.location.hash).toBe("#verlauf");
+    expect(window.location.hash).toBe("#history");
     expect(screen.getByText(/7 Aussagen/)).toBeInTheDocument();
     expect(screen.getByText(/1 912 Zeichen/)).toBeInTheDocument();
     expect(
@@ -772,7 +774,7 @@ describe("RepoPage", () => {
         .getByText("PAY/pay-clearing#51")
         .closest("a")
         ?.getAttribute("href"),
-    ).toBe("/projekte/PAY/repos/pay-clearing/notizen/51");
+    ).toBe("/projects/PAY/repos/pay-clearing/notes/51");
   });
 
   it("names the kinds for agents in German, in the export's order", async () => {
@@ -883,7 +885,7 @@ describe("RepoPage", () => {
         .getByText("PAY/pay-clearing#77")
         .closest("a")
         ?.getAttribute("href"),
-    ).toBe("/projekte/PAY/repos/pay-clearing/notizen/77");
+    ).toBe("/projects/PAY/repos/pay-clearing/notes/77");
     expect(screen.getByText("Geprüft 9a8b7c6")).toBeInTheDocument();
     // The revision row shows the same commit, a quiet chip too.
     await openTab(/Verlauf/);
@@ -948,7 +950,7 @@ describe("RepoPage", () => {
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
     expect(
       within(rail).getByText("pay-api").closest("a")?.getAttribute("href"),
-    ).toBe("/projekte/PAY/repos/pay-api");
+    ).toBe("/projects/PAY/repos/pay-api");
     expect(
       within(rail).getByText("pay-clearing").getAttribute("aria-current"),
     ).toBe("page");
@@ -1042,7 +1044,7 @@ describe("App", () => {
     render(<App />);
     expect(await screen.findByText(/Revision 7/)).toBeInTheDocument();
     screen.getByText("PAY").closest("a")!.click();
-    await waitFor(() => expect(window.location.pathname).toBe("/projekte/PAY"));
+    await waitFor(() => expect(window.location.pathname).toBe("/projects/PAY"));
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
     screen.getByText("FAQ").click();
     expect(await screen.findByText("Was ist Almanach?")).toBeInTheDocument();
@@ -1243,13 +1245,13 @@ describe("session gate", () => {
   });
 
   it("takes the deep link along to the login", async () => {
-    const loc = stubLocation("?x=1&signed_in=no", "/projekte/PAY");
+    const loc = stubLocation("?x=1&signed_in=no", "/projects/PAY");
     answer({ status: 401 });
     render(<App />);
     await waitFor(() =>
       expect(loc.href).toBe(
         "/api/auth/login?next=" +
-          encodeURIComponent("/projekte/PAY?x=1&signed_in=no"),
+          encodeURIComponent("/projects/PAY?x=1&signed_in=no"),
       ),
     );
   });
@@ -1299,13 +1301,13 @@ describe("session gate", () => {
   });
 
   it("passes the page along on the halted page's sign-in link", async () => {
-    stubLocation("?x=1&auth_error=oidc_callback_failed", "/quellen/werkzeuge");
+    stubLocation("?x=1&auth_error=oidc_callback_failed", "/sources/werkzeuge");
     answer({ status: 401 });
     render(<App />);
     const link = await screen.findByText("Anmelden");
     expect(link.closest("a")).toHaveAttribute(
       "href",
-      "/api/auth/login?next=" + encodeURIComponent("/quellen/werkzeuge?x=1"),
+      "/api/auth/login?next=" + encodeURIComponent("/sources/werkzeuge?x=1"),
     );
   });
 

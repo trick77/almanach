@@ -42,18 +42,18 @@ import {
 
 /** The project page's tabs by their hash: the overview first, the hub's
  *  job; the description second. */
-const OVERVIEW = "uebersicht";
-const DESCRIPTION = "beschreibung";
+const OVERVIEW = "overview";
+const DESCRIPTION = "description";
 const TABS = [OVERVIEW, DESCRIPTION];
 const tabLabel = (t: string) =>
   t === OVERVIEW ? S.tabs.overview : S.tabs.description;
 
 /** The overview's section ids, the rail's anchors. */
 const ids = {
-  map: "systemkarte",
+  map: "map",
   repos: "repositories",
-  problems: "problemzonen",
-  notes: "notizen",
+  problems: "problems",
+  notes: "notes",
 };
 
 export function ProjectPage({ projectKey }: { projectKey: string }) {

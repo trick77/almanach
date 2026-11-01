@@ -43,8 +43,8 @@ export function kindLabel(kind: Kind, project: boolean): string {
 }
 
 /** The ids of a description's sections, the rail's anchors. */
-export const summaryId = "ueberblick";
-export const kindId = (k: Kind) => `art-${k}`;
+export const summaryId = "summary";
+export const kindId = (k: Kind) => `kind-${k}`;
 
 /** plainOf is a statement's text as the search reads it (plain), parsed
  *  once per statement, not twice per keystroke (rail and list). */

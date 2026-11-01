@@ -29,8 +29,8 @@ func req(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 	h := handler(built())
 	for _, path := range []string{
-		"/", "/faq", "/warteschlange", "/abhaengigkeiten", "/projekte/PLAT", "/projekte/pay.v2/repos/pay-api", "/projekte/PLAT/repos/files/notizen/42",
-		"/projekte/PLAT/repos/files/notizen/123456789", "/projekte/~jan/repos/scratch",
+		"/", "/faq", "/queue", "/dependencies", "/projects/PLAT", "/projects/pay.v2/repos/pay-api", "/projects/PLAT/repos/files/notes/42",
+		"/projects/PLAT/repos/files/notes/123456789", "/projects/~jan/repos/scratch", "/sources", "/sources/~jan",
 	} {
 		w := req(t, h, path)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "id=root") {
@@ -38,10 +38,12 @@ func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		"/nope", "/projekte", "/projekte/", "/projekte/PLAT/repos", "/projekte/PLAT/repos/files/notizen/0",
-		"/projekte/PLAT/repos/files/notizen/abc", "/projekte/PLAT/repos/files/notizen/1234567890",
-		"/projekte/a%20b", "/projekte/PLAT/repos/~x", "/FAQ", "/api/projects", "/auth/ping", "/webhooks/noergler",
+		"/nope", "/projects", "/projects/", "/projects/PLAT/repos", "/projects/PLAT/repos/files/notes/0",
+		"/projects/PLAT/repos/files/notes/abc", "/projects/PLAT/repos/files/notes/1234567890",
+		"/projects/a%20b", "/projects/PLAT/repos/~x", "/FAQ", "/api/projects", "/auth/ping", "/webhooks/noergler",
 		"/assets/missing.js",
+		// The German paths the UI had first: gone, no redirect.
+		"/projekte/PLAT", "/quellen",
 	} {
 		if code := req(t, h, path).Code; code != http.StatusNotFound {
 			t.Errorf("%s: status = %d, want 404", path, code)
@@ -57,7 +59,7 @@ func TestAssetsAndThePlaceholder(t *testing.T) {
 		t.Errorf("asset: %d %q", w.Code, w.Body.String())
 	}
 	unbuilt := handler(fstest.MapFS{".gitkeep": {Data: nil}})
-	w := req(t, unbuilt, "/projekte/PLAT")
+	w := req(t, unbuilt, "/projects/PLAT")
 	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "make fe-build") {
 		t.Errorf("unbuilt: %d %q, want 503 with the placeholder", w.Code, w.Body.String())
 	}

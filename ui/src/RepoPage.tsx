@@ -36,15 +36,15 @@ import {
 
 /** The repository page's tabs by their hash: the page is a leaf, its
  *  content first; notes and revisions are where it came from. */
-const DESCRIPTION = "beschreibung";
-const HISTORY = "verlauf";
+const DESCRIPTION = "description";
+const HISTORY = "history";
 const TABS = [DESCRIPTION, HISTORY];
 
 const ids = {
-  map: "aufbau",
-  problems: "problemzonen",
-  notes: "notizen",
-  revisions: "revisionen",
+  map: "structure",
+  problems: "problems",
+  notes: "notes",
+  revisions: "revisions",
 };
 
 /** RepoPage is a repository's page; single when it is a project of one's,

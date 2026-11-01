@@ -20,11 +20,11 @@ export type Route =
 const KEY = "[A-Za-z0-9._~-]+";
 const SLUG = "[A-Za-z0-9._-]+";
 const PR = "[1-9][0-9]{0,8}";
-const PROJECT = new RegExp(`^/projekte/(${KEY})$`);
-const REPO = new RegExp(`^/projekte/(${KEY})/repos/(${SLUG})$`);
-const NOTE = new RegExp(`^/projekte/(${KEY})/repos/(${SLUG})/notizen/(${PR})$`);
+const PROJECT = new RegExp(`^/projects/(${KEY})$`);
+const REPO = new RegExp(`^/projects/(${KEY})/repos/(${SLUG})$`);
+const NOTE = new RegExp(`^/projects/(${KEY})/repos/(${SLUG})/notes/(${PR})$`);
 const PR_KEY = new RegExp(`^(${KEY})/(${SLUG})#(${PR})$`);
-const SOURCE = new RegExp(`^/quellen/(${KEY})$`);
+const SOURCE = new RegExp(`^/sources/(${KEY})$`);
 
 export function routeFromPath(path: string): Route {
   let m = NOTE.exec(path);
@@ -35,27 +35,27 @@ export function routeFromPath(path: string): Route {
   if (m) return { page: "project", key: m[1] };
   m = SOURCE.exec(path);
   if (m) return { page: "source", key: m[1] };
-  if (path === "/quellen") return { page: "sources" };
+  if (path === sourcesPath) return { page: "sources" };
   if (path === "/faq") return { page: "faq" };
   if (path === queuePath) return { page: "queue" };
   if (path === depsPath) return { page: "deps" };
   return { page: "projects" };
 }
 
-export const depsPath = "/abhaengigkeiten";
+export const depsPath = "/dependencies";
 
-export const sourcesPath = "/quellen";
+export const sourcesPath = "/sources";
 
-export const queuePath = "/warteschlange";
+export const queuePath = "/queue";
 
 export function sourcePath(key: string): string {
-  return `/quellen/${encodeURIComponent(key)}`;
+  return `${sourcesPath}/${encodeURIComponent(key)}`;
 }
 
 // Encoded, so a key the server would not serve becomes a visible 404
 // rather than a link that changes the URL and shows nothing.
 export function projectPath(key: string): string {
-  return `/projekte/${encodeURIComponent(key)}`;
+  return `/projects/${encodeURIComponent(key)}`;
 }
 
 export function repoPath(key: string, slug: string): string {
@@ -63,7 +63,7 @@ export function repoPath(key: string, slug: string): string {
 }
 
 export function notePath(key: string, slug: string, pr: number): string {
-  return `${repoPath(key, slug)}/notizen/${pr}`;
+  return `${repoPath(key, slug)}/notes/${pr}`;
 }
 
 /** notePathFor is the note page for a PR key the API gives as
