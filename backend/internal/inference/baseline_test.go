@@ -312,7 +312,7 @@ func TestSchemaKinds(t *testing.T) {
 		"project":       {projectDescription(true)["properties"].(map[string]any)["statements"].(map[string]any), false},
 	} {
 		got := kindsOf(tc.st)
-		for _, k := range []string{"component", "rule", "invariant", "entity", "decision", "pitfall"} {
+		for _, k := range []string{"component", "interface", "rule", "invariant", "entity", "decision", "pitfall"} {
 			if !slices.Contains(got, any(k)) {
 				t.Errorf("%s: kinds %v lack %s", name, got, k)
 			}

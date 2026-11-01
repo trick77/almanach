@@ -680,7 +680,10 @@ describe("RepoPage", () => {
   });
 
   it("names the kinds for agents in German, in the export's order", async () => {
-    const st = (id: string, kind: "decision" | "extension" | "pitfall") => ({
+    const st = (
+      id: string,
+      kind: "interface" | "decision" | "extension" | "pitfall",
+    ) => ({
       id,
       kind,
       name: `Aussage ${id}`,
@@ -697,13 +700,26 @@ describe("RepoPage", () => {
             st("s1", "extension"),
             st("s2", "pitfall"),
             st("s3", "decision"),
+            st("s4", "interface"),
           ],
         },
       },
     });
     render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
     const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    const invariants = within(desc).getByText("Invarianten");
+    const interfaces = within(desc).getByText("Schnittstellen");
     const decisions = within(desc).getByText("Entscheidungen");
+    // A public interface right after the invariants: what others rely on.
+    for (const [a, b] of [
+      [invariants, interfaces],
+      [interfaces, decisions],
+    ]) {
+      expect(
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+    expect(screen.getByText("Aussage s4")).toBeInTheDocument();
     const pitfalls = within(desc).getByText("Fallstricke");
     const extensions = within(desc).getByText("Erweiterungen");
     // A repository's entities keep their name.

@@ -216,8 +216,8 @@ paths:
         The current revision as one Markdown file, for a coding agent to
         pull into its context: the title and revision, the summary, the
         system map as a fenced JSON block, then the statements grouped by
-        kind in the order invariants, rules, decisions, pitfalls,
-        extensions, components, entities, each with its files and PR keys
+        kind in the order invariants, interfaces, rules, decisions,
+        pitfalls, extensions, components, entities, each with its files and PR keys
         and its diagram as a fenced JSON block. A kind without statements
         has no heading. Markdown is the frame; a statement's text and the
         summary go in as stored, in their layout (paragraphs, `- ` and
@@ -1713,11 +1713,13 @@ components:
         kind:
           type: string
           description: |
-            `decision` is a choice the code embodies with its stated reason,
-            `extension` where and how a kind of change is made (a repository's
-            alone, never on a project page), `pitfall` what broke before and
-            how not to break it again.
-          enum: [component, rule, invariant, entity, decision, extension, pitfall]
+            `interface` is a public interface a component offers others (an
+            API, events, a library's exported API, a CLI), never the
+            component itself; `decision` is a choice the code embodies with
+            its stated reason, `extension` where and how a kind of change is
+            made (a repository's alone, never on a project page), `pitfall`
+            what broke before and how not to break it again.
+          enum: [component, interface, rule, invariant, entity, decision, extension, pitfall]
         name:
           type: string
         text:

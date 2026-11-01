@@ -18,11 +18,13 @@ import (
 // in as the paragraphs it is, never rewritten into Markdown, only a line
 // that would read as structure escaped (prose).
 
-// markdownKinds is the export's order: what must not break and why first,
-// where to change and the parts after. Order and headings are the UI's
+// markdownKinds is the export's order: what must not break and why first
+// (a public interface is what others rely on not breaking), where to
+// change and the parts after. Order and headings are the UI's
 // (Description.tsx KINDS, strings.ts S.kinds), held to them by a test.
 var markdownKinds = []struct{ kind, heading string }{
 	{"invariant", "Invarianten"},
+	{"interface", "Schnittstellen"},
 	{"rule", "Regeln"},
 	{"decision", "Entscheidungen"},
 	{"pitfall", "Fallstricke"},

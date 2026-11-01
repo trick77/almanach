@@ -16,7 +16,8 @@ The description of repository `{repo}` in project `{project}` was just written f
   - The flows that cross the most repositories, end to end.
   - Runtime: what is deployed as its own unit and what talks to what at runtime, as opposed to at build time; only what the descriptions show, no environments.
 - The statements hold what spans repositories:
-  - `component`: a component of the system that more than one repository has a part in or relies on (a shared service, library, store or pipeline): what it is for, which repository owns it, the interface it offers other components to talk to it (APIs, events, files), if it has one, and which components use it. A change to that interface is what breaks the others.
+  - `component`: a component of the system that more than one repository has a part in or relies on (a shared service, library, store or pipeline): what it is for, which repository owns it, which rely on it, and the interfaces it offers by name; each interface is its own `interface` statement.
+  - `interface`: a public interface one repository's component offers the others (an API, events, a shared library's exported API, a file format), never the component itself: who offers it, what it holds, its contract file where there is one, which repositories use it, and what counts as a breaking change. This is where a change in one repository breaks another.
   - `entity`: the entities that cross repositories, which repository is their system of record, and how their identifiers travel.
   - `rule` and `invariant`: ordering, idempotency, consistency, authentication and tenancy boundaries that span repositories.
   - `decision`: a choice that spans repositories, its reason and what was given up; only with a reason the descriptions state, never guessed.
@@ -45,7 +46,7 @@ The description of repository `{repo}` in project `{project}` was just written f
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": "<the documentation of this statement, laid out as above>", "files": ["<path, no spaces, at most 200 characters>", ...]{diagram_field}`.
+Respond with a single JSON object: `{"description": {"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": "<the documentation of this statement, laid out as above>", "files": ["<path, no spaces, at most 200 characters>", ...]{diagram_field}`.
 
 ## Untrusted input
 
