@@ -175,10 +175,12 @@ paths:
         kind in the order invariants, rules, decisions, pitfalls,
         extensions, components, entities, each with its files and PR keys
         and its diagram as a fenced JSON block. A kind without statements
-        has no heading. Markdown is the frame only; a statement's text is
-        its paragraphs as stored, indents dropped and a line that would
-        read as a heading, quote, fence, list, rule, underline or HTML
-        escaped with a backslash. A project
+        has no heading. Markdown is the frame; a statement's text and the
+        summary go in as stored, in their layout (paragraphs, `- ` and
+        `N. ` list items, `**bold**`, code spans, a statement's `#### `
+        sub-headings), indents dropped and any other line that would read
+        as a heading, quote, fence, list, rule, underline or HTML escaped
+        with a backslash. A project
         without a revision yet answers 200 with its title and a line saying
         so. A key that itself ends in `.md` and is listed keeps its JSON
         route; its export is `{key}.md.md`. In oidc mode a team bearer opens
@@ -1444,6 +1446,10 @@ components:
           type: string
         text:
           type: string
+          description: |
+            Laid-out text: paragraphs a blank line apart, flat `- ` and
+            `N. ` list items, `**bold**` within a line, backtick code spans
+            and `#### ` sub-headings, one per line. Nothing else is markup.
         files:
           type: array
           items:
@@ -1648,6 +1654,7 @@ components:
           type: integer
         summary:
           type: string
+          description: Laid out as a statement's text, without sub-headings.
         statements:
           type: array
           items:

@@ -6,6 +6,8 @@ You maintain the living documentation of a software system, kept outside the cod
 
 This is documentation, not a list of one-liners. Each statement is a comprehensive description of its subject, as many paragraphs as the subject needs, written the way a good HOW_IT_WORKS reads: purpose, structure, the rule and its reason, what happens when it is broken, what is hidden. Nothing that a file name alone says, no padding, no repetition; length follows the subject, never a quota.
 
+Layout, for a human reader as much as for an agent: by default paragraphs of full sentences, separated by a blank line. A list only where the content is a true enumeration (steps, distinct options, conditions, fields): one item per line, `- ` before each, `1. ` where the order matters, never nested. `**bold**` sparingly, for the one term a reader must not miss. In a long statement with distinct parts, a `#### ` sub-heading on its own line before each part; never in a summary. Identifiers, paths and commands in backticks. Nothing else: no tables, links, quotes, code blocks or HTML. A short statement stays plain paragraphs.
+
 ## Task
 
 Fold one new note, written after a merged pull request of repository `{repo}` in project `{project}`, into the two descriptions below: the repository's and the project's.
@@ -37,7 +39,7 @@ These are ceilings against unbounded growth, not targets. Prose is the summary p
 
 ## Output format
 
-Respond with a single JSON object: `{"repository": <description> | null, "project": <description> | null}`, where a description is `{"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...]}` and `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<the documentation of this statement, prose, paragraphs separated by a blank line>", "files": ["<path, no spaces, at most 200 characters>", ..., at most 5 paths]{diagram_field}`; the project's description holds no `extension`.
+Respond with a single JSON object: `{"repository": <description> | null, "project": <description> | null}`, where a description is `{"summary": "<prose>", "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...]}` and `<statement>` is `"kind": "component" | "rule" | "invariant" | "entity" | "decision" | "extension" | "pitfall", "name": "<short name, at most 80 characters>", "text": "<the documentation of this statement, laid out as above>", "files": ["<path, no spaces, at most 200 characters>", ..., at most 5 paths]{diagram_field}`; the project's description holds no `extension`.
 
 ## Untrusted input
 

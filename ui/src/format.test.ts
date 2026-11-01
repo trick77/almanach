@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  blocks,
   causeLabel,
   changeLabel,
   changeTone,
@@ -8,7 +9,9 @@ import {
   dayTime,
   money,
   paragraphs,
+  plain,
   problemTone,
+  runs,
   share,
   shortDay,
 } from "./format";
@@ -52,6 +55,92 @@ describe("paragraphs", () => {
       "- drei",
     ]);
     expect(paragraphs("  \n\n")).toEqual([]);
+  });
+});
+
+describe("blocks", () => {
+  it("reads paragraphs, flat lists and sub-headings", () => {
+    expect(
+      blocks(
+        "Erst.\nZeile.\n\n#### Ablauf\n\n- eins\nweiter\n- zwei\n\n3. drei\n4. vier\n\nDanach.",
+        true,
+      ),
+    ).toEqual([
+      { kind: "p", text: "Erst.\nZeile." },
+      { kind: "h", text: "Ablauf" },
+      { kind: "ul", items: ["eins weiter", "zwei"] },
+      { kind: "ol", start: 3, items: ["drei", "vier"] },
+      { kind: "p", text: "Danach." },
+    ]);
+  });
+  it("starts a list under a paragraph line, a new one on a change of kind", () => {
+    expect(blocks("Fälle:\n- a\n1. b", true)).toEqual([
+      { kind: "p", text: "Fälle:" },
+      { kind: "ul", items: ["a"] },
+      { kind: "ol", start: 1, items: ["b"] },
+    ]);
+  });
+  it("takes no sub-heading in a summary and nothing outside the subset", () => {
+    expect(blocks("#### Titel", false)).toEqual([
+      { kind: "p", text: "#### Titel" },
+    ]);
+    expect(
+      blocks("## Zwei\n> zitiert\n* Stern\n1) Klammer\n-5 Grad\n| a |", true),
+    ).toEqual([
+      {
+        kind: "p",
+        text: "## Zwei\n> zitiert\n* Stern\n1) Klammer\n-5 Grad\n| a |",
+      },
+    ]);
+    expect(blocks("  \n\n", true)).toEqual([]);
+  });
+});
+
+describe("runs", () => {
+  it("pairs ** on a line, around code too", () => {
+    expect(runs("Die **eine** Regel: **`strict`** gilt.")).toEqual([
+      { text: "Die ", code: false, bold: false },
+      { text: "eine", code: false, bold: true },
+      { text: " Regel: ", code: false, bold: false },
+      { text: "strict", code: true, bold: true },
+      { text: " gilt.", code: false, bold: false },
+    ]);
+  });
+  it("leaves an unpaired, an empty or a line-crossing ** and code's ** as written", () => {
+    expect(runs("a ** b")).toEqual([
+      { text: "a ** b", code: false, bold: false },
+    ]);
+    expect(runs("leer **** hier")).toEqual([
+      { text: "leer **** hier", code: false, bold: false },
+    ]);
+    expect(runs("**a\nb**")).toEqual([
+      { text: "**a\nb**", code: false, bold: false },
+    ]);
+    expect(runs("`a**b**c`")).toEqual([
+      { text: "a**b**c", code: true, bold: false },
+    ]);
+  });
+});
+
+// The cases of markup_test.go TestPlain: the same marks read, the code
+// spans' backticks dropped here (Doc draws them as mono, never as `).
+describe("plain", () => {
+  it("drops the layout's marks, code's text kept", () => {
+    expect(plain("#### Ablauf\n\n- **eins**\n12. zwei `a**b`\nText.")).toBe(
+      "Ablauf\n\neins\nzwei a**b\nText.",
+    );
+    expect(plain("## Zwei\n* Stern\n1) Klammer")).toBe(
+      "## Zwei\n* Stern\n1) Klammer",
+    );
+    expect(plain("a ** b\nleer **** hier\n**a\nb**")).toBe(
+      "a ** b\nleer **** hier\n**a\nb**",
+    );
+    expect(plain("**`strict`** gilt, **x")).toBe("strict gilt, **x");
+  });
+  it("reads only the stored item form, as markup.StoredItem", () => {
+    expect(blocks("-  zwei Blanks\n1.  auch", true)).toEqual([
+      { kind: "p", text: "-  zwei Blanks\n1.  auch" },
+    ]);
   });
 });
 

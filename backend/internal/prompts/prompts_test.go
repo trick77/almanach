@@ -22,3 +22,12 @@ func TestPromptsStateTheSpelling(t *testing.T) {
 		}
 	}
 }
+
+// Every prompt that writes statement text states the one layout rule.
+func TestPromptsStateTheLayout(t *testing.T) {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project} {
+		if !strings.Contains(p, Layout) {
+			t.Errorf("%s prompt lacks the layout rule %q", name, Layout)
+		}
+	}
+}

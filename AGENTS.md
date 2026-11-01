@@ -6,8 +6,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 
 - Prompts compiled in, never configurable. UI: German, copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
-  browser write. Statements paragraphs, no markdown but `backtick` code spans (UI mono, user,
-  2026-11-01); diagrams only validated JSON, drawn by rongo's code.
+  browser write. Text, summary: `lang.Laid` subset (user, 2026-11-01), UI `blocks` mirrors, rest
+  literal; notes plain. Diagrams only validated JSON, drawn by rongo's code.
 - Gate = `make check` (`SHIP_CMD=<binary>` locally); `make hooks` per clone. GitHub never first to
   find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.
@@ -27,7 +27,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   access log only. openapi.yaml = api.go.
 - Swiss German (`lang.Prose` on model prose, never paths), generic masculine, no Eszett.
 - Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
-  read (rows verbatim), `lang.Prose`. Shapes need a value's mark, prose stays. New shape → test.
+  read (rows verbatim), `lang.Prose`/`Laid`. Shapes need a value's mark, prose stays. New shape → test.
 - Description = documentation, no one-liners: statement as long as subject needs, no
   sentence/paragraph quota (user, 2026-10-28). Ceilings: statement counts, page runes from config;
   name, file caps constants; checked on stored Swiss text. Statement over a field cap: left out,

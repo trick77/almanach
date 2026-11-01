@@ -2,7 +2,7 @@
 // hoisted to named consts where a component would add nothing, components
 // where there is behaviour or a shape worth a name.
 import { Fragment, type CSSProperties, type ReactNode } from "react";
-import { codeSpans, paragraphs, type Tone } from "./format";
+import { blocks, codeSpans, paragraphs, runs, type Tone } from "./format";
 import { S } from "./strings";
 import { onNav } from "./routing";
 
@@ -145,10 +145,10 @@ export function Pill({
 }
 
 /** Prose renders a text as paragraphs, split on blank lines, with a
- *  backtick-quoted identifier in the mono face (codeSpans): the wiki is
- *  prose, no other markdown. Held at measure, in the font size the
- *  caller's className sets; a caller sets no max-w of its own. query sets
- *  off a search's matches. */
+ *  backtick-quoted identifier in the mono face (codeSpans) and nothing
+ *  else read: a note's text, the FAQ's. Almanach's own laid-out text is
+ *  Doc's. Held at measure, in the font size the caller's className sets;
+ *  a caller sets no max-w of its own. query sets off a search's matches. */
 export function Prose({
   text,
   className = "",
@@ -171,37 +171,140 @@ export function Prose({
 
 /** Inline is a line of model text with its backtick-quoted identifiers in
  *  the mono face (codeSpans): a paragraph of Prose, a statement's name.
- *  query sets off a search's matches, in the code spans too. */
-export function Inline({ text, query = "" }: { text: string; query?: string }) {
+ *  bold reads **bold** as well (runs), for Doc's laid-out text only; its
+ *  search marks are found on the runs' text as one (plain's, which the
+ *  search matched), so a match across a bold or code edge is set off in
+ *  each run it covers. query sets off a search's matches, in the code
+ *  spans too. */
+export function Inline({
+  text,
+  query = "",
+  bold = false,
+}: {
+  text: string;
+  query?: string;
+  bold?: boolean;
+}) {
+  const parts = bold
+    ? runs(text)
+    : codeSpans(text).map((s) => ({ ...s, bold: false }));
+  const hits = bold
+    ? matchRanges(parts.map((p) => p.text).join(""), query)
+    : [];
+  // Each run's offset in the runs' text as one.
+  const starts = parts.map((_, j) =>
+    parts.slice(0, j).reduce((n, p) => n + p.text.length, 0),
+  );
   return (
     <>
-      {codeSpans(text).map((s, j) =>
-        s.code ? (
-          <code
-            key={j}
-            className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink"
-          >
-            <Marked text={s.text} query={query} />
+      {parts.map((s, j) => {
+        const body = bold ? (
+          <Ranged text={s.text} from={starts[j]} hits={hits} />
+        ) : (
+          <Marked text={s.text} query={query} />
+        );
+        const run = s.code ? (
+          <code className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink">
+            {body}
           </code>
         ) : (
-          <Fragment key={j}>
-            <Marked text={s.text} query={query} />
-          </Fragment>
-        ),
-      )}
+          body
+        );
+        return s.bold ? (
+          <strong key={j} className="font-semibold text-ink">
+            {run}
+          </strong>
+        ) : (
+          <Fragment key={j}>{run}</Fragment>
+        );
+      })}
     </>
   );
 }
 
-/** Summary is a description's or a note's prose in the serif, ../rongo's
- *  answer column. */
-export function Summary({ text, query }: { text: string; query?: string }) {
+/** Doc renders Almanach's laid-out text, a statement's or a summary's
+ *  (blocks): paragraphs, flat lists, **bold**, code spans and, where
+ *  headings is set, #### sub-headings; anything else as written. Held at
+ *  measure, in the font size the caller's className sets. query sets off
+ *  a search's matches in every block. */
+export function Doc({
+  text,
+  headings,
+  className = "",
+  query = "",
+}: {
+  text: string;
+  headings: boolean;
+  className?: string;
+  query?: string;
+}) {
+  const block = "mb-3.5 last:mb-0";
   return (
-    <Prose
-      text={text}
-      query={query}
-      className="font-serif text-[17px] leading-[1.6] text-ink-prose"
-    />
+    <div className={measure + " " + className}>
+      {blocks(text, headings).map((b, i) => {
+        switch (b.kind) {
+          case "h":
+            return (
+              <h5
+                key={i}
+                className="mt-5 mb-1.5 font-sans text-[13.5px] font-semibold tracking-[.01em] text-ink first:mt-0"
+              >
+                <Inline text={b.text} query={query} bold />
+              </h5>
+            );
+          case "ul":
+          case "ol": {
+            const items = b.items.map((it, k) => (
+              <li key={k} className="mb-1 pl-1 last:mb-0">
+                <Inline text={it} query={query} bold />
+              </li>
+            ));
+            return b.kind === "ul" ? (
+              <ul
+                key={i}
+                className={block + " list-disc pl-5 marker:text-faint"}
+              >
+                {items}
+              </ul>
+            ) : (
+              <ol
+                key={i}
+                start={b.start}
+                className={block + " list-decimal pl-6 marker:text-muted"}
+              >
+                {items}
+              </ol>
+            );
+          }
+          default:
+            return (
+              <p key={i} className={block}>
+                <Inline text={b.text} query={query} bold />
+              </p>
+            );
+        }
+      })}
+    </div>
+  );
+}
+
+/** Summary is a description's or a note's prose in the serif, ../rongo's
+ *  answer column. layout reads a description's summary as Doc does, no
+ *  sub-heading; a note's stays Prose. */
+export function Summary({
+  text,
+  query,
+  layout = false,
+}: {
+  text: string;
+  query?: string;
+  layout?: boolean;
+}) {
+  const className = "font-serif text-[17px] leading-[1.6] text-ink-prose";
+  return layout ? (
+    <Doc text={text} query={query} headings={false} className={className} />
+  ) : (
+    <Prose text={text} query={query} className={className} />
   );
 }
 
@@ -229,6 +332,44 @@ export function Marked({ text, query }: { text: string; query: string }) {
       )}
     </>
   );
+}
+
+/** matchRanges is every case-insensitive match of a search in a text, as
+ *  [start, end) offsets: Marked's pattern, for marks that cross runs. */
+function matchRanges(text: string, query: string): [number, number][] {
+  const q = query.trim();
+  if (q === "") return [];
+  const re = new RegExp(escapeRegExp(q), "gi");
+  return [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+}
+
+/** Ranged is a run of text that starts at offset from of its line, with
+ *  the parts the line's hits cover set off as Marked sets them off. */
+function Ranged({
+  text,
+  from,
+  hits,
+}: {
+  text: string;
+  from: number;
+  hits: [number, number][];
+}) {
+  const out: ReactNode[] = [];
+  let i = 0;
+  for (const [s, e] of hits) {
+    const a = Math.max(s - from, i);
+    const b = Math.min(e - from, text.length);
+    if (b <= a) continue;
+    if (a > i) out.push(text.slice(i, a));
+    out.push(
+      <mark key={a} className="rounded-[2px] bg-ochre-wash px-px text-ochre">
+        {text.slice(a, b)}
+      </mark>,
+    );
+    i = b;
+  }
+  if (i < text.length) out.push(text.slice(i));
+  return <>{out}</>;
 }
 
 function escapeRegExp(s: string): string {

@@ -1,16 +1,16 @@
 import type { ReactNode } from "react";
 import type { Description, Kind, Source, Statement } from "./api";
 import { Diagram } from "./Diagram";
-import { day, shortSHA } from "./format";
+import { day, plain, shortSHA } from "./format";
 import type { RailItem } from "./Rail";
 import { notePathFor } from "./routing";
 import { S } from "./strings";
 import {
   Chip,
+  Doc,
   Empty,
   Inline,
   Marked,
-  Prose,
   Summary,
   eyebrow,
   matchesQuery,
@@ -47,7 +47,7 @@ export const kindId = (k: Kind) => `art-${k}`;
 /** statementMatches is the search's test on a statement: its name, its
  *  text and its files. */
 export function statementMatches(s: Statement, query: string): boolean {
-  return matchesQuery(query, s.name, s.text, ...s.files);
+  return matchesQuery(query, s.name, plain(s.text), ...s.files);
 }
 
 /** descriptionRail is the rail's part of a description: the summary and
@@ -97,9 +97,9 @@ export function descriptionRail(
   return { items, hitLine };
 }
 
-/** DescriptionView is a page's description: the summary as prose, then the
- *  statements grouped by kind, each a block with its name, its text as
- *  paragraphs, its files and its sources as citation chips. pageRepo is
+/** DescriptionView is a page's description: the summary laid out, then the
+ *  statements grouped by kind, each a block with its name, its text laid
+ *  out (Doc), its files and its sources as citation chips. pageRepo is
  *  the repository a repository page shows, whose slug its chips leave out;
  *  without it the page is a project's, which holds no extension. query
  *  keeps the statements it matches and sets the matches off; the summary
@@ -141,7 +141,7 @@ export function DescriptionView({
       {lead}
       <section id={summaryId} className="scroll-mt-16">
         <div className={eyebrow}>{S.rail.summary}</div>
-        <Summary text={description.summary} query={query} />
+        <Summary text={description.summary} query={query} layout />
       </section>
       {afterSummary}
       {kindsOf(project).map((kind) => {
@@ -247,8 +247,9 @@ export function StatementBlock({
       <h4 className="font-semibold text-ink">
         <Inline text={s.name} query={query} />
       </h4>
-      <Prose
+      <Doc
         text={s.text}
+        headings
         query={query}
         className="mt-1 mb-1.5 font-serif text-[15.5px] leading-[1.55] text-ink-dim"
       />

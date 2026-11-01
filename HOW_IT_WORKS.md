@@ -292,8 +292,10 @@ project's system map as a fenced `json` block, then the statements
 grouped by kind in the order invariants, rules, decisions, pitfalls,
 extensions, components, entities (a kind without statements has no
 heading), each with its files, its PR keys and its diagram as a fenced
-`json` block. Markdown is the frame only; a statement's text goes in as
-its paragraphs, each line's indent dropped and a line that would read as
+`json` block. Markdown is the frame; a statement's text and the summary
+go in in their stored layout (paragraphs, `- ` and `N. ` items, bold,
+code spans, a statement's `####` sub-headings under its `###` name),
+each line's indent dropped and any other line that would read as
 structure (a heading, quote, fence, list, rule, underline, HTML) escaped
 with a backslash, and a fence or code span
 longer than any backtick run inside it. An unknown project or repository
@@ -974,9 +976,17 @@ so the choice is not undone as a cleanup.
   login is the backend's OIDC flow, the UI only gates on `/api/me`, names
   the reader and offers Abmelden in oidc mode. The wiki
   pages are read-only; the Quellen section configures the clones, and is
-  the only place a browser writes. Statement text is rendered as
-  paragraphs split on blank lines, never as markdown, so a model that
-  emits markup cannot change the page's shape.
+  the only place a browser writes. Statement text and summaries carry a
+  layout for the human reader: paragraphs, flat lists, bold terms, code
+  spans and, in a statement, one sub-heading level. The backend
+  (`lang.Laid`, `internal/markup`) puts what the model writes into that
+  stored form after redaction (a key's PEM shape holds only as written)
+  and before the Swiss rule reads it: any heading level becomes `####`
+  (bold in a summary), `*` bullets `-`, a closed fence code spans. The UI
+  (`format.ts` `blocks`) reads only that form, so markup beyond it (a
+  quote, a table, HTML) stays text and cannot change the page's shape. A
+  text only laid out anew says nothing new and credits no source. Note
+  text is noergler's and stays paragraphs.
 - **Almanach clones, noergler reviews.** noergler is the pull request
   agent; it never indexes a repository, that would make no sense for a
   review tool. The code lives with Almanach, which is the one that will
