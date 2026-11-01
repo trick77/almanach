@@ -6,7 +6,6 @@ import {
   labelBox,
   lay,
   margin,
-  pageColumn,
   tidy,
   type EdgeRoute,
   type FlowLayout,
@@ -39,6 +38,10 @@ import { ramp, textWidth } from "./diagramTheme";
  * track, slid clear of the lines crossing it.
  */
 
+/** The widest a map shows unscaled: the page column's main track (Rail.tsx:
+ * 1400px less its padding, the rail and the gap beside it). Wider, the card
+ * shrinks it and its text with it. */
+export const pageColumn = 1080;
 /** The bands' order; a zone not named here comes after them, as written. */
 const bandOrder = [
   "clients",

@@ -107,6 +107,10 @@ type runPlan struct {
 	// still in its project state, has the repository map step left. A
 	// restart takes the map step, never the project's call again.
 	ProjectDone bool `json:"project_done,omitempty"`
+	// Kept is the calls the reading leaves to the steps after it, judged
+	// once when the plan is made (keptCalls); nil on a plan from before,
+	// which keeps one.
+	Kept *int `json:"kept,omitempty"`
 }
 
 // steps is the reading steps of the plan: the overview, then the subjects.
@@ -328,21 +332,35 @@ func (w *Worker) maxSubjects() int {
 	return max(w.base.Limits.MaxCalls-4, 0)
 }
 
-// keptCalls is the calls a run's parts leave to the steps after them: one
-// for the repository map, which the parts once spent on every run of a
-// large repository (loom had no map), and one for the project's in a
-// project of more than one. A placing call or a part read again past
-// maxSubjects ends the reading early, not the map.
-func (w *Worker) keptCalls(ctx context.Context, r *store.BaselineRun) (int, error) {
-	n, err := w.store.SourceRepoCount(ctx, r.ProjectKey)
+// keptCalls is the calls a run's reading leaves to the steps after it,
+// judged once when the plan is made: one for the repository map unless it
+// stands for the text (the parts once spent it on every run of a large
+// repository: loom had no map), one for the project's unless that step
+// stands (a project of one, a quiet reconcile). A step that comes due
+// during the reading (a summary rewritten) competes for what is left.
+func (w *Worker) keptCalls(ctx context.Context, r *store.BaselineRun, plan runPlan) (int, error) {
+	kept := 0
+	repo, ok, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project source read failed, drain paused", logging.Err(err))
+		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
 		return 0, errStop
 	}
-	if store.Single(n) {
-		return 1, nil
+	if !ok || !repo.MapStands() {
+		kept++
 	}
-	return 2, nil
+	project, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
+		return 0, errStop
+	}
+	stands, _, err := w.projectStands(ctx, r, plan, project)
+	if err != nil {
+		return 0, err
+	}
+	if !stands {
+		kept++
+	}
+	return kept, nil
 }
 
 // catalogue is a run's catalogue step: one call to the catalogue model for
@@ -505,6 +523,13 @@ func stillReadable(paths []string, files, already []baseline.File) []baseline.Fi
 // straight to its end when there is nothing to read. The pinned commit's
 // time is read here, once.
 func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
+	if plan.steps() > 0 {
+		kept, err := w.keptCalls(ctx, r, plan)
+		if err != nil {
+			return err
+		}
+		plan.Kept = &kept
+	}
 	raw, err := json.Marshal(plan)
 	if err != nil {
 		return err
@@ -595,9 +620,9 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		}
 		part, purpose, read = fmt.Sprintf("the subject %q: %s", s.Name, s.Purpose), store.PurposeSubject, s.Files
 	}
-	kept, err := w.keptCalls(ctx, r)
-	if err != nil {
-		return err
+	kept := 1
+	if plan.Kept != nil {
+		kept = *plan.Kept
 	}
 	if r.Calls >= w.base.Limits.MaxCalls-kept {
 		return w.endReading(ctx, r, &plan, baseline.SkipCalls, "the run's calls are spent")
@@ -1212,10 +1237,22 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		}
 	}
 	if rev == nil {
-		return w.projectOver(ctx, r, plan)
+		err = w.projectOver(ctx, r, plan)
+	} else {
+		err = w.writeProject(ctx, r, plan, rev)
 	}
-	// The project revision and the step's end in one transaction: a crash
-	// between them would pay for the project call again and write it twice.
+	// A map retry held by the gateway: the description is written, the
+	// drain waits out the hold before the map step.
+	if err == nil && w.holding() {
+		return errStop
+	}
+	return err
+}
+
+// writeProject writes the project revision and the step's end in one
+// transaction: a crash between them would pay for the project call again
+// and write it twice.
+func (w *Worker) writeProject(ctx context.Context, r *store.BaselineRun, plan runPlan, rev *store.NewRevision) error {
 	prev := *r
 	plan.ProjectDone = true
 	if err := encodeInto(r, plan); err != nil {
@@ -1373,10 +1410,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	// (user, 2026-11-01).
 	chars := prose(summary, statements)
 	logLeftOut(ctx, w.log, "baseline: "+projectLabel, leftOut)
-	drawn, err := w.revisionMap(ctx, r, page, d.Map, slugs, prompt)
-	if err != nil {
-		return nil, "", err
-	}
+	drawn := w.revisionMap(ctx, r, page, d.Map, slugs, prompt)
 	if summary == page.Summary && sameStatements(page.Statements, statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, "", nil
@@ -1395,22 +1429,36 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 // (not the statement diagrams'). One refused is asked again, the map
 // alone, with the rule it broke, at most mapRetries more calls while the
 // run keeps one for the repository map; each counts against the run. One
-// still refused, or none returned, keeps the stored map, with the reason
-// logged: the map never costs the description. A hold of the gateway
-// during a retry stops the step, which asks again from the start.
+// refused on every try, or none returned at first, keeps the stored map
+// (the sentinel where there is none), with the reason logged: the map
+// never costs the description. A retry cut short (no call to spare, a
+// failed call, a hold of the gateway, null) keeps the map as stored, never
+// the sentinel, so the next run asks again; the description is written
+// all the same, never paid for twice.
 func (w *Worker) revisionMap(ctx context.Context, r *store.BaselineRun, page store.Page, proposed *diagram.Diagram, slugs []string,
-	prompt func(refused string) string) (*diagram.Diagram, error) {
+	prompt func(refused string) string) *diagram.Diagram {
 	at := "baseline: " + projectLabel + " map"
 	if !diagram.MapFits(len(slugs)) {
 		if proposed != nil || page.Map != nil {
 			w.log.InfoContext(ctx, fmt.Sprintf("%s: %d repositories, more than a map holds, none drawn", at, len(slugs)))
 		}
-		return nil, nil
+		return nil
+	}
+	// cut is a retry cut short: the map as stored, departed repositories out.
+	cut := func(why string) *diagram.Diagram {
+		w.log.WarnContext(ctx, at+": not asked again ("+why+"), the stored one kept")
+		if page.Map == nil || diagram.IsSentinel(page.Map) {
+			return page.Map
+		}
+		return w.carriedMap(ctx, page, slugs)
 	}
 	for try := 0; ; try++ {
+		if proposed == nil && try > 0 {
+			return cut("none returned")
+		}
 		if proposed == nil {
 			w.log.WarnContext(ctx, at+": none returned, the stored one kept")
-			return w.carriedMap(ctx, page, slugs), nil
+			return w.carriedMap(ctx, page, slugs)
 		}
 		repaired, dropped := baseline.RepairEdges(proposed)
 		if len(dropped) > 0 {
@@ -1418,20 +1466,23 @@ func (w *Worker) revisionMap(ctx context.Context, r *store.BaselineRun, page sto
 		}
 		drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, repaired, slugs)), slugs, baseline.MapCaps)
 		if why == "" {
-			return drawn, nil
+			return drawn
 		}
 		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(proposed)))
-		if try == mapRetries || r.Calls >= w.base.Limits.MaxCalls-1 {
+		if try == mapRetries {
 			w.log.WarnContext(ctx, at+": still refused, the stored one kept")
-			return w.carriedMap(ctx, page, slugs), nil
+			return w.carriedMap(ctx, page, slugs)
+		}
+		if r.Calls >= w.base.Limits.MaxCalls-1 {
+			return cut("no call to spare beside the repository map's")
 		}
 		res := w.base.Describer.ProjectMap(ctx, prompt(why))
-		ok, err := w.call(ctx, r, store.PurposeProject, res.Call)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return w.carriedMap(ctx, page, slugs), nil
+		ok, err := w.call(ctx, r, store.PurposeProjectMap, res.Call)
+		if err != nil || !ok {
+			// A hold or its attempts spent: the step goes on, its
+			// attempts not counted against the steps after it.
+			r.Attempts = 0
+			return cut("the call failed: " + res.Outcome.String())
 		}
 		proposed = res.Map
 	}
@@ -1546,14 +1597,14 @@ func (w *Worker) projectOver(ctx context.Context, r *store.BaselineRun, plan run
 // step keeps (a new map, or the stored one confirmed) is set on the page's
 // current revision in place, with its basis, and the run's end, in one
 // transaction: no revision of its own, the text did not change. A map
-// still refused keeps a stored one, writing nothing; with none stored, the
-// sentinel is set with the basis: declined, said on the page, not asked
-// again until the text changes. A skip, a failed call, or null for a page
-// without a map writes nothing, so the basis stays stale and the next run
-// asks again (null was recorded once, and a map then never came). The map
-// is optional: a database busy past its attempts ends the run done
-// without it, never failed. A hold of the gateway during a retry stops the
-// step, which asks again from the start.
+// still refused keeps a stored one, writing nothing; with none stored and
+// every try run and refused, the sentinel is set with the basis: declined,
+// said on the page, not asked again until the text changes. A skip, a
+// failed call, a hold, the calls spent before every try ran, or null for a
+// page without a map write nothing, so the basis stays stale and the next
+// run asks again (null was recorded once, and a map then never came). The
+// map is optional: a database busy past its attempts ends the run done
+// without it, never failed.
 func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	at := "baseline: " + repoMapName
 	if r.Calls >= w.base.Limits.MaxCalls {
@@ -1582,12 +1633,18 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	for try := 0; ; try++ {
 		res := w.base.Describer.RepoMap(ctx, renderRepoMap(*r, page, refused))
 		okCall, err := w.call(ctx, r, store.PurposeRepoMap, res.Call)
-		if err != nil {
+		if err != nil && try == 0 {
 			return err
 		}
-		if !okCall {
+		if err != nil || !okCall {
+			// A retry held or given up ends the step without a map, its
+			// first call not paid again; the drain waits out a hold.
+			r.Attempts = 0
 			w.log.WarnContext(ctx, at+" skipped: the call failed: "+res.Outcome.String()+", the stored one kept")
-			return w.finish(ctx, r, plan)
+			if err := w.finish(ctx, r, plan); err != nil || !w.holding() {
+				return err
+			}
+			return errStop
 		}
 		var drawn *diagram.Diagram
 		if res.Map != nil {
@@ -1605,13 +1662,16 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		case drawn != nil:
 			keep = drawn
 			w.log.InfoContext(ctx, fmt.Sprintf("%s: drawn (%d nodes, %d edges)", at, len(drawn.Nodes), len(drawn.Edges)))
-		case res.Map == nil && try == 0:
+		case res.Map == nil:
+			// None drawn, first or on a retry: nothing recorded.
 			w.log.InfoContext(ctx, at+": none drawn, asked again by the next run")
 			return w.finish(ctx, r, plan)
 		case try < mapRetries && r.Calls < w.base.Limits.MaxCalls:
 			w.log.InfoContext(ctx, fmt.Sprintf("%s: asked again, %d of %d", at, try+1, mapRetries))
 			continue
-		case keep != nil:
+		case keep != nil || try < mapRetries:
+			// A stored map stays; one refused before every try ran (no
+			// call left) is not declined: the next run asks again.
 			w.log.WarnContext(ctx, at+": still refused, the stored one kept")
 			return w.finish(ctx, r, plan)
 		default:

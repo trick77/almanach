@@ -1388,11 +1388,14 @@ func partsMap(n int) *diagram.Diagram {
 
 // A refused map is asked again in the same run, the rule it broke in the
 // prompt, at most twice more, each call counted against the run: loom's 18
-// nodes were refused once and never asked again. Still refused with no map
-// stored, the map is declined for the text; the run's last call ends the
-// asking. The refused map's labels are logged by zone.
+// nodes were refused once and never asked again. Refused on every try with
+// no map stored, the map is declined for the text. Cut short (the run's
+// last call, null, a hold of the gateway) nothing is written: the next run
+// asks again, and a held retry does not fail the run. The refused map's
+// labels are logged by zone.
 func TestRun_RepoMapAskedAgain(t *testing.T) {
 	over := inference.RepoMapResult{Call: called, Map: partsMap(diagram.MapMaxNodes + 1)}
+	held := inference.RepoMapResult{Call: inference.Call{Outcome: inference.OutcomeTimedOut, Err: errors.New("slow")}}
 	for name, c := range map[string]struct {
 		calls   int
 		answers []inference.RepoMapResult
@@ -1402,7 +1405,9 @@ func TestRun_RepoMapAskedAgain(t *testing.T) {
 	}{
 		"then fits":      {16, []inference.RepoMapResult{over, {Call: called, Map: partsMap(14)}}, 2, partsMap(14), "drawn (14 nodes"},
 		"three refusals": {16, []inference.RepoMapResult{over, over, over}, 3, diagram.Sentinel(), "still refused, declined"},
-		"last call":      {4, []inference.RepoMapResult{over, {Call: called, Map: partsMap(14)}}, 1, diagram.Sentinel(), "still refused, declined"},
+		"last call":      {4, []inference.RepoMapResult{over, {Call: called, Map: partsMap(14)}}, 1, nil, "still refused, the stored one kept"},
+		"null on retry":  {16, []inference.RepoMapResult{over, {Call: called}}, 2, nil, "none drawn, asked again by the next run"},
+		"held on retry":  {16, []inference.RepoMapResult{over, held}, 2, nil, "skipped: the call failed: timed_out"},
 	} {
 		x := newWorld(t, c.calls)
 		var logs strings.Builder
@@ -1416,12 +1421,19 @@ func TestRun_RepoMapAskedAgain(t *testing.T) {
 		x.models.repoMaps = c.answers
 		x.w.drain(context.Background())
 		r := x.run()
-		if r.State != store.RunDone || r.Calls != 3+c.asked || len(x.st.calls) != c.asked {
+		// A call the gateway held is in the ledger, not in the run's count.
+		counted := c.asked
+		if name == "held on retry" {
+			counted--
+		}
+		if r.State != store.RunDone || r.Calls != 3+counted || len(x.st.calls) != c.asked || r.Attempts != 0 {
 			t.Errorf("%s: run = %+v, %d calls in the ledger; want %d asked", name, r, len(x.st.calls), c.asked)
 		}
 		p := x.st.pages[key]
-		if !diagram.Equal(p.RepoMap, c.want) || p.RepoMapBasis != p.MapBasis() || x.st.mapWrites != 1 {
-			t.Errorf("%s: map %+v, basis %q, writes %d; want %+v with the text's basis", name, p.RepoMap, p.RepoMapBasis, x.st.mapWrites, c.want)
+		written := c.want != nil
+		if !diagram.Equal(p.RepoMap, c.want) || written != (x.st.mapWrites == 1) || (written && p.RepoMapBasis != p.MapBasis()) ||
+			(!written && p.RepoMapBasis != "") {
+			t.Errorf("%s: map %+v, basis %q, writes %d; want %+v, written %v", name, p.RepoMap, p.RepoMapBasis, x.st.mapWrites, c.want, written)
 		}
 		first, again := x.models.prompts[0], x.models.prompts[len(x.models.prompts)-1]
 		if strings.Contains(first, "refused") || (c.asked > 1 && !strings.Contains(again, "Your last map was refused and not drawn: 23 nodes, not 1 to 22.")) {
@@ -1445,11 +1457,15 @@ func TestRun_ProjectMapAskedAgain(t *testing.T) {
 		purpose []string
 	}{
 		"then fits": {16, []inference.RepoMapResult{{Call: called, Map: drawnMap("svc", "web")}}, drawnMap("svc", "web"),
-			[]string{"project", "project", "repo_map"}},
+			[]string{"project", "project_map", "repo_map"}},
 		"still refused": {16, []inference.RepoMapResult{{Call: called, Map: broken}, {Call: called, Map: broken}}, drawnMap("svc"),
-			[]string{"project", "project", "project", "repo_map"}},
+			[]string{"project", "project_map", "project_map", "repo_map"}},
 		// One call left after the project's: the repository map's.
 		"no call to spare": {2, nil, drawnMap("svc"), []string{"project", "repo_map"}},
+		// A held retry: the description written, the stored map kept, the
+		// drain waiting out the hold before the map step.
+		"held": {16, []inference.RepoMapResult{{Call: inference.Call{Outcome: inference.OutcomeTimedOut, Err: errors.New("slow")}}}, drawnMap("svc"),
+			[]string{"project", "project_map"}},
 	} {
 		x := newWorld(t, c.calls)
 		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
@@ -1470,6 +1486,49 @@ func TestRun_ProjectMapAskedAgain(t *testing.T) {
 		}
 		if len(c.again) > 0 && !strings.Contains(x.models.prompts[1], `repository "web" sits in zone "external", not repositories`) {
 			t.Errorf("%s: the retry's prompt lacks the refusal:\n%s", name, x.models.prompts[1])
+		}
+		if r := x.run(); r.State == store.RunFailed || r.Attempts != 0 || !x.plan(t).ProjectDone {
+			t.Errorf("%s: run = %+v, want the project step done", name, r)
+		}
+	}
+	// A refused map and no stored one, cut short: no sentinel, so the next
+	// run asks again.
+	x := newWorld(t, 2)
+	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Statements: []store.Statement{}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	plan, _ := json.Marshal(runPlan{SummaryChanged: true})
+	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
+		Commit: head, State: store.RunProject, Plan: plan})
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge, neu.",
+		Statements: []inference.Statement{}, Map: broken}}
+	x.w.drain(context.Background())
+	if p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; p.Summary != "Werkzeuge, neu." || p.Map != nil {
+		t.Errorf("cut short without a stored map: page %q map %+v, want the new text and no map", p.Summary, p.Map)
+	}
+}
+
+// The calls the reading keeps are judged once, when the plan is made: one
+// for a map that does not stand, one for a project step that does not.
+func TestKeptCalls(t *testing.T) {
+	for name, c := range map[string]struct {
+		repos  int
+		stands bool
+		want   int
+	}{
+		"two, no map":        {2, false, 2},
+		"single, no map":     {1, false, 1},
+		"single, map stands": {1, true, 0},
+	} {
+		x := newWorld(t, 16)
+		x.st.repoCount = map[string]int{"tools": c.repos}
+		p := store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		if c.stands {
+			p.RepoMap, p.RepoMapBasis = drawnRepoMap(), p.MapBasis()
+		}
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = p
+		r := store.BaselineRun{ProjectKey: "tools", Slug: "svc", Mode: store.RunFull}
+		if got, err := x.w.keptCalls(context.Background(), &r, runPlan{}); err != nil || got != c.want {
+			t.Errorf("%s: kept = %d, %v; want %d", name, got, err, c.want)
 		}
 	}
 }
@@ -1492,8 +1551,9 @@ func TestRun_PartsKeepTheMapCall(t *testing.T) {
 			x.st.others = []store.RepoSummary{{Slug: "svc"}}
 		}
 		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		kept := 16 - c.calls
 		plan, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}},
-			Read: []string{"A"}, SummaryChanged: true})
+			Read: []string{"A"}, SummaryChanged: true, Kept: &kept})
 		x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
 			Commit: head, State: store.RunDescribing, Plan: plan, Steps: 2, Calls: c.calls})
 		x.models.project = inference.DescriptionResult{Call: called}

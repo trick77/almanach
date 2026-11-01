@@ -706,12 +706,13 @@ resumes after a restart. The run pins the clone's head when it starts.
    the page's current revision in place, with the run's end in one
    transaction: no revision of its own, the text did not change. A
    refused map is asked again in the same run with the rule it broke, at
-   most twice more, each call counted against the run; the parts keep one
-   call back for the map. Still refused, a stored map stays and nothing is
-   written; with none stored, the sentinel is set with the basis
-   (declined: the page says so, not asked again until the text changes).
-   A failed call or spent calls write nothing, the basis stays stale for
-   the next run. The map is optional: a database busy past its attempts
+   most twice more, each call counted against the run; the reading keeps
+   one call back for the map when it does not stand (judged once, with the
+   plan). Still refused, a stored map stays and nothing is written; with
+   none stored and all three tries refused, the sentinel is set with the
+   basis (declined: the page says so, not asked again until the text
+   changes). Cut short (no call left, null, a failed or held call) nothing
+   is written, the basis stays stale for the next run. The map is optional: a database busy past its attempts
    ends the run done without it, never failed. None drawn for a page
    without a map writes nothing either, so the next run asks again (once
    recorded with its basis, loom's map never came). A page with no answer for its text (described before maps
@@ -743,7 +744,7 @@ beside a changed name or text goes, logged: it would picture what is no
 longer said. A changed diagram is a changed statement (reordering is
 none), and only a new or changed one meets today's caps, so lowering a
 cap never freezes a page; a page over the count may keep it, not grow.
-Every project with no more source repositories than a map holds (15,
+Every project with no more source repositories than a map holds (21,
 room left for one more node) carries an architecture overview, the project step's alone
 (`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
 a repository node named and labelled by a source repository's slug (code
@@ -754,10 +755,15 @@ drawing's limits. A larger project gets none, and the prompt asks for
 null. The map never costs the description: an edge pointing at its own
 node or repeating one before it is taken out (one "almanach → almanach"
 edge refused a whole map once), a repository that left the
-project is taken out of it first, and a map that still breaks a rule, or
-none returned, keeps the stored one (its departed repositories out too)
-with the reason logged. Where a map was due and none is stored, the
-revision carries the sentinel `{"kind": "none"}`: asked for, not drawn.
+project is taken out of it first. A map that still breaks a rule is
+asked again alone (`project_map` in the ledger), the reason in the
+prompt, at most twice, while a call is left beside the repository map's;
+refused every time, or none returned, it keeps the stored one (its
+departed repositories out too) with the reason logged. Where a map was
+due and none is stored, the revision carries the sentinel `{"kind":
+"none"}`: asked for, not drawn. A retry cut short (no call to spare, a
+failed or held call, null) keeps the map as stored, no sentinel; the
+description is written all the same, never paid for twice.
 A map is due only while `revisions.map` is NULL, so a quiet reconcile
 folds such a project once, not forever; a run that folds it anyway asks
 again. A zone needs no title, the UI titles zones by id. A note's fold
@@ -811,7 +817,8 @@ after it still read; a project step refused (a first page without a
 summary) or unpaid is skipped too. No part is skipped for the page's size. The calls
 (`BACKEND_BASELINE_MAX_CALLS`) are checked before each call, and when
 they are spent the rest is skipped; the parts leave one for the
-repository map, and one for the project's in a project of more than one. The bytes
+repository map and one for the project's step, each only when that step
+will call (judged when the plan is made). The bytes
 (`BACKEND_BASELINE_MAX_BYTES`, the catalogue's docs and every part's
 files) are checked per part: a part over what is left is skipped, a
 smaller one after it may still be read. A

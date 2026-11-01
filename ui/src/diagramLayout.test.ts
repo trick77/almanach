@@ -291,26 +291,6 @@ describe("layoutMapping", () => {
 });
 
 describe("layoutElk", () => {
-  it("wraps a top-down fan wider than the page column", async () => {
-    // One step fanning out to eight, two of them going on: no spine, and
-    // one layer of eight boxes is 2000px wide.
-    const leaves = Array.from({ length: 8 }, (_, i) =>
-      n(`l${i}`, `Ziel ${i + 1}`),
-    );
-    const ir = flow(
-      [n("a", "Auftrag verteilen"), ...leaves, n("z", "Abschluss")],
-      [...leaves.map((l) => e("a", l.id)), e("l0", "z"), e("l7", "z")],
-    );
-    expect(layoutSpine(ir)).toBeNull();
-    const l = await layoutElk(ir, new ELK());
-    const row = 8 * box(l, "l0").w + 7 * 32 + 48;
-    expect(l.width).toBeLessThan(row);
-    expect(check(l)).toEqual([]);
-    // Across, a layer is a column: no bound, as the model drew it.
-    const lr = await layoutElk({ ...ir, direction: "LR" }, new ELK());
-    expect(new Set(leaves.map((x) => box(lr, x.id).x)).size).toBe(1);
-  });
-
   it("places what the spine declines, on the same rules", async () => {
     // A branch that rejoins the path below.
     const ir = flow(

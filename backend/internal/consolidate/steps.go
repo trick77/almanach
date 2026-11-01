@@ -145,7 +145,7 @@ func RunSteps(r store.BaselineRun, calls []store.RunCall) ([]RunStep, error) {
 			if c.Step != nil && *c.Step >= 0 && *c.Step < reading {
 				i = 1 + *c.Step
 			}
-		case store.PurposeProject:
+		case store.PurposeProject, store.PurposeProjectMap:
 			i = project
 		case store.PurposeRepoMap:
 			i = repoMap

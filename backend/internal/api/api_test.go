@@ -547,12 +547,20 @@ func TestRepo(t *testing.T) {
 	if err := json.Unmarshal(body["map"], &drawn); err != nil || !diagram.Equal(&drawn, page.RepoMap) || string(body["map_declined"]) != "false" {
 		t.Errorf("map = %s, declined %s", body["map"], body["map_declined"])
 	}
-	// Declined (every map refused): no map, and said so.
+	// Declined (every map refused) for the text as it stands: no map, and
+	// said so; for an older text, no map and not declined.
 	page.RepoMap = diagram.Sentinel()
+	page.RepoMapBasis = page.MapBasis()
 	st.pages[store.ScopeRepository+"|PLAT|files"] = page
 	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files", "", "", nil)
 	if string(body["map"]) != "null" || string(body["map_declined"]) != "true" {
 		t.Errorf("declined: map = %s, map_declined = %s", body["map"], body["map_declined"])
+	}
+	page.RepoMapBasis = "an older text"
+	st.pages[store.ScopeRepository+"|PLAT|files"] = page
+	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files", "", "", nil)
+	if string(body["map"]) != "null" || string(body["map_declined"]) != "false" {
+		t.Errorf("declined for an older text: map = %s, map_declined = %s", body["map"], body["map_declined"])
 	}
 }
 

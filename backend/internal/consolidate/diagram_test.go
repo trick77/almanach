@@ -584,6 +584,9 @@ func TestRun_MapSentinel(t *testing.T) {
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
 		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: answer}
+		// A refused map refused again on both retries.
+		refused := inference.RepoMapResult{Call: called, Map: &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR"}}
+		x.models.projectMaps = []inference.RepoMapResult{refused, refused}
 		x.w.drain(context.Background())
 		return x
 	}

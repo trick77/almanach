@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/llmwire/llmwiretest"
 )
 
@@ -234,16 +233,12 @@ func TestDiagramSchemas(t *testing.T) {
 	if !slices.Equal(zone["enum"].([]any), []any{"clients", "repositories", "stores", "external"}) {
 		t.Errorf("map node zone = %v", zone)
 	}
-	// Both maps bounded by the map caps, a statement's flow by none: its
-	// caps are config's, held by the validator.
-	for name, m := range map[string]map[string]any{"system map": mapSchema(), "repository map": repoMapSchema()} {
+	// No array bound past minItems: a strict schema rejects one.
+	for name, m := range map[string]map[string]any{"system map": mapSchema(), "repository map": repoMapSchema(), "flow": flowSchema()} {
 		props := m["properties"].(map[string]any)
-		if props["nodes"].(map[string]any)["maxItems"] != diagram.MapMaxNodes || props["edges"].(map[string]any)["maxItems"] != diagram.MapMaxEdges {
-			t.Errorf("%s: nodes %v, edges %v, want maxItems %d and %d", name, props["nodes"], props["edges"], diagram.MapMaxNodes, diagram.MapMaxEdges)
+		if _, ok := props["nodes"].(map[string]any)["maxItems"]; ok {
+			t.Errorf("%s: nodes bounded in the schema", name)
 		}
-	}
-	if _, ok := flowSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["maxItems"]; ok {
-		t.Error("a statement's flow bounded in the schema")
 	}
 	// The three kinds, the removal, and null to keep.
 	branches := statementDiagram()["anyOf"].([]any)
