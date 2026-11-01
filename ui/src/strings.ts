@@ -262,18 +262,18 @@ export const S = {
       "Zustand",
       "Letzter Run",
     ],
-    kind: { bitbucket: "Bitbucket", static: "von Hand" } as Record<
+    kind: { bitbucket: "Bitbucket", static: "Von Hand" } as Record<
       string,
       string
     >,
     kindLabel: {
-      // No-break spaces: a narrow form wraps before the bracket, never inside it.
       bitbucket: "Ganzes Projekt (Bitbucket)",
-      static: "Einzelnes Repository (z.\u00a0B.\u00a0GitHub, Bitbucket)",
+      // No-break spaces: a narrow form wraps before the bracket, never inside it.
+      static: "Einzelnes Repository (z.\u00a0B.\u00a0GitHub,\u00a0Bitbucket)",
     } as Record<string, string>,
     kindHint: {
       bitbucket:
-        "Almanach liest die Repositories des Projekts aus der Bitbucket-API und listet sie bei jedem Run neu: neue kommen dazu, entfernte verschwinden.",
+        "Almanach liest die Repositories des Projekts aus der Bitbucket-API und listet sie bei jedem Run neu: neue kommen dazu, entfernte bleiben als verschwunden stehen, bis du sie entfernst.",
       static: "Ein Repository per Clone-URL, von jedem Git-Host über https.",
     } as Record<string, string>,
     tokenStored: "Hinterlegt",
@@ -315,7 +315,7 @@ export const S = {
         bitbucket:
           "Nur nötig für private Repositories, ein privates Bitbucket-Projekt oder einen Host, der die API nicht anonym beantwortet. Das Token listet das Projekt über die API und clont seine Repositories.",
         static:
-          "Nur nötig für private Repositories. Ein Token für das ganze Projekt: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read».",
+          "Nur nötig für private Repositories. Ein Token für das ganze Projekt: es gilt für jedes Repository darin. Für GitHub ein klassisches Token mit Scope «repo» oder ein Fine-grained-Token mit «Contents: read»; für Bitbucket ein HTTP-Access-Token mit Leserecht, gesendet als Bearer.",
       } as Record<string, string>,
       tokenAs: "Token senden als",
       bearerHint:

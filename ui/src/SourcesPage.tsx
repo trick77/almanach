@@ -199,6 +199,12 @@ export function hostOf(url: string): string {
   }
 }
 
+/** authFor is a kind's usual token header: Bitbucket Data Center takes a
+ *  bearer, GitHub basic. */
+function authFor(kind: SourceKind): TokenAuth {
+  return kind === "bitbucket" ? "bearer" : "basic";
+}
+
 /** NewSourceForm is the create form: the token is optional and comes
  *  first; how it travels and the username appear only once one is typed.
  *  The host starts as BACKEND_BITBUCKET_HOST and stays editable. */
@@ -216,7 +222,7 @@ function NewSourceForm({
   const [key, setKey] = useState("");
   const [host, setHost] = useState(defaultHost);
   const [token, setToken] = useState("");
-  const [auth, setAuth] = useState<TokenAuth>("basic");
+  const [auth, setAuth] = useState<TokenAuth>(authFor(kind));
   const [user, setUser] = useState("");
   // A hand-filled project comes with its first repository; the slug follows
   // the URL until it is typed by hand.
@@ -228,9 +234,13 @@ function NewSourceForm({
   const f = S.sources.form;
   const isStatic = kind === "static";
 
+  // The slug is the kind's own: a repository's name never becomes a
+  // Bitbucket project key, nor a project key a repository's slug.
   const pickKind = (k: SourceKind) => {
     setKind(k);
-    setAuth(k === "bitbucket" ? "bearer" : "basic");
+    setAuth(authFor(k));
+    setKey(k === "static" ? slugFromURL(url) : "");
+    setKeyTyped(false);
   };
 
   const submit = async () => {

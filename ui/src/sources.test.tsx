@@ -243,6 +243,28 @@ describe("SourcesPage", () => {
     expect(screen.queryByText(/«Contents: read»/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByText(/^Einzelnes Repository/));
     expect(screen.getByText(/«Contents: read»/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/privates Bitbucket-Projekt/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never carries a repository's name into a Bitbucket project key", async () => {
+    serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      { target: { value: "https://forge.example.invalid/x/shop-api.git" } },
+    );
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop-api");
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("");
+    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
+      target: { value: "SHOP" },
+    });
+    // Back to the single repository: its slug is the URL's again.
+    fireEvent.click(screen.getByText(/^Einzelnes Repository/));
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop-api");
   });
 
   it("creates a source on the configured host", async () => {
