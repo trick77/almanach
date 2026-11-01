@@ -47,6 +47,11 @@ type Store interface {
 	Notes(ctx context.Context, project, repo string, limit int) ([]store.NoteRow, error)
 	NoteByKey(ctx context.Context, project, repo string, prID int) (store.NoteDetail, bool, error)
 	Problems(ctx context.Context, project string, days int) ([]store.ProblemArea, error)
+	// Any name a project or repository ever had finds it; these give its
+	// current names, which a response carries so an old URL lands on the
+	// new one.
+	ProjectKeyOf(ctx context.Context, key string) (string, bool, error)
+	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
 }
 
 // Waker is poked when a note was queued.
@@ -431,6 +436,10 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "unknown project")
 		return
 	}
+	if key, _, err = d.Store.ProjectKeyOf(ctx, key); err != nil {
+		httpx.ServerError(w, r, err, "project key")
+		return
+	}
 	page, found, err := d.Store.CurrentPage(ctx, store.ScopeProject, key, "")
 	if err != nil {
 		httpx.ServerError(w, r, err, "project page")
@@ -542,6 +551,10 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	}
+	if key, slug, _, err = d.Store.RepoNamesOf(ctx, key, slug); err != nil {
+		httpx.ServerError(w, r, err, "repo names")
 		return
 	}
 	page, found, err := d.Store.CurrentPage(ctx, store.ScopeRepository, key, slug)

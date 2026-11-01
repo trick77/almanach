@@ -25,19 +25,21 @@ type ProjectRow struct {
 // and a repository a source repository: the source is the starting point,
 // and a project noergler named without one is no page anyone reaches. The
 // team is noergler's, shown when it has delivered for the key. With the
-// sources off, the wiki is noergler's projects and repositories, as before.
+// sources off, the wiki is noergler's projects and repositories, as before:
+// the rows noergler delivered for (first_seen set), not the ones only a
+// claim or a source registered.
 func projectsFrom(sourced bool) string {
 	if sourced {
-		return `(SELECT s.project_key AS key, COALESCE(p.team, '') AS team FROM sources s LEFT JOIN projects p ON p.key = s.project_key)`
+		return `(SELECT p.id, p.key, COALESCE(p.team, '') AS team FROM sources s JOIN projects p ON p.id = s.project_id)`
 	}
-	return `(SELECT key, team FROM projects)`
+	return `(SELECT id, key, team FROM projects WHERE first_seen IS NOT NULL)`
 }
 
 func reposFrom(sourced bool) string {
 	if sourced {
-		return `(SELECT project_key, slug FROM source_repos)`
+		return `(SELECT r.id, r.project_id, r.slug FROM source_repos sr JOIN repos r ON r.id = sr.repo_id)`
 	}
-	return `(SELECT project_key, slug FROM repos)`
+	return `(SELECT id, project_id, slug FROM repos WHERE first_seen IS NOT NULL)`
 }
 
 // Projects lists every project with its repo and note counts and its
@@ -46,11 +48,11 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 	//nolint:gosec // G202: constant fragments of this file, no value spliced in
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.key, p.team,
-		       (SELECT COUNT(*) FROM `+reposFrom(sourced)+` r WHERE r.project_key = p.key),
-		       (SELECT COUNT(*) FROM notes n WHERE n.project_key = p.key),
+		       (SELECT COUNT(*) FROM `+reposFrom(sourced)+` r WHERE r.project_id = p.id),
+		       (SELECT COUNT(*) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
 		       COALESCE((SELECT rv.revision FROM pages pg JOIN revisions rv ON rv.id = pg.current_revision_id
-		                  WHERE pg.scope = 'project' AND pg.project_key = p.key AND pg.repo_slug = ''), 0),
-		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.project_key = p.key)
+		                  WHERE pg.scope = 'project' AND pg.project_id = p.id AND pg.repo_id = 0), 0),
+		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id)
 		  FROM `+projectsFrom(sourced)+` p ORDER BY p.key`)
 	if err != nil {
 		return nil, err
@@ -86,12 +88,16 @@ type RepoSummary struct {
 // summary of their current description, "" before the first: what the
 // project step reads of the others, without the note counts of Repos.
 func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummary, error) {
+	pid, ok, err := projectID(ctx, s.db, project)
+	if err != nil || !ok {
+		return []RepoSummary{}, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.slug, COALESCE(rv.summary, '')
-		  FROM source_repos r
-		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_key = r.project_key AND pg.repo_slug = r.slug
+		  FROM source_repos sr JOIN repos r ON r.id = sr.repo_id
+		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
-		 WHERE r.project_key = ? ORDER BY r.slug`, project)
+		 WHERE sr.project_id = ? ORDER BY r.slug`, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -110,16 +116,20 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 // Repos lists a project's repositories with the summary of their current
 // description, whole.
 func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]RepoRow, error) {
+	pid, ok, err := projectID(ctx, s.db, project)
+	if err != nil || !ok {
+		return []RepoRow{}, err
+	}
 	//nolint:gosec // G202: constant fragments of this file, no value spliced in
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.slug,
 		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
-		       (SELECT COUNT(*) FROM notes n WHERE n.project_key = r.project_key AND n.repo_slug = r.slug),
-		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.project_key = r.project_key AND n.repo_slug = r.slug)
+		       (SELECT COUNT(*) FROM notes n WHERE n.repo_id = r.id),
+		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.repo_id = r.id)
 		  FROM `+reposFrom(sourced)+` r
-		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_key = r.project_key AND pg.repo_slug = r.slug
+		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
-		 WHERE r.project_key = ? ORDER BY r.slug`, project)
+		 WHERE r.project_id = ? ORDER BY r.slug`, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -136,23 +146,50 @@ func (s *Store) Repos(ctx context.Context, project string, sourced bool) ([]Repo
 }
 
 // ProjectExists reports whether the project is listed, and its team.
+// Any key the project ever had finds it.
 func (s *Store) ProjectExists(ctx context.Context, key string, sourced bool) (string, bool, error) {
+	pid, ok, err := projectID(ctx, s.db, key)
+	if err != nil || !ok {
+		return "", false, err
+	}
 	var team string
-	err := s.db.QueryRowContext(ctx, `SELECT team FROM `+projectsFrom(sourced)+` p WHERE key = ?`, key).Scan(&team)
+	err = s.db.QueryRowContext(ctx, `SELECT team FROM `+projectsFrom(sourced)+` p WHERE id = ?`, pid).Scan(&team)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	return team, err == nil, err
 }
 
-// RepoExists reports whether the repo is listed.
+// RepoExists reports whether the repo is listed. Any name it ever had
+// finds it.
 func (s *Store) RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error) {
+	rid, ok, err := repoID(ctx, s.db, project, slug)
+	if err != nil || !ok {
+		return false, err
+	}
 	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM `+reposFrom(sourced)+` r WHERE project_key = ? AND slug = ?`, project, slug).Scan(&one)
+	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM `+reposFrom(sourced)+` r WHERE id = ?`, rid).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// scopeIDs resolves a page's names: the project, and the repository unless
+// repo is "" (the project scope, repository id 0). ok false when a name
+// was never used.
+func scopeIDs(ctx context.Context, q rowQuerier, project, repo string) (pid, rid int64, ok bool, err error) {
+	if repo == "" {
+		pid, ok, err = projectID(ctx, q, project)
+		return pid, 0, ok, err
+	}
+	err = q.QueryRowContext(ctx, `
+		SELECT rn.project_id, rn.repo_id FROM repo_names rn JOIN project_names pn ON pn.project_id = rn.project_id
+		 WHERE pn.key = ? AND rn.slug = ?`, project, repo).Scan(&pid, &rid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, false, nil
+	}
+	return pid, rid, err == nil, err
 }
 
 // RevisionRow is one entry of a page's history.
@@ -169,11 +206,15 @@ type RevisionRow struct {
 
 // Revisions is a page's history, newest first.
 func (s *Store) Revisions(ctx context.Context, scope, project, repo string, limit int) ([]RevisionRow, error) {
+	pid, rid, ok, err := scopeIDs(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return []RevisionRow{}, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT revision, source_kind, COALESCE(source_pr_key, ''), COALESCE(source_commit, ''),
 		       json_array_length(statements), chars, created_at
-		  FROM revisions WHERE scope = ? AND project_key = ? AND COALESCE(repo_slug, '') = ?
-		 ORDER BY revision DESC LIMIT ?`, scope, project, repo, limit)
+		  FROM revisions WHERE scope = ? AND project_id = ? AND COALESCE(repo_id, 0) = ?
+		 ORDER BY revision DESC LIMIT ?`, scope, pid, rid, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -214,13 +255,18 @@ func arrayLen(key string) string {
 
 // Notes lists the notes of a repo (repo != "") or a project, newest first.
 func (s *Store) Notes(ctx context.Context, project, repo string, limit int) ([]NoteRow, error) {
+	pid, rid, ok, err := scopeIDs(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return []NoteRow{}, err
+	}
 	//nolint:gosec // G202: constant fragments of this file, no value spliced in
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT pr_id, pr_key, pr_title, repo_slug, COALESCE(ticket_key, ''), COALESCE(change_kind, ''), merged_at,
+		SELECT n.pr_id, n.pr_key, n.pr_title, r.slug, COALESCE(n.ticket_key, ''), COALESCE(n.change_kind, ''), n.merged_at,
 		       `+itemsSQL+`,
-		       issues_posted, suggestions_posted
-		  FROM notes WHERE project_key = ?1 AND (?2 = '' OR repo_slug = ?2)
-		 ORDER BY merged_at DESC LIMIT ?3`, project, repo, limit)
+		       n.issues_posted, n.suggestions_posted
+		  FROM notes n JOIN repos r ON r.id = n.repo_id
+		 WHERE r.project_id = ?1 AND (?2 = 0 OR n.repo_id = ?2)
+		 ORDER BY n.merged_at DESC LIMIT ?3`, pid, rid, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -269,11 +315,17 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	var bugfix, note []byte
 	var ticket, issueType, kind, area, comp, reviewed, merge, model *string
 	var runID *int64
-	err := s.db.QueryRowContext(ctx, `
-		SELECT project_key, repo_slug, pr_id, team, pr_key, pr_title, ticket_key, jira_issue_type, change_kind,
-		       bugfix, bugfix_area, bugfix_component, note, reviewed_commit, source_commit, merge_commit, merged_at,
-		       run_id, model_label, issues_posted, suggestions_posted, received_at, consolidated_at, `+itemsSQL+`
-		  FROM notes WHERE project_key = ? AND repo_slug = ? AND pr_id = ?`, project, repo, prID).Scan(
+	rid, ok, err := repoID(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return NoteDetail{}, false, err
+	}
+	err = s.db.QueryRowContext(ctx, `
+		SELECT p.key, r.slug, n.pr_id, n.team, n.pr_key, n.pr_title, n.ticket_key, n.jira_issue_type, n.change_kind,
+		       n.bugfix, n.bugfix_area, n.bugfix_component, n.note, n.reviewed_commit, n.source_commit, n.merge_commit,
+		       n.merged_at, n.run_id, n.model_label, n.issues_posted, n.suggestions_posted, n.received_at,
+		       n.consolidated_at, `+itemsSQL+`
+		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
+		 WHERE n.repo_id = ? AND n.pr_id = ?`, rid, prID).Scan(
 		&d.ProjectKey, &d.RepoSlug, &d.PRID, &d.Team, &d.PRKey, &d.PRTitle, &ticket, &issueType, &kind,
 		&bugfix, &area, &comp, &note, &reviewed, &d.SourceCommit, &merge, timeAt(&d.MergedAt),
 		&runID, &model, &d.IssuesPosted, &d.Suggestions, timeAt(&d.ReceivedAt), timeOrNil(&d.ConsolidatedAt), &d.Items)
@@ -294,8 +346,8 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	err = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(outcome, ''), COALESCE(note_status, ''), model, input_tokens, cache_read_tokens, output_tokens,
 		       cost_nano_usd, rounds, rounds_input_tokens, rounds_output_tokens, rounds_cost_nano_usd
-		  FROM note_calls WHERE project_key = ? AND repo_slug = ? AND pr_id = ? ORDER BY id DESC LIMIT 1`,
-		project, repo, prID).Scan(&c.Outcome, &c.NoteStatus, &cm, &c.InputTokens, &c.CacheReadTokens, &c.OutputTokens,
+		  FROM note_calls WHERE repo_id = ? AND pr_id = ? ORDER BY id DESC LIMIT 1`,
+		rid, prID).Scan(&c.Outcome, &c.NoteStatus, &cm, &c.InputTokens, &c.CacheReadTokens, &c.OutputTokens,
 		&c.CostNanoUSD, &c.Rounds, &c.RoundsInputTokens, &c.RoundsOutputTokens, &c.RoundsCost)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -330,29 +382,35 @@ type ProblemArea struct {
 // most recent one.
 func (s *Store) Problems(ctx context.Context, project string, days int) ([]ProblemArea, error) {
 	since := stamp(time.Now().Add(-time.Duration(days) * 24 * time.Hour))
+	pid, ok, err := projectID(ctx, s.db, project)
+	if err != nil || !ok {
+		return []ProblemArea{}, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH fixes AS (
-		    SELECT repo_slug, COALESCE(bugfix_area, '') AS area, COALESCE(bugfix_component, '') AS component,
-		           COALESCE(bugfix ->> '$.cause_kind', 'other') AS cause, merged_at, pr_key, issues_posted, suggestions_posted
-		      FROM notes
-		     WHERE project_key = ? AND change_kind = 'bugfix' AND merged_at >= ?
+		    SELECT n.repo_id, COALESCE(n.bugfix_area, '') AS area, COALESCE(n.bugfix_component, '') AS component,
+		           COALESCE(n.bugfix ->> '$.cause_kind', 'other') AS cause, n.merged_at, n.pr_key, n.issues_posted,
+		           n.suggestions_posted
+		      FROM notes n JOIN repos r ON r.id = n.repo_id
+		     WHERE r.project_id = ? AND n.change_kind = 'bugfix' AND n.merged_at >= ?
 		),
 		causes AS (
-		    SELECT repo_slug, area, cause, COUNT(*) AS n,
-		           ROW_NUMBER() OVER (PARTITION BY repo_slug, area ORDER BY COUNT(*) DESC, cause) AS rn
-		      FROM fixes GROUP BY repo_slug, area, cause
+		    SELECT repo_id, area, cause, COUNT(*) AS n,
+		           ROW_NUMBER() OVER (PARTITION BY repo_id, area ORDER BY COUNT(*) DESC, cause) AS rn
+		      FROM fixes GROUP BY repo_id, area, cause
 		),
 		latest AS (
-		    SELECT repo_slug, area, component, pr_key, merged_at,
-		           ROW_NUMBER() OVER (PARTITION BY repo_slug, area ORDER BY merged_at DESC) AS rn
+		    SELECT repo_id, area, component, pr_key, merged_at,
+		           ROW_NUMBER() OVER (PARTITION BY repo_id, area ORDER BY merged_at DESC) AS rn
 		      FROM fixes
 		)
-		SELECT f.repo_slug, f.area, l.component, COUNT(*), c.cause, c.n, SUM(f.issues_posted), SUM(f.suggestions_posted), l.pr_key, l.merged_at
+		SELECT r.slug, f.area, l.component, COUNT(*), c.cause, c.n, SUM(f.issues_posted), SUM(f.suggestions_posted), l.pr_key, l.merged_at
 		  FROM fixes f
-		  JOIN causes c ON c.repo_slug = f.repo_slug AND c.area = f.area AND c.rn = 1
-		  JOIN latest l ON l.repo_slug = f.repo_slug AND l.area = f.area AND l.rn = 1
-		 GROUP BY f.repo_slug, f.area, l.component, c.cause, c.n, l.pr_key, l.merged_at
-		 ORDER BY COUNT(*) DESC, l.merged_at DESC`, project, since)
+		  JOIN causes c ON c.repo_id = f.repo_id AND c.area = f.area AND c.rn = 1
+		  JOIN latest l ON l.repo_id = f.repo_id AND l.area = f.area AND l.rn = 1
+		  JOIN repos r ON r.id = f.repo_id
+		 GROUP BY f.repo_id, f.area, l.component, c.cause, c.n, l.pr_key, l.merged_at
+		 ORDER BY COUNT(*) DESC, l.merged_at DESC`, pid, since)
 	if err != nil {
 		return nil, err
 	}
@@ -386,11 +444,15 @@ const repoProblemPRs = 3
 // dashboard's window, and a fix merged after the commit a run reads is no
 // evidence about that code. Grouped by bugfix_area like Problems.
 func (s *Store) RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]RepoProblem, error) {
+	rid, ok, err := repoID(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return []RepoProblem{}, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT COALESCE(bugfix_area, ''), COALESCE(bugfix ->> '$.cause_kind', 'other'), pr_key
 		  FROM notes
-		 WHERE project_key = ? AND repo_slug = ? AND change_kind = 'bugfix' AND merged_at <= ?
-		 ORDER BY merged_at DESC, pr_key`, project, repo, stamp(until))
+		 WHERE repo_id = ? AND change_kind = 'bugfix' AND merged_at <= ?
+		 ORDER BY merged_at DESC, pr_key`, rid, stamp(until))
 	if err != nil {
 		return nil, err
 	}

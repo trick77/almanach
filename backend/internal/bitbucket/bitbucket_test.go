@@ -21,7 +21,7 @@ func TestListRepos_PagesSkipsArchivedAndSendsAuth(t *testing.T) {
 		switch r.URL.Query().Get("start") {
 		case "0":
 			fmt.Fprint(w, `{"values":[
-			  {"slug":"ui","archived":false,"links":{"clone":[{"href":"ssh://git@x/shop/ui.git","name":"ssh"},{"href":"https://x/scm/shop/ui.git","name":"http"}]}},
+			  {"id":41,"slug":"ui","archived":false,"links":{"clone":[{"href":"ssh://git@x/shop/ui.git","name":"ssh"},{"href":"https://x/scm/shop/ui.git","name":"http"}]}},
 			  {"slug":"old","archived":true,"links":{"clone":[{"href":"https://x/scm/shop/old.git","name":"http"}]}}
 			],"isLastPage":false,"nextPageStart":2}`)
 		case "2":
@@ -38,6 +38,10 @@ func TestListRepos_PagesSkipsArchivedAndSendsAuth(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Slug != "ui" || got[0].CloneURL != "https://x/scm/shop/ui.git" || got[1].Slug != "api" {
 		t.Fatalf("ListRepos = %+v", got)
+	}
+	// Bitbucket's own id travels with the slug; none listed is 0.
+	if got[0].ForgeID != 41 || got[1].ForgeID != 0 {
+		t.Errorf("forge ids = %d, %d; want 41, 0", got[0].ForgeID, got[1].ForgeID)
 	}
 	if len(auths) != 2 || auths[0] != "Bearer tok" {
 		t.Fatalf("auth headers = %v", auths)

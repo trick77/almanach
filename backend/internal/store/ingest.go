@@ -112,15 +112,27 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 	}
 	// A project follows the team that last sent for it: a repo that changed
 	// hands moves its project's team with it, as noergler's PR rows follow.
-	if _, err := tx.ExecContext(ctx, `INSERT INTO projects (key, team, first_seen, last_seen) VALUES (?1, ?2, ?3, ?3)
-		ON CONFLICT (key) DO UPDATE SET team = EXCLUDED.team, last_seen = EXCLUDED.last_seen`, n.ProjectKey, n.Team, now); err != nil {
+	// A name no project or repository ever had registers a new one; an old
+	// name lands on the row that had it.
+	pid, err := ensureProject(ctx, tx, n.ProjectKey)
+	if err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO repos (project_key, slug, team, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)
-		ON CONFLICT (project_key, slug) DO UPDATE SET team = EXCLUDED.team, last_seen = EXCLUDED.last_seen`,
-		n.ProjectKey, n.RepoSlug, n.Team, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET team = ?2, first_seen = COALESCE(first_seen, ?3), last_seen = ?3 WHERE id = ?1`,
+		pid, n.Team, now); err != nil {
 		return false, err
 	}
+	rid, err := ensureRepo(ctx, tx, pid, n.RepoSlug)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE repos SET team = ?2, first_seen = COALESCE(first_seen, ?3), last_seen = ?3 WHERE id = ?1`,
+		rid, n.Team, now); err != nil {
+		return false, err
+	}
+	// Claims are kept as noergler sent them, names and all, never joined
+	// on: a claim of a repository Almanach has not met registers nothing
+	// (a registered name would block the rename that later brings it).
 	for _, c := range claims {
 		var repo *string
 		if c.RepoSlug != "" {
@@ -135,13 +147,13 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 	// The note. A second note for the same PR (a reopened PR merged again)
 	// replaces the first and queues again.
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO notes (project_key, repo_slug, pr_id, team, pr_key, pr_title, ticket_key, jira_issue_type, change_kind,
+		INSERT INTO notes (repo_id, pr_id, team, pr_key, pr_title, ticket_key, jira_issue_type, change_kind,
 		    bugfix, bugfix_area, bugfix_component, note, reviewed_commit, source_commit, merge_commit, merged_at, run_id,
 		    model_label, issues_posted, suggestions_posted, delivery_id, received_at)
-		VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''),
+		VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''),
 		    ?, NULLIF(?, ''), NULLIF(?, ''), ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, NULLIF(?, 0),
 		    NULLIF(?, ''), ?, ?, ?, ?)
-		ON CONFLICT (project_key, repo_slug, pr_id) DO UPDATE SET
+		ON CONFLICT (repo_id, pr_id) DO UPDATE SET
 		    team = EXCLUDED.team, pr_key = EXCLUDED.pr_key, pr_title = EXCLUDED.pr_title, ticket_key = EXCLUDED.ticket_key,
 		    jira_issue_type = EXCLUDED.jira_issue_type, change_kind = EXCLUDED.change_kind, bugfix = EXCLUDED.bugfix,
 		    bugfix_area = EXCLUDED.bugfix_area, bugfix_component = EXCLUDED.bugfix_component, note = EXCLUDED.note,
@@ -150,7 +162,7 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 		    model_label = EXCLUDED.model_label, issues_posted = EXCLUDED.issues_posted,
 		    suggestions_posted = EXCLUDED.suggestions_posted, delivery_id = EXCLUDED.delivery_id,
 		    received_at = EXCLUDED.received_at, consolidated_at = NULL, fold_attempts = 0`,
-		n.ProjectKey, n.RepoSlug, n.PRID, n.Team, n.PRKey, n.PRTitle, n.TicketKey, n.IssueType, n.ChangeKind,
+		rid, n.PRID, n.Team, n.PRKey, n.PRTitle, n.TicketKey, n.IssueType, n.ChangeKind,
 		jsonOrNull(n.Bugfix), n.BugfixArea, n.BugfixComponent, jsonText(n.Body), n.ReviewedCommit, n.SourceCommit, n.MergeCommit,
 		stamp(n.MergedAt), n.RunID, n.ModelLabel, n.IssuesPosted, n.Suggestions, d.ID, now); err != nil {
 		return false, err
@@ -163,20 +175,20 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 			return false, err
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO note_calls (delivery_id, team, project_key, repo_slug, pr_id, run_id, outcome, note_status,
+			INSERT INTO note_calls (delivery_id, team, repo_id, pr_id, run_id, outcome, note_status,
 			    profile, model, deployment, reasoning_sent, finish_reason, call_id, litellm_version,
 			    input_tokens, input_uncached_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
 			    cost_nano_usd, cost_input_nano_usd, cost_cache_read_nano_usd, cost_cache_write_nano_usd,
 			    cost_output_nano_usd, cost_reasoning_nano_usd, cost_tool_usage_nano_usd,
 			    key_spend_nano_usd, headers_ms, total_ms, warnings,
 			    rounds, rounds_input_tokens, rounds_output_tokens, rounds_cost_nano_usd, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''),
+			VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''),
 			    NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''),
 			    ?, ?, ?, ?, ?, ?,
 			    ?, ?, ?, ?, ?, ?, ?,
 			    ?, ?, ?, ?,
 			    ?, ?, ?, ?, ?)`,
-			d.ID, n.Team, n.ProjectKey, n.RepoSlug, n.PRID, c.RunID, c.Outcome, c.NoteStatus,
+			d.ID, n.Team, rid, n.PRID, c.RunID, c.Outcome, c.NoteStatus,
 			c.Profile, c.Model, c.Deployment, c.Reasoning, c.Finish, c.CallID, c.GatewayVer,
 			c.InputTokens, c.InputUncached, c.CacheRead, c.CacheWrite, c.OutputTokens, c.ReasoningTokens,
 			c.Cost, c.CostInput, c.CostCacheRead, c.CostCacheWrite, c.CostOutput, c.CostReasoning, c.CostTool,

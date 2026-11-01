@@ -111,7 +111,7 @@ const detail: SourceDetail = {
   has_token: false,
   token_auth: "basic",
   token_user: "",
-  dir: "/app/repos/werkzeuge",
+  dir: "/app/repos/p3",
   disk_bytes: 1_400_000_000,
   last_listed_at: null,
   last_error: "",
@@ -128,6 +128,7 @@ const detail: SourceDetail = {
       last_synced_at: when,
       last_error: "",
       created_at: when,
+      dir: "/app/repos/p3/r11",
       baseline: {
         run_id: 7,
         state: "done",
@@ -157,6 +158,7 @@ const detail: SourceDetail = {
       last_synced_at: null,
       last_error: 'branch "develop": configured branch not found on the remote',
       created_at: when,
+      dir: "/app/repos/p3/r12",
       baseline: null,
     },
   ],
@@ -485,6 +487,80 @@ describe("SourcePage", () => {
       expect(b).toBeEnabled();
       expect(b).not.toHaveAttribute("title");
     });
+  });
+
+  it("renames the source, a change of case included, and moves the address", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    window.history.replaceState({}, "", "/quellen/werkzeuge");
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    const [open] = screen
+      .getAllByRole("button", { name: S.sources.actions.rename })
+      .filter((b) => b.closest("table") === null);
+    fireEvent.click(open);
+    fireEvent.change(screen.getByDisplayValue("werkzeuge"), {
+      target: { value: "Werkzeuge" },
+    });
+    // The form's button shares the action's word and comes after it.
+    const save = screen
+      .getAllByRole("button", { name: S.sources.renameForm.save })
+      .filter((b) => b.closest("table") === null)
+      .at(-1);
+    if (!save || save === open) throw new Error("no save button");
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(writes).toEqual([
+        {
+          method: "PATCH",
+          path: "sources/werkzeuge",
+          body: { project_key: "Werkzeuge" },
+        },
+      ]),
+    );
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/quellen/Werkzeuge"),
+    );
+  });
+
+  it("renames a hand-entered repository", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    const [row] = screen
+      .getAllByRole("button", { name: S.sources.repoActions.rename })
+      .filter((b) => b.closest("table") !== null);
+    fireEvent.click(row);
+    expect(
+      screen.getByText(S.sources.renameRepoForm.title("acme-cli")),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByDisplayValue("acme-cli"), {
+      target: { value: "acme-tool" },
+    });
+    const save = screen
+      .getAllByRole("button", { name: S.sources.renameRepoForm.save })
+      .filter((b) => b.closest("table") === null)
+      .at(-1);
+    if (!save) throw new Error("no save button");
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(writes).toEqual([
+        {
+          method: "PATCH",
+          path: "sources/werkzeuge/repos/acme-cli",
+          body: { slug: "acme-tool", clone_url: "" },
+        },
+      ]),
+    );
+  });
+
+  it("shows the current key in the address when opened under an old one", async () => {
+    serve({ "sources/alt": detail });
+    window.history.replaceState({}, "", "/quellen/alt");
+    render(<SourcePage projectKey="alt" />);
+    await screen.findByText("acme-cli");
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/quellen/werkzeuge"),
+    );
   });
 
   it("confirms before removing", async () => {

@@ -60,18 +60,30 @@ type BaselineRun struct {
 	QueuedAt   time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+	// RepoID and ProjectID are the repository's ids; ProjectKey and Slug
+	// its current names.
+	RepoID    int64
+	ProjectID int64
 }
 
 // Open reports whether the run is neither done nor failed.
 func (r BaselineRun) Open() bool { return r.State != RunDone && r.State != RunFailed }
 
-// runColumns quotes "commit": a keyword in SQLite, a column name here.
-const runColumns = `id, project_key, slug, mode, trigger, base_commit, "commit", state, step, steps, plan,
-	attempts, calls, bytes, skipped, error, queued_at, started_at, finished_at`
+// runsFrom is a run (b) with its repository (r) and project (p), whose
+// current names it carries.
+const runsFrom = `baseline_runs b JOIN repos r ON r.id = b.repo_id JOIN projects p ON p.id = r.project_id`
 
-// lColumns is runColumns of a query's run aliased l, in the same order.
+// runColumns are a run's columns over runsFrom, named as scanRun reads
+// them. "commit" is quoted: a keyword in SQLite, a column name here.
+const runColumns = `b.id AS id, p.key AS project_key, r.slug AS slug, b.mode AS mode, b.trigger AS trigger,
+	b.base_commit AS base_commit, b."commit" AS "commit", b.state AS state, b.step AS step, b.steps AS steps,
+	b.plan AS plan, b.attempts AS attempts, b.calls AS calls, b.bytes AS bytes, b.skipped AS skipped,
+	b.error AS error, b.queued_at AS queued_at, b.started_at AS started_at, b.finished_at AS finished_at,
+	b.repo_id AS repo_id, r.project_id AS project_id`
+
+// lColumns is runColumns of a subquery aliased l, in the same order.
 const lColumns = `l.id, l.project_key, l.slug, l.mode, l.trigger, l.base_commit, l."commit", l.state, l.step, l.steps, l.plan,
-	l.attempts, l.calls, l.bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at`
+	l.attempts, l.calls, l.bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at, l.repo_id, l.project_id`
 
 // scanner is *sql.Row and *sql.Rows.
 type scanner interface {
@@ -84,7 +96,8 @@ func scanRun(row scanner, extra ...any) (BaselineRun, error) {
 	var r BaselineRun
 	var plan []byte
 	dest := append([]any{&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
-		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, timeAt(&r.QueuedAt), timeOrNil(&r.StartedAt), timeOrNil(&r.FinishedAt)}, extra...)
+		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, timeAt(&r.QueuedAt), timeOrNil(&r.StartedAt), timeOrNil(&r.FinishedAt),
+		&r.RepoID, &r.ProjectID}, extra...)
 	err := row.Scan(dest...)
 	if len(plan) > 0 {
 		r.Plan = json.RawMessage(plan)
@@ -108,11 +121,18 @@ func (s *Store) oneRun(ctx context.Context, query string, args ...any) (Baseline
 // its id. ErrExists when the repository has an open run, ErrNoRepo when it
 // is no source repository.
 func (s *Store) EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error) {
+	rid, ok, err := repoID(ctx, s.db, key, slug)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, ErrNoRepo
+	}
 	var id int64
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO baseline_runs (project_key, slug, mode, trigger, base_commit, "commit", state, queued_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'queued', ?) RETURNING id`,
-		key, slug, mode, trigger, baseCommit, commit, nowStamp()).Scan(&id)
+	err = s.db.QueryRowContext(ctx, `
+		INSERT INTO baseline_runs (repo_id, mode, trigger, base_commit, "commit", state, queued_at)
+		VALUES (?, ?, ?, ?, ?, 'queued', ?) RETURNING id`,
+		rid, mode, trigger, baseCommit, commit, nowStamp()).Scan(&id)
 	if isForeignKey(err) {
 		return 0, ErrNoRepo
 	}
@@ -123,29 +143,33 @@ func (s *Store) EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCo
 // queued one, so a run goes to its end before the next begins; among equals
 // the oldest. ok false when no run is open.
 func (s *Store) NextRun(ctx context.Context) (BaselineRun, bool, error) {
-	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs
-		WHERE state NOT IN ('done', 'failed')
-		ORDER BY state = 'queued', queued_at, id LIMIT 1`)
+	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+`
+		WHERE b.state NOT IN ('done', 'failed')
+		ORDER BY b.state = 'queued', b.queued_at, b.id LIMIT 1`)
 }
 
 // RunByID is one run, ok false when it is gone (its repository removed).
 func (s *Store) RunByID(ctx context.Context, id int64) (BaselineRun, bool, error) {
-	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs WHERE id = ?`, id)
+	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+` WHERE b.id = ?`, id)
 }
 
 // LastRun is a repository's newest run, open or not, and how many runs
 // failed since its newest done run (all of them before any): what bounds
 // the automatic retries, read in the same query.
 func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, int, bool, error) {
+	rid, ok, err := repoID(ctx, s.db, key, slug)
+	if err != nil || !ok {
+		return BaselineRun{}, 0, false, err
+	}
 	var failed int
 	r, err := scanRun(s.db.QueryRowContext(ctx, `
 		SELECT `+runColumns+`,
 		       (SELECT COUNT(*) FROM baseline_runs f
-		         WHERE f.project_key = l.project_key AND f.slug = l.slug AND f.state = 'failed'
+		         WHERE f.repo_id = b.repo_id AND f.state = 'failed'
 		           AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
-		                                 WHERE d.project_key = l.project_key AND d.slug = l.slug AND d.state = 'done'), 0))
-		  FROM baseline_runs l
-		 WHERE l.project_key = ? AND l.slug = ? ORDER BY l.id DESC LIMIT 1`, key, slug), &failed)
+		                                 WHERE d.repo_id = b.repo_id AND d.state = 'done'), 0))
+		  FROM `+runsFrom+`
+		 WHERE b.repo_id = ? ORDER BY b.id DESC LIMIT 1`, rid), &failed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BaselineRun{}, 0, false, nil
 	}
@@ -158,8 +182,12 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, int
 // DocumentedRun is a repository's newest done run: its commit is the one
 // the page was last read against.
 func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRun, bool, error) {
-	return s.oneRun(ctx, `SELECT `+runColumns+` FROM baseline_runs
-		WHERE project_key = ? AND slug = ? AND state = 'done' ORDER BY id DESC LIMIT 1`, key, slug)
+	rid, ok, err := repoID(ctx, s.db, key, slug)
+	if err != nil || !ok {
+		return BaselineRun{}, false, err
+	}
+	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+`
+		WHERE b.repo_id = ? AND b.state = 'done' ORDER BY b.id DESC LIMIT 1`, rid)
 }
 
 // SaveRun writes a run's progress: the commit it pinned, its mode (a reconcile
@@ -220,17 +248,23 @@ type RepoRuns struct {
 // SourceRuns is RepoRuns for every repository of a source that has a run,
 // by slug.
 func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns, error) {
+	pid, ok, err := projectID(ctx, s.db, key)
+	if err != nil || !ok {
+		return map[string]RepoRuns{}, err
+	}
 	// l is each repository's newest run, d its newest done one.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+lColumns+`,
 		       (SELECT SUM(c.cost_nano_usd) FROM llm_calls c WHERE c.baseline_run_id = l.id),
 		       d."commit", d.finished_at
-		  FROM (SELECT `+runColumns+`, ROW_NUMBER() OVER (PARTITION BY slug ORDER BY id DESC) AS rn
-		          FROM baseline_runs WHERE project_key = ?1) l
-		  LEFT JOIN (SELECT slug, "commit", finished_at, ROW_NUMBER() OVER (PARTITION BY slug ORDER BY id DESC) AS rn
-		               FROM baseline_runs WHERE project_key = ?1 AND state = 'done') d
-		    ON d.slug = l.slug AND d.rn = 1
-		 WHERE l.rn = 1`, key)
+		  FROM (SELECT `+runColumns+`, ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
+		          FROM `+runsFrom+` WHERE r.project_id = ?1) l
+		  LEFT JOIN (SELECT b.repo_id, b."commit", b.finished_at,
+		                    ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
+		               FROM baseline_runs b JOIN repos r ON r.id = b.repo_id
+		              WHERE r.project_id = ?1 AND b.state = 'done') d
+		    ON d.repo_id = l.repo_id AND d.rn = 1
+		 WHERE l.rn = 1`, pid)
 	if err != nil {
 		return nil, err
 	}

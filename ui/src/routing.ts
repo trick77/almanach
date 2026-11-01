@@ -84,6 +84,15 @@ export function onNav(path: string) {
   };
 }
 
+/** replaceTo swaps the address for path without a history entry: a page
+ *  opened under a project's or repository's old name shows its current
+ *  one, the API having found it by the old. */
+export function replaceTo(path: string) {
+  if (window.location.pathname === path) return;
+  window.history.replaceState({}, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 /** navigateTo pushes any app path. No duplicate history entry for the page
  *  you are already on. */
 export function navigateTo(path: string) {

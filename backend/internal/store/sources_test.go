@@ -69,7 +69,7 @@ func TestSources_CreateListUpdateDelete(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("delete: %v %v", ok, err)
 	}
-	if n := count(t, s, "source_repos", "project_key = 'tools'"); n != 0 {
+	if n := count(t, s, "source_repos", "project_id = (SELECT project_id FROM project_names WHERE key = 'tools')"); n != 0 {
 		t.Fatalf("repos survived the cascade: %d", n)
 	}
 	if _, found, _ := s.SourceByKey(ctx, "tools"); found {
@@ -99,16 +99,24 @@ func TestAddSourceRepo_OneHost(t *testing.T) {
 	if err := add("c", "https://other.example.invalid/c.git"); !errors.As(err, &other) || strings.Join(other.Hosts, ",") != "https://forge.example.invalid" {
 		t.Fatalf("other host: %v", err)
 	}
-	if n := count(t, s, "source_repos", "project_key = 'tools'"); n != 2 {
+	if n := count(t, s, "source_repos", "project_id = (SELECT project_id FROM project_names WHERE key = 'tools')"); n != 2 {
 		t.Fatalf("rows after the refusal: %d", n)
 	}
 	// A folder from before the rule, on two hosts: every add is refused,
 	// both hosts named.
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO source_repos (project_key, slug, clone_url, origin, state, created_at)
-		VALUES ('tools', 'old', 'https://other.example.invalid/old.git', 'manual', 'missing', ?)`, nowStamp()); err != nil {
+	pid, _, err := projectID(ctx, s.db, "tools")
+	if err != nil {
 		t.Fatal(err)
 	}
-	err := add("d", "https://forge.example.invalid/d.git")
+	rid, err := ensureRepo(ctx, s.db, pid, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO source_repos (repo_id, project_id, clone_url, origin, state, created_at)
+		VALUES (?, ?, 'https://other.example.invalid/old.git', 'manual', 'missing', ?)`, rid, pid, nowStamp()); err != nil {
+		t.Fatal(err)
+	}
+	err = add("d", "https://forge.example.invalid/d.git")
 	if !errors.As(err, &other) || strings.Join(other.Hosts, ",") != "https://forge.example.invalid,https://other.example.invalid" {
 		t.Fatalf("mixed folder: %v", err)
 	}
@@ -183,7 +191,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 	if err := s.CreateSource(ctx, bitbucketSource("SHOP")); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "https://forge.example.invalid/scm/shop/ui.git"}, {"api", "https://forge.example.invalid/scm/shop/api.git"}})
+	res, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "https://forge.example.invalid/scm/shop/ui.git"}, {Slug: "api", CloneURL: "https://forge.example.invalid/scm/shop/api.git"}})
 	if err != nil || res.Added != 2 || res.Missing != 0 {
 		t.Fatalf("first listing: %+v, %v", res, err)
 	}
@@ -192,7 +200,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 	}
 
 	// api vanishes, infra appears, ui's URL changes but its state stays.
-	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "https://forge.example.invalid/scm/shop/ui-2.git"}, {"infra", "https://forge.example.invalid/scm/shop/infra.git"}})
+	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "https://forge.example.invalid/scm/shop/ui-2.git"}, {Slug: "infra", CloneURL: "https://forge.example.invalid/scm/shop/infra.git"}})
 	if err != nil || res.Added != 1 || res.Missing != 1 {
 		t.Fatalf("second listing: %+v, %v", res, err)
 	}
@@ -211,7 +219,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Fatalf("jobs with a missing row: %d, want 2", len(jobs))
 	}
-	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "u"}, {"infra", "i"}, {"api", "a"}})
+	res, err = s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "u"}, {Slug: "infra", CloneURL: "i"}, {Slug: "api", CloneURL: "a"}})
 	if err != nil || res.Added != 0 || res.Missing != 0 {
 		t.Fatalf("third listing: %+v, %v", res, err)
 	}
@@ -222,7 +230,7 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 		}
 	}
 	// RequestSync leaves a missing row alone.
-	if _, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{"ui", "u"}}); err != nil {
+	if _, err := s.ApplyListing(ctx, "SHOP", []ListedRepo{{Slug: "ui", CloneURL: "u"}}); err != nil {
 		t.Fatal(err)
 	}
 	n, _ := s.RequestSync(ctx, "SHOP", "")
@@ -230,18 +238,26 @@ func TestApplyListing_ReconcilesListedRows(t *testing.T) {
 		t.Fatalf("RequestSync moved %d rows, want 1 (ui only)", n)
 	}
 
-	if err := s.MarkSourceListed(ctx, "SHOP", "401 from the API"); err != nil {
+	if err := s.MarkSourceListed(ctx, "SHOP", "401 from the API", false); err != nil {
 		t.Fatal(err)
 	}
 	src, _, _ := s.SourceByKey(ctx, "SHOP")
 	if src.LastError != "401 from the API" || src.LastListedAt != nil {
 		t.Fatalf("after failed listing: %+v", src)
 	}
-	if err := s.MarkSourceListed(ctx, "SHOP", ""); err != nil {
+	if err := s.MarkSourceListed(ctx, "SHOP", "", true); err != nil {
 		t.Fatal(err)
 	}
 	src, _, _ = s.SourceByKey(ctx, "SHOP")
 	if src.LastError != "" || src.LastListedAt == nil {
 		t.Fatalf("after good listing: %+v", src)
+	}
+	// An applied listing that left a repository out: its time and why.
+	if err := s.MarkSourceListed(ctx, "SHOP", "left out: ui", true); err != nil {
+		t.Fatal(err)
+	}
+	src, _, _ = s.SourceByKey(ctx, "SHOP")
+	if src.LastError != "left out: ui" || src.LastListedAt == nil {
+		t.Fatalf("after a listing with conflicts: %+v", src)
 	}
 }

@@ -42,6 +42,9 @@ func New(client *http.Client) *Lister {
 
 type page struct {
 	Values []struct {
+		// ID is Bitbucket's own id of the repository: it survives a
+		// rename, which the slug does not.
+		ID       int64  `json:"id"`
 		Slug     string `json:"slug"`
 		Archived bool   `json:"archived"`
 		Links    struct {
@@ -78,7 +81,7 @@ func (l *Lister) ListRepos(ctx context.Context, host, project string, a gitrepo.
 			live++
 			for _, c := range v.Links.Clone {
 				if c.Name == "http" {
-					out = append(out, store.ListedRepo{Slug: v.Slug, CloneURL: c.Href})
+					out = append(out, store.ListedRepo{Slug: v.Slug, CloneURL: c.Href, ForgeID: v.ID})
 					break
 				}
 			}

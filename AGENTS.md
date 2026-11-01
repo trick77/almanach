@@ -53,11 +53,14 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   never edit applied migration. Probes exec, not httpGet.
 - oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,
   gates nothing.
-- Sources: Almanach clones, noergler never indexes. git binary (`os/exec`; image has git), never
-  go-git (rejected 2026-10-30). Clones only at `BACKEND_REPOS_DIR/<project>/<slug>`; key, slug
-  single path segments, `filepath.Rel`-checked before `RemoveAll`. Clone URLs https, no creds. Bare
-  clones. Token: per-command `GIT_CONFIG_*` header, never in URL; stderr redacted; AES-GCM-sealed,
-  not returned/logged; reaches one origin only (static folder = one host, header bound to it).
+- Project, repo = id; names only in `projects`, `repos`, `*_names`; never join on one. Name once
+  used, any case, never to another; own may change case (user, 2026-11-01). Carry-over:
+  `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
+- Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
+  2026-10-30). Clones only at `BACKEND_REPOS_DIR/p<id>/r<id>`; segments `filepath.Rel`-checked
+  before `RemoveAll`. Clone URLs https, no creds; bare. Token: per-command `GIT_CONFIG_*` header,
+  never in URL; stderr redacted; AES-GCM-sealed, not returned/logged; one origin only (static
+  folder = one host, header bound to it).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
   poller; repo failure on its row. Removal: poller's disk lock, folder, then row.
   `BACKEND_REPOS_DIR` unset = off. UI copy: capital only if first char letter ("Bereit",

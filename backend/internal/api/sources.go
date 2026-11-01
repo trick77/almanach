@@ -39,18 +39,27 @@ type SourceStore interface {
 	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
+	SourceRepoByName(ctx context.Context, key, slug string) (store.SourceRepo, bool, error)
+	RenameProject(ctx context.Context, key, to string) (int64, error)
+	RenameRepo(ctx context.Context, key, slug, to, cloneURL string) error
 }
 
 // Nudger starts the next sync cycle now.
 type Nudger interface{ Nudge() }
 
 // Checkouts is what the routes need of gitrepo: where a clone lives and
-// how it goes.
+// how it goes. A folder is named by ids, never by names.
 type Checkouts interface {
-	Dir(key, slug string) (string, error)
-	ProjectDir(key string) (string, error)
-	Remove(key, slug string) error
-	RemoveProject(key string) error
+	Dir(projectID, repoID int64) (string, error)
+	ProjectDir(projectID int64) (string, error)
+	Remove(projectID, repoID int64) error
+	RemoveProject(projectID int64) error
+	// TRANSITIONAL(ids): a clone from before the ids that no sync has moved
+	// yet (a missing repository is never synced) still sits in a folder
+	// named by names; a removal takes it too. Remove when every instance
+	// has synced once on a release with ids.
+	RemoveLegacy(key, slug string) error
+	RemoveLegacyProject(key string) error
 }
 
 // SourcesDeps is the clone feature as the routes see it; nil in Deps means
@@ -106,6 +115,7 @@ func (d Deps) registerSources(s *httpapi.Server) {
 	s.HandleFunc("DELETE /api/sources/{key}", d.deleteSource)
 	s.HandleFunc("POST /api/sources/{key}/sync", d.syncSource)
 	s.HandleFunc("POST /api/sources/{key}/repos", d.addRepo)
+	s.HandleFunc("PATCH /api/sources/{key}/repos/{slug}", d.renameRepo)
 	s.HandleFunc("DELETE /api/sources/{key}/repos/{slug}", d.deleteRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/sync", d.syncRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/describe", d.describeRepo)
@@ -186,6 +196,8 @@ type sourceRepoBody struct {
 	LastSyncedAt *time.Time `json:"last_synced_at"`
 	LastError    string     `json:"last_error"`
 	CreatedAt    time.Time  `json:"created_at"`
+	// Dir is the clone's folder, named by ids.
+	Dir string `json:"dir"`
 	// Baseline is the newest run and the commit last documented, null
 	// before the first run.
 	Baseline *baselineBody `json:"baseline"`
@@ -250,12 +262,15 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
 		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError,
 		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos))}
-	if dir, err := d.Sources.Git.ProjectDir(src.ProjectKey); err == nil {
+	if dir, err := d.Sources.Git.ProjectDir(src.ProjectID); err == nil {
 		out.Dir, out.DiskBytes = dir, d.Sources.sizes.size(dir)
 	}
 	for _, rp := range repos {
 		body := sourceRepoBody{Slug: rp.Slug, CloneURL: rp.CloneURL, Origin: rp.Origin, Branch: rp.Branch, HeadCommit: rp.HeadCommit,
 			State: rp.State, LastSyncedAt: rp.LastSyncedAt, LastError: rp.LastError, CreatedAt: rp.CreatedAt}
+		if dir, err := d.Sources.Git.Dir(rp.ProjectID, rp.RepoID); err == nil {
+			body.Dir = dir
+		}
 		if rr, ok := runs[rp.Slug]; ok {
 			var err error
 			if body.Baseline, err = baselineOf(rr); err != nil {
@@ -428,6 +443,10 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusConflict, "a source with this project_key exists")
 			return
 		}
+		if errors.Is(err, store.ErrNameTaken) {
+			httpx.WriteError(w, http.StatusConflict, "project_key: another project had this key")
+			return
+		}
 		httpx.ServerError(w, r, err, "create source")
 		return
 	}
@@ -451,10 +470,12 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateSourceBody struct {
-	Host      *string `json:"host"`
-	Token     *string `json:"token"`
-	TokenAuth *string `json:"token_auth"`
-	TokenUser *string `json:"token_user"`
+	// ProjectKey renames the project, a change of case included.
+	ProjectKey *string `json:"project_key"`
+	Host       *string `json:"host"`
+	Token      *string `json:"token"`
+	TokenAuth  *string `json:"token_auth"`
+	TokenUser  *string `json:"token_user"`
 }
 
 func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
@@ -469,6 +490,12 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	}
 	var in updateSourceBody
 	if !jsonBody(w, r, &in) {
+		return
+	}
+	// An unchanged project_key (a client sending the source back whole) is
+	// no rename.
+	if in.ProjectKey != nil && strings.TrimSpace(*in.ProjectKey) != src.ProjectKey {
+		d.renameSource(w, r, src, in)
 		return
 	}
 	host, tokenAuth, tokenUser := src.Host, src.TokenAuth, src.TokenUser
@@ -530,7 +557,43 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Log.InfoContext(ctx, "source_updated", "project", src.ProjectKey, "token_changed", setToken, "user", d.user(r))
 	d.Sources.Poller.Nudge()
-	stored, found, err := d.Sources.Store.SourceByKey(ctx, src.ProjectKey)
+	d.writeSource(w, r, src.ProjectKey, http.StatusOK)
+}
+
+// renameSource renames the source's project, a change of case included: the
+// project keeps its id, pages, notes and clones, and the old key stays a
+// name of it. Alone in its PATCH, so a request is the rename or the access
+// change, never half of both. A key another project ever had, in any case,
+// is never given away.
+func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
+	ctx := r.Context()
+	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a rename comes alone, the other fields in their own PATCH")
+		return
+	}
+	to := strings.TrimSpace(*in.ProjectKey)
+	if !gitrepo.ValidSegment(to) {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
+		return
+	}
+	_, err := d.Sources.Store.RenameProject(ctx, src.ProjectKey, to)
+	switch {
+	case errors.Is(err, store.ErrNameTaken):
+		httpx.WriteError(w, http.StatusConflict, "project_key: another project had this key")
+		return
+	case err != nil:
+		httpx.ServerError(w, r, err, "rename project")
+		return
+	}
+	d.Log.InfoContext(ctx, "project_renamed", "project", to, "from", src.ProjectKey, "user", d.user(r))
+	d.Sources.Poller.Nudge()
+	d.writeSource(w, r, to, http.StatusOK)
+}
+
+// writeSource answers with the source as stored.
+func (d Deps) writeSource(w http.ResponseWriter, r *http.Request, key string, status int) {
+	ctx := r.Context()
+	stored, found, err := d.Sources.Store.SourceByKey(ctx, key)
 	if err != nil {
 		httpx.ServerError(w, r, err, "source")
 		return
@@ -544,7 +607,7 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "source repos")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, status, out)
 }
 
 // deleteSource removes the folder first, then the rows: a folder left
@@ -560,7 +623,12 @@ func (d Deps) deleteSource(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := d.Sources.Git.RemoveProject(src.ProjectKey); err != nil {
+	if err := d.Sources.Git.RemoveProject(src.ProjectID); err != nil {
+		httpx.ServerError(w, r, err, "remove clones")
+		return
+	}
+	// TRANSITIONAL(ids): goes with Checkouts.RemoveLegacyProject.
+	if err := d.Sources.Git.RemoveLegacyProject(src.ProjectKey); err != nil {
 		httpx.ServerError(w, r, err, "remove clones")
 		return
 	}
@@ -572,21 +640,24 @@ func (d Deps) deleteSource(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// hasRepo is whether the source has the slug, or false with the 404 (or
-// 500) written. The slug is validated by the caller.
-func (d Deps) hasRepo(w http.ResponseWriter, r *http.Request, key, slug string) bool {
-	repos, err := d.Sources.Store.SourceRepos(r.Context(), key)
+// lookupRepo is the source's repository the path's slug names, any slug it
+// ever had, or false with the 404 (or 500) written.
+func (d Deps) lookupRepo(w http.ResponseWriter, r *http.Request, src store.ProjectSource) (store.SourceRepo, bool) {
+	slug := r.PathValue("slug")
+	if !gitrepo.ValidSegment(slug) {
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return store.SourceRepo{}, false
+	}
+	rp, ok, err := d.Sources.Store.SourceRepoByName(r.Context(), src.ProjectKey, slug)
 	if err != nil {
-		httpx.ServerError(w, r, err, "source repos")
-		return false
+		httpx.ServerError(w, r, err, "source repo")
+		return store.SourceRepo{}, false
 	}
-	for _, rp := range repos {
-		if rp.Slug == slug {
-			return true
-		}
+	if !ok || rp.ProjectID != src.ProjectID {
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return store.SourceRepo{}, false
 	}
-	httpx.WriteError(w, http.StatusNotFound, "unknown repository")
-	return false
+	return rp, true
 }
 
 type queuedBody struct {
@@ -653,21 +724,19 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 	// host would be a second place it goes, and a token set later finds the
 	// folder already on one.
 	err := d.Sources.Store.AddSourceRepo(ctx, store.SourceRepo{ProjectKey: src.ProjectKey, Slug: in.Slug, CloneURL: in.CloneURL, Branch: in.Branch})
-	var other *store.OtherHostError
 	switch {
 	case errors.Is(err, store.ErrExists):
 		httpx.WriteError(w, http.StatusConflict, "a repository with this slug exists")
 		return
-	case errors.As(err, &other) && len(other.Hosts) == 1:
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder's repositories are on "+other.Hosts[0]+
-			"; a folder holds one host, its token goes nowhere else")
+	case otherHost(w, err):
 		return
-	case errors.As(err, &other):
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder already spans several hosts ("+strings.Join(other.Hosts, ", ")+
-			"); a folder holds one host, remove the others first")
+	case errors.Is(err, store.ErrNameTaken):
+		httpx.WriteError(w, http.StatusConflict, "slug: another repository had this slug")
 		return
-	}
-	if err != nil {
+	case errors.Is(err, store.ErrNoProject):
+		httpx.WriteError(w, http.StatusNotFound, "unknown source")
+		return
+	case err != nil:
 		httpx.ServerError(w, r, err, "add repo")
 		return
 	}
@@ -681,6 +750,23 @@ func (d Deps) addRepo(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, out)
 }
 
+// otherHost writes the 422 of a clone URL off the folder's one host and
+// reports whether err was one.
+func otherHost(w http.ResponseWriter, err error) bool {
+	var other *store.OtherHostError
+	switch {
+	case errors.As(err, &other) && len(other.Hosts) == 1:
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder's repositories are on "+other.Hosts[0]+
+			"; a folder holds one host, its token goes nowhere else")
+	case errors.As(err, &other):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: this folder already spans several hosts ("+strings.Join(other.Hosts, ", ")+
+			"); a folder holds one host, remove the others first")
+	default:
+		return false
+	}
+	return true
+}
+
 func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
@@ -691,25 +777,93 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	slug := r.PathValue("slug")
-	if !gitrepo.ValidSegment(slug) {
-		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
-		return
-	}
-	if !d.hasRepo(w, r, src.ProjectKey, slug) {
+	rp, ok := d.lookupRepo(w, r, src)
+	if !ok {
 		return
 	}
 	// The clone first, then the row (deleteSource's reason).
-	if err := d.Sources.Git.Remove(src.ProjectKey, slug); err != nil {
+	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
 		httpx.ServerError(w, r, err, "remove clone")
 		return
 	}
-	if _, err := d.Sources.Store.DeleteSourceRepo(ctx, src.ProjectKey, slug); err != nil {
+	// TRANSITIONAL(ids): goes with Checkouts.RemoveLegacy.
+	if err := d.Sources.Git.RemoveLegacy(src.ProjectKey, rp.Slug); err != nil {
+		httpx.ServerError(w, r, err, "remove clone")
+		return
+	}
+	if _, err := d.Sources.Store.DeleteSourceRepo(ctx, src.ProjectKey, rp.Slug); err != nil {
 		httpx.ServerError(w, r, err, "delete repo")
 		return
 	}
-	d.Log.InfoContext(ctx, "source_repo_deleted", "project", src.ProjectKey, "repo", slug, "user", d.user(r))
+	d.Log.InfoContext(ctx, "source_repo_deleted", "project", src.ProjectKey, "repo", rp.Slug, "user", d.user(r))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type renameRepoBody struct {
+	Slug     string `json:"slug"`
+	CloneURL string `json:"clone_url"`
+}
+
+// renameRepo gives a hand-entered repository a new slug and, optionally, a
+// new clone URL (a sync follows). The repository keeps its id, pages, notes
+// and runs; the old slug stays a name of it. A listed repository follows
+// Bitbucket's name on its own.
+func (d Deps) renameRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	d.reader(r)
+	if !d.enabled(w) {
+		return
+	}
+	src, ok := d.lookupSource(w, r)
+	if !ok {
+		return
+	}
+	rp, ok := d.lookupRepo(w, r, src)
+	if !ok {
+		return
+	}
+	var in renameRepoBody
+	if !jsonBody(w, r, &in) {
+		return
+	}
+	in.Slug, in.CloneURL = strings.TrimSpace(in.Slug), strings.TrimSpace(in.CloneURL)
+	switch {
+	case rp.Origin != store.OriginManual:
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "origin: a listed repository follows its name in Bitbucket")
+		return
+	case !gitrepo.ValidSegment(in.Slug):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "slug: letters, digits, dot, dash, underscore; not . or ..")
+		return
+	case in.CloneURL != "" && !validCloneURL(in.CloneURL):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "clone_url: an https URL without credentials")
+		return
+	}
+	err := d.Sources.Store.RenameRepo(ctx, src.ProjectKey, rp.Slug, in.Slug, in.CloneURL)
+	switch {
+	case errors.Is(err, store.ErrNameTaken):
+		httpx.WriteError(w, http.StatusConflict, "slug: another repository had this slug")
+		return
+	case errors.Is(err, store.ErrRunOpen):
+		httpx.WriteError(w, http.StatusConflict, "clone_url: a run of this repository is open, change the URL once it ends")
+		return
+	case otherHost(w, err):
+		return
+	case errors.Is(err, store.ErrNoRepo):
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	case err != nil:
+		httpx.ServerError(w, r, err, "rename repo")
+		return
+	}
+	d.Log.InfoContext(ctx, "source_repo_renamed", "project", src.ProjectKey, "repo", in.Slug, "from", rp.Slug,
+		"clone_url_changed", in.CloneURL != "" && in.CloneURL != rp.CloneURL, "user", d.user(r))
+	d.Sources.Poller.Nudge()
+	out, err := d.sourceDetail(ctx, src)
+	if err != nil {
+		httpx.ServerError(w, r, err, "source repos")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (d Deps) syncRepo(w http.ResponseWriter, r *http.Request) {
@@ -721,15 +875,11 @@ func (d Deps) syncRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	slug := r.PathValue("slug")
-	if !gitrepo.ValidSegment(slug) {
-		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+	rp, ok := d.lookupRepo(w, r, src)
+	if !ok {
 		return
 	}
-	if !d.hasRepo(w, r, src.ProjectKey, slug) {
-		return
-	}
-	n, err := d.Sources.Store.RequestSync(r.Context(), src.ProjectKey, slug)
+	n, err := d.Sources.Store.RequestSync(r.Context(), src.ProjectKey, rp.Slug)
 	if err != nil {
 		httpx.ServerError(w, r, err, "request sync")
 		return
@@ -780,22 +930,11 @@ func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "mode: reconcile or full")
 		return
 	}
-	repos, err := d.Sources.Store.SourceRepos(ctx, src.ProjectKey)
-	if err != nil {
-		httpx.ServerError(w, r, err, "source repos")
+	rp, ok := d.lookupRepo(w, r, src)
+	if !ok {
 		return
 	}
-	var head string
-	found := false
-	for _, rp := range repos {
-		if rp.Slug == slug {
-			found, head = true, rp.HeadCommit
-		}
-	}
-	if !found {
-		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
-		return
-	}
+	slug, head := rp.Slug, rp.HeadCommit
 	if head == "" {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "the clone has no head yet: describe it once it is synced")
 		return

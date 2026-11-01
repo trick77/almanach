@@ -8,8 +8,9 @@ import {
   money,
   share,
 } from "./format";
-import { projectPath, repoPath } from "./routing";
+import { notePath, projectPath, repoPath } from "./routing";
 import { S, fmtInt } from "./strings";
+import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Chip,
@@ -47,6 +48,7 @@ export function NotePage({
   useEffect(() => {
     document.title = `${projectKey}/${slug}#${pr} ${S.common.sep} ${S.app}`;
   }, [projectKey, slug, pr]);
+  useCanonical(data ? notePath(data.project_key, data.repo_slug, pr) : null);
 
   return (
     <div className={page}>

@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +33,7 @@ const FirstDelay = 30 * time.Second
 type Store interface {
 	Sources(ctx context.Context) ([]store.SourceRow, error)
 	ApplyListing(ctx context.Context, key string, listed []store.ListedRepo) (store.ListingResult, error)
-	MarkSourceListed(ctx context.Context, key, errText string) error
+	MarkSourceListed(ctx context.Context, key, errText string, listed bool) error
 	SyncJobs(ctx context.Context) ([]store.SyncJob, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	MarkRepoSyncing(ctx context.Context, key, slug string) error
@@ -40,7 +42,14 @@ type Store interface {
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
 	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, int, bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
+	RepoIDs(ctx context.Context, key, slug string) (projectID, repoID int64, ok bool, err error)
 }
+
+// A clone's folder is named by ids, <root>/p<project id>/r<repo id>: a
+// rename of the project or the repository never touches the disk, a change
+// of case included, which a case-insensitive filesystem would trip over.
+func projectSeg(projectID int64) string { return "p" + strconv.FormatInt(projectID, 10) }
+func repoSeg(repoID int64) string       { return "r" + strconv.FormatInt(repoID, 10) }
 
 // Describe is when the poller queues baseline runs on its own: a clone's
 // first ready, and a reconcile once Reconcile has passed since a
@@ -63,6 +72,10 @@ type Git interface {
 	HeadSHA(ctx context.Context, dir, branch string) (string, error)
 	Remove(key, slug string) error
 	RemoveProject(key string) error
+	// TRANSITIONAL(ids): moves a clone from its folder named by names to the
+	// one named by ids. Remove when every instance has synced once on a
+	// release with ids (no name-named folder left).
+	MoveLegacy(fromKey, fromSlug, toKey, toSlug string) (bool, error)
 }
 
 // Lister lists a Bitbucket project's repositories.
@@ -107,8 +120,8 @@ type Poller struct {
 }
 
 type inFlight struct {
-	key, slug string
-	cancel    context.CancelFunc
+	projectID, repoID int64
+	cancel            context.CancelFunc
 }
 
 // New builds a Poller.
@@ -125,30 +138,65 @@ func New(d Deps) *Poller {
 	return &Poller{Deps: d, wake: make(chan struct{}, 1), removed: map[string]bool{}}
 }
 
-// Dir and ProjectDir are gitrepo's, for the API's bodies.
-func (p *Poller) Dir(key, slug string) (string, error) { return p.Git.Dir(key, slug) }
+// Dir is a clone's folder, by ids, for the API's bodies.
+func (p *Poller) Dir(projectID, repoID int64) (string, error) {
+	return p.Git.Dir(projectSeg(projectID), repoSeg(repoID))
+}
 
-// ProjectDir is the project's folder.
-func (p *Poller) ProjectDir(key string) (string, error) { return p.Git.ProjectDir(key) }
+// ProjectDir is the project's folder, by id.
+func (p *Poller) ProjectDir(projectID int64) (string, error) {
+	return p.Git.ProjectDir(projectSeg(projectID))
+}
 
 // Remove deletes one clone, never while a sync touches the disk, and
 // marks it so a cycle in flight skips the row. A sync of this very row is
 // cancelled first, so the removal waits for git to die, not to finish.
-func (p *Poller) Remove(key, slug string) error {
-	p.cutIf(func(f inFlight) bool { return f.key == key && f.slug == slug })
+func (p *Poller) Remove(projectID, repoID int64) error {
+	p.cutIf(func(f inFlight) bool { return f.projectID == projectID && f.repoID == repoID })
 	p.disk.Lock()
 	defer p.disk.Unlock()
-	p.removed[key+"/"+slug] = true
-	return p.Git.Remove(key, slug)
+	p.removed[projectSeg(projectID)+"/"+repoSeg(repoID)] = true
+	return p.Git.Remove(projectSeg(projectID), repoSeg(repoID))
 }
 
 // RemoveProject deletes a whole project folder under the same lock,
 // cancelling a sync of any of its repositories first.
-func (p *Poller) RemoveProject(key string) error {
-	p.cutIf(func(f inFlight) bool { return f.key == key })
+func (p *Poller) RemoveProject(projectID int64) error {
+	p.cutIf(func(f inFlight) bool { return f.projectID == projectID })
 	p.disk.Lock()
 	defer p.disk.Unlock()
-	p.removed[key] = true
+	p.removed[projectSeg(projectID)] = true
+	return p.Git.RemoveProject(projectSeg(projectID))
+}
+
+// idSeg is a folder name the ids use (p12, r7): a legacy move or removal
+// never touches one, whatever a project key or slug happened to be called.
+// Any case: on a case-insensitive volume P1 is p1.
+var idSeg = regexp.MustCompile(`(?i)^[pr][0-9]+$`)
+
+// RemoveLegacy deletes key/slug's clone in the folder named by names, under
+// the disk lock, unless the folder could be an id folder.
+//
+// TRANSITIONAL(ids): a clone from before the ids that no sync moved (a
+// missing repository is never synced). Remove when every instance has
+// synced once on a release with ids.
+func (p *Poller) RemoveLegacy(key, slug string) error {
+	if idSeg.MatchString(key) {
+		return nil
+	}
+	p.disk.Lock()
+	defer p.disk.Unlock()
+	return p.Git.Remove(key, slug)
+}
+
+// RemoveLegacyProject is RemoveLegacy for a whole project folder named by
+// its key. TRANSITIONAL(ids), goes with RemoveLegacy.
+func (p *Poller) RemoveLegacyProject(key string) error {
+	if idSeg.MatchString(key) {
+		return nil
+	}
+	p.disk.Lock()
+	defer p.disk.Unlock()
 	return p.Git.RemoveProject(key)
 }
 
@@ -163,8 +211,8 @@ func (p *Poller) cutIf(match func(inFlight) bool) {
 
 // gone reports whether a job's row or project was removed since the cycle
 // listed it.
-func (p *Poller) gone(key, slug string) bool {
-	return p.removed[key] || p.removed[key+"/"+slug]
+func (p *Poller) gone(projectID, repoID int64) bool {
+	return p.removed[projectSeg(projectID)] || p.removed[projectSeg(projectID)+"/"+repoSeg(repoID)]
 }
 
 // Nudge starts the next cycle now rather than at the end of the wait.
@@ -277,7 +325,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		p.disk.Lock()
 		var head string
 		var moved bool
-		if p.gone(j.Source.ProjectKey, j.Repo.Slug) {
+		if p.gone(j.Repo.ProjectID, j.Repo.RepoID) {
 			p.disk.Unlock()
 			continue
 		}
@@ -286,7 +334,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		// behind a long clone.
 		jobCtx, cancel := context.WithCancel(ctx)
 		p.cur.Lock()
-		p.current = inFlight{key: j.Source.ProjectKey, slug: j.Repo.Slug, cancel: cancel}
+		p.current = inFlight{projectID: j.Repo.ProjectID, repoID: j.Repo.RepoID, cancel: cancel}
 		p.cur.Unlock()
 		head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
@@ -418,6 +466,7 @@ func (p *Poller) logRunCheck(err error, key, slug string) {
 
 // list reconciles one Bitbucket source's repositories with the API.
 func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
+	errText, applied := "", false
 	a, err := p.access(s, urlorigin.Of(s.Host))
 	if err == nil {
 		var listed []store.ListedRepo
@@ -426,11 +475,19 @@ func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
 			var res store.ListingResult
 			res, err = p.Store.ApplyListing(ctx, s.ProjectKey, listed)
 			if err == nil {
-				p.Log.Info("source_listed", "project", s.ProjectKey, "repositories", len(listed), "added", res.Added, "missing", res.Missing)
+				p.Log.Info("source_listed", "project", s.ProjectKey, "repositories", len(listed), "added", res.Added,
+					"renamed", res.Renamed, "missing", res.Missing)
+				applied = true
+				if len(res.Conflicts) > 0 {
+					// A name is never given to another repository: the
+					// listed one is left out, the source page says why.
+					// The listing itself applied: its time still counts.
+					errText = "left out, the slug was another repository's: " + strings.Join(res.Conflicts, ", ")
+					p.Log.Warn("source_listing_conflicts", "project", s.ProjectKey, "repos", strings.Join(res.Conflicts, ","))
+				}
 			}
 		}
 	}
-	errText := ""
 	if err != nil {
 		if ctx.Err() != nil {
 			return
@@ -438,7 +495,7 @@ func (p *Poller) list(ctx context.Context, s store.ProjectSource) {
 		errText = err.Error()
 		p.Log.Warn("source_listing_failed", "project", s.ProjectKey, "err", errText)
 	}
-	if markErr := p.Store.MarkSourceListed(ctx, s.ProjectKey, errText); markErr != nil {
+	if markErr := p.Store.MarkSourceListed(ctx, s.ProjectKey, errText, applied); markErr != nil {
 		p.Log.Error("recording the listing failed", "project", s.ProjectKey, "err", markErr.Error())
 	}
 }
@@ -523,12 +580,23 @@ func (p *Poller) sync(ctx context.Context, j store.SyncJob, b binding) (string, 
 		}
 		return fmt.Errorf("%s; %w", withheld, err)
 	}
-	dir, err := p.Git.Dir(key, slug)
+	pseg, rseg := projectSeg(j.Repo.ProjectID), repoSeg(j.Repo.RepoID)
+	dir, err := p.Git.Dir(pseg, rseg)
 	if err != nil {
 		return "", false, err
 	}
 	if err := p.Store.MarkRepoSyncing(ctx, key, slug); err != nil {
 		return "", false, err
+	}
+	// TRANSITIONAL(ids): a clone from before the ids sits in a folder named
+	// by its names; moved once, it is not cloned again. Remove when every
+	// instance has synced once on a release with ids.
+	if !idSeg.MatchString(key) {
+		if moved, err := p.Git.MoveLegacy(key, slug, pseg, rseg); err != nil {
+			p.Log.Warn("moving the clone to its id folder failed; cloning afresh", "project", key, "repo", slug, "err", err.Error())
+		} else if moved {
+			p.Log.Info("clone moved to its id folder", "project", key, "repo", slug, "dir", dir)
+		}
 	}
 	// The directory is a label; the origin is the identity. A corrected
 	// clone URL must not go on serving the old code under the new name.
@@ -538,7 +606,7 @@ func (p *Poller) sync(ctx context.Context, j store.SyncJob, b binding) (string, 
 	}
 	if origin != "" && origin != j.Repo.CloneURL {
 		p.Log.Info("clone points at a different remote; re-cloning", "project", key, "repo", slug, "clone_origin", gitrepo.Redact(origin), "configured", j.Repo.CloneURL)
-		if err := p.Git.Remove(key, slug); err != nil {
+		if err := p.Git.Remove(pseg, rseg); err != nil {
 			return "", false, err
 		}
 	}

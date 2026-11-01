@@ -29,10 +29,30 @@ type fakeSources struct {
 	enqueueErr error
 	// noerglerKeys are the project keys noergler delivered.
 	noerglerKeys []string
+	// ids are the fake's project and repository ids, handed out in the
+	// order the names are first met ("key", "key/slug"); taken are names a
+	// rename must refuse.
+	ids   map[string]int64
+	taken map[string]bool
 }
 
 func newFakeSources() *fakeSources {
-	return &fakeSources{sources: map[string]store.ProjectSource{}, repos: map[string][]store.SourceRepo{}}
+	return &fakeSources{sources: map[string]store.ProjectSource{}, repos: map[string][]store.SourceRepo{},
+		ids: map[string]int64{}, taken: map[string]bool{}}
+}
+
+func (f *fakeSources) id(name string) int64 {
+	if _, ok := f.ids[name]; !ok {
+		f.ids[name] = int64(len(f.ids) + 1)
+	}
+	return f.ids[name]
+}
+
+// withIDs is a source or repository row as the store returns it: its ids
+// filled in.
+func (f *fakeSources) withIDs(r store.SourceRepo) store.SourceRepo {
+	r.ProjectID, r.RepoID = f.id(r.ProjectKey), f.id(r.ProjectKey+"/"+r.Slug)
+	return r
 }
 
 func (f *fakeSources) Sources(context.Context) ([]store.SourceRow, error) {
@@ -50,11 +70,57 @@ func (f *fakeSources) Sources(context.Context) ([]store.SourceRow, error) {
 }
 func (f *fakeSources) SourceByKey(_ context.Context, key string) (store.ProjectSource, bool, error) {
 	s, ok := f.sources[key]
+	if ok {
+		s.ProjectID = f.id(key)
+	}
 	return s, ok, nil
+}
+func (f *fakeSources) SourceRepoByName(_ context.Context, key, slug string) (store.SourceRepo, bool, error) {
+	for _, r := range f.repos[key] {
+		if r.Slug == slug {
+			return f.withIDs(r), true, nil
+		}
+	}
+	return store.SourceRepo{}, false, nil
+}
+func (f *fakeSources) RenameProject(_ context.Context, key, to string) (int64, error) {
+	if f.taken[to] {
+		return 0, store.ErrNameTaken
+	}
+	s := f.sources[key]
+	s.ProjectKey = to
+	f.sources[to], f.repos[to] = s, f.repos[key]
+	f.ids[to] = f.id(key)
+	delete(f.sources, key)
+	delete(f.repos, key)
+	return f.ids[to], nil
+}
+func (f *fakeSources) RenameRepo(_ context.Context, key, slug, to, cloneURL string) error {
+	if f.taken[key+"/"+to] {
+		return store.ErrNameTaken
+	}
+	if rr, ok := f.runs[slug]; ok && rr.Last.Open() && cloneURL != "" {
+		return store.ErrRunOpen
+	}
+	for i, r := range f.repos[key] {
+		if r.Slug == slug {
+			f.ids[key+"/"+to] = f.id(key + "/" + slug)
+			r.Slug = to
+			if cloneURL != "" {
+				r.CloneURL, r.State = cloneURL, store.RepoPending
+			}
+			f.repos[key][i] = r
+			return nil
+		}
+	}
+	return store.ErrNoRepo
 }
 func (f *fakeSources) CreateSource(_ context.Context, s store.ProjectSource) error {
 	if _, ok := f.sources[s.ProjectKey]; ok {
 		return store.ErrExists
+	}
+	if f.taken[s.ProjectKey] {
+		return store.ErrNameTaken
 	}
 	f.sources[s.ProjectKey] = s
 	return nil
@@ -78,12 +144,19 @@ func (f *fakeSources) DeleteSource(_ context.Context, key string) (bool, error) 
 	return ok, nil
 }
 func (f *fakeSources) SourceRepos(_ context.Context, key string) ([]store.SourceRepo, error) {
-	return f.repos[key], nil
+	out := make([]store.SourceRepo, 0, len(f.repos[key]))
+	for _, r := range f.repos[key] {
+		out = append(out, f.withIDs(r))
+	}
+	return out, nil
 }
 func (f *fakeSources) AddSourceRepo(_ context.Context, r store.SourceRepo) error {
 	// The store's order: the host first, then the slug's uniqueness.
 	if err := store.OneHost(f.repos[r.ProjectKey], r.CloneURL); err != nil {
 		return err
+	}
+	if f.taken[r.ProjectKey+"/"+r.Slug] {
+		return store.ErrNameTaken
 	}
 	for _, have := range f.repos[r.ProjectKey] {
 		if have.Slug == r.Slug {
@@ -147,18 +220,32 @@ type fakeNudger struct{ nudges int }
 
 func (n *fakeNudger) Nudge() { n.nudges++ }
 
+// fakeCheckouts names folders by ids, as the poller does.
 type fakeCheckouts struct{ removed []string }
 
-func (c *fakeCheckouts) Dir(key, slug string) (string, error) {
-	return "/base/" + key + "/" + slug, nil
+func (c *fakeCheckouts) Dir(projectID, repoID int64) (string, error) {
+	return fmt.Sprintf("/base/p%d/r%d", projectID, repoID), nil
 }
-func (c *fakeCheckouts) ProjectDir(key string) (string, error) { return "/base/" + key, nil }
-func (c *fakeCheckouts) Remove(key, slug string) error {
-	c.removed = append(c.removed, key+"/"+slug)
+func (c *fakeCheckouts) ProjectDir(projectID int64) (string, error) {
+	return fmt.Sprintf("/base/p%d", projectID), nil
+}
+func (c *fakeCheckouts) Remove(projectID, repoID int64) error {
+	c.removed = append(c.removed, fmt.Sprintf("p%d/r%d", projectID, repoID))
 	return nil
 }
-func (c *fakeCheckouts) RemoveProject(key string) error {
-	c.removed = append(c.removed, key)
+func (c *fakeCheckouts) RemoveProject(projectID int64) error {
+	c.removed = append(c.removed, fmt.Sprintf("p%d", projectID))
+	return nil
+}
+
+// RemoveLegacy and RemoveLegacyProject: TRANSITIONAL(ids), go with the
+// poller's.
+func (c *fakeCheckouts) RemoveLegacy(key, slug string) error {
+	c.removed = append(c.removed, "legacy "+key+"/"+slug)
+	return nil
+}
+func (c *fakeCheckouts) RemoveLegacyProject(key string) error {
+	c.removed = append(c.removed, "legacy "+key)
 	return nil
 }
 
@@ -264,6 +351,84 @@ func TestSources_CreateValidatesAndSeals(t *testing.T) {
 	}
 }
 
+// A project key is renamed through the source, a change of case included;
+// a hand-entered repository through its own PATCH. A name another had is a
+// 409, a listed repository follows Bitbucket (422), an open run blocks.
+func TestSources_Rename(t *testing.T) {
+	fs := newFakeSources()
+	h, nudger, _ := sourcesHandler(t, fs, false)
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"ACME","kind":"static"}`, jsonHdr); code != 201 {
+		t.Fatal("create")
+	}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/ACME/repos", "", `{"slug":"cli","clone_url":"https://forge.example.invalid/cli.git"}`, jsonHdr); code != 201 {
+		t.Fatal("add repo")
+	}
+	fs.repos["ACME"] = append(fs.repos["ACME"], store.SourceRepo{ProjectKey: "ACME", Slug: "ui", Origin: store.OriginListed, State: store.RepoReady,
+		CloneURL: "https://forge.example.invalid/ui.git"})
+
+	code, body := do(t, h, http.MethodPatch, "/api/sources/ACME", "", `{"project_key":"acme"}`, jsonHdr)
+	if code != 200 || field(t, body, "project_key") != "acme" {
+		t.Fatalf("case-only rename: %d %v", code, body)
+	}
+	if code, _ := do(t, h, http.MethodGet, "/api/sources/acme", "", "", nil); code != 200 {
+		t.Errorf("source under its new key: %d", code)
+	}
+	fs.taken["taken"] = true
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/acme", "", `{"project_key":"taken"}`, jsonHdr); code != 409 {
+		t.Errorf("rename to a taken key: %d %v", code, body)
+	}
+	if code, _ := do(t, h, http.MethodPatch, "/api/sources/acme", "", `{"project_key":"a b"}`, jsonHdr); code != 422 {
+		t.Errorf("rename to a bad key: %d", code)
+	}
+	// A rename comes alone: never half a rename, half an access change.
+	if code, _ := do(t, h, http.MethodPatch, "/api/sources/acme", "", `{"project_key":"ACME2","token_user":"me"}`, jsonHdr); code != 422 {
+		t.Errorf("rename with another field: %d, want 422", code)
+	}
+	if _, ok := fs.sources["acme"]; !ok {
+		t.Fatal("a refused rename renamed")
+	}
+	// The source sent back whole, its key unchanged, is an access update.
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/acme", "", `{"project_key":"acme","token_user":"me"}`, jsonHdr); code != 200 || fs.sources["acme"].TokenUser != "me" {
+		t.Errorf("unchanged key with another field: %d %v", code, body)
+	}
+	// A key or slug another had is a 409 on create, not a 500.
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"taken","kind":"static"}`, jsonHdr); code != 409 {
+		t.Errorf("new source under a taken key: %d, want 409", code)
+	}
+	fs.taken["acme/gone"] = true
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/acme/repos", "", `{"slug":"gone","clone_url":"https://forge.example.invalid/gone.git"}`, jsonHdr); code != 409 {
+		t.Errorf("new repo under a taken slug: %d, want 409", code)
+	}
+
+	nudges := nudger.nudges
+	code, body = do(t, h, http.MethodPatch, "/api/sources/acme/repos/cli", "", `{"slug":"core","clone_url":"https://forge.example.invalid/core.git"}`, jsonHdr)
+	if code != 200 || nudger.nudges != nudges+1 {
+		t.Fatalf("repo rename: %d %v nudges=%d", code, body, nudger.nudges)
+	}
+	if r, ok, _ := fs.SourceRepoByName(context.Background(), "acme", "core"); !ok || r.CloneURL != "https://forge.example.invalid/core.git" || r.State != store.RepoPending {
+		t.Errorf("renamed repo: %+v %v", r, ok)
+	}
+	fs.taken["acme/other"] = true
+	for _, c := range []struct {
+		path, body string
+		want       int
+	}{
+		{"/api/sources/acme/repos/core", `{"slug":"other"}`, 409},
+		{"/api/sources/acme/repos/ui", `{"slug":"web"}`, 422},
+		{"/api/sources/acme/repos/core", `{"slug":"x","clone_url":"git@forge:x.git"}`, 422},
+		{"/api/sources/acme/repos/core", `{"slug":"../x"}`, 422},
+		{"/api/sources/acme/repos/nope", `{"slug":"x"}`, 404},
+	} {
+		if code, body := do(t, h, http.MethodPatch, c.path, "", c.body, jsonHdr); code != c.want {
+			t.Errorf("PATCH %s %s: %d %v, want %d", c.path, c.body, code, body, c.want)
+		}
+	}
+	fs.runs = map[string]store.RepoRuns{"core": {Last: store.BaselineRun{ProjectKey: "acme", State: store.RunDescribing}}}
+	if code, _ := do(t, h, http.MethodPatch, "/api/sources/acme/repos/core", "", `{"slug":"x","clone_url":"https://forge.example.invalid/x.git"}`, jsonHdr); code != 409 {
+		t.Errorf("new clone URL with an open run: %d, want 409", code)
+	}
+}
+
 func TestSources_TokenNeedsKey(t *testing.T) {
 	h, _, _ := sourcesHandler(t, newFakeSources(), false)
 	code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"tools","kind":"static","token":"pat"}`, jsonHdr)
@@ -354,7 +519,7 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 		t.Fatalf("sync requests = %v", fs.synced)
 	}
 	code, body = do(t, h, http.MethodGet, "/api/sources/tools", "", "", nil)
-	if code != 200 || field(t, body, "dir") != "/base/tools" {
+	if code != 200 || field(t, body, "dir") != fmt.Sprintf("/base/p%d", fs.id("tools")) {
 		t.Fatalf("detail: %d %v", code, body)
 	}
 
@@ -371,7 +536,9 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	if code, _ := do(t, h, http.MethodGet, "/api/sources/tools", "", "", nil); code != 404 {
 		t.Fatal("deleted source still served")
 	}
-	if strings.Join(checkouts.removed, ",") != "tools/cli,tools" {
+	// Folders by ids: the repository's, then the project's; each with the
+	// folder named by names a clone from before the ids may still sit in.
+	if want := fmt.Sprintf("p%d/r%d,legacy tools/cli,p%d,legacy tools", fs.id("tools"), fs.id("tools/cli"), fs.id("tools")); strings.Join(checkouts.removed, ",") != want {
 		t.Fatalf("checkouts removed = %v", checkouts.removed)
 	}
 }

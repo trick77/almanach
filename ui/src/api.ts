@@ -248,6 +248,8 @@ export interface SourceRepo {
   last_synced_at: string | null;
   last_error: string;
   created_at: string;
+  /** The clone's folder, named by ids, never by the names. */
+  dir: string;
   /** The newest baseline run, null before the first. */
   baseline: Baseline | null;
 }

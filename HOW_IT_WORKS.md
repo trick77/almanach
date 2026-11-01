@@ -392,9 +392,20 @@ repositories are listed from the Bitbucket Server REST API
 every cycle; and a **static folder**, a project key the operator chooses
 with repositories entered by hand as clone URLs, for example the
 repositories of one GitHub organisation. Both land as
-`<BACKEND_REPOS_DIR>/<project_key>/<slug>`; nothing else is ever written
-there. In compose that folder is the `repos` volume, in a deployment a
-volume claim.
+`<BACKEND_REPOS_DIR>/p<project id>/r<repo id>`, named by ids, never by the
+key or slug; nothing else is ever written there. In compose that folder is
+the `repos` volume, in a deployment a volume claim.
+
+A project and a repository are ids; the key and the slug are names. Every
+name either ever had stays a name of it, so a renamed project or repository
+keeps its pages, notes, runs and clone, and a URL, a note or a listing
+entry under the old name still lands on it. A project is renamed on its
+source page (a change of case included), a hand-entered repository on its
+row. A Bitbucket repository follows its name in Bitbucket: the listing
+knows it by Bitbucket's own repository id, so a rename there changes the
+slug on the next sync instead of adding a second repository. A name once
+used is never given to another project or repository, in any case. PR keys
+keep the name the PR was merged under.
 
 Git is the binary, after ../rongo's `gitrepo`, never a Go library: proven on
 any repository size, and every rule here was paid for there.
