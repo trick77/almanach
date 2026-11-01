@@ -1,7 +1,8 @@
 // Copied from rongo (ui/src/DiagramView.tsx), kept in step by hand.
 // Almanach: the title and the kind come in as props (rongo reads them off
 // the mermaid source), the copy is strings.ts's, and the drawing's wrapper
-// (rongo's MermaidSvg) lives here as DiagramSvg.
+// (rongo's MermaidSvg) lives here as DiagramSvg, and the sheet is 1400px,
+// not rongo's 1100px: the page column is wider than rongo's.
 import { useRef, type ReactNode } from "react";
 import { download, fileName, toSvgFile } from "./diagramExport";
 import OverlayShell from "./OverlayShell";
@@ -10,8 +11,9 @@ import { S } from "./strings";
 
 /**
  * DiagramView is the diagram seen whole. On the page the picture is scaled
- * into the text column, so a five-actor sequence is read small; here it has
- * the width of the sheet.
+ * into the column between the statements; here it has a sheet of its own,
+ * 1400px like the page column, so it never opens smaller than it was drawn
+ * on the page.
  */
 export default function DiagramView({
   title,
@@ -33,7 +35,7 @@ export default function DiagramView({
   return (
     <OverlayShell
       label={title}
-      dialogClassName="grid h-full w-full max-w-[1100px] grid-rows-[auto_1fr] overflow-hidden rounded-none border-0 bg-panel font-sans shadow-panel sm:rounded-ui-lg sm:border sm:border-elevated-border"
+      dialogClassName="grid h-full w-full max-w-[1400px] grid-rows-[auto_1fr] overflow-hidden rounded-none border-0 bg-panel font-sans shadow-panel sm:rounded-ui-lg sm:border sm:border-elevated-border"
       headerClassName="flex items-center gap-2 border-b border-border px-3 py-2.5 sm:gap-3 sm:px-4.5 sm:py-3"
       onClose={onClose}
       header={
