@@ -77,7 +77,6 @@ const sources: Sources = {
       missing: 0,
       last_listed_at: when,
       last_error: "",
-      auto_describe: true,
       created_at: when,
       updated_at: when,
     },
@@ -95,7 +94,6 @@ const sources: Sources = {
       missing: 0,
       last_listed_at: null,
       last_error: "",
-      auto_describe: true,
       created_at: when,
       updated_at: when,
     },
@@ -113,7 +111,6 @@ const detail: SourceDetail = {
   disk_bytes: 1_400_000_000,
   last_listed_at: null,
   last_error: "",
-  auto_describe: true,
   created_at: when,
   updated_at: when,
   repos: [
@@ -216,7 +213,6 @@ describe("SourcesPage", () => {
         token: "pat",
         token_auth: "bearer",
         token_user: "",
-        auto_describe: true,
       },
     });
     await waitFor(() => expect(window.location.pathname).toBe("/quellen/neu"));
@@ -234,7 +230,7 @@ describe("SourcesPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("creates a source that describes nothing on its own, on the configured host", async () => {
+  it("creates a source on the configured host", async () => {
     const writes = serve({
       sources: { ...sources, default_host: "https://forge.example.invalid" },
     });
@@ -246,13 +242,9 @@ describe("SourcesPage", () => {
     expect(
       screen.getByPlaceholderText("https://bitbucket.example.invalid"),
     ).toHaveValue("https://forge.example.invalid");
-    const auto = screen.getByLabelText(/Automatisch beschreiben/);
-    expect(auto).toBeChecked();
-    fireEvent.click(auto);
     fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
     await waitFor(() => expect(writes).toHaveLength(1));
-    const body = writes[0]?.body as { auto_describe: boolean; host: string };
-    expect(body.auto_describe).toBe(false);
+    const body = writes[0]?.body as { host: string };
     expect(body.host).toBe("https://forge.example.invalid");
   });
 });
@@ -334,7 +326,7 @@ describe("SourcePage baseline", () => {
     expect(screen.getAllByText("Aktualisieren")[0]).toBeEnabled();
   });
 
-  it("turns the automatic runs off in the access form", async () => {
+  it("saves the access form without a switch for the runs", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     fireEvent.click(await screen.findByText("Token"));
@@ -343,13 +335,12 @@ describe("SourcePage baseline", () => {
       screen.getByText(/gilt für jedes Repository darin/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/listet das Projekt/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText(/Automatisch beschreiben/));
+    expect(screen.queryByText(/Automatisch/)).toBeNull();
     fireEvent.click(screen.getByText("Speichern"));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]?.body).toEqual({
       token_auth: "basic",
       token_user: "",
-      auto_describe: false,
     });
   });
 
@@ -367,7 +358,6 @@ describe("SourcePage baseline", () => {
       token: "ghp",
       token_auth: "basic",
       token_user: "",
-      auto_describe: true,
     });
   });
 });

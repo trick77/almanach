@@ -320,11 +320,11 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 // when the head is off the documented commit and the last run is older
 // than the interval, and a failed run again, in its own mode, after
 // retryAfter, at most maxRetries times in a row; past that the failed
-// repository is back on the reconcile interval. Only with auto_describe
-// on; a repository already cloned when the baseline shipped has no run at
-// all and waits for its button. A run already open is no failure.
+// repository is back on the reconcile interval. A repository already
+// cloned when the baseline shipped has no run at all and waits for its
+// button. A run already open is no failure.
 func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
-	if p.Describe.Wake == nil || !j.Source.AutoDescribe {
+	if p.Describe.Wake == nil {
 		return
 	}
 	key, slug := j.Source.ProjectKey, j.Repo.Slug

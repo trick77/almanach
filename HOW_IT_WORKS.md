@@ -492,8 +492,7 @@ button's, is queued again in its own mode (trigger `retry`) a day after it
 ended, or after the interval when that is shorter, three times in a row,
 whatever the head and even with reconciles off; past that the repository
 is back on the interval, so a failure that is permanent costs a call a
-month, not a day. All only with the source's
-`auto_describe` on. The buttons on the source page queue a reconcile
+month, not a day. The buttons on the source page queue a reconcile
 (Aktualisieren, a full run before the first) or a full run with a fresh
 catalogue (Neu beschreiben). Repositories cloned before the baseline
 existed have no documented run and wait for their button.
@@ -801,7 +800,7 @@ error. `source_repos` is one row per clone: the clone URL, who put it here
 (`listed` by the API or `manual`), the branch (NULL until resolved from
 the remote), the head commit the checkout holds, the poller's `state`
 (`pending`, `syncing`, `ready`, `failed`, `missing`) and the last sync's
-time and error, and `auto_describe` on the source. The two groups meet on
+time and error. The two groups meet on
 `(project_key, slug)`: with the sources on, a note is taken only for a
 source repository, and the wiki lists the sources (4b).
 

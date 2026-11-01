@@ -361,9 +361,6 @@ export const S = {
       reconcile: "Aktualisieren",
       full: "Neu beschreiben",
     },
-    auto: "Automatisch beschreiben",
-    autoHint:
-      "Ein Repository beim ersten Klon, danach monatlich, wenn sich der Head bewegt hat; gelesen wird nur, was sich seit der letzten Beschreibung geändert hat. Aus: nur über die Buttons, für alle Repositories dieser Quelle.",
   },
   faq: {
     title: "FAQ",
