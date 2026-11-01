@@ -374,8 +374,9 @@ function NewSourceForm({
               value={auth}
               onChange={setAuth}
               options={[
-                { value: "bearer", label: "Bearer" },
+                // GitHub's left, Bitbucket's right, as the kinds.
                 { value: "basic", label: "Basic" },
+                { value: "bearer", label: "Bearer" },
               ]}
             />
             <span className={fieldHint}>
