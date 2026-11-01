@@ -70,6 +70,11 @@ export function NotePage({
   );
 }
 
+/** factWidth holds the label/value rows (bugfix, facts) at the width they
+ *  had in the 900px column: in the 1400px one a label sat 1300px from its
+ *  value. */
+const factWidth = "max-w-[820px]";
+
 const LISTS: {
   key: "components" | "rules" | "invariants" | "entities";
   label: string;
@@ -110,7 +115,12 @@ function Body({ n }: { n: NoteDetail }) {
       {bugfix && (
         <>
           <div className={eyebrow}>{S.note.bugfix}</div>
-          <div className="rounded-ui border border-border bg-panel px-4.5 py-4">
+          <div
+            className={
+              factWidth +
+              " rounded-ui border border-border bg-panel px-4.5 py-4"
+            }
+          >
             <dl className="m-0 text-[13.5px]">
               <Fact label={S.note.symptom}>{bugfix.symptom}</Fact>
               <Fact label={S.note.cause}>{bugfix.cause}</Fact>
@@ -142,7 +152,12 @@ function Body({ n }: { n: NoteDetail }) {
       })}
 
       <div className={eyebrow}>{S.note.facts}</div>
-      <dl className="m-0 grid grid-cols-1 gap-x-10 text-[13.5px] sm:grid-cols-2">
+      <dl
+        className={
+          factWidth +
+          " m-0 grid grid-cols-1 gap-x-10 text-[13.5px] sm:grid-cols-2"
+        }
+      >
         <Fact label={S.note.rounds}>{call ? call.rounds : S.common.none}</Fact>
         <Fact label={S.note.posted}>
           {n.issues_posted} / {n.suggestions_posted}
