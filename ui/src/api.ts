@@ -130,6 +130,9 @@ export interface ProjectDetail {
    *  and no run is promised to draw one. */
   map_declined: boolean;
   repos: Repo[];
+  /** Repositories of other projects this project's repositories use: the
+   *  map's libraries zone, drawn here, not stored in the map. */
+  libraries: Library[];
   problems: Problem[];
   problem_window_days: number;
   recent_notes: NoteSummary[];
@@ -179,6 +182,12 @@ export interface Use extends DependencyEnd {
 export interface RepoRef {
   project: string;
   slug: string;
+}
+
+export interface Library {
+  project: string;
+  slug: string;
+  used_by: RepoRef[];
 }
 
 /** GET /api/dependencies: joined from the manifests at read time. */

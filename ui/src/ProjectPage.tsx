@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import type { ProjectDetail } from "./api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Library, ProjectDetail } from "./api";
 import { DescriptionView, descriptionRail } from "./Description";
 import { Diagram, titledZones } from "./Diagram";
-import type { FlowIR } from "./diagramIR";
+import { fits, type FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
 import {
@@ -248,6 +248,7 @@ function Overview({
               map={data.map}
               projectKey={data.key}
               slugs={data.repos.map((r) => r.slug)}
+              libraries={data.libraries}
             />
           )}
         </section>
@@ -327,22 +328,133 @@ function SystemMap({
   map,
   projectKey,
   slugs,
+  libraries,
 }: {
   map: FlowIR;
   projectKey: string;
   slugs: string[];
+  libraries: Library[];
 }) {
-  const ir = titledZones(map, S.diagram.zones);
+  const ir = useMemo(
+    () => titledZones(withLibraries(map, libraries), S.diagram.zones),
+    [map, libraries],
+  );
   const repoZone = new Map(map.nodes.map((n) => [n.id, n.zone]));
+  const libs = new Map(libraries.map((l) => [libId(l), l]));
   return (
     <Diagram
       ir={ir}
       title={S.diagram.titles.map}
-      links={(id) =>
-        repoZone.get(id) === "repositories" && slugs.includes(id)
+      links={(id) => {
+        const l = libs.get(id);
+        if (l) return repoPath(l.project, l.slug);
+        return repoZone.get(id) === "repositories" && slugs.includes(id)
           ? repoPath(projectKey, id)
-          : null
-      }
+          : null;
+      }}
     />
   );
+}
+
+const libId = (l: Library) => `library:${l.project}/${l.slug}`;
+
+/** withLibraries is the stored map with the libraries of other projects
+ *  the project's repositories use, drawn by code, never by the model: a
+ *  zone of their own, a node each, an edge from each user the map shows.
+ *  A node the model drew for one anyway gives way to it, its edges moved
+ *  over, so nothing is drawn twice: an external node named by the
+ *  library's slug (by project/slug when two libraries share it) whose
+ *  every edge is a library use, nothing else. Only libraries a repository
+ *  on the map uses (a map older than a repository does not show its
+ *  user), as many as one drawing holds, in the order given; with none of
+ *  them fitting, the map as stored. */
+export function withLibraries(map: FlowIR, libraries: Library[]): FlowIR {
+  const own = new Set(
+    map.nodes.filter((n) => n.zone === "repositories").map((n) => n.id),
+  );
+  const drawn = libraries.filter((l) => l.used_by.some((u) => own.has(u.slug)));
+  for (let n = drawn.length; n > 0; n--) {
+    const out = drawLibraries(map, drawn.slice(0, n), libraries);
+    if (fits(out)) return out;
+  }
+  return map;
+}
+
+/** libraryEdge says an edge the model drew is a use of a library: its
+ *  label starts with the map's `library` kind. */
+const libraryEdge = (e: FlowIR["edges"][number]) =>
+  e.label.trim().toLowerCase().startsWith("library");
+
+/** drawLibraries draws libraries; all is every library of the project, so a
+ *  slug two of them share stays ambiguous when one was cut. */
+function drawLibraries(
+  map: FlowIR,
+  libraries: Library[],
+  all: Library[],
+): FlowIR {
+  const own = new Set(
+    map.nodes.filter((n) => n.zone === "repositories").map((n) => n.id),
+  );
+  const slugCount = new Map<string, number>();
+  for (const l of all) {
+    const s = l.slug.toLowerCase();
+    slugCount.set(s, (slugCount.get(s) ?? 0) + 1);
+  }
+  const drawnAs = new Map<string, string>();
+  for (const n of map.nodes) {
+    if (n.zone !== "external") continue;
+    const touching = map.edges.filter((e) => e.from === n.id || e.to === n.id);
+    if (touching.length === 0 || !touching.every(libraryEdge)) continue;
+    const names = [n.id, n.label].map((s) => s.toLowerCase());
+    const l = libraries.find((l) => {
+      const full = `${l.project}/${l.slug}`.toLowerCase();
+      const slug = l.slug.toLowerCase();
+      return (
+        names.includes(full) ||
+        (slugCount.get(slug) === 1 && names.includes(slug))
+      );
+    });
+    if (l) drawnAs.set(n.id, libId(l));
+  }
+  const to = (id: string) => drawnAs.get(id) ?? id;
+  const edges: FlowIR["edges"] = [];
+  const seen = new Set<string>();
+  // A pair once, whichever way the model drew it: a library edge the model
+  // drew backwards is the use code draws.
+  const add = (e: FlowIR["edges"][number]) => {
+    const k = [e.from, e.to].sort().join(">");
+    if (e.from === e.to || seen.has(k)) return;
+    seen.add(k);
+    edges.push(e);
+  };
+  for (const e of map.edges) add({ ...e, from: to(e.from), to: to(e.to) });
+  for (const l of libraries)
+    for (const u of l.used_by)
+      if (own.has(u.slug))
+        add({
+          from: u.slug,
+          to: libId(l),
+          label: S.diagram.libraryEdge,
+          dashed: false,
+          head: "end",
+        });
+  return {
+    ...map,
+    nodes: [
+      ...map.nodes.filter((n) => !drawnAs.has(n.id)),
+      ...libraries.map((l) => ({
+        id: libId(l),
+        label: `${l.project}/${l.slug}`,
+        shape: "pill" as const,
+        zone: "libraries",
+      })),
+    ],
+    edges,
+    zones: [
+      ...map.zones.filter((z) =>
+        map.nodes.some((n) => n.zone === z.id && !drawnAs.has(n.id)),
+      ),
+      { id: "libraries", title: "libraries" },
+    ],
+  };
 }

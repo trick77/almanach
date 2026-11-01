@@ -565,6 +565,20 @@ users, `also`) and `used_by`, the `.md` export an
 drawn on the page "Abhängigkeiten" as a flow from users to libraries. With
 the sources off every list is empty.
 
+A library is described once, on its own page, and read as context where
+it is used. Every describe step gets the summaries of the libraries its
+repository uses (`store.Libraries`, read once a run before the files,
+fitted to `LibrariesMaxBytes` like the project's other repositories), the
+project step those of other projects the project's repositories use; both
+prompts ask how the repository or the system uses them, never what they
+are. A project with a map carries those libraries as `libraries`, and the
+UI draws them on the system map in a zone of its own ("Bibliotheken")
+with an edge from each user; the stored map never holds them. The model
+is told not to draw them and gets a node and edge cap lowered by what
+they need (`mapRoom`); the UI draws as many as fit. An external node the
+model drew anyway, named by a library's slug and touched only by
+`library` edges, gives way to the library's node.
+
 ## 4b. The baseline
 
 A **run** reads one repository's clone at one commit and folds what the

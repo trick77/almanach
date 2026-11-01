@@ -56,6 +56,7 @@ type Store interface {
 	ProjectKeyOf(ctx context.Context, key string) (string, bool, error)
 	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
 	Dependencies(ctx context.Context) (store.Graph, error)
+	Libraries(ctx context.Context, key, slug string) ([]store.Library, error)
 }
 
 // Waker is poked when a note was queued.
@@ -459,8 +460,11 @@ type projectDetailBody struct {
 	MapExpected bool `json:"map_expected"`
 	// MapDeclined says a project step asked for the map and none was
 	// accepted: no map, and none promised for the next run either.
-	MapDeclined bool          `json:"map_declined"`
-	Repos       []repoBody    `json:"repos"`
+	MapDeclined bool       `json:"map_declined"`
+	Repos       []repoBody `json:"repos"`
+	// Libraries are the repositories of other projects this project's
+	// repositories use: the system map's libraries zone.
+	Libraries   []libraryBody `json:"libraries"`
 	Problems    []problemBody `json:"problems"`
 	ProblemDays int           `json:"problem_window_days"`
 	Notes       []noteBody    `json:"recent_notes"`
@@ -535,6 +539,14 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Problems: problemBodies(problems), Notes: noteBodies(notes)}
 	out.Repos = repoBodies(repos)
+	// The libraries are the map's zone: no map, none asked for.
+	out.Libraries = []libraryBody{}
+	if drawn != nil {
+		if out.Libraries, err = d.libraries(ctx, key); err != nil {
+			httpx.ServerError(w, r, err, "libraries")
+			return
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 

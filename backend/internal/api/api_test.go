@@ -53,9 +53,16 @@ type fakeStore struct {
 	// graph is what Dependencies answers; graphErr fails it.
 	graph    store.Graph
 	graphErr error
+	// libs is what Libraries answers, by project key.
+	libs map[string][]store.Library
 }
 
 func (f *fakeStore) Dependencies(context.Context) (store.Graph, error) { return f.graph, f.graphErr }
+
+// Libraries answers libs by project key; graphErr fails it.
+func (f *fakeStore) Libraries(_ context.Context, key, _ string) ([]store.Library, error) {
+	return f.libs[key], f.graphErr
+}
 
 func (f *fakeStore) ProjectSystemOf(_ context.Context, key string) (store.ProjectSystem, error) {
 	return store.ProjectSystem{Standalone: f.standalone[key]}, nil

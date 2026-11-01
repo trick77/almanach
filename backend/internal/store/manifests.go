@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/manifest"
 )
 
@@ -195,4 +196,98 @@ func less(a, b RepoRef) bool {
 		return a.ProjectKey < b.ProjectKey
 	}
 	return a.Slug < b.Slug
+}
+
+// Library is a source repository others use, with the summary of its
+// current description ("" before the first) and the users the question
+// was asked for.
+type Library struct {
+	RepoRef
+	Summary string
+	UsedBy  []RepoRef
+}
+
+// Libraries is what a repository uses (slug set), or what a project's
+// repositories use of other projects' (slug ""): the context a step reads
+// beside its own code. In the graph's order, each once.
+func (s *Store) Libraries(ctx context.Context, key, slug string) ([]Library, error) {
+	g, err := s.Dependencies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []Library{}
+	at := map[RepoRef]int{}
+	for _, e := range g.Edges {
+		if e.From.ProjectKey != key {
+			continue
+		}
+		if slug != "" && e.From.Slug != slug {
+			continue
+		}
+		if slug == "" && e.To.ProjectKey == key {
+			// A project's own repository is no library of it.
+			continue
+		}
+		i, ok := at[e.To]
+		if !ok {
+			i = len(out)
+			at[e.To] = i
+			out = append(out, Library{RepoRef: e.To})
+		}
+		out[i].UsedBy = append(out[i].UsedBy, e.From)
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	refs := make([]RepoRef, len(out))
+	for i, l := range out {
+		refs[i] = l.RepoRef
+	}
+	sums, err := s.sourceSummaries(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Summary = sums[out[i].RepoRef]
+	}
+	return out, nil
+}
+
+// sourceSummaries is the current summaries of the source repositories
+// named, in one query, "" before a first description. By the names the
+// graph read a moment before: a rename between the two reads leaves one
+// summary out of one prompt, the next step reads it again.
+func (s *Store) sourceSummaries(ctx context.Context, refs []RepoRef) (map[RepoRef]string, error) {
+	pairs := make([][2]string, len(refs))
+	for i, r := range refs {
+		pairs[i] = [2]string{r.ProjectKey, r.Slug}
+	}
+	named, err := jsonOf(pairs)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.key, r.slug, COALESCE(rv.summary, '')
+		  FROM json_each(?) j
+		  JOIN projects p ON p.key = j.value ->> 0
+		  JOIN repos r ON r.project_id = p.id AND r.slug = j.value ->> 1
+		  JOIN source_repos sr ON sr.repo_id = r.id
+		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
+		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id`, named)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[RepoRef]string{}
+	for rows.Next() {
+		var r RepoRef
+		var sum string
+		if err := rows.Scan(&r.ProjectKey, &r.Slug, &sum); err != nil {
+			return nil, err
+		}
+		// TRANSITIONAL(layout): Remove when every page's current revision was
+		// written after the layout.
+		out[r] = lang.Relaid(sum, false)
+	}
+	return out, rows.Err()
 }

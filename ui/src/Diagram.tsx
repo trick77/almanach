@@ -93,6 +93,9 @@ export function Diagram({
   // Every diagram the backend stores fits: its caps are below these. One
   // that does not is a defect, said rather than drawn crowded.
   const ok = fits(ir);
+  const names = new Map(
+    ir.kind === "flow" ? ir.nodes.map((n) => [n.id, n.label]) : [],
+  );
 
   useEffect(() => {
     if (!ok) return;
@@ -144,7 +147,7 @@ export function Diagram({
         <div className="relative">
           <DiagramSvg svg={svg} title={title} />
           {layout !== null && links && (
-            <NodeLinks layout={layout} links={links} />
+            <NodeLinks layout={layout} links={links} names={names} />
           )}
         </div>
         {full && (
@@ -158,6 +161,7 @@ export function Diagram({
                 <NodeLinks
                   layout={layout}
                   links={links}
+                  names={names}
                   onFollow={() => setFull(false)}
                 />
               ) : undefined
@@ -175,10 +179,13 @@ export function Diagram({
 function NodeLinks({
   layout,
   links,
+  names,
   onFollow,
 }: {
   layout: FlowLayout;
   links: (id: string) => string | null;
+  /** names are the nodes' labels by id: a link is named by what it shows. */
+  names: Map<string, string>;
   onFollow?: () => void;
 }) {
   const pct = (v: number, of: number) => `${(v / of) * 100}%`;
@@ -199,7 +206,7 @@ function NodeLinks({
           <Link
             key={n.id}
             to={to}
-            title={S.diagram.repoLink(n.id)}
+            title={S.diagram.repoLink(names.get(n.id) ?? n.id)}
             className="absolute rounded-[6px] hover:bg-accent/10 hover:outline-2 hover:outline-accent-strong focus-visible:outline-2 focus-visible:outline-accent-strong"
             style={{
               left: pct(n.x, layout.width),
@@ -208,7 +215,9 @@ function NodeLinks({
               height: pct(n.h, layout.height),
             }}
           >
-            <span className="sr-only">{S.diagram.repoLink(n.id)}</span>
+            <span className="sr-only">
+              {S.diagram.repoLink(names.get(n.id) ?? n.id)}
+            </span>
           </Link>
         );
       })}

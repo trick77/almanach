@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -33,6 +34,8 @@ func depsStore() *fakeStore {
 	st.teams["apps"], st.teams["libs"] = "", ""
 	st.repos["apps"] = []store.RepoRow{{Slug: "fetch"}, {Slug: "loom"}, {Slug: "rongo"}}
 	st.repos["libs"] = []store.RepoRow{{Slug: "wire"}}
+	g := depsGraph()
+	st.libs = map[string][]store.Library{"apps": {{RepoRef: g.Edges[1].To, UsedBy: []store.RepoRef{g.Edges[1].From, g.Edges[2].From}}}}
 	return st
 }
 
@@ -145,5 +148,42 @@ func TestSources_ClonedElsewhere(t *testing.T) {
 		`{"slug":"loom","clone_url":"https://forge.example.invalid/x/wire.git"}`, jsonHdr)
 	if code != 409 || !strings.Contains(field(t, body, "error"), "clone_url") {
 		t.Fatalf("rename: %d %v, want 409", code, body)
+	}
+}
+
+// A project lists the libraries of other projects its repositories use,
+// never its own; a standalone folder none, having no map.
+func TestProject_Libraries(t *testing.T) {
+	st := depsStore()
+	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	// No map, no libraries: they are its zone.
+	if code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
+		t.Fatalf("apps without a map: %d %s, want no libraries", code, body["libraries"])
+	}
+	m := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "loom", Label: "loom", Shape: "step", Zone: "repositories"}},
+		Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}}}
+	st.pages[store.ScopeProject+"|apps|"] = store.Page{RevisionID: 1, Revision: 1, Summary: "Apps.", Map: m}
+	code, body := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil)
+	if code != 200 {
+		t.Fatalf("project: %d", code)
+	}
+	var libs []libraryBody
+	if err := json.Unmarshal(body["libraries"], &libs); err != nil || len(libs) != 1 {
+		t.Fatalf("libraries: %v %s", err, body["libraries"])
+	}
+	if libs[0].Project != "libs" || libs[0].Slug != "wire" || len(libs[0].UsedBy) != 2 {
+		t.Fatalf("libraries = %+v, want libs/wire used by loom and rongo", libs)
+	}
+	if code, body = do(t, h, http.MethodGet, "/api/projects/libs", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
+		t.Fatalf("libs' libraries: %d %s, want none", code, body["libraries"])
+	}
+	st.standalone = map[string]bool{"apps": true}
+	if code, body = do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 200 || string(body["libraries"]) != "[]" {
+		t.Fatalf("standalone apps' libraries: %d %s, want none", code, body["libraries"])
+	}
+	st.standalone = nil
+	st.graphErr = errors.New("database is locked")
+	if code, _ := do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil); code != 500 {
+		t.Fatalf("failing store: %d, want 500", code)
 	}
 }

@@ -52,6 +52,16 @@ type runStore struct {
 	// mapErr fails the map step's write; mapWrites counts the writes tried.
 	mapErr    error
 	mapWrites int
+	// libs is what Libraries answers, by slug ("" the project's); libsErr
+	// fails it.
+	libs     map[string][]store.Library
+	libsErr  error
+	libReads map[string]int
+}
+
+func (s *runStore) Libraries(_ context.Context, _, slug string) ([]store.Library, error) {
+	s.libReads[slug]++
+	return s.libs[slug], s.libsErr
 }
 
 func (s *runStore) RepoProblems(_ context.Context, _, _ string, until time.Time) ([]store.RepoProblem, error) {
@@ -281,7 +291,7 @@ type world struct {
 
 func newWorld(t *testing.T, calls int) world {
 	t.Helper()
-	st := &runStore{fakeStore: newFakeStore(), sources: map[string]bool{"tools/svc": true},
+	st := &runStore{fakeStore: newFakeStore(), sources: map[string]bool{"tools/svc": true}, libReads: map[string]int{},
 		repos: []store.SourceRepo{{ProjectKey: "tools", Slug: "svc", HeadCommit: head}}}
 	code := &fakeCode{
 		tree: []gitrepo.Entry{
