@@ -1303,7 +1303,7 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 			return false, nil, nil
 		}
 	}
-	if page.Map != nil {
+	if page.Map != nil && !untaggedMap(page.Map) {
 		return true, nil, nil
 	}
 	repos, err := w.repoSummaries(ctx, r)
@@ -1335,10 +1335,27 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 	return mapRevision(r, page, m)
 }
 
+// untaggedMap is a system map stored before the tags (layer, stage): drawn
+// with every build, monitoring and stage box the filter now takes out. It
+// counts as missing: a quiet reconcile runs the project step for it, the
+// prompt shows none, and the map drawn then is written even when it looks
+// the same, so it is asked once, not on every reconcile.
+//
+// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+func untaggedMap(m *diagram.Diagram) bool {
+	return m != nil && m.Kind == diagram.KindFlow && !diagram.Tagged(m)
+}
+
+// sameMap reports whether m is the stored map: equal as drawn, and not the
+// tagged redraw of an untagged one (diagram.Equal ignores tags).
+func sameMap(m, stored *diagram.Diagram) bool {
+	return diagram.Equal(m, stored) && (!untaggedMap(stored) || !diagram.Tagged(m))
+}
+
 // mapRevision is the page's text with the map m: what a map changes alone
 // writes; nil when m is the page's map.
 func mapRevision(r *store.BaselineRun, page store.Page, m *diagram.Diagram) *store.NewRevision {
-	if diagram.Equal(m, page.Map) {
+	if sameMap(m, page.Map) {
 		return nil
 	}
 	runID := r.ID
@@ -1415,7 +1432,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if summary == page.Summary && sameStatements(page.Statements, statements) && diagram.Equal(drawn, page.Map) {
+	if summary == page.Summary && sameStatements(page.Statements, statements) && sameMap(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, retry, "", nil
 	}
@@ -2086,9 +2103,11 @@ func mapDue(repos int) string {
 }
 
 // projectMap is the current system map as the JSON the model returns, so
-// keeping it means repeating it. The sentinel is no map.
+// keeping it means repeating it. The sentinel is no map; nor is an untagged
+// one, drawn afresh under today's rules, not repeated with its build and
+// stage boxes.
 func projectMap(p store.Page) string {
-	if p.Map == nil || diagram.IsSentinel(p.Map) {
+	if p.Map == nil || diagram.IsSentinel(p.Map) || untaggedMap(p.Map) {
 		return "_None yet: draw it._"
 	}
 	j, err := json.Marshal(p.Map)

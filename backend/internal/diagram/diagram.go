@@ -81,6 +81,21 @@ var (
 	Stages = []string{StageProduction, StageOther, StageNone}
 )
 
+// Tagged reports whether a system map carries the tags: every node of one
+// drawn since has a stage. A map stored before them has none; so has the
+// sentinel, and nil.
+func Tagged(d *Diagram) bool {
+	if d == nil {
+		return false
+	}
+	for _, n := range d.Nodes {
+		if n.Stage != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // The system map's zones, the only five it may have.
 const (
 	ZoneClients      = "clients"

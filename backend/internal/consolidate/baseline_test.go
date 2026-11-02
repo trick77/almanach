@@ -283,12 +283,30 @@ func drawnMap(slugs ...string) *diagram.Diagram {
 	d := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Zones: []diagram.Zone{
 		{ID: "repositories", Title: "Repositories"}, {ID: "stores", Title: "Datenspeicher"}, {ID: "external", Title: "Externe Systeme"}}}
 	for _, s := range slugs {
-		d.Nodes = append(d.Nodes, diagram.Node{ID: s, Label: s, Shape: "step", Zone: "repositories"})
+		d.Nodes = append(d.Nodes, diagram.Node{ID: s, Label: s, Shape: "step", Zone: "repositories", Stage: diagram.StageNone})
 	}
-	d.Nodes = append(d.Nodes, diagram.Node{ID: "pg", Label: "PostgreSQL", Shape: "step", Zone: "stores"},
-		diagram.Node{ID: "forge", Label: "Forge", Shape: "step", Zone: "external"})
-	d.Edges = []diagram.Edge{{From: slugs[0], To: "pg", Label: "DB", Head: "end"}, {From: "forge", To: slugs[0], Label: "HTTP: Webhook", Head: "end"}}
+	d.Nodes = append(d.Nodes, diagram.Node{ID: "pg", Label: "PostgreSQL", Shape: "step", Zone: "stores", Stage: diagram.StageProduction},
+		diagram.Node{ID: "forge", Label: "Forge", Shape: "step", Zone: "external", Stage: diagram.StageNone})
+	d.Edges = []diagram.Edge{{From: slugs[0], To: "pg", Label: "DB", Head: "end", Layer: diagram.LayerRuntime},
+		{From: "forge", To: slugs[0], Label: "HTTP: Webhook", Head: "end", Layer: diagram.LayerRuntime}}
 	return d
+}
+
+// untagged is a map as stored before the tags: d without its stages and
+// layers.
+//
+// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+func untagged(d *diagram.Diagram) *diagram.Diagram {
+	out := *d
+	out.Nodes = slices.Clone(d.Nodes)
+	out.Edges = slices.Clone(d.Edges)
+	for i := range out.Nodes {
+		out.Nodes[i].Stage = ""
+	}
+	for i := range out.Edges {
+		out.Edges[i].Layer = ""
+	}
+	return &out
 }
 
 // drawnRepoMap is a repository map: the API entered, a part behind it, the
