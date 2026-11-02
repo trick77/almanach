@@ -37,6 +37,10 @@ The description of repository `{repo}` in project `{project}` was just written f
 - `summary`: the project as it is now, laid out as above; never a changelog, no PR numbers, no dates, no names of people.
 - Answer `{"description": null}` only when neither the project description nor its map needs a change, and never while a project that is due a map has none yet.
 
+## The layout
+
+`outline` lays the project page out, the description below as it stands: its areas in reading order, each with the ids of its statements (`[s1]` and so on, as shown), overview before detail: inside an area, the statement that says what the part is and does before those about one piece of it, a whole flow before its steps, a rule before its exceptions. Every statement shown under exactly one area, every id as shown, none twice; one area order serves every kind at once. `Entwicklung und Auslieferung` last. Only order and areas: a statement's text stays as it is, and the outline is answered whether the description changes or not (with `{"description": null}` too). A statement you add has no id yet: its `area` places it. `null` keeps the page as laid out when every statement has an area and stands where it should.
+
 ## The system map
 
 `map` is the project as one picture, the top of the project page: the system at runtime, in production. Its repositories, where a request enters, and what the deployed parts call while they serve; never how the system is built, delivered or watched. {map_due}.
@@ -53,7 +57,7 @@ The description of repository `{repo}` in project `{project}` was just written f
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...], "area": "<area>"{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
+Respond with a single JSON object: `{"outline": [{"area": "<area>", "ids": ["<id>", ...]}, ...] | null, "description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...], "area": "<area>"{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
 
 ## Untrusted input
 

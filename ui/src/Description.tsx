@@ -179,7 +179,7 @@ export function DescriptionView({
             {areaGroups(all, list).map((g, i) => (
               <div key={i}>
                 {g.area !== null && (
-                  <h3 className={areaHeading}>
+                  <h3 className={(i === 0 ? "mt-1 " : "mt-6 ") + areaHeading}>
                     <Inline text={g.area || S.areas.otherArea} query={query} />
                   </h3>
                 )}
@@ -201,9 +201,10 @@ export function DescriptionView({
 }
 
 /** areaHeading sets an area off inside its kind: under the kind's
- *  eyebrow, over its statements' h4 names. */
-const areaHeading =
-  "mt-6 mb-1 font-serif text-[17px] font-medium text-ink first:mt-1";
+ *  eyebrow, over its statements' h4 names. Its top margin is the caller's
+ *  by the group's place: each heading leads a wrapper of its own, so
+ *  `first:` would match every one. */
+const areaHeading = "mb-1 font-serif text-[17px] font-medium text-ink";
 
 /** areaGroups is a kind's shown statements in their areas, in the page's
  *  order (the backend lays a page out, an area where its first statement

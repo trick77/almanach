@@ -90,6 +90,16 @@ func TestDescribe(t *testing.T) {
 	if d.Map == nil || d.Map.Nodes[0].Zone != "repositories" || d.Statements[0].Diagram == nil || d.Statements[0].Diagram.Rows[0].Head != "filled" {
 		t.Errorf("map %+v, diagram %+v", d.Map, d.Statements[0].Diagram)
 	}
+	// The outline beside a description, or beside none: no change asked
+	// still lays the page out.
+	srv.SetReply(`{"description": null, "outline": [{"area": "Gesamtsystem", "ids": ["s1"]}]}`)
+	if res := testClient(srv.Client()).Describe(context.Background(), "p"); res.Outcome != OutcomeOK || res.Description != nil ||
+		len(res.Outline) != 1 || res.Outline[0].IDs[0] != "s1" {
+		t.Errorf("outline without a change = %+v", res)
+	}
+	if props := descriptionFormat(true).Schema["properties"].(map[string]any); props["outline"] == nil {
+		t.Error("the project schema asks for no outline")
+	}
 	if name := schemaName(t, srv); name != DescriptionSchemaName {
 		t.Errorf("schema = %q", name)
 	}

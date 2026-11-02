@@ -283,7 +283,7 @@ func TestMarkdownAreas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(copyTS), fmt.Sprintf("    otherArea: %q,\n", otherArea)) {
+	if !strings.Contains(string(copyTS), fmt.Sprintf("  areas: {\n    otherArea: %q,\n", otherArea)) {
 		t.Errorf("strings.ts lacks the label %q for statements in no area", otherArea)
 	}
 }

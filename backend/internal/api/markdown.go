@@ -211,7 +211,7 @@ func areaHeading(area string) string {
 }
 
 // otherArea heads the statements of a kind that stand in no area: the UI's
-// S.description.otherArea, held to it by a test.
+// S.areas.otherArea, held to it by a test.
 const otherArea = "Weiteres"
 
 // writeStatement writes one statement, its name a level heading and its

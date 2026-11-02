@@ -54,10 +54,13 @@ type PatchResult struct {
 }
 
 // DescriptionResult is one project call: Description nil means no change;
-// a rewrite's Map is nil only for a project too large to draw.
+// a rewrite's Map is nil only for a project too large to draw. Outline is
+// the project page's layout, nil to keep it, given with a change or
+// without one.
 type DescriptionResult struct {
 	Call
 	Description *Description
+	Outline     []OutlineArea
 }
 
 // RepoMapResult is one map call, a repository's map or the system map
@@ -110,11 +113,13 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 	// must carry its statements, or the page would lose them all.
 	var answer *struct {
 		Description json.RawMessage `json:"description"`
+		Outline     json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &answer) || answer == nil || answer.Description == nil {
 		out.Outcome = OutcomeUnparseable
 		return out
 	}
+	out.Outline = parseOutline(answer.Outline)
 	if string(answer.Description) == "null" {
 		return out
 	}
@@ -159,11 +164,8 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 		out.Outcome = OutcomeUnparseable
 		return out
 	}
-	if outline && answer.Outline != nil && string(answer.Outline) != "null" {
-		var o []OutlineArea
-		if json.Unmarshal(answer.Outline, &o) == nil {
-			out.Outline = o
-		}
+	if outline {
+		out.Outline = parseOutline(answer.Outline)
 	}
 	if string(answer.Map) == "null" {
 		return out
@@ -178,9 +180,28 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 }
 
 func repoMapFormat() llmwire.ResponseFormat {
+	return strict(RepoMapSchemaName, map[string]any{"map": nullable(repoMapSchema()), "outline": outlineSchema()})
+}
+
+// outlineSchema is a page's layout, its areas in order with their
+// statements by id; null keeps the page as laid out.
+func outlineSchema() map[string]any {
 	outline := array(object(map[string]any{"area": str(), "ids": array(str())}))
 	outline["type"] = []any{"array", "null"}
-	return strict(RepoMapSchemaName, map[string]any{"map": nullable(repoMapSchema()), "outline": outline})
+	return outline
+}
+
+// parseOutline reads an answer's outline: nil for none, null or one off
+// its shape, which costs only itself.
+func parseOutline(raw json.RawMessage) []OutlineArea {
+	if raw == nil || string(raw) == "null" {
+		return nil
+	}
+	var o []OutlineArea
+	if json.Unmarshal(raw, &o) != nil {
+		return nil
+	}
+	return o
 }
 
 func strict(name string, properties map[string]any) llmwire.ResponseFormat {
@@ -220,5 +241,5 @@ func patchFormat(diagrams bool) llmwire.ResponseFormat {
 }
 
 func descriptionFormat(diagrams bool) llmwire.ResponseFormat {
-	return strict(DescriptionSchemaName, map[string]any{"description": projectDescription(diagrams)})
+	return strict(DescriptionSchemaName, map[string]any{"description": projectDescription(diagrams), "outline": outlineSchema()})
 }

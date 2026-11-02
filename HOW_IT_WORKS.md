@@ -896,16 +896,22 @@ in, the build in four kinds at four places (user, 2026-11-02: "a human
 would not structure a documentation like that"). Every write lays the
 page out by its areas (`baseline.Arrange`, an area where its first
 statement stands); every call that writes a statement gives it one, none
-keeping the stored one. The order inside an area is the repository map
-step's: its call, no extra one, returns an `outline` beside the map, the
-areas in reading order with their statement ids overview first, applied
-by `baseline.ApplyOutline` (an unknown or repeated id or a nameless area
-left out and logged, an unnamed statement kept in its area) and written
-in place on the current revision (`ArrangePage`), as the map is. Area and
-order are no text: never a source, never a revision (`sameStatements`
-compares by id), never a map drawn again (`MapBasis` hashes by id). A
-page with a statement in no area is asked for though its map stands, so
-a page written before areas is laid out by its next run. The UI and the
+keeping the stored one. The order inside an area is the call's that reads
+the whole page, no extra one: the repository map step's and the project
+step's each return an `outline` (the areas in reading order with their
+statement ids, overview first), applied by `baseline.ApplyOutline` (an
+unknown or repeated id or a nameless area left out and logged, an
+unnamed statement kept in its area), on a repository page in place on the
+current revision (`ArrangePage`) as the map is, on the project page in
+the revision the step writes or, with none, in place too. Area and order
+are no text: never a source, never a revision (`sameStatements` compares
+by id), never a map drawn again (`MapBasis` hashes by id). The layout
+rides on the map's due, never on a predicate of its own: `MapBasis`
+changed shape with areas, so every repository page written before them
+has its map step, and its layout, due exactly once (one paid call per
+repository on the next sweep), then only when its text changes; an
+outline that leaves a statement under no area never costs a call per
+run. A project page is laid out by its next project step. The UI and the
 Markdown export head a kind's statements by area when they span more
 than one; the rail stays the kinds.
 

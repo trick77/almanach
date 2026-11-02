@@ -306,11 +306,12 @@ func (s *Store) SetRepoMap(ctx context.Context, project, repo string, m *diagram
 	return true, nil
 }
 
-// ArrangePage is the map step's layout of a repository page: the same
-// statements in their areas and order (baseline.ApplyOutline), set on the
-// revision in place while it is the page's current one. No revision of its
-// own, as SetRepoMap: no statement's text changed. ok false, and nothing
-// written, when revisionID is no longer the page's current revision.
+// ArrangePage is a page's layout, the repository map step's or the project
+// step's: the same statements in their areas and order
+// (baseline.ApplyOutline), set on the revision in place while it is its
+// page's current one. No revision of its own, as SetRepoMap: no statement's
+// text changed. ok false, and nothing written, when revisionID is no
+// longer its page's current revision.
 func (s *Store) ArrangePage(ctx context.Context, revisionID int64, statements []Statement) (bool, error) {
 	raw, err := jsonOf(orEmptyStatements(statements))
 	if err != nil {
@@ -318,8 +319,7 @@ func (s *Store) ArrangePage(ctx context.Context, revisionID int64, statements []
 	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE revisions SET statements = ?
-		 WHERE scope = 'repository' AND id = ?
-		   AND id IN (SELECT current_revision_id FROM pages WHERE scope = 'repository')`,
+		 WHERE id = ? AND id IN (SELECT current_revision_id FROM pages)`,
 		raw, revisionID)
 	if err != nil {
 		return false, err
