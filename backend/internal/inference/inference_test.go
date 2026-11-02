@@ -152,6 +152,7 @@ func streamGateway(t *testing.T, frames []string, hang bool, idle time.Duration)
 	release := make(chan struct{})
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("x-litellm-call-id", "call-7")
 		for _, f := range frames {
 			_, _ = io.WriteString(w, "data: "+f+"\n\n")
 		}
@@ -202,6 +203,40 @@ func TestStreamCutIsNoAnswer(t *testing.T) {
 	res := streamGateway(t, []string{answerFrame}, false, time.Minute).Merge(context.Background(), MergeRequest{Prompt: "p"})
 	if res.Outcome != OutcomeError || res.Err == nil {
 		t.Fatalf("Outcome = %s, err %v, want an error", res.Outcome, res.Err)
+	}
+}
+
+// A stream cut after its usage arrived was paid for: the cost and the
+// gateway's call id stay on the failed call, never marked answered.
+func TestStreamCutAfterUsageKeepsItsCost(t *testing.T) {
+	res := streamGateway(t, []string{answerFrame,
+		`{"model": "sol", "choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost": 0.0015}}`},
+		false, time.Minute).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if res.Outcome == OutcomeOK || res.Cost.Answered {
+		t.Fatalf("Outcome = %s, cost %+v, want a failed call", res.Outcome, res.Cost)
+	}
+	if res.Cost.NanoUSD == nil || *res.Cost.NanoUSD != 1_500_000 || res.Cost.CallID != "call-7" {
+		t.Errorf("cost %+v, want the usage's 1.5 m nano-USD and the call id", res.Cost)
+	}
+	// Cut before any usage: no cost, the call id all the same.
+	res = streamGateway(t, []string{answerFrame}, false, time.Minute).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if res.Cost.NanoUSD != nil || res.Cost.CallID != "call-7" {
+		t.Errorf("cost %+v, want none and the call id", res.Cost)
+	}
+}
+
+// A refusal of the request inside an open stream is this call's, a bad
+// request as its 4xx would be; another error frame stays the gateway's.
+func TestStreamRefusalIsABadRequest(t *testing.T) {
+	refused := streamGateway(t, []string{`{"error": {"message": "too long", "type": "invalid_request_error", "code": "context_length_exceeded"}}`},
+		false, time.Minute).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if refused.Outcome != OutcomeError || !errors.Is(refused.Err, llmwire.ErrBadRequest) {
+		t.Errorf("refusal: Outcome = %s, err %v, want a bad request", refused.Outcome, refused.Err)
+	}
+	busy := streamGateway(t, []string{`{"error": {"message": "overloaded", "type": "server_error"}}`},
+		false, time.Minute).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if busy.Outcome != OutcomeError || errors.Is(busy.Err, llmwire.ErrBadRequest) {
+		t.Errorf("server error: Outcome = %s, err %v, want the gateway's", busy.Outcome, busy.Err)
 	}
 }
 

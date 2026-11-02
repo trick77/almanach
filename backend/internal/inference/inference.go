@@ -1,7 +1,7 @@
 // Package inference is the model calls: one llmwire client per profile on
-// the LiteLLM gateway, one Chat per fold or baseline step, a strict schema,
-// never streaming, no retry inside a call (the consolidation worker's hold
-// is the only retry).
+// the LiteLLM gateway, one streamed call per fold or baseline step, a
+// strict schema, no retry inside a call (the consolidation worker's hold is
+// the only retry).
 package inference
 
 import (
@@ -25,6 +25,17 @@ import (
 // ten minutes covers both, and a call that takes longer is the gateway
 // hanging. One bound for all: the worker's shutdown grace is sized on it.
 const CallTimeout = 10 * time.Minute
+
+// HeaderTimeout bounds the wait for a stream's headers: a host may open the
+// stream only once the model has a first token, which a long prompt and
+// hidden reasoning put minutes off. IdleTimeout bounds a started stream's
+// silence, reasoning deltas re-arming it: a stream that stalls ends here,
+// not at the call cap. The gateway gives up on a silent stream at 300 s
+// (its request timeout); five minutes is that silence and no more.
+const (
+	HeaderTimeout = 5 * time.Minute
+	IdleTimeout   = 5 * time.Minute
+)
 
 // Outcome says how a call ended.
 type Outcome int
@@ -87,26 +98,25 @@ func New(opt Options) (*Client, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	// Every call streams (call). The idle bound is the call cap all the
-	// same: a reasoning model may send nothing between its headers and its
-	// first token, and a host may hold the whole body back: mimo's did, and a
-	// baseline overview took 4m48s to write (2026-10-31), cut at every bound
-	// short of that. The call cap is bound enough, the merger included.
-	wire, err := llmwire.FromEnv(opt.Model, llmwire.Config{CallTimeout: CallTimeout, IdleTimeout: CallTimeout, Logger: opt.Logger, Lookup: opt.Lookup})
+	// Every call streams (call), so llmwire's 60 s header and 90 s idle
+	// defaults would cut a reasoning model before its first token: a
+	// baseline overview took 4m48s to write (2026-10-31).
+	wire, err := llmwire.FromEnv(opt.Model, llmwire.Config{CallTimeout: CallTimeout, HeaderTimeout: HeaderTimeout, IdleTimeout: IdleTimeout,
+		Logger: opt.Logger, Lookup: opt.Lookup})
 	if err != nil {
 		return nil, fmt.Errorf("inference: build client for %s: %w", opt.Model, err)
 	}
 	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log, diagrams: !opt.NoDiagrams}, nil
 }
 
-// Startup checks the profile can do what a fold needs (strict JSON-schema
+// Startup checks the profile can do what a fold needs (a stream, strict JSON-schema
 // output and, when a level is set, that level) and then asks the gateway
 // for its model list. A gateway that does not answer is a warning, not a
 // fault: it being down is no reason not to take notes, and folds retry. A
 // gateway that answers without the alias, or refuses the key, is a fault:
 // that is configuration, and every fold would fail.
 func (c *Client) Startup(ctx context.Context) (warning string, err error) {
-	p, err := c.wire.Registry().Require(c.model, llmwire.Needs{JSONSchema: true})
+	p, err := c.wire.Registry().Require(c.model, llmwire.Needs{JSONSchema: true, Streaming: true})
 	if err != nil {
 		return "", fmt.Errorf("inference: model %q: %w", c.model, err)
 	}
@@ -338,10 +348,12 @@ type Call struct {
 
 // call is one streamed Chat with a strict schema, no retry, the stream read
 // to its end and the answer assembled. Streamed, so the connection carries
-// bytes from the first token on: a host in between that gave up on a
-// non-streamed call waiting for its headers cut every long project step at
-// 300 s (2026-11-02). The content is the answer to parse when the outcome is
-// ok. A stream cut after its usage arrived was paid for: its cost is kept.
+// bytes from the first token on: the gateway's request timeout (300 s) cut
+// every long non-streamed project step, which sends nothing until the whole
+// answer is written (2026-11-02). The content is the answer to parse when
+// the outcome is ok. A failed stream keeps the gateway's call id (what
+// matches it to the gateway's log) and, cut after its usage arrived, what
+// it was paid.
 func (c *Client) call(ctx context.Context, prompt string, format llmwire.ResponseFormat) (string, Call) {
 	stream, _, err := c.wire.ChatStream(ctx, llmwire.ChatRequest{
 		Model:          c.model,
@@ -356,12 +368,15 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 	res, err := stream.Collect(nil)
 	if err != nil {
 		out := failed(err)
-		if n, ok := res.Usage.Total(); ok && n > 0 {
-			out.Cost = c.costFrom(res)
+		out.Cost = c.costFrom(res)
+		out.Cost.Answered = false
+		if n, ok := res.Usage.Total(); !ok || n == 0 {
+			out.Cost.NanoUSD = nil
 		}
 		return "", out
 	}
 	out := Call{Cost: c.costFrom(res)}
+	out.Cost.Answered = true
 	if out.Cost.NanoUSD == nil {
 		c.logUnpriced(res.Gateway.CallID, stream.Warnings())
 	}
@@ -377,6 +392,10 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 
 // failed is a call that got no answer: timed out when a bound fired (the
 // whole call's, the headers', a stream gone silent), an error otherwise.
+// A refusal of the request inside an open stream (an error frame after the
+// 200, which llmwire classes upstream) is this call's, as the same refusal
+// as a 4xx would be: marked a bad request, so the worker does not pay for
+// it again and again.
 func failed(err error) Call {
 	out := Call{Outcome: OutcomeError, Err: err}
 	for _, bound := range []error{llmwire.ErrCallCap, llmwire.ErrNoResponseHeaders, llmwire.ErrStreamIdle, context.DeadlineExceeded} {
@@ -384,7 +403,17 @@ func failed(err error) Call {
 			out.Outcome = OutcomeTimedOut
 		}
 	}
+	var api *llmwire.APIError
+	if errors.As(err, &api) && api.StatusCode == 0 && refusal(api) {
+		out.Err = fmt.Errorf("%w: %w", llmwire.ErrBadRequest, err)
+	}
 	return out
+}
+
+// refusal reports an in-stream error that refuses the request itself (too
+// long, a schema or parameter it will not take), not the gateway's day.
+func refusal(e *llmwire.APIError) bool {
+	return e.Type == "invalid_request_error" || e.Code == "context_length_exceeded" || e.Param != ""
 }
 
 // logUnpriced says why an answered call has no cost: llmwire's reason is
@@ -430,16 +459,13 @@ func parse(content string, dst any) bool {
 	return json.Unmarshal([]byte(content), dst) == nil
 }
 
-// costFrom is a stream's usage and cost. The model is the deployment the
-// gateway says ran, else the profile asked for: a stream carries no model
-// of its own.
+// costFrom is a stream's usage, cost and call id; Answered is the caller's
+// to say. The model is the profile asked for, on either route: a stream
+// carries no model of its own, and a gateway's deployment name would put
+// one model in the ledger under a second name.
 func (c *Client) costFrom(res llmwire.StreamResult) CallCost {
-	model := res.Gateway.ModelName
-	if model == "" {
-		model = c.model
-	}
 	u := res.Usage
-	out := CallCost{Model: model, CallID: res.Gateway.CallID, Answered: true,
+	out := CallCost{Model: c.model, CallID: res.Gateway.CallID,
 		InputTokens: deref(u.Input.Total), CachedTokens: deref(u.Input.CacheRead), OutputTokens: deref(u.Output.Total)}
 	// Reported is the gateway's charge, on a stream only with LiteLLM's
 	// include_cost_in_streaming_usage; FromTable is llmwire's list rate, the

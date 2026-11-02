@@ -39,8 +39,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:
   worker holds, note kept, ≤ `maxFoldAttempts`: none blocks queue forever. Failed mark pauses drain (else one paid call per lap).
-- One `ChatStream` per call, strict schema, no in-call retry. Streamed: a host cut non-streamed
-  calls at 300 s waiting for headers (user, 2026-11-02). Models = llmwire profile ids in config.
+- One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
+  schema, no in-call retry. Models = llmwire profile ids in config.
 - Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.
 - SQLite: `serve` never migrates; never edit applied migration (0001 squashed once, DB dropped,
   2026-11-01). Probes exec.
