@@ -37,7 +37,7 @@ function pad(n: number): string {
 
 /** money shows a USD string as the API sends it (3 decimals) at 2,
  *  rounded half up on the digits, never through a float, with the sign in
- *  front; absent means the gateway did not price the call. */
+ *  front; absent means the call was unpriced. */
 export function money(usd: string | undefined | null): string {
   if (usd === undefined || usd === null || usd === "") return S.note.unpriced;
   const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(usd);

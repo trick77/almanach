@@ -345,13 +345,6 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		Messages:       []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(prompt)},
 		ResponseFormat: format,
 	})
-	// Why a call went unpriced is said only here: logged, or the cost is
-	// missing with nothing naming the cause.
-	for _, w := range warnings {
-		if w.Feature == "cost" {
-			c.log.Warn("call unpriced", "model", c.model, "reason", w.Details)
-		}
-	}
 	if err != nil {
 		out := Call{Outcome: OutcomeError, Err: err}
 		if errors.Is(err, llmwire.ErrCallCap) || errors.Is(err, llmwire.ErrNoResponseHeaders) || errors.Is(err, context.DeadlineExceeded) {
@@ -360,6 +353,9 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		return "", out
 	}
 	out := Call{Cost: costFrom(resp)}
+	if out.Cost.NanoUSD == nil {
+		c.logUnpriced(resp.Gateway.CallID, warnings)
+	}
 	if resp.FinishReason == "length" {
 		// Cut by the model's output cap, so the JSON is incomplete: say so,
 		// rather than reporting the cut as an answer off the schema.
@@ -368,6 +364,24 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		return "", out
 	}
 	return resp.Content, out
+}
+
+// logUnpriced says why an answered call has no cost: llmwire's reason is
+// said only in its warnings, and without this line the cost is missing with
+// nothing naming the cause. Keyed on the cost, not on the warning, so a
+// reason llmwire files elsewhere still leaves a line.
+func (c *Client) logUnpriced(callID string, warnings []llmwire.Warning) {
+	var reasons []string
+	for _, w := range warnings {
+		if w.Feature == "cost" {
+			reasons = append(reasons, w.Details)
+		}
+	}
+	reason := strings.Join(reasons, "; ")
+	if reason == "" {
+		reason = "none given"
+	}
+	c.log.Warn("call unpriced", "model", c.model, "call_id", callID, "reason", reason)
 }
 
 // ParseMerge reads the model's answer. A bare null is a non-answer.

@@ -301,8 +301,8 @@ func (s *Store) SetRepoMap(ctx context.Context, project, repo string, m *diagram
 }
 
 // RepoRuns is what the source page shows of one repository's runs: the
-// newest run, what the gateway priced of its calls (nil when it priced
-// none), the commit last documented and how many of the newest runs in a
+// newest run, what its priced calls cost (nil when none was priced), the
+// commit last documented and how many of the newest runs in a
 // row were the poller's retries (RunStreak.Retried).
 type RepoRuns struct {
 	Last         BaselineRun

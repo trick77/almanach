@@ -1372,7 +1372,8 @@ baseline step's patch never is: its bad items are left out one by one (see
   appears for a row that predates the delivery's call, which the current
   ingest never produces.
 - Money: nano-USD integers in the store; on the wire a 3-decimal USD
-  string rounded half up, or omitted when the call was unpriced. Never a float, never summed across `note_calls` and `llm_calls`.
+  string rounded half up, or omitted when the call was unpriced. Never a
+  float, never summed across `note_calls` and `llm_calls`.
 - `files` and every array are `[]` on the wire, never `null`.
 - In oidc mode the reader (kit's username: preferred username, else
   email, else subject) is written to the access

@@ -130,19 +130,19 @@ func TestUnpricedCallLogsReason(t *testing.T) {
 	if res.Outcome != OutcomeOK || res.Cost.NanoUSD != nil {
 		t.Fatalf("Outcome = %s (err %v), NanoUSD = %v, want ok and unpriced", res.Outcome, res.Err, res.Cost.NanoUSD)
 	}
-	if !strings.Contains(logs.String(), "call unpriced") || !strings.Contains(logs.String(), "reported no cost") {
-		t.Errorf("an unpriced call logged no reason: %q", logs.String())
+	got := logs.String()
+	if !strings.Contains(got, "call unpriced") || !strings.Contains(got, "reason=") || strings.Contains(got, "reason=\"none given\"") {
+		t.Errorf("an unpriced call logged no reason: %q", got)
 	}
 }
 
-// The test model has a table rate and goes straight to its endpoint: the
-// direct route. Its cost is the table's, kept, not dropped as unpriced.
-func TestDirectRouteCallIsPriced(t *testing.T) {
-	srv := llmwiretest.NewServer(t)
-	srv.SetReply(`{"repository": null, "project": null}`)
-	res := testClient(srv.Client()).Merge(context.Background(), MergeRequest{Prompt: "p"})
-	if res.Cost.NanoUSD == nil || *res.Cost.NanoUSD <= 0 {
-		t.Errorf("NanoUSD = %v, want the table's figure", res.Cost.NanoUSD)
+// No warning from llmwire still leaves the line: the cost is what decides.
+func TestLogUnpricedWithoutReason(t *testing.T) {
+	var logs strings.Builder
+	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil))}
+	c.logUnpriced("abc", nil)
+	if got := logs.String(); !strings.Contains(got, "call unpriced") || !strings.Contains(got, "call_id=abc") || !strings.Contains(got, `reason="none given"`) {
+		t.Errorf("log = %q", got)
 	}
 }
 

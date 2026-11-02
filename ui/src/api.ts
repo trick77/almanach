@@ -344,7 +344,7 @@ export interface Baseline {
   skipped: number;
   /** The parts the run left out, in the order it hit them. */
   skipped_parts: SkippedPart[];
-  /** 3 decimals; absent when the gateway priced none of its calls. */
+  /** 3 decimals; absent when none of its calls was priced. */
   cost_usd?: string;
   error: string;
   queued_at: string;
