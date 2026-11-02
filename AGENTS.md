@@ -30,8 +30,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   read (rows verbatim), `lang.Prose`/`Laid`. Shapes need a value's mark, prose stays. New shape → test.
 - Description = documentation, no one-liners: statement as long as subject needs, no
   sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
-  (user, 2026-11-01); bad path: off file list. Same rewrite = no revision. Flow:
-  self/repeated edges dropped first.
+  (user, 2026-11-01); bad path: off file list. Same rewrite = no revision.
 - Provenance is code's: `sources` carried by id, current PR appended on text change. Bad item
   (unknown/repeated id, bad kind, empty): merge (whole page) rejected; step's patch never, item
   left out, logged, stored kept (user, 2026-11-01). Page without statements: edits taken as new.
@@ -73,3 +72,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   derived: no project call/page (`projectStands`).
 - Deps code's: manifests depth ≤1; edges joined at read, never stored; ambiguous = no edge; 1
   clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
+- Flow: self/repeated edges dropped first. System map runtime+prod only (user, 2026-11-02): model's
+  `layer`/`stage` tags, `RuntimeOnly` filters.

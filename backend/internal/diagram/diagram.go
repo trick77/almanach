@@ -25,8 +25,9 @@ const (
 // these): the one place the backend keeps them. A statement's flow holds
 // DrawMaxNodes and DrawMaxEdges; a sequence and an entity model are wider
 // per item and stop sooner. A map, the system map or a repository's, holds
-// MapMaxNodes and MapMaxEdges: every external system it names is its own
-// node, never merged into one (user, 2026-11-01), and the UI lays a map out
+// MapMaxNodes and MapMaxEdges: every external system it shows is its own
+// node, never merged into one (user, 2026-11-01), the system map's only
+// those at runtime, in production (user, 2026-11-02), and the UI lays a map out
 // in rows that grow downwards (ui/src/mapLayout.ts), not in ELK's layers.
 // The edges grow with the nodes, 24/16 of them.
 const (
@@ -56,23 +57,45 @@ var (
 	KeyMarks   = []string{"PK", "FK", "UK"}
 )
 
-// The system map's zones, the only four it may have.
+// The system map shows the system at runtime, in production (user,
+// 2026-11-02): the model tags each arrow with its layer and each box with
+// its stage, code keeps the runtime and library arrows and the boxes not of
+// another stage (baseline.RuntimeOnly). Code never reads a stage's name:
+// whatever a repository calls production is the model's to tell.
+const (
+	LayerRuntime    = "runtime"
+	LayerLibrary    = "library"
+	LayerBuild      = "build"
+	LayerDeploy     = "deploy"
+	LayerMonitoring = "monitoring"
+
+	StageProduction = "production"
+	StageOther      = "other"
+	StageNone       = "none"
+)
+
+// Layers and Stages are the system map's tags, the schema's and the
+// check's.
+var (
+	Layers = []string{LayerRuntime, LayerLibrary, LayerBuild, LayerDeploy, LayerMonitoring}
+	Stages = []string{StageProduction, StageOther, StageNone}
+)
+
+// The system map's zones, the only five it may have.
 const (
 	ZoneClients      = "clients"
+	ZoneEntry        = "entry"
 	ZoneRepositories = "repositories"
 	ZoneStores       = "stores"
 	ZoneExternal     = "external"
 )
 
-// MapZones is the four in the order the prompt names them.
-var MapZones = []string{ZoneClients, ZoneRepositories, ZoneStores, ZoneExternal}
+// MapZones is the five in the order the prompt names them.
+var MapZones = []string{ZoneClients, ZoneEntry, ZoneRepositories, ZoneStores, ZoneExternal}
 
-// A repository map's own zones: where the repository is entered, and its
-// parts. Its stores and external systems share the system map's ids.
-const (
-	ZoneEntry = "entry"
-	ZoneParts = "parts"
-)
+// ZoneParts is a repository map's own zone, its parts. Its entry, stores
+// and external systems share the system map's ids.
+const ZoneParts = "parts"
 
 // RepoMapZones is the repository map's four in the order the prompt names
 // them.
@@ -110,21 +133,25 @@ type Diagram struct {
 }
 
 // Node is a flow's box. Shape: pill, step, decision, start, stop. Zone ""
-// is none.
+// is none. Stage: the system map's only, one of Stages; "" on every other
+// flow and on a map stored before it.
 type Node struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Shape string `json:"shape"`
 	Zone  string `json:"zone,omitempty"`
+	Stage string `json:"stage,omitempty"`
 }
 
-// Edge is a flow's arrow. Head: end, both, none.
+// Edge is a flow's arrow. Head: end, both, none. Layer: the system map's
+// only, one of Layers; "" on every other flow and on a map stored before it.
 type Edge struct {
 	From   string `json:"from"`
 	To     string `json:"to"`
 	Label  string `json:"label"`
 	Dashed bool   `json:"dashed"`
 	Head   string `json:"head"`
+	Layer  string `json:"layer,omitempty"`
 }
 
 // Zone is a titled frame around some of a flow's nodes.
@@ -304,11 +331,21 @@ func Equal(a, b *Diagram) bool {
 // canonical is a diagram with every list whose order says nothing sorted:
 // a flow's nodes and zones by id, its edges by their ends and label, an
 // entity model's tables by id and relationships likewise. A table's
-// fields and a sequence's rows keep their order: it is what they say.
+// fields and a sequence's rows keep their order: it is what they say. The
+// system map's stage and layer are left out: what is left of the map after
+// the filter is drawn the same whatever its tags, so a retag is no change
+// (and a map stored before the tags no revision).
 func canonical(d Diagram) Diagram {
 	d.Nodes = sorted(d.Nodes, func(n Node) string { return n.ID })
 	d.Zones = sorted(d.Zones, func(z Zone) string { return z.ID })
 	d.Edges = sorted(d.Edges, func(e Edge) string { return e.From + "\x00" + e.To + "\x00" + e.Label })
+	// On the sorted copies: the caller's lists keep their tags.
+	for i := range d.Nodes {
+		d.Nodes[i].Stage = ""
+	}
+	for i := range d.Edges {
+		d.Edges[i].Layer = ""
+	}
 	d.Entities = sorted(d.Entities, func(e Entity) string { return e.ID })
 	d.Rels = sorted(d.Rels, func(r Rel) string { return r.From + "\x00" + r.To + "\x00" + r.Label })
 	return d

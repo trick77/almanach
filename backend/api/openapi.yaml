@@ -1851,6 +1851,14 @@ components:
               zone:
                 type: string
                 description: The id of the zone it sits in; absent for none.
+              stage:
+                type: string
+                enum: [production, other, none]
+                description: >-
+                  The system map's only, absent on a map stored before it: the
+                  stage of the system it shows. A box of another stage outside
+                  the repositories zone is never served; it is taken out before
+                  the map is stored. A repository is kept whatever its stage.
         edges:
           type: array
           items:
@@ -1868,6 +1876,14 @@ components:
               head:
                 type: string
                 enum: [end, both, none]
+              layer:
+                type: string
+                enum: [runtime, library, build, deploy, monitoring]
+                description: >-
+                  The system map's only: what the arrow is. A map drawn with
+                  the tags serves runtime and library arrows only, the others
+                  taken out before it is stored. A map stored before the tags
+                  carries none and is served as it was drawn.
         zones:
           type: array
           items:
@@ -2118,8 +2134,9 @@ components:
             - type: "null"
         map:
           description: >-
-            The architecture overview of the current project revision: a flow whose
-            zones are clients, repositories, stores and external, a
+            The architecture overview of the current project revision, the
+            system at runtime in production: a flow whose zones are clients,
+            entry, repositories, stores and external, a
             repository node's id its slug. Null for a project too large for
             one, and before a baseline project
             step drew one.

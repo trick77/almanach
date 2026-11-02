@@ -1448,7 +1448,7 @@ func (w *Worker) revisionMap(ctx context.Context, r *store.BaselineRun, page sto
 		w.log.WarnContext(ctx, at+": none returned, the stored one kept")
 		return w.carriedMap(ctx, page, slugs), nil, nil
 	}
-	drawn, why := w.projectMapOf(ctx, proposed, slugs)
+	drawn, why, draft := w.projectMapOf(ctx, proposed, slugs)
 	if why == "" {
 		return drawn, nil, nil
 	}
@@ -1460,24 +1460,38 @@ func (w *Worker) revisionMap(ctx context.Context, r *store.BaselineRun, page sto
 		w.log.WarnContext(ctx, at+": not asked again, no call to spare, the stored one kept")
 		return w.asStored(ctx, page, slugs), nil, nil
 	}
-	return w.asStored(ctx, page, slugs), &mapRetry{Draft: proposed, Why: why, Tries: 1}, nil
+	return w.asStored(ctx, page, slugs), &mapRetry{Draft: draft, Why: why, Tries: 1}, nil
 }
 
 // projectMapOf is a proposed system map repaired and checked: its self and
-// repeated edges and its departed repositories out, its repository nodes
-// labelled by slug, held to the map's rules and caps. A refusal is logged
-// with the map's labels by zone.
-func (w *Worker) projectMapOf(ctx context.Context, proposed *diagram.Diagram, slugs []string) (*diagram.Diagram, string) {
+// repeated edges, what it shows of the build, the deployment, the
+// monitoring and the other stages, and its departed repositories out, its
+// repository nodes labelled by slug, held to the map's rules and caps. A
+// refusal is logged with the map's labels by zone and returns the draft as
+// checked, the one the reason counts, for the retry to show.
+func (w *Worker) projectMapOf(ctx context.Context, proposed *diagram.Diagram, slugs []string) (*diagram.Diagram, string, *diagram.Diagram) {
 	at := "baseline: " + projectLabel + " map"
 	repaired, dropped := baseline.RepairEdges(proposed)
 	if len(dropped) > 0 {
 		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
 	}
-	drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, repaired, slugs)), slugs, baseline.MapCaps)
+	runtime := w.runtimeOnly(ctx, w.withoutDeparted(ctx, repaired, slugs))
+	drawn, why := baseline.CheckMap(baseline.LabelRepos(runtime), slugs, baseline.MapCaps)
 	if why != "" {
-		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(proposed)))
+		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(runtime)))
+		return nil, why, runtime
 	}
-	return drawn, why
+	return drawn, "", nil
+}
+
+// runtimeOnly is RuntimeOnly with its log line, after the departed
+// repositories are out: a box only they talked to goes too.
+func (w *Worker) runtimeOnly(ctx context.Context, m *diagram.Diagram) *diagram.Diagram {
+	kept, dropped := baseline.RuntimeOnly(m)
+	if len(dropped) > 0 {
+		w.log.InfoContext(ctx, "baseline: "+projectLabel+" map: not the system at runtime in production, left out: "+strings.Join(dropped, ", "))
+	}
+	return kept
 }
 
 // asStored is the system map as stored, its departed repositories out:
@@ -1561,10 +1575,10 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if res.Map == nil {
 		return cut("none returned")
 	}
-	m, why := w.projectMapOf(ctx, res.Map, slugs(repos))
+	m, why, draft := w.projectMapOf(ctx, res.Map, slugs(repos))
 	if why != "" {
 		if retry.Tries+1 < 1+mapRetries {
-			plan.ProjectMap = &mapRetry{Draft: res.Map, Why: why, Tries: retry.Tries + 1}
+			plan.ProjectMap = &mapRetry{Draft: draft, Why: why, Tries: retry.Tries + 1}
 			if err := encodeInto(r, plan); err != nil {
 				return err
 			}
@@ -1656,7 +1670,9 @@ func (w *Worker) carriedMap(ctx context.Context, page store.Page, slugs []string
 	}
 	// Checked again only for what the trim may break: a map whose last
 	// repository left holds nothing of the project, and an emptied zone goes.
-	carried, why := baseline.CheckMap(w.withoutDeparted(ctx, page.Map, slugs), slugs, baseline.MapCaps)
+	// The filter as on a new map, so a box only a departed repository talked
+	// to goes here too.
+	carried, why := baseline.CheckMap(w.runtimeOnly(ctx, w.withoutDeparted(ctx, page.Map, slugs)), slugs, baseline.MapCaps)
 	if why != "" {
 		return diagram.Sentinel()
 	}

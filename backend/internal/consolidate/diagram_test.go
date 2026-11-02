@@ -555,6 +555,21 @@ func TestRun_ProjectMap(t *testing.T) {
 		t.Errorf("departed slug: revisions = %+v, want the map as stored, no revision", projectRevisions(x))
 	}
 
+	// The build, the monitoring and another stage are taken out by their
+	// tags: what is left is the map as stored, so no revision.
+	busy := drawnMap("svc")
+	busy.Nodes = append(busy.Nodes,
+		diagram.Node{ID: "ci", Label: "Build-Server", Shape: "step", Zone: "external", Stage: diagram.StageNone},
+		diagram.Node{ID: "metrics", Label: "Metriken", Shape: "step", Zone: "external", Stage: diagram.StageNone},
+		diagram.Node{ID: "pg-test", Label: "PostgreSQL Test", Shape: "step", Zone: "stores", Stage: diagram.StageOther})
+	busy.Edges = append(busy.Edges,
+		diagram.Edge{From: "ci", To: "svc", Label: "HTTP: Build", Head: "end", Layer: diagram.LayerBuild},
+		diagram.Edge{From: "metrics", To: "svc", Label: "HTTP: Metriken", Head: "end", Layer: diagram.LayerMonitoring},
+		diagram.Edge{From: "svc", To: "pg-test", Label: "DB", Head: "end", Layer: diagram.LayerRuntime})
+	if x := project(busy); len(projectRevisions(x)) != 0 {
+		t.Errorf("build, monitoring, test stage: revisions = %+v, want them left out, the map as stored", projectRevisions(x))
+	}
+
 	if revs := projectRevisions(project(drawnMap("svc"))); len(revs) != 0 {
 		t.Errorf("same map, same text: revisions = %+v, want none", revs)
 	}
@@ -566,7 +581,9 @@ func TestRun_ProjectMap(t *testing.T) {
 	// 13 nodes: over the statement diagrams' cap (12), within the drawing's.
 	wide := drawnMap("svc", "portal")
 	for i := range 9 {
-		wide.Nodes = append(wide.Nodes, diagram.Node{ID: fmt.Sprintf("x%d", i), Label: "Extern", Shape: "step", Zone: "external"})
+		id := fmt.Sprintf("x%d", i)
+		wide.Nodes = append(wide.Nodes, diagram.Node{ID: id, Label: "Extern", Shape: "step", Zone: "external"})
+		wide.Edges = append(wide.Edges, diagram.Edge{From: "svc", To: id, Label: "HTTP", Head: "end"})
 	}
 	if revs := projectRevisions(project(wide)); len(revs) != 1 || len(revs[0].Map.Nodes) != 13 {
 		t.Errorf("13-node map: revisions = %+v, want it drawn", revs)
@@ -631,6 +648,9 @@ func TestRun_MapSentinel(t *testing.T) {
 func TestRun_CarriedMapDropsDeparted(t *testing.T) {
 	stored := drawnMap("svc", "gone")
 	stored.Edges = append(stored.Edges, diagram.Edge{From: "gone", To: "pg", Label: "DB", Head: "end"})
+	// A box only the departed repository talked to goes with it.
+	stored.Nodes = append(stored.Nodes, diagram.Node{ID: "idp", Label: "Login", Shape: "step", Zone: "external"})
+	stored.Edges = append(stored.Edges, diagram.Edge{From: "gone", To: "idp", Label: "HTTP", Head: "end"})
 	want := drawnMap("svc")
 	for name, answer := range map[string]*inference.Description{
 		"null map":    {Summary: "Werkzeuge, neu.", Statements: []inference.Statement{}},

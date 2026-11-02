@@ -117,7 +117,8 @@ export interface ProjectDetail {
    *  description and map are null and none is expected. */
   single: boolean;
   description: Description | null;
-  /** The architecture overview: zones clients, repositories, stores and external; a
+  /** The architecture overview, the system at runtime in production: zones
+   *  clients, entry, repositories, stores and external; a
    *  repository node's id is its slug. null before the first baseline
    *  project step wrote one. */
   map: FlowIR | null;

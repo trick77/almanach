@@ -48,6 +48,8 @@ var (
 	directions = ir.Directions
 	shapes     = ir.Shapes
 	heads      = ir.Heads
+	layers     = ir.Layers
+	stages     = ir.Stages
 	seqLines   = ir.SeqLines
 	seqHeads   = ir.SeqHeads
 	sides      = ir.Sides
@@ -69,7 +71,7 @@ func CheckDiagram(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 	}
 	switch d.Kind {
 	case ir.KindFlow:
-		return checkFlow(d, caps)
+		return checkFlow(d, caps, false)
 	case ir.KindSequence:
 		return checkSequence(d, caps)
 	case ir.KindER:
@@ -79,7 +81,7 @@ func CheckDiagram(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 }
 
 // CheckMap holds the project's system map to the rules of a flow and to its
-// own: the four zones only, every node in one, a node in the repositories
+// own: the five zones only, every node in one, a node in the repositories
 // zone named by a source repository's slug, and a slug nowhere else. A map
 // without a repository is no map of the project.
 func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, string) {
@@ -101,7 +103,7 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 	if repos == 0 {
 		return nil, "the map holds no repository"
 	}
-	return checkFlow(d, caps)
+	return checkFlow(d, caps, true)
 }
 
 // CheckRepoMap holds a repository's map to the rules of a flow and to its
@@ -111,7 +113,7 @@ func CheckRepoMap(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 	if why := checkZoned(d, ir.RepoMapZones); why != "" {
 		return nil, why
 	}
-	return checkFlow(d, caps)
+	return checkFlow(d, caps, false)
 }
 
 // checkZoned is the rules both maps share before their own: a flow, its
@@ -149,10 +151,16 @@ func RepairEdges(d *ir.Diagram) (*ir.Diagram, []string) {
 	out := *d
 	out.Edges = nil
 	var dropped []string
-	seen := map[[3]string]bool{}
+	seen := map[[4]string]bool{}
 	for _, e := range d.Edges {
-		// The label as checkFlow compares it: trimmed and Swiss.
-		key := [3]string{e.From, e.To, lang.Prose(e.Label)}
+		// The label as checkFlow compares it: trimmed and Swiss. And whether
+		// the system map keeps it: a build arrow repeating a runtime one must
+		// not take its place, RuntimeOnly takes it out after.
+		kept := ""
+		if e.Layer == ir.LayerBuild || e.Layer == ir.LayerDeploy || e.Layer == ir.LayerMonitoring {
+			kept = e.Layer
+		}
+		key := [4]string{e.From, e.To, lang.Prose(e.Label), kept}
 		if e.From == e.To || seen[key] {
 			dropped = append(dropped, e.From+" → "+e.To)
 			continue
@@ -191,29 +199,102 @@ func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
 		return nil, nil
 	}
 	gone := map[string]bool{}
-	out := *d
-	out.Nodes = nil
 	for _, n := range d.Nodes {
 		if n.Zone == ir.ZoneRepositories && !slices.Contains(slugs, n.ID) {
 			gone[n.ID] = true
-			continue
 		}
-		out.Nodes = append(out.Nodes, n)
 	}
 	if len(gone) == 0 {
 		return d, nil
 	}
-	out.Edges = nil
+	out := *d
+	out.Nodes, out.Edges = nil, nil
+	for _, n := range d.Nodes {
+		if !gone[n.ID] {
+			out.Nodes = append(out.Nodes, n)
+		}
+	}
 	for _, e := range d.Edges {
 		if !gone[e.From] && !gone[e.To] {
 			out.Edges = append(out.Edges, e)
 		}
 	}
-	names := slices.Sorted(maps.Keys(gone))
-	return &out, names
+	return &out, slices.Sorted(maps.Keys(gone))
 }
 
-func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
+// RuntimeOnly takes out of a proposed system map what the system does not
+// do at runtime, in production, by the model's tags, never by a name: a box
+// outside the repositories tagged with another stage, with its arrows (the
+// model's word that the system's production box is on the map: code cannot
+// tell two boxes are one system), an arrow of the build, the deployment or
+// the monitoring, and then every box outside the repositories left without
+// an arrow: the map shows only what the system calls at runtime, so a box
+// with no arrow says nothing (a build server drawn without its edge). A
+// repository stays, arrows or not; an untagged arrow stays; an unknown tag
+// is checkFlow's to refuse. Run after the departed repositories are out, so
+// a box they left alone goes too. What went is named, "label (why)". A
+// copy; d itself when nothing goes; nil stays nil.
+func RuntimeOnly(d *ir.Diagram) (*ir.Diagram, []string) {
+	if d == nil {
+		return nil, nil
+	}
+	// Only a box in a zone other than the repositories may go: one in no
+	// zone, or an arrow to an undeclared box, is CheckMap's to refuse, and
+	// the refusal goes back to the model.
+	label := map[string]string{}
+	other := map[string]bool{}
+	for _, n := range d.Nodes {
+		label[n.ID] = n.Label
+		other[n.ID] = droppable(n) && n.Stage == ir.StageOther
+	}
+	var dropped []string
+	var edges []ir.Edge
+	linked := map[string]bool{}
+	for _, e := range d.Edges {
+		_, from := label[e.From]
+		_, to := label[e.To]
+		why := ""
+		switch {
+		case !from || !to:
+		case other[e.From] || other[e.To]:
+			why = "to another stage"
+		case e.Layer == ir.LayerBuild || e.Layer == ir.LayerDeploy || e.Layer == ir.LayerMonitoring:
+			why = e.Layer
+		}
+		if why != "" {
+			dropped = append(dropped, label[e.From]+" → "+label[e.To]+" ("+why+")")
+			continue
+		}
+		edges = append(edges, e)
+		linked[e.From], linked[e.To] = true, true
+	}
+	var nodes []ir.Node
+	for _, n := range d.Nodes {
+		switch {
+		case other[n.ID]:
+			dropped = append(dropped, n.Label+" ("+ir.StageOther+" stage)")
+		case droppable(n) && !linked[n.ID]:
+			dropped = append(dropped, n.Label+" (no runtime arrow)")
+		default:
+			nodes = append(nodes, n)
+		}
+	}
+	if len(dropped) == 0 {
+		return d, nil
+	}
+	out := *d
+	out.Nodes, out.Edges = nodes, edges
+	return &out, dropped
+}
+
+// droppable is a box RuntimeOnly may take out: one in a zone, not a
+// repository.
+func droppable(n ir.Node) bool { return n.Zone != "" && n.Zone != ir.ZoneRepositories }
+
+// checkFlow holds a flow to the rules. tagged: the system map, whose stage
+// and layer are carried; every other flow drops them, so no tag reaches a
+// diagram RuntimeOnly never filters.
+func checkFlow(d *ir.Diagram, caps DiagramCaps, tagged bool) (*ir.Diagram, string) {
 	if !slices.Contains(directions, d.Direction) {
 		return nil, fmt.Sprintf("direction %q is neither TB nor LR", d.Direction)
 	}
@@ -248,6 +329,9 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 		if n.Zone != "" && !zones[n.Zone] {
 			return nil, fmt.Sprintf("node %q: undeclared zone %q", n.ID, n.Zone)
 		}
+		if n.Stage != "" && !slices.Contains(stages, n.Stage) {
+			return nil, fmt.Sprintf("node %q: unknown stage %q", n.ID, n.Stage)
+		}
 		used[n.Zone] = true
 		// A start or a stop is a dot: it carries no text.
 		text := ""
@@ -257,7 +341,11 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 				return nil, reason
 			}
 		}
-		out.Nodes = append(out.Nodes, ir.Node{ID: n.ID, Label: text, Shape: n.Shape, Zone: n.Zone})
+		stage := ""
+		if tagged {
+			stage = n.Stage
+		}
+		out.Nodes = append(out.Nodes, ir.Node{ID: n.ID, Label: text, Shape: n.Shape, Zone: n.Zone, Stage: stage})
 	}
 	// A zone holding no node is no zone: drawn it is an empty frame, and it
 	// would keep the flow from the layouts built for it.
@@ -273,6 +361,9 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 		if !slices.Contains(heads, e.Head) {
 			return nil, fmt.Sprintf("edge %s → %s: unknown head %q", e.From, e.To, e.Head)
 		}
+		if e.Layer != "" && !slices.Contains(layers, e.Layer) {
+			return nil, fmt.Sprintf("edge %s → %s: unknown layer %q", e.From, e.To, e.Layer)
+		}
 		text, reason := label("edge "+e.From+" → "+e.To, e.Label, false)
 		if reason != "" {
 			return nil, reason
@@ -282,7 +373,11 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 			return nil, fmt.Sprintf("edge %s → %s %q twice", e.From, e.To, text)
 		}
 		seen[key] = true
-		out.Edges = append(out.Edges, ir.Edge{From: e.From, To: e.To, Label: text, Dashed: e.Dashed, Head: e.Head})
+		layer := ""
+		if tagged {
+			layer = e.Layer
+		}
+		out.Edges = append(out.Edges, ir.Edge{From: e.From, To: e.To, Label: text, Dashed: e.Dashed, Head: e.Head, Layer: layer})
 	}
 	return out, ""
 }

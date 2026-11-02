@@ -754,13 +754,31 @@ none), and only a new or changed one meets today's caps, so lowering a
 cap never freezes a page; a page over the count may keep it, not grow.
 Every project with no more source repositories than a map holds (21,
 room left for one more node) carries an architecture overview, the project step's alone
-(`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
+(`revisions.map`): zones `clients`, `entry`, `repositories`, `stores`, `external`,
 a repository node named and labelled by a source repository's slug (code
 sets the label on a new map, whatever the model wrote, unless the slug is
 longer than a label), an edge labelled
 by how the parts talk (HTTP, event, DB, library, file), held to the
 drawing's limits. A larger project gets none, and the prompt asks for
-null. The map never costs the description: an edge pointing at its own
+null. The overview is the system at runtime, in production (user,
+2026-11-02): a configuration-as-code repository once put its build
+servers, registries, monitoring and one box per stage on it. The model
+tags each edge's `layer` (runtime, library, build, deploy, monitoring)
+and each node's `stage` (production, other, none: whatever the stage is
+called, the model's to tell); code (`baseline.RuntimeOnly`, after the
+departed repositories) takes out a node of another stage with its edges
+(the model's word that its production twin is drawn: code cannot tell
+two boxes are one system), build, deploy and monitoring edges, and then
+every node outside the repositories without an edge (a build server drawn
+edgeless too). A repository always stays; an untagged arrow (a map stored
+before the tags) stays; a box in no zone or an arrow to an undeclared box
+is left for the check to refuse. A carried map passes the same filter
+after its departed repositories, so a box only they talked to goes. A
+repeated edge counts as one only within the same keep-or-drop layer: a
+build arrow never takes a runtime one's place. A refused map is asked again with the filtered draft, the one the
+reason counts. `diagram.Equal` ignores the tags: a retag is no revision.
+Only the system map carries them; `checkFlow` drops them on any other
+flow. The map never costs the description: an edge pointing at its own
 node or repeating one before it is taken out (one "almanach → almanach"
 edge refused a whole map once), a repository that left the
 project is taken out of it first. A map that still breaks a rule leaves
