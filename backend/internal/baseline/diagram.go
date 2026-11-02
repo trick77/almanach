@@ -151,10 +151,16 @@ func RepairEdges(d *ir.Diagram) (*ir.Diagram, []string) {
 	out := *d
 	out.Edges = nil
 	var dropped []string
-	seen := map[[3]string]bool{}
+	seen := map[[4]string]bool{}
 	for _, e := range d.Edges {
-		// The label as checkFlow compares it: trimmed and Swiss.
-		key := [3]string{e.From, e.To, lang.Prose(e.Label)}
+		// The label as checkFlow compares it: trimmed and Swiss. And whether
+		// the system map keeps it: a build arrow repeating a runtime one must
+		// not take its place, RuntimeOnly takes it out after.
+		kept := ""
+		if e.Layer == ir.LayerBuild || e.Layer == ir.LayerDeploy || e.Layer == ir.LayerMonitoring {
+			kept = e.Layer
+		}
+		key := [4]string{e.From, e.To, lang.Prose(e.Label), kept}
 		if e.From == e.To || seen[key] {
 			dropped = append(dropped, e.From+" → "+e.To)
 			continue
@@ -201,14 +207,6 @@ func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
 	if len(gone) == 0 {
 		return d, nil
 	}
-	out, _ := without(d, gone)
-	return out, slices.Sorted(maps.Keys(gone))
-}
-
-// without is a copy of a flow with the nodes gone names taken out, and with
-// them every edge touching one, returned as cut. The caller's lists are left
-// as they were.
-func without(d *ir.Diagram, gone map[string]bool) (*ir.Diagram, []ir.Edge) {
 	out := *d
 	out.Nodes, out.Edges = nil, nil
 	for _, n := range d.Nodes {
@@ -216,15 +214,12 @@ func without(d *ir.Diagram, gone map[string]bool) (*ir.Diagram, []ir.Edge) {
 			out.Nodes = append(out.Nodes, n)
 		}
 	}
-	var cut []ir.Edge
 	for _, e := range d.Edges {
-		if gone[e.From] || gone[e.To] {
-			cut = append(cut, e)
-			continue
+		if !gone[e.From] && !gone[e.To] {
+			out.Edges = append(out.Edges, e)
 		}
-		out.Edges = append(out.Edges, e)
 	}
-	return &out, cut
+	return &out, slices.Sorted(maps.Keys(gone))
 }
 
 // RuntimeOnly takes out of a proposed system map what the system does not
@@ -243,48 +238,58 @@ func RuntimeOnly(d *ir.Diagram) (*ir.Diagram, []string) {
 	if d == nil {
 		return nil, nil
 	}
+	// Only a box in a zone other than the repositories may go: one in no
+	// zone, or an arrow to an undeclared box, is CheckMap's to refuse, and
+	// the refusal goes back to the model.
 	label := map[string]string{}
 	other := map[string]bool{}
-	var dropped []string
 	for _, n := range d.Nodes {
 		label[n.ID] = n.Label
-		if n.Zone != ir.ZoneRepositories && n.Stage == ir.StageOther {
-			other[n.ID] = true
-			dropped = append(dropped, n.Label+" ("+ir.StageOther+" stage)")
-		}
+		other[n.ID] = droppable(n) && n.Stage == ir.StageOther
 	}
-	arrow := func(e ir.Edge) string { return label[e.From] + " → " + label[e.To] }
-	out, cut := without(d, other)
-	for _, e := range cut {
-		dropped = append(dropped, arrow(e)+" (to another stage)")
-	}
+	var dropped []string
 	var edges []ir.Edge
-	for _, e := range out.Edges {
-		switch e.Layer {
-		case ir.LayerBuild, ir.LayerDeploy, ir.LayerMonitoring:
-			dropped = append(dropped, arrow(e)+" ("+e.Layer+")")
+	linked := map[string]bool{}
+	for _, e := range d.Edges {
+		_, from := label[e.From]
+		_, to := label[e.To]
+		why := ""
+		switch {
+		case !from || !to:
+		case other[e.From] || other[e.To]:
+			why = "to another stage"
+		case e.Layer == ir.LayerBuild || e.Layer == ir.LayerDeploy || e.Layer == ir.LayerMonitoring:
+			why = e.Layer
+		}
+		if why != "" {
+			dropped = append(dropped, label[e.From]+" → "+label[e.To]+" ("+why+")")
 			continue
 		}
 		edges = append(edges, e)
-	}
-	out.Edges = edges
-	linked := map[string]bool{}
-	for _, e := range edges {
 		linked[e.From], linked[e.To] = true, true
 	}
-	alone := map[string]bool{}
-	for _, n := range out.Nodes {
-		if n.Zone != ir.ZoneRepositories && !linked[n.ID] {
-			alone[n.ID] = true
+	var nodes []ir.Node
+	for _, n := range d.Nodes {
+		switch {
+		case other[n.ID]:
+			dropped = append(dropped, n.Label+" ("+ir.StageOther+" stage)")
+		case droppable(n) && !linked[n.ID]:
 			dropped = append(dropped, n.Label+" (no runtime arrow)")
+		default:
+			nodes = append(nodes, n)
 		}
 	}
 	if len(dropped) == 0 {
 		return d, nil
 	}
-	out, _ = without(out, alone)
-	return out, dropped
+	out := *d
+	out.Nodes, out.Edges = nodes, edges
+	return &out, dropped
 }
+
+// droppable is a box RuntimeOnly may take out: one in a zone, not a
+// repository.
+func droppable(n ir.Node) bool { return n.Zone != "" && n.Zone != ir.ZoneRepositories }
 
 // checkFlow holds a flow to the rules. tagged: the system map, whose stage
 // and layer are carried; every other flow drops them, so no tag reaches a

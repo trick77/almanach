@@ -28,7 +28,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Swiss German (`lang.Prose` on model prose, never paths), generic masculine, no Eszett.
 - Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
   read (rows verbatim), `lang.Prose`/`Laid`. Shapes need a value's mark, prose stays. New shape → test.
-- Description = documentation, no one-liners, no sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
+- Description = documentation, no one-liners: statement as long as subject needs, no
+  sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
   (user, 2026-11-01); bad path: off file list. Same rewrite = no revision.
 - Provenance is code's: `sources` carried by id, current PR appended on text change. Bad item
   (unknown/repeated id, bad kind, empty): merge (whole page) rejected; step's patch never, item
@@ -42,16 +43,18 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   grace, then cut.
 - Startup listing: unreachable = warning, refused key = fault.
 - One `Chat` per fold, strict schema, no streaming, no in-call retry. Models = llmwire profile ids
-  in config.
+  in config, not code.
 - Money: nano-USD INTEGER, JSON 3-decimal string, no float. `llm_calls` (own), `note_calls`
   (noergler's) never summed.
 - SQLite: one file, own volume, WAL, writes BEGIN IMMEDIATE; no shared FS. `serve` never migrates;
   never edit applied migration (0001 squashed once, DB dropped, 2026-11-01). Probes exec.
-- oidc gates `/api` but login+callback; no proxy (user, 2026-10-31). Reader's name: log only.
+- oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,
+  gates nothing.
 - Project, repo = id; names only in `projects`, `repos`, `*_names`; never join on one. Name once
   used, any case, never to another; own may change case (user, 2026-11-01). Carry-over:
   `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
-- Sources: Almanach clones, noergler never indexes. git binary, never go-git (2026-10-30). Clones only at `BACKEND_REPOS_DIR/p<id>/r<id>`; segments `filepath.Rel`-checked
+- Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
+  2026-10-30). Clones only at `BACKEND_REPOS_DIR/p<id>/r<id>`; segments `filepath.Rel`-checked
   before `RemoveAll`. Clone URLs https, no creds; bare. Token: per-command `GIT_CONFIG_*` header,
   never in URL; stderr redacted; AES-GCM-sealed, not returned/logged; one origin only (static
   folder = one host, header bound to it).
@@ -68,5 +71,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   derived: no project call/page (`projectStands`).
 - Deps code's: manifests depth ≤1; edges joined at read, never stored; ambiguous = no edge; 1
   clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
-- Flow: self/repeated edges out. System map runtime+prod only (user, 2026-11-02): model's
+- Flow: self/repeated edges dropped first. System map runtime+prod only (user, 2026-11-02): model's
   `layer`/`stage` tags, `RuntimeOnly` filters.

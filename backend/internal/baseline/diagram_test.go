@@ -380,9 +380,9 @@ func TestRuntimeOnly(t *testing.T) {
 	if len(out.Edges) != 5 {
 		t.Errorf("edges = %+v, want the runtime, library and untagged five", out.Edges)
 	}
-	wantDropped := []string{"pg-test (other stage)", "api → pg-test (to another stage)",
+	wantDropped := []string{"api → pg-test (to another stage)",
 		"infra → api (deploy)", "ci → infra (build)", "metrics → api (monitoring)",
-		"ci (no runtime arrow)", "metrics (no runtime arrow)", "lonely (no runtime arrow)"}
+		"pg-test (other stage)", "ci (no runtime arrow)", "metrics (no runtime arrow)", "lonely (no runtime arrow)"}
 	if !slices.Equal(dropped, wantDropped) {
 		t.Errorf("dropped = %v, want %v", dropped, wantDropped)
 	}
@@ -403,6 +403,23 @@ func TestRuntimeOnly(t *testing.T) {
 	}
 	if d, gone := RuntimeOnly(nil); d != nil || gone != nil {
 		t.Error("nil map")
+	}
+	// A box in no zone and an arrow to an undeclared box are CheckMap's to
+	// refuse, so the model hears why: the filter leaves them.
+	malformed := mapOf(node("api", ir.ZoneRepositories), staged(node("pg-test", ""), ir.StageOther))
+	malformed.Edges = []ir.Edge{tag(edge("api", "ghost", "HTTP"), ir.LayerBuild)}
+	if same, d := RuntimeOnly(malformed); same != malformed || d != nil {
+		t.Errorf("malformed map filtered: %+v %v", same, d)
+	}
+	if _, why := CheckMap(malformed, []string{"api"}, caps); why == "" {
+		t.Error("malformed map held")
+	}
+	// A build arrow repeating a runtime one does not take its place.
+	twice := mapOf(node("api", ir.ZoneRepositories), node("reg", ir.ZoneExternal))
+	twice.Edges = []ir.Edge{tag(edge("api", "reg", "HTTP"), ir.LayerBuild), tag(edge("api", "reg", "HTTP"), ir.LayerRuntime)}
+	repaired, _ := RepairEdges(twice)
+	if kept, _ := RuntimeOnly(repaired); len(kept.Nodes) != 2 || len(kept.Edges) != 1 || kept.Edges[0].Layer != ir.LayerRuntime {
+		t.Errorf("runtime arrow lost to a repeated build arrow: %+v", kept)
 	}
 	// What is left holds as a map, its emptied zones gone, its tags carried.
 	held, why := CheckMap(out, []string{"web", "api", "infra"}, DiagramCaps{MaxNodes: 22, MaxEdges: 33})

@@ -1875,9 +1875,10 @@ components:
                 type: string
                 enum: [runtime, library, build, deploy, monitoring]
                 description: >-
-                  The system map's only, absent on a map stored before it: what
-                  the arrow is. Only runtime and library arrows are served; the
-                  others are taken out before the map is stored.
+                  The system map's only: what the arrow is. A map drawn with
+                  the tags serves runtime and library arrows only, the others
+                  taken out before it is stored. A map stored before the tags
+                  carries none and is served as it was drawn.
         zones:
           type: array
           items:

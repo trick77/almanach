@@ -1475,17 +1475,23 @@ func (w *Worker) projectMapOf(ctx context.Context, proposed *diagram.Diagram, sl
 	if len(dropped) > 0 {
 		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
 	}
-	// After the departed repositories: a box only they talked to goes too.
-	runtime, dropped := baseline.RuntimeOnly(w.withoutDeparted(ctx, repaired, slugs))
-	if len(dropped) > 0 {
-		w.log.InfoContext(ctx, at+": not the system at runtime in production, left out: "+strings.Join(dropped, ", "))
-	}
+	runtime := w.runtimeOnly(ctx, w.withoutDeparted(ctx, repaired, slugs))
 	drawn, why := baseline.CheckMap(baseline.LabelRepos(runtime), slugs, baseline.MapCaps)
 	if why != "" {
-		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(proposed)))
+		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(runtime)))
 		return nil, why, runtime
 	}
 	return drawn, "", nil
+}
+
+// runtimeOnly is RuntimeOnly with its log line, after the departed
+// repositories are out: a box only they talked to goes too.
+func (w *Worker) runtimeOnly(ctx context.Context, m *diagram.Diagram) *diagram.Diagram {
+	kept, dropped := baseline.RuntimeOnly(m)
+	if len(dropped) > 0 {
+		w.log.InfoContext(ctx, "baseline: "+projectLabel+" map: not the system at runtime in production, left out: "+strings.Join(dropped, ", "))
+	}
+	return kept
 }
 
 // asStored is the system map as stored, its departed repositories out:
@@ -1664,7 +1670,9 @@ func (w *Worker) carriedMap(ctx context.Context, page store.Page, slugs []string
 	}
 	// Checked again only for what the trim may break: a map whose last
 	// repository left holds nothing of the project, and an emptied zone goes.
-	carried, why := baseline.CheckMap(w.withoutDeparted(ctx, page.Map, slugs), slugs, baseline.MapCaps)
+	// The filter as on a new map, so a box only a departed repository talked
+	// to goes here too.
+	carried, why := baseline.CheckMap(w.runtimeOnly(ctx, w.withoutDeparted(ctx, page.Map, slugs)), slugs, baseline.MapCaps)
 	if why != "" {
 		return diagram.Sentinel()
 	}

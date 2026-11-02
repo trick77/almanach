@@ -648,6 +648,9 @@ func TestRun_MapSentinel(t *testing.T) {
 func TestRun_CarriedMapDropsDeparted(t *testing.T) {
 	stored := drawnMap("svc", "gone")
 	stored.Edges = append(stored.Edges, diagram.Edge{From: "gone", To: "pg", Label: "DB", Head: "end"})
+	// A box only the departed repository talked to goes with it.
+	stored.Nodes = append(stored.Nodes, diagram.Node{ID: "idp", Label: "Login", Shape: "step", Zone: "external"})
+	stored.Edges = append(stored.Edges, diagram.Edge{From: "gone", To: "idp", Label: "HTTP", Head: "end"})
 	want := drawnMap("svc")
 	for name, answer := range map[string]*inference.Description{
 		"null map":    {Summary: "Werkzeuge, neu.", Statements: []inference.Statement{}},

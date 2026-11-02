@@ -763,8 +763,12 @@ departed repositories) takes out a node of another stage with its edges
 (the model's word that its production twin is drawn: code cannot tell
 two boxes are one system), build, deploy and monitoring edges, and then
 every node outside the repositories without an edge (a build server drawn
-edgeless too). A repository always stays; a stored map is carried as it
-is. A refused map is asked again with the filtered draft, the one the
+edgeless too). A repository always stays; an untagged arrow (a map stored
+before the tags) stays; a box in no zone or an arrow to an undeclared box
+is left for the check to refuse. A carried map passes the same filter
+after its departed repositories, so a box only they talked to goes. A
+repeated edge counts as one only within the same keep-or-drop layer: a
+build arrow never takes a runtime one's place. A refused map is asked again with the filtered draft, the one the
 reason counts. `diagram.Equal` ignores the tags: a retag is no revision.
 Only the system map carries them; `checkFlow` drops them on any other
 flow. The map never costs the description: an edge pointing at its own
