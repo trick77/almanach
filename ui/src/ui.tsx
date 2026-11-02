@@ -72,11 +72,14 @@ export function Link({
 export function Chip({
   to,
   quiet = false,
+  row = false,
   title,
   children,
 }: {
   to: string | null;
   quiet?: boolean;
+  /** row: the chip is its rowLinked row's link, the whole row opens it. */
+  row?: boolean;
   title?: string;
   children: ReactNode;
 }) {
@@ -93,7 +96,12 @@ export function Chip({
     <Link
       to={to}
       title={title}
-      className={cls + " hover:border-accent hover:text-ink"}
+      className={
+        cls +
+        (row
+          ? " group-hover:border-accent group-hover:text-ink after:absolute after:inset-0"
+          : " hover:border-accent hover:text-ink")
+      }
     >
       {children}
     </Link>
@@ -169,6 +177,31 @@ export function Prose({
   );
 }
 
+/** codePill is a backtick-quoted identifier, every one in the app the
+ *  same: mono on a slight pill, a soft border that still reads on a row's
+ *  hover (bg-active); cloned per line when one wraps. */
+const codePill =
+  "rounded-[5px] border border-elevated-border/75 bg-active px-[0.4em] py-[0.05em] font-mono text-[0.84em] text-ink box-decoration-clone";
+
+/** Teaser is a summary read on in a list, a table cell's or a tile's:
+ *  paragraphs and items run together, no sub-heading, code spans and bold
+ *  as Doc sets them. */
+export function Teaser({ text }: { text: string }) {
+  const lines = blocks(text).flatMap((b) =>
+    b.kind === "h" ? [] : b.kind === "p" ? [b.text] : b.items,
+  );
+  return (
+    <>
+      {lines.map((t, i) => (
+        <Fragment key={i}>
+          {i > 0 && " "}
+          <Inline text={t} bold />
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 /** Inline is a line of model text with its backtick-quoted identifiers in
  *  the mono face (codeSpans): a paragraph of Prose, a statement's name.
  *  bold reads **bold** as well (runs), for Doc's laid-out text only; its
@@ -204,13 +237,7 @@ export function Inline({
         ) : (
           <Marked text={s.text} query={query} />
         );
-        const run = s.code ? (
-          <code className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink">
-            {body}
-          </code>
-        ) : (
-          body
-        );
+        const run = s.code ? <code className={codePill}>{body}</code> : body;
         return s.bold ? (
           <strong key={j} className="font-semibold text-ink">
             {run}
@@ -381,6 +408,12 @@ export const td =
   "border-b border-border-soft py-[7px] pr-2.5 align-top text-ink-dim";
 export const tdNum = td + " text-right tabular-nums whitespace-nowrap";
 export const tdMono = td + " " + mono + " whitespace-nowrap";
+/** A row that opens its subject's page, the whole row the link: rowLinked
+ *  on the <tr>, rowLink on the name's Link, a real <a> (middle click, a
+ *  copied address) whose ::after spans the row. */
+export const rowLinked = "group relative hover:bg-active";
+export const rowLink =
+  "text-ink-dim group-hover:text-ink after:absolute after:inset-0";
 
 /** Buttons, the Quellen pages' only ones: a quiet default, one primary
  *  per row, a dangerous one that only reddens on hover. */

@@ -31,6 +31,8 @@ import {
   h2,
   meta,
   page,
+  rowLink,
+  rowLinked,
   table,
   tableBox,
   td,
@@ -38,6 +40,7 @@ import {
   tdNum,
   th,
   thNum,
+  Teaser,
 } from "./ui";
 
 /** The project page's tabs by their hash: the overview first, the hub's
@@ -263,12 +266,9 @@ function Overview({
               </thead>
               <tbody>
                 {data.repos.map((r) => (
-                  <tr key={r.slug}>
+                  <tr key={r.slug} className={rowLinked}>
                     <td className={tdMono}>
-                      <Link
-                        to={repoPath(data.key, r.slug)}
-                        className="text-ink-dim hover:text-ink"
-                      >
+                      <Link to={repoPath(data.key, r.slug)} className={rowLink}>
                         {r.slug}
                       </Link>
                     </td>
@@ -278,7 +278,7 @@ function Overview({
                           {S.project.noDescription}
                         </span>
                       ) : (
-                        r.summary
+                        <Teaser text={r.summary} />
                       )}
                     </td>
                     <td className={tdNum}>{r.notes}</td>

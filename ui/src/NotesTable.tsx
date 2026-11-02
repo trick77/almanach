@@ -2,7 +2,18 @@ import type { NoteSummary } from "./api";
 import { changeLabel, changeTone, day } from "./format";
 import { notePath } from "./routing";
 import { S } from "./strings";
-import { Chip, Empty, Pill, table, tableBox, td, tdNum, th, thNum } from "./ui";
+import {
+  Chip,
+  Empty,
+  Pill,
+  rowLinked,
+  table,
+  tableBox,
+  td,
+  tdNum,
+  th,
+  thNum,
+} from "./ui";
 
 /** NotesTable lists notes: PR, title, kind, item count, posted findings,
  *  merge day. The PR key is a chip that opens the note. */
@@ -30,9 +41,9 @@ export function NotesTable({
         </thead>
         <tbody>
           {notes.map((n) => (
-            <tr key={n.pr_key}>
+            <tr key={n.pr_key} className={rowLinked}>
               <td className={td}>
-                <Chip to={notePath(projectKey, n.repo_slug, n.pr_id)}>
+                <Chip to={notePath(projectKey, n.repo_slug, n.pr_id)} row>
                   {n.pr_key}
                 </Chip>
               </td>

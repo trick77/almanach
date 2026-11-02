@@ -267,7 +267,7 @@ describe("ProjectsPage", () => {
             repo: {
               slug: "loom",
               revision: 3,
-              summary: "Ein Recherche-Agent.",
+              summary: "#### Zweck\n\nEin Recherche-Agent, `loom`.",
               notes: 0,
               last_merge: null,
             },
@@ -288,9 +288,16 @@ describe("ProjectsPage", () => {
       },
     });
     render(<ProjectsPage />);
-    const tile = (await screen.findByText("loom")).closest("a")!;
+    const tile = (await screen.findByRole("heading", { name: "loom" })).closest(
+      "a",
+    )!;
     expect(tile.getAttribute("href")).toBe("/projects/loom");
-    expect(within(tile).getByText("Ein Recherche-Agent.")).toBeInTheDocument();
+    expect(within(tile).getByText(/Ein Recherche-Agent,/)).toBeInTheDocument();
+    // Code spans as the repository table sets them, no part's title.
+    expect(
+      within(tile).getByText("loom", { selector: "code" }),
+    ).toBeInTheDocument();
+    expect(within(tile).queryByText(/Zweck/)).toBeNull();
     expect(within(tile).getByText(/Revision 3/)).toBeInTheDocument();
     expect(within(tile).getByText("llmwire")).toBeInTheDocument();
     // No headings splitting projects: one grid.
@@ -328,6 +335,36 @@ describe("ProjectPage", () => {
     expect(document.title).toContain("PAY");
     // The start tab has no hash.
     expect(window.location.hash).toBe("");
+  });
+
+  it("reads a repository's summary as the tile does: code spans, no heading", async () => {
+    serve({
+      "projects/PAY": {
+        ...project,
+        repos: [
+          {
+            slug: "pay-api",
+            revision: 5,
+            summary:
+              "#### Zweck\n\n`pay-api` nimmt Aufträge an.\n\n- prüft `limit`",
+            notes: 11,
+            last_merge: mergedAt,
+          },
+        ],
+      },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    const code = within(overview).getByText("limit");
+    expect(code.closest("code")).not.toBeNull();
+    const row = code.closest("tr")!;
+    expect(within(row).queryByText(/Zweck/)).toBeNull();
+    expect(row.textContent).not.toContain("`");
+    // The whole row opens the repository: its one link, stretched.
+    expect(row.className).toContain("relative");
+    const links = within(row).getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0]!.getAttribute("href")).toBe("/projects/PAY/repos/pay-api");
   });
 
   it("renders the description as paragraphs, the statements with chips", async () => {

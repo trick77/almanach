@@ -1,5 +1,5 @@
 import type { Dependencies, Project, Projects } from "./api";
-import { day, plain, refName } from "./format";
+import { day, refName } from "./format";
 import { projectPath } from "./routing";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
@@ -10,6 +10,7 @@ import {
   Link,
   Sep,
   Skeleton,
+  Teaser,
   column,
   h2,
   lede,
@@ -109,13 +110,7 @@ function ProjectTile({ p, links }: { p: Project; links?: Links }) {
       </div>
       {p.repo !== null && p.repo.summary !== "" && (
         <div className="mt-3 line-clamp-3 text-[13.5px] text-muted">
-          {plain(
-            // The tile reads on, no part's title in its three lines.
-            p.repo.summary
-              .split("\n\n")
-              .filter((b) => !b.startsWith("#### "))
-              .join("\n\n"),
-          )}
+          <Teaser text={p.repo.summary} />
         </div>
       )}
       {links && (links.uses.length > 0 || links.usedBy > 0) && (

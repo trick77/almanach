@@ -32,6 +32,8 @@ import {
   lede,
   mono,
   page,
+  rowLink,
+  rowLinked,
   table,
   tableBox,
   td,
@@ -113,12 +115,9 @@ function SourcesTable({ sources }: { sources: SourceSummary[] }) {
         </thead>
         <tbody>
           {sources.map((s) => (
-            <tr key={s.project_key} className="hover:bg-active">
+            <tr key={s.project_key} className={rowLinked}>
               <td className={tdMono}>
-                <Link
-                  to={sourcePath(s.project_key)}
-                  className="text-ink hover:text-accent-strong"
-                >
+                <Link to={sourcePath(s.project_key)} className={rowLink}>
                   {s.project_key}
                 </Link>
               </td>
