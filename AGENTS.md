@@ -11,7 +11,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   rongo's code; maps by `mapLayout.ts`, banded, grow down (ELK holds no rows in zones).
 - Gate = `make check`. GitHub never first to find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.
-- Fresh clone: `ship hooks` (or check/conform/init) before first push, else push skips gate.
+- Fresh clone: `ship hooks` before the first push (check, conform and init install it too); without the pre-push hook a push skips the gate.
 - Release: `gh workflow run Release`, GitHub-hosted runners only.
 - ship, kit never hand-pinned: `ship init`, kit `@latest`, Dependabot.
 - No web framework, ORM, logging lib beyond kit's.
@@ -37,14 +37,12 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:
-  worker holds, doubling backoff, note kept, attempts ≤ `maxFoldAttempts`: none blocks queue
-  forever. Failed mark pauses drain (else one paid call per lap).
+  worker holds, note kept, ≤ `maxFoldAttempts`: none blocks queue forever. Failed mark pauses drain (else one paid call per lap).
 - One `Chat` per fold, strict schema, no streaming, no in-call retry. Models = llmwire profile ids
   in config, not code.
-- Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls`
-  (noergler's) never summed.
-- SQLite: `serve` never migrates;
-  never edit applied migration (0001 squashed once, DB dropped, 2026-11-01). Probes exec.
+- Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.
+- SQLite: `serve` never migrates; never edit applied migration (0001 squashed once, DB dropped,
+  2026-11-01). Probes exec.
 - oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,
   gates nothing.
 - Project, repo = id; names only in `projects`, `repos`, `*_names`; never join on one. Name once
@@ -56,8 +54,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
   poller; repo failure on its row. Lock per clone (project removal: all); removal: lock,
   folder, then row. Run due = read from rows each cycle, never from an event.
-  UI copy: capital only if first char letter ("Bereit",
-  "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
+  UI copy: capital only if first char letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
   source key: from project URL, case-only rename.
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at
