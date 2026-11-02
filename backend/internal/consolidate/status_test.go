@@ -94,6 +94,22 @@ func TestStatus_Wait(t *testing.T) {
 	}
 }
 
+// A departure run is its one project step: to do, current, done, with its
+// call.
+func TestRunSteps_Departure(t *testing.T) {
+	raw := []byte(`{"departure":true}`)
+	for state, want := range map[string]string{store.RunQueued: StepTodo, store.RunProject: StepCurrent, store.RunDone: StepDone} {
+		r := store.BaselineRun{ID: 1, State: state, Trigger: store.TriggerDeparture, Plan: raw}
+		steps, err := RunSteps(r, []store.RunCall{{Purpose: store.PurposeProject, Outcome: "ok", CostNanoUSD: i64(5), At: mergedAt}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(steps) != 1 || steps[0].Kind != StepProject || steps[0].State != want || steps[0].Calls != 1 || *steps[0].CostNanoUSD != 5 {
+			t.Errorf("%s: steps = %+v", state, steps)
+		}
+	}
+}
+
 // A run's steps from its plan and calls: the catalogue, the overview, the
 // subjects in reading order with their files, the project and the map,
 // each done, skipped, current or to do, with its calls' time and cost.

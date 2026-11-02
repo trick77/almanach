@@ -26,6 +26,13 @@ var Describe string
 //go:embed almanach_project.txt
 var Project string
 
+// ProjectDeparture takes deactivated repositories out of the project
+// description, a departure run's one call: the same answer as Project's,
+// the map always the code's.
+//
+//go:embed almanach_project_departure.txt
+var ProjectDeparture string
+
 // RepoMap draws a repository's map from its description, the last step of
 // a baseline run, after the project.
 //

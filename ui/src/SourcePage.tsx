@@ -69,11 +69,14 @@ export function runOpen(b: Baseline | null): boolean {
 }
 
 /** running reports whether a clone or a baseline run is in progress, which
- *  is when the page polls. */
+ *  is when the page polls. A deactivated repository stays pending, waiting
+ *  for no sync: only its departure run counts. */
 function running(d: SourceDetail | null): number {
   return d?.repos.some(
     (r) =>
-      r.state === "pending" || r.state === "syncing" || runOpen(r.baseline),
+      (r.deactivated_at === null &&
+        (r.state === "pending" || r.state === "syncing")) ||
+      runOpen(r.baseline),
   )
     ? pollEvery
     : 0;
@@ -117,16 +120,21 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const [queued, setQueued] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [deactivating, setDeactivating] = useState<string | null>(null);
   const [error, setError] = useState("");
   const isStatic = data.kind === "static";
-  const ready = data.repos.filter((r) => r.state === "ready").length;
-  const active = data.repos.filter(
+  // A deactivated repository is no source: its state (pending, waiting for
+  // a comeback) counts for nothing here.
+  const on = data.repos.filter((r) => r.deactivated_at === null);
+  const inactive = data.repos.length - on.length;
+  const ready = on.filter((r) => r.state === "ready").length;
+  const active = on.filter(
     (r) => r.state === "pending" || r.state === "syncing",
   ).length;
-  const syncing = data.repos.some((r) => r.state === "syncing");
-  const failed = data.repos.filter((r) => r.state === "failed").length;
-  const describing = data.repos.filter((r) => runOpen(r.baseline)).length;
-  const described = data.repos.filter(
+  const syncing = on.some((r) => r.state === "syncing");
+  const failed = on.filter((r) => r.state === "failed").length;
+  const describing = on.filter((r) => runOpen(r.baseline)).length;
+  const described = on.filter(
     (r) => r.baseline !== null && r.baseline.documented_commit !== "",
   ).length;
   const lastSync = data.repos
@@ -226,6 +234,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
             note={[
               active > 0 ? S.sources.counts.active(active) : "",
               failed > 0 ? S.sources.counts.failed(failed) : "",
+              inactive > 0 ? S.sources.counts.inactive(inactive) : "",
               described > 0 ? S.baseline.described(described) : "",
             ]
               .filter((s) => s !== "")
@@ -398,8 +407,32 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           removing={removing}
           onAskRemove={(slug) => {
             setRenaming(null);
+            setDeactivating(null);
             setRemoving(slug);
           }}
+          deactivating={deactivating}
+          onAskDeactivate={(slug) => {
+            setRenaming(null);
+            setRemoving(null);
+            setDeactivating(slug);
+          }}
+          onDeactivate={(slug) =>
+            act(async () => {
+              await send(
+                "POST",
+                `${path}/repos/${encodeURIComponent(slug)}/deactivate`,
+              );
+              setDeactivating(null);
+            })
+          }
+          onActivate={(slug) =>
+            act(() =>
+              send(
+                "POST",
+                `${path}/repos/${encodeURIComponent(slug)}/activate`,
+              ),
+            )
+          }
           onRemove={(slug) =>
             act(async () => {
               await send("DELETE", `${path}/repos/${encodeURIComponent(slug)}`);
@@ -409,6 +442,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           renaming={renaming}
           onAskRename={(slug) => {
             setRemoving(null);
+            setDeactivating(null);
             setRenaming(slug);
           }}
           onRenamed={() => {
@@ -429,6 +463,10 @@ function ReposTable({
   removing,
   onAskRemove,
   onRemove,
+  deactivating,
+  onAskDeactivate,
+  onDeactivate,
+  onActivate,
   renaming,
   onAskRename,
   onRenamed,
@@ -439,6 +477,10 @@ function ReposTable({
   removing: string | null;
   onAskRemove: (slug: string | null) => void;
   onRemove: (slug: string) => void;
+  deactivating: string | null;
+  onAskDeactivate: (slug: string | null) => void;
+  onDeactivate: (slug: string) => void;
+  onActivate: (slug: string) => void;
   renaming: string | null;
   onAskRename: (slug: string | null) => void;
   onRenamed: () => void;
@@ -473,6 +515,8 @@ function ReposTable({
                 onDescribe={(mode) => onDescribe(r.slug, mode)}
                 onAskRemove={() => onAskRemove(r.slug)}
                 onAskRename={() => onAskRename(r.slug)}
+                onAskDeactivate={() => onAskDeactivate(r.slug)}
+                onActivate={() => onActivate(r.slug)}
               />
             ))}
           </tbody>
@@ -510,6 +554,27 @@ function ReposTable({
           </div>
         </Panel>
       )}
+      {deactivating !== null && (
+        <Panel tone="danger">
+          {S.sources.confirmDeactivateRepo(deactivating)}
+          <div className="mt-2.5 flex gap-2">
+            <button
+              type="button"
+              className={btnDanger}
+              onClick={() => onDeactivate(deactivating)}
+            >
+              {S.sources.yesDeactivate}
+            </button>
+            <button
+              type="button"
+              className={btn}
+              onClick={() => onAskDeactivate(null)}
+            >
+              {S.sources.form.cancel}
+            </button>
+          </div>
+        </Panel>
+      )}
     </>
   );
 }
@@ -521,6 +586,8 @@ function RepoRow({
   onDescribe,
   onAskRemove,
   onAskRename,
+  onAskDeactivate,
+  onActivate,
 }: {
   r: SourceRepo;
   isStatic: boolean;
@@ -528,7 +595,13 @@ function RepoRow({
   onDescribe: (mode: "reconcile" | "full") => Promise<void>;
   onAskRemove: () => void;
   onAskRename: () => void;
+  onAskDeactivate: () => void;
+  onActivate: () => void;
 }) {
+  // A deactivated repository has no clone and takes no run: it offers its
+  // comeback, and its removal once the listing dropped it.
+  const off = r.deactivated_at !== null;
+  const live = !off && r.state !== "missing";
   const running = r.state === "pending" || r.state === "syncing";
   const removable = isStatic || r.state === "missing";
   // A listed repository follows its name in Bitbucket.
@@ -553,7 +626,7 @@ function RepoRow({
   };
   return (
     <>
-      <tr>
+      <tr className={off ? "text-faint" : undefined}>
         <td className={tdMono}>
           {r.slug}
           <div
@@ -568,9 +641,15 @@ function RepoRow({
           {r.head_commit === "" ? "—" : shortSHA(r.head_commit)}
         </td>
         <td className={td}>
-          <Pill tone={stateTone(r.state)} dot>
-            {stateLabel(r.state)}
-          </Pill>
+          {off ? (
+            <Pill tone="quiet" dot>
+              {S.sources.deactivated}
+            </Pill>
+          ) : (
+            <Pill tone={stateTone(r.state)} dot>
+              {stateLabel(r.state)}
+            </Pill>
+          )}
         </td>
         <td className={tdNum}>
           {r.last_synced_at === null ? "—" : dayTime(r.last_synced_at)}
@@ -582,7 +661,7 @@ function RepoRow({
           {/* Stacked: four actions side by side push the table past the
               column on a source with long clone URLs. */}
           <div className="flex flex-col items-end gap-0.5 whitespace-nowrap">
-            {r.state !== "missing" && (
+            {live && (
               <button
                 type="button"
                 className={rowBtn}
@@ -594,7 +673,7 @@ function RepoRow({
                   : S.sources.repoActions.sync}
               </button>
             )}
-            {r.state !== "missing" && (
+            {live && (
               <button
                 type="button"
                 className={rowBtn}
@@ -607,7 +686,7 @@ function RepoRow({
                   : S.baseline.actions.describe}
               </button>
             )}
-            {r.state !== "missing" && documented && (
+            {live && documented && (
               <button
                 type="button"
                 className={rowBtn}
@@ -620,6 +699,27 @@ function RepoRow({
             {renamable && (
               <button type="button" className={rowBtn} onClick={onAskRename}>
                 {S.sources.repoActions.rename}
+              </button>
+            )}
+            {off ? (
+              <button
+                type="button"
+                className={rowBtn}
+                // Its departure run is taking it out of the project page:
+                // the server refuses until that ends.
+                disabled={runOpen(r.baseline) && r.baseline?.state !== "queued"}
+                onClick={onActivate}
+              >
+                {S.sources.repoActions.activate}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={rowBtn + " hover:text-danger-ink"}
+                disabled={runOpen(r.baseline) && r.baseline?.state !== "queued"}
+                onClick={onAskDeactivate}
+              >
+                {S.sources.repoActions.deactivate}
               </button>
             )}
             {removable && (

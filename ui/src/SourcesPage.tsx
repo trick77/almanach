@@ -185,6 +185,12 @@ function StatePills({ s }: { s: SourceSummary }) {
         {S.sources.counts.missing(s.missing)}
       </Pill>,
     );
+  if (s.inactive > 0)
+    pills.push(
+      <Pill key="i" tone="quiet">
+        {S.sources.counts.inactive(s.inactive)}
+      </Pill>,
+    );
   if (pills.length === 0)
     return <span className="text-faint">{S.sources.counts.none}</span>;
   return <div className="flex flex-wrap gap-1.5">{pills}</div>;

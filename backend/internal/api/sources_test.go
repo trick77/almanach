@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
@@ -37,6 +39,8 @@ type fakeSources struct {
 	// cloned are clone URLs another source clones, by URL: an add or a
 	// rename onto one is refused.
 	cloned map[string]*store.ClonedElsewhereError
+	// activeErr fails a deactivation or an activation.
+	activeErr error
 }
 
 func newFakeSources() *fakeSources {
@@ -202,6 +206,46 @@ func (f *fakeSources) DeleteSourceRepo(_ context.Context, key, slug string) (boo
 	f.repos[key] = kept
 	return found, nil
 }
+
+// DeactivateSourceRepo and ActivateSourceRepo set the row's mark, as the
+// store does; a run past queued refuses both, and a deactivation queues a
+// departure run.
+func (f *fakeSources) DeactivateSourceRepo(_ context.Context, key, slug string) (bool, error) {
+	return true, f.setActive(key, slug, false)
+}
+
+func (f *fakeSources) ActivateSourceRepo(_ context.Context, key, slug string) error {
+	return f.setActive(key, slug, true)
+}
+
+func (f *fakeSources) DropQueuedRuns(_ context.Context, _, slug string) error {
+	if rr, ok := f.runs[slug]; ok && rr.Last.Open() && rr.Last.State != store.RunQueued {
+		return store.ErrRunOpen
+	}
+	return nil
+}
+
+func (f *fakeSources) setActive(key, slug string, on bool) error {
+	if f.activeErr != nil {
+		return f.activeErr
+	}
+	if rr, ok := f.runs[slug]; ok && rr.Last.Open() && rr.Last.State != store.RunQueued {
+		return store.ErrRunOpen
+	}
+	for i, r := range f.repos[key] {
+		if r.Slug == slug {
+			at := time.Now()
+			r.DeactivatedAt = &at
+			if on {
+				r.DeactivatedAt, r.ReactivatedAt = nil, &at
+			}
+			f.repos[key][i] = r
+			return nil
+		}
+	}
+	return store.ErrNoRepo
+}
+
 func (f *fakeSources) RequestSync(_ context.Context, key, slug string) (int, error) {
 	f.synced = append(f.synced, key+"/"+slug)
 	return len(f.repos[key]), nil
@@ -243,7 +287,11 @@ type fakeNudger struct{ nudges int }
 func (n *fakeNudger) Nudge() { n.nudges++ }
 
 // fakeCheckouts names folders by ids, as the poller does.
-type fakeCheckouts struct{ removed []string }
+// fakeCheckouts records the folders removed; removeErr fails a repository's.
+type fakeCheckouts struct {
+	removed   []string
+	removeErr error
+}
 
 func (c *fakeCheckouts) Dir(projectID, repoID int64) (string, error) {
 	return fmt.Sprintf("/base/p%d/r%d", projectID, repoID), nil
@@ -252,6 +300,9 @@ func (c *fakeCheckouts) ProjectDir(projectID int64) (string, error) {
 	return fmt.Sprintf("/base/p%d", projectID), nil
 }
 func (c *fakeCheckouts) Remove(projectID, repoID int64) error {
+	if c.removeErr != nil {
+		return c.removeErr
+	}
 	c.removed = append(c.removed, fmt.Sprintf("p%d/r%d", projectID, repoID))
 	return nil
 }
@@ -594,6 +645,94 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	// Folders by ids: the repository's, then the project's.
 	if want := fmt.Sprintf("p%d/r%d,p%d", fs.id("tools"), fs.id("tools/cli"), fs.id("tools")); strings.Join(checkouts.removed, ",") != want {
 		t.Fatalf("checkouts removed = %v", checkouts.removed)
+	}
+}
+
+// Deactivation: the row first, then the clone, the detail back with the
+// mark; a run past queued refuses it before the clone is touched.
+// Activation clears the mark and nudges the poller.
+func TestSources_DeactivateActivate(t *testing.T) {
+	fs := newFakeSources()
+	h, nudger, checkouts := sourcesHandler(t, fs, true)
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"tools","kind":"static"}`, jsonHdr); code != 201 {
+		t.Fatal("create")
+	}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos", "", `{"slug":"cli","clone_url":"https://github.com/acme/cli.git"}`, jsonHdr); code != 201 {
+		t.Fatal("add repo")
+	}
+	deactivatedAt := func(body map[string]json.RawMessage) string {
+		var repos []map[string]any
+		if err := json.Unmarshal(body["repos"], &repos); err != nil || len(repos) != 1 {
+			t.Fatalf("repos: %v %s", err, body["repos"])
+		}
+		v, ok := repos[0]["deactivated_at"]
+		if !ok {
+			t.Fatal("deactivated_at is not on the wire")
+		}
+		s, _ := v.(string)
+		return s
+	}
+
+	fs.runs = map[string]store.RepoRuns{"cli": {Last: store.BaselineRun{State: store.RunDescribing}}}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/cli/deactivate", "", "", nil); code != 409 {
+		t.Fatalf("deactivate under a running run: %d, want 409", code)
+	}
+	if len(checkouts.removed) != 0 {
+		t.Fatalf("a refused deactivation removed the clone: %v", checkouts.removed)
+	}
+	fs.runs = nil
+
+	code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos/cli/deactivate", "", "", nil)
+	if code != 200 || deactivatedAt(body) == "" {
+		t.Fatalf("deactivate: %d %v", code, body)
+	}
+	// The folder before the row, and once more after it.
+	if want := fmt.Sprintf("p%d/r%d", fs.id("tools"), fs.id("tools/cli")); strings.Join(checkouts.removed, ",") != want+","+want {
+		t.Fatalf("checkouts removed = %v, want %s twice", checkouts.removed, want)
+	}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/nope/deactivate", "", "", nil); code != 404 {
+		t.Fatal("deactivate of an unknown repo was not a 404")
+	}
+
+	nudges := nudger.nudges
+	code, body = do(t, h, http.MethodPost, "/api/sources/tools/repos/cli/activate", "", "", nil)
+	if code != 200 || deactivatedAt(body) != "" || nudger.nudges != nudges+1 {
+		t.Fatalf("activate: %d %v nudges=%d", code, body, nudger.nudges)
+	}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/nope/activate", "", "", nil); code != 404 {
+		t.Fatal("activate of an unknown repo was not a 404")
+	}
+
+	// What the store says, as a status; a clone that would not go is a 500.
+	for _, c := range []struct {
+		err  error
+		want int
+	}{{store.ErrRunOpen, 409}, {store.ErrNoRepo, 404}, {errors.New("disk"), 500}} {
+		fs.activeErr = c.err
+		for _, action := range []string{"deactivate", "activate"} {
+			if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/cli/"+action, "", "", nil); code != c.want {
+				t.Errorf("%s with %v: %d, want %d", action, c.err, code, c.want)
+			}
+		}
+	}
+	// A clone that would not go: a 500, the row untouched, so the button
+	// tries again.
+	fs.activeErr, checkouts.removeErr = nil, errors.New("busy disk")
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/cli/deactivate", "", "", nil); code != 500 {
+		t.Errorf("a clone that would not go: %d, want 500", code)
+	}
+	if fs.repos["tools"][0].DeactivatedAt != nil {
+		t.Error("a deactivation whose clone would not go deactivated the row")
+	}
+}
+
+// With the sources off, the routes are 404 like every other sources route.
+func TestSources_DeactivateOff(t *testing.T) {
+	off := handler(t, newFakeStore(), &fakeWaker{}, config.AuthNone)
+	for _, action := range []string{"deactivate", "activate"} {
+		if code, _ := do(t, off, http.MethodPost, "/api/sources/tools/repos/cli/"+action, "", "", nil); code != 404 {
+			t.Errorf("%s with the sources off: %d", action, code)
+		}
 	}
 }
 

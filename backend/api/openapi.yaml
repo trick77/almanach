@@ -724,6 +724,75 @@ paths:
         "422":
           $ref: "#/components/responses/Invalid"
 
+  /api/sources/{key}/repos/{slug}/deactivate:
+    post:
+      tags: [sources]
+      summary: Deactivate one repository
+      description: >-
+        Takes the repository out without removing its row, so a listing never
+        adds it back. At once: its clone is removed, its queued runs and
+        manifests go, its notes are ignored, its page leaves the wiki. The
+        project page is the worker's: a departure run, queued when the project
+        has a page, takes the repository off the system map and has the model
+        rewrite what still names it. Deactivating a deactivated repository
+        changes nothing.
+      operationId: deactivateSourceRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "200":
+          description: The source as it stands.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A run of the repository is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/sources/{key}/repos/{slug}/activate:
+    post:
+      tags: [sources]
+      summary: Activate a deactivated repository again
+      description: >-
+        A source again: cloned by the next cycle (nudged), its kept page back
+        in the wiki, its first run reconciling from the commit last
+        documented. A queued departure run is dropped. Activating an active
+        repository changes nothing.
+      operationId: activateSourceRepo
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "200":
+          description: The source as it stands.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Its departure run is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/me:
     get:
       tags: [auth]
@@ -937,7 +1006,7 @@ components:
 
     SourceSummary:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, last_listed_at, last_synced_at, last_error, created_at, updated_at]
+      required: [project_key, kind, host, has_token, token_auth, token_user, repos, ready, active, failed, missing, inactive, last_listed_at, last_synced_at, last_error, created_at, updated_at]
       properties:
         project_key:
           type: string
@@ -958,6 +1027,7 @@ components:
           type: integer
         ready:
           type: integer
+          description: Ready and not deactivated; active and failed count the same way.
         active:
           type: integer
           description: Pending or syncing.
@@ -965,6 +1035,9 @@ components:
           type: integer
         missing:
           type: integer
+        inactive:
+          type: integer
+          description: Deactivated.
         last_listed_at:
           type: [string, "null"]
           format: date-time
@@ -1023,7 +1096,7 @@ components:
 
     SourceRepo:
       type: object
-      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at, dir, baseline]
+      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at, deactivated_at, dir, baseline]
       properties:
         slug:
           type: string
@@ -1051,6 +1124,14 @@ components:
         created_at:
           type: string
           format: date-time
+        deactivated_at:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the repository was deactivated, null while it is a source. A
+            deactivated repository stays on the source (a listing never adds
+            it back) but is no source anywhere: no clone, no run, its notes
+            ignored, its page out of the wiki.
         baseline:
           oneOf:
             - $ref: "#/components/schemas/Baseline"
@@ -1169,7 +1250,7 @@ components:
           enum: [full, reconcile]
         trigger:
           type: string
-          enum: [manual, first_ready, monthly, retry]
+          enum: [manual, first_ready, monthly, retry, departure]
         commit:
           type: string
         base_commit:
@@ -1300,7 +1381,7 @@ components:
           enum: [full, reconcile]
         trigger:
           type: string
-          enum: [manual, first_ready, monthly, retry]
+          enum: [manual, first_ready, monthly, retry, departure]
         commit:
           type: string
           description: The head when queued, pinned when the run starts.

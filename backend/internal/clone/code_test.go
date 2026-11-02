@@ -84,6 +84,41 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 	}
 }
 
+// A repository back from a deactivation (its head forgotten with the
+// clone) reconciles from the commit last documented on its first ready;
+// never documented, it reads afresh.
+func TestDescribe_ReactivatedReconciles(t *testing.T) {
+	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
+	for name, c := range map[string]struct {
+		documented string
+		want       string
+	}{
+		"documented":       {"d0", "tools cli reconcile first_ready d0 h1"},
+		"never documented": {"", "tools cli full first_ready  h1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, g := newFakeStore(), newFakeGit()
+			j := job("tools", "cli", "https://x/cli.git", "main", "", src)
+			back := time.Now()
+			j.Repo.ReactivatedAt = &back
+			s.jobs = []store.SyncJob{j}
+			if c.documented != "" {
+				s.documented = store.BaselineRun{ID: 2, Mode: store.RunFull, Commit: c.documented, State: store.RunDone}
+			}
+			g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+			g.heads[dirOf("tools", "cli")+"@main"] = "h1"
+			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Describe: Describe{Reconcile: 30 * 24 * time.Hour, Wake: func() {}}, Now: time.Now})
+			if err := p.CycleOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(s.enqueued, "|"); got != c.want {
+				t.Fatalf("queued %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // A failed run is queued again in its own mode a day after it ended (or
 // after the interval, when that is shorter), three times in a row, whatever
 // the head and even with reconciles off; past that the repository is back

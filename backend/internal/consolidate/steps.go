@@ -59,6 +59,9 @@ func RunSteps(r store.BaselineRun, calls []store.RunCall) ([]RunStep, error) {
 	if err != nil {
 		return nil, err
 	}
+	if plan.Departure {
+		return departureSteps(r, calls), nil
+	}
 	var steps []RunStep
 	steps = append(steps, RunStep{Kind: StepCatalogue})
 	if plan.Overview {
@@ -153,20 +156,43 @@ func RunSteps(r store.BaselineRun, calls []store.RunCall) ([]RunStep, error) {
 		if i < 0 {
 			continue
 		}
-		s := &steps[i]
-		s.Calls++
-		if c.Outcome != inference.OutcomeOK.String() {
-			s.Failed++
-		}
-		at := c.At
-		s.At = &at
-		if c.CostNanoUSD != nil {
-			sum := *c.CostNanoUSD
-			if s.CostNanoUSD != nil {
-				sum += *s.CostNanoUSD
-			}
-			s.CostNanoUSD = &sum
-		}
+		addCall(&steps[i], c)
 	}
 	return steps, nil
+}
+
+// departureSteps is a departure run's one step, the project's: it reads
+// nothing and draws no repository map.
+func departureSteps(r store.BaselineRun, calls []store.RunCall) []RunStep {
+	s := RunStep{Kind: StepProject, State: StepTodo}
+	switch r.State {
+	case store.RunProject:
+		s.State = StepCurrent
+	case store.RunDone:
+		s.State = StepDone
+	}
+	for _, c := range calls {
+		if c.Purpose == store.PurposeProject {
+			addCall(&s, c)
+		}
+	}
+	return []RunStep{s}
+}
+
+// addCall counts one call on its step: failed when it did not answer, its
+// time the step's last, its cost added.
+func addCall(s *RunStep, c store.RunCall) {
+	s.Calls++
+	if c.Outcome != inference.OutcomeOK.String() {
+		s.Failed++
+	}
+	at := c.At
+	s.At = &at
+	if c.CostNanoUSD != nil {
+		sum := *c.CostNanoUSD
+		if s.CostNanoUSD != nil {
+			sum += *s.CostNanoUSD
+		}
+		s.CostNanoUSD = &sum
+	}
 }

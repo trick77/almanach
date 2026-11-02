@@ -25,7 +25,7 @@ func (s *Store) ManifestCommit(ctx context.Context, repoID int64) (string, bool,
 
 // SaveManifests stores what a source repository's manifests say at commit,
 // in place of what they said before. ErrNoRepo when the row went meanwhile
-// (removed while its manifests were read).
+// (removed, or deactivated, while its manifests were read).
 func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, read manifest.Read) error {
 	if read.Provides == nil {
 		read.Provides = []string{}
@@ -41,12 +41,13 @@ func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, reader, read_at) VALUES (?, ?, ?, ?, ?, ?)
+	n, err := affected(s.db.ExecContext(ctx, `
+		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, reader, read_at)
+		SELECT sr.repo_id, ?, ?, ?, ?, ? FROM source_repos sr WHERE sr.repo_id = ? AND `+activeRow+`
 		ON CONFLICT (repo_id) DO UPDATE SET "commit" = excluded."commit", provides = excluded.provides,
 		       requires = excluded.requires, reader = excluded.reader, read_at = excluded.read_at`,
-		repoID, commit, provides, requires, manifest.Version, nowStamp())
-	if isForeignKey(err) {
+		commit, provides, requires, manifest.Version, nowStamp(), repoID))
+	if isForeignKey(err) || err == nil && n == 0 {
 		return ErrNoRepo
 	}
 	return err
@@ -90,7 +91,7 @@ type Graph struct {
 
 // Dependencies joins what every source repository requires against what
 // the others provide, at read time: nothing of it is stored. A repository
-// gone missing from its listing counts for nothing; a repository's use of
+// gone missing from its listing, or deactivated, counts for nothing; a repository's use of
 // itself (a monorepo's modules) is no edge; a coordinate two repositories
 // provide gives no edge, and is listed as ambiguous when something
 // requires it.
@@ -101,7 +102,7 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 		  JOIN source_repos sr ON sr.repo_id = m.repo_id
 		  JOIN repos r ON r.id = m.repo_id
 		  JOIN projects p ON p.id = r.project_id
-		 WHERE sr.state <> 'missing'
+		 WHERE sr.state <> 'missing' AND `+activeRow+`
 		 ORDER BY p.key, r.slug`)
 	if err != nil {
 		return Graph{}, err

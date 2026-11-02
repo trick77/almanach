@@ -57,6 +57,23 @@ type runStore struct {
 	libs     map[string][]store.SharedRepo
 	libsErr  error
 	libReads map[string]int
+	// departed is the project's deactivated repositories; prRepos the
+	// repository each pull request was noted for.
+	departed []string
+	// departureDue is what DepartureDue answers, cleared by a settle;
+	// settled is every settle's slugs.
+	departureDue bool
+	settled      [][]string
+}
+
+func (s *runStore) DepartedRepos(context.Context, string) ([]string, error) { return s.departed, nil }
+
+func (s *runStore) DepartureDue(context.Context, string) (bool, error) { return s.departureDue, nil }
+
+func (s *runStore) SettleDepartures(_ context.Context, _ string, slugs []string) error {
+	s.settled = append(s.settled, slugs)
+	s.departureDue = false
+	return nil
 }
 
 func (s *runStore) Shared(_ context.Context, _, slug string) ([]store.SharedRepo, error) {

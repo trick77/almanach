@@ -7,7 +7,8 @@ import (
 
 // Every prompt that reads code or notes says what the redaction marker is.
 func TestPromptsStateTheRedactionMarker(t *testing.T) {
-	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project, "repo map": RepoMap} {
+	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
+		"project departure": ProjectDeparture, "repo map": RepoMap} {
 		if !strings.Contains(p, Redacted) {
 			t.Errorf("%s prompt lacks the redaction sentence %q", name, Redacted)
 		}
@@ -16,7 +17,8 @@ func TestPromptsStateTheRedactionMarker(t *testing.T) {
 
 // Every prompt that asks for German states the one spelling rule.
 func TestPromptsStateTheSpelling(t *testing.T) {
-	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project, "repo map": RepoMap, "diagrams": Diagrams} {
+	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
+		"project departure": ProjectDeparture, "repo map": RepoMap, "diagrams": Diagrams} {
 		if !strings.Contains(p, Spelling) {
 			t.Errorf("%s prompt lacks the spelling rule %q", name, Spelling)
 		}
@@ -26,7 +28,7 @@ func TestPromptsStateTheSpelling(t *testing.T) {
 // Every prompt that writes statement text and a summary states the one
 // layout rule and how the summary takes it; none bars the summary from it.
 func TestPromptsStateTheLayout(t *testing.T) {
-	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project} {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture} {
 		if !strings.Contains(p, Layout) {
 			t.Errorf("%s prompt lacks the layout rule %q", name, Layout)
 		}

@@ -70,6 +70,9 @@ type SourceRow struct {
 	Active  int // pending or syncing
 	Failed  int
 	Missing int
+	// Inactive is the deactivated ones, missing or not; Ready, Active,
+	// Failed and Missing count the others only.
+	Inactive int
 	// LastSyncedAt is the newest sync of any of its repositories, nil
 	// before the first: a static source is never listed, so this is its
 	// last run.
@@ -92,7 +95,20 @@ type SourceRepo struct {
 	LastSyncedAt *time.Time
 	LastError    string
 	CreatedAt    time.Time
+	// DeactivatedAt is when the repository was deactivated, nil while it is
+	// active; ReactivatedAt the last time it came back.
+	DeactivatedAt *time.Time
+	ReactivatedAt *time.Time
 }
+
+// Active reports whether the repository is a source: not deactivated.
+func (r SourceRepo) Active() bool { return r.DeactivatedAt == nil }
+
+// activeRow is the one predicate of a source repository that counts, over
+// a source_repos row aliased sr: not deactivated. Every reader that means
+// a source (the wiki, the notes, the sync, the project step) goes through
+// it; the source's own page lists every row.
+const activeRow = `sr.deactivated_at IS NULL`
 
 // sourcesFrom is a source (s) with its project (p).
 const sourcesFrom = `sources s JOIN projects p ON p.id = s.project_id`
@@ -119,13 +135,14 @@ const (
 func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+sourceColumns+`,
-		       COUNT(r.repo_id),
-		       COUNT(r.repo_id) FILTER (WHERE r.state = 'ready'),
-		       COUNT(r.repo_id) FILTER (WHERE r.state IN ('pending', 'syncing')),
-		       COUNT(r.repo_id) FILTER (WHERE r.state = 'failed'),
-		       COUNT(r.repo_id) FILTER (WHERE r.state = 'missing'),
-		       MAX(r.last_synced_at)
-		  FROM `+sourcesFrom+` LEFT JOIN source_repos r ON r.project_id = s.project_id
+		       COUNT(sr.repo_id),
+		       COUNT(sr.repo_id) FILTER (WHERE sr.state = 'ready' AND `+activeRow+`),
+		       COUNT(sr.repo_id) FILTER (WHERE sr.state IN ('pending', 'syncing') AND `+activeRow+`),
+		       COUNT(sr.repo_id) FILTER (WHERE sr.state = 'failed' AND `+activeRow+`),
+		       COUNT(sr.repo_id) FILTER (WHERE sr.state = 'missing' AND `+activeRow+`),
+		       COUNT(sr.repo_id) FILTER (WHERE sr.deactivated_at IS NOT NULL),
+		       MAX(sr.last_synced_at)
+		  FROM `+sourcesFrom+` LEFT JOIN source_repos sr ON sr.project_id = s.project_id
 		 GROUP BY s.project_id ORDER BY p.key`)
 	if err != nil {
 		return nil, err
@@ -135,7 +152,7 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 	for rows.Next() {
 		var r SourceRow
 		if err := rows.Scan(append(sourceDest(&r.ProjectSource), &r.Repos, &r.Ready, &r.Active, &r.Failed, &r.Missing,
-			timeOrNil(&r.LastSyncedAt))...); err != nil {
+			&r.Inactive, timeOrNil(&r.LastSyncedAt))...); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -262,19 +279,22 @@ func (s *Store) UpdateSourceAccess(ctx context.Context, key, host, tokenAuth, to
 func Single(sourceRepos int) bool { return sourceRepos == 1 }
 
 // SourceRepoCount is how many source repositories a project has, 0 for a
-// project without a source; Single says what one means.
+// project without a source; Single says what one means. A deactivated one
+// does not count.
 func (s *Store) SourceRepoCount(ctx context.Context, key string) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_repos WHERE project_id = `+projectByName, key).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_repos sr WHERE `+activeRow+` AND sr.project_id = `+projectByName, key).Scan(&n)
 	return n, err
 }
 
 // IsSourceRepo reports whether (key, slug) is a source repository: the
 // starting point of a page, before which noergler's notes are ignored. Any
-// name the project and the repository ever had counts.
+// name the project and the repository ever had counts. A deactivated one
+// is none.
 func (s *Store) IsSourceRepo(ctx context.Context, key, slug string) (bool, error) {
 	var ok bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_repos WHERE repo_id = `+repoByName+`)`, key, slug).Scan(&ok)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_repos sr WHERE `+activeRow+` AND sr.repo_id = `+repoByName+`)`,
+		key, slug).Scan(&ok)
 	return ok, err
 }
 
@@ -300,13 +320,13 @@ func (s *Store) MarkSourceListed(ctx context.Context, key, errText string, liste
 // sourceRepoColumns are a clone's columns over source_repos sr, repos r and
 // projects p, in the order sourceRepoDest scans them.
 const sourceRepoColumns = `sr.project_id, sr.repo_id, p.key, r.slug, sr.clone_url, sr.origin, COALESCE(sr.branch, ''),
-	sr.head_commit, sr.state, sr.last_synced_at, sr.last_error, sr.created_at`
+	sr.head_commit, sr.state, sr.last_synced_at, sr.last_error, sr.created_at, sr.deactivated_at, sr.reactivated_at`
 
 const sourceReposFrom = `source_repos sr JOIN repos r ON r.id = sr.repo_id JOIN projects p ON p.id = sr.project_id`
 
 func sourceRepoDest(r *SourceRepo) []any {
 	return []any{&r.ProjectID, &r.RepoID, &r.ProjectKey, &r.Slug, &r.CloneURL, &r.Origin, &r.Branch, &r.HeadCommit, &r.State,
-		timeOrNil(&r.LastSyncedAt), &r.LastError, timeAt(&r.CreatedAt)}
+		timeOrNil(&r.LastSyncedAt), &r.LastError, timeAt(&r.CreatedAt), timeOrNil(&r.DeactivatedAt), timeOrNil(&r.ReactivatedAt)}
 }
 
 // SourceRepos lists a source's repos by slug.
@@ -674,16 +694,16 @@ func listedRepo(ctx context.Context, tx *sql.Tx, pid int64, l ListedRepo, forges
 }
 
 // RequestSync marks a source's repos (or one repo, when slug is set) pending
-// so the next cycle syncs them; a missing one stays missing. Reports how
-// many rows moved.
+// so the next cycle syncs them; a missing or deactivated one stays as it
+// is. Reports how many rows moved.
 func (s *Store) RequestSync(ctx context.Context, key, slug string) (int, error) {
 	pid, rid, ok, err := scopeIDs(ctx, s.db, key, slug)
 	if err != nil || !ok {
 		return 0, err
 	}
 	n, err := affected(s.db.ExecContext(ctx, `
-		UPDATE source_repos SET state = 'pending'
-		 WHERE project_id = ?1 AND (?2 = 0 OR repo_id = ?2) AND state <> 'missing'`, pid, rid))
+		UPDATE source_repos AS sr SET state = 'pending'
+		 WHERE sr.project_id = ?1 AND (?2 = 0 OR sr.repo_id = ?2) AND sr.state <> 'missing' AND `+activeRow, pid, rid))
 	return int(n), err
 }
 
@@ -694,13 +714,13 @@ type SyncJob struct {
 	Repo   SourceRepo
 }
 
-// SyncJobs is every repo a cycle must look at (everything but missing), by
-// source then slug, with its source's access settings.
+// SyncJobs is every repo a cycle must look at (everything but missing and
+// deactivated), by source then slug, with its source's access settings.
 func (s *Store) SyncJobs(ctx context.Context) ([]SyncJob, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+sourceColumns+`, `+sourceRepoColumns+`
 		  FROM `+sourceReposFrom+` JOIN sources s ON s.project_id = sr.project_id
-		 WHERE sr.state <> 'missing'
+		 WHERE sr.state <> 'missing' AND `+activeRow+`
 		 ORDER BY p.key, r.slug`)
 	if err != nil {
 		return nil, err
@@ -717,9 +737,13 @@ func (s *Store) SyncJobs(ctx context.Context) ([]SyncJob, error) {
 	return out, rows.Err()
 }
 
+// The cycle's writes below never land on a deactivated row: a sync in
+// flight when the deactivation committed would put a head, a state and a
+// time back on a repository that has no clone.
+
 // MarkRepoSyncing is the cycle taking a repo on.
 func (s *Store) MarkRepoSyncing(ctx context.Context, key, slug string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE source_repos SET state = 'syncing' WHERE repo_id = `+repoByName, key, slug)
+	_, err := s.db.ExecContext(ctx, `UPDATE source_repos AS sr SET state = 'syncing' WHERE `+activeRow+` AND sr.repo_id = `+repoByName, key, slug)
 	return err
 }
 
@@ -727,16 +751,16 @@ func (s *Store) MarkRepoSyncing(ctx context.Context, key, slug string) error {
 // configured), the head and the time; a left-over error goes.
 func (s *Store) MarkRepoReady(ctx context.Context, key, slug, branch, head string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE source_repos SET state = 'ready', branch = NULLIF(?, ''), head_commit = ?,
+		UPDATE source_repos AS sr SET state = 'ready', branch = NULLIF(?, ''), head_commit = ?,
 		       last_synced_at = ?, last_error = ''
-		 WHERE repo_id = `+repoByName, branch, head, nowStamp(), key, slug)
+		 WHERE `+activeRow+` AND sr.repo_id = `+repoByName, branch, head, nowStamp(), key, slug)
 	return err
 }
 
 // MarkRepoFailed records why a sync failed; the head stays what it was.
 func (s *Store) MarkRepoFailed(ctx context.Context, key, slug, errText string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE source_repos SET state = 'failed', last_error = ? WHERE repo_id = `+repoByName, errText, key, slug)
+		UPDATE source_repos AS sr SET state = 'failed', last_error = ? WHERE `+activeRow+` AND sr.repo_id = `+repoByName, errText, key, slug)
 	return err
 }
 

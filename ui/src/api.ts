@@ -282,6 +282,8 @@ export interface SourceSummary {
   active: number;
   failed: number;
   missing: number;
+  /** Deactivated; ready, active and failed count the others only. */
+  inactive: number;
   last_listed_at: string | null;
   /** The newest sync of any of its repositories: a static source is never
    *  listed, so this is its last run. */
@@ -309,6 +311,9 @@ export interface SourceRepo {
   last_synced_at: string | null;
   last_error: string;
   created_at: string;
+  /** When it was deactivated, null while it is a source. A deactivated
+   *  repository stays on the source but is no source anywhere. */
+  deactivated_at: string | null;
   /** The clone's folder, named by ids, never by the names. */
   dir: string;
   /** The newest baseline run, null before the first. */
@@ -338,7 +343,7 @@ export interface Baseline {
    *  repository map, its last step. */
   map_step: boolean;
   mode: "full" | "reconcile";
-  trigger: "manual" | "first_ready" | "monthly" | "retry";
+  trigger: "manual" | "first_ready" | "monthly" | "retry" | "departure";
   commit: string;
   step: number;
   steps: number;
