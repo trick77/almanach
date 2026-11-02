@@ -133,7 +133,7 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 			continue
 		}
 		id := s.ID
-		out.Statements = append(out.Statements, inference.Statement{ID: &id, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Diagram: s.Diagram})
+		out.Statements = append(out.Statements, inference.Statement{ID: &id, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Diagram: s.Diagram, Area: s.Area})
 		out.Checked = append(out.Checked, confirmed[s.ID])
 	}
 	for _, st := range p.Added {

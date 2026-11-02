@@ -351,6 +351,9 @@ type statementBody struct {
 	// Checked is the commit a baseline run last confirmed the statement
 	// against, "" when none has.
 	Checked string `json:"checked"`
+	// Area is the part of the system the statement is about, its sub-chunk
+	// inside its kind; "" before the page was laid out.
+	Area string `json:"area"`
 	// Diagram is rongo's IR as validated on the way in, absent for none.
 	Diagram *diagram.Diagram `json:"diagram,omitempty"`
 }
@@ -380,7 +383,7 @@ func describe(p store.Page, ok bool) *descriptionBody {
 	out := &descriptionBody{Revision: p.Revision, Summary: p.Summary, SourceKind: sourceKind(p.SourceKind), SourcePR: p.SourcePR,
 		SourceCommit: p.SourceCommit, UpdatedAt: p.UpdatedAt, Statements: make([]statementBody, 0, len(p.Statements))}
 	for _, s := range p.Statements {
-		sb := statementBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Checked: s.Checked,
+		sb := statementBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Checked: s.Checked, Area: s.Area,
 			Diagram: s.Diagram, Sources: make([]sourceBody, 0, len(s.Sources))}
 		if sb.Files == nil {
 			sb.Files = []string{}

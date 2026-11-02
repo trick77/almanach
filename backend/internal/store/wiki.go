@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
@@ -71,6 +73,10 @@ type Statement struct {
 	// Diagram is a picture beside the text, validated like the text; nil
 	// for none.
 	Diagram *diagram.Diagram `json:"diagram,omitempty"`
+	// Area is the part of the system the statement is about, the page's
+	// sub-chunk inside every kind (baseline.Arrange); "" before one is
+	// given.
+	Area string `json:"area,omitempty"`
 }
 
 // Page is a description as currently published.
@@ -111,15 +117,20 @@ func (p Page) MapStands() bool {
 
 // MapBasis is the description a repository map is drawn from, as a hash:
 // the summary and each statement's kind, name, text and files, never its
-// sources or last check, which change without the text. The shape hashed
-// is what every stored basis was: change it and every map is due again.
+// sources or last check, which change without the text. Nor their order
+// or area: laying a page out anew (baseline.Arrange) draws no map again.
+// The shape hashed is what every stored basis was: change it and every map
+// is due again (sorted by id once, 2026-11-02, when every page was due for
+// its first layout anyway).
 func (p Page) MapBasis() string {
 	type part struct {
 		Kind, Name, Text string
 		Files            []string
 	}
-	parts := make([]part, 0, len(p.Statements))
-	for _, s := range p.Statements {
+	byID := slices.Clone(p.Statements)
+	slices.SortStableFunc(byID, func(a, b Statement) int { return strings.Compare(a.ID, b.ID) })
+	parts := make([]part, 0, len(byID))
+	for _, s := range byID {
 		parts = append(parts, part{s.Kind, s.Name, s.Text, s.Files})
 	}
 	raw, _ := json.Marshal(struct {

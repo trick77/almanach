@@ -151,6 +151,22 @@ func TestRepoMap(t *testing.T) {
 			t.Errorf("reply %q: Outcome = %s, want unparseable", reply, res.Outcome)
 		}
 	}
+	// The outline beside the map: read, null kept, one off its shape costs
+	// only itself.
+	srv.SetReply(`{"map": null, "outline": [{"area": "Abfrage", "ids": ["s2", "s1"]}]}`)
+	res = testClient(srv.Client()).RepoMap(context.Background(), "p")
+	if res.Outcome != OutcomeOK || len(res.Outline) != 1 || res.Outline[0].Area != "Abfrage" || res.Outline[0].IDs[1] != "s1" {
+		t.Errorf("outline = %+v", res)
+	}
+	for _, reply := range []string{`{"map": null, "outline": null}`, `{"map": null, "outline": 3}`} {
+		srv.SetReply(reply)
+		if res := testClient(srv.Client()).RepoMap(context.Background(), "p"); res.Outcome != OutcomeOK || res.Outline != nil {
+			t.Errorf("reply %q: %+v, want ok and no outline", reply, res)
+		}
+	}
+	if props := repoMapFormat().Schema["properties"].(map[string]any); props["outline"] == nil {
+		t.Error("the repository map schema asks for no outline")
+	}
 }
 
 // A call that fails at the gateway says so the same way for every kind of

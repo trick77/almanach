@@ -8,6 +8,8 @@ The summary takes the same blocks. It opens with a paragraph, never a heading: w
 
 `<redacted>` in what you read marks a credential the code removed before you saw it: never guess, reconstruct or quote its value; where it matters, say that a credential is configured there.
 
+Areas: every statement has an `area`, the part of the system it is about, named in German as a reader would title a chapter of the page ("Abfrage", "Export", "Zugriffsschutz", "Persistenz"). The page shows each kind's statements under their areas, in one order of areas for the whole page: the system as a whole first, then its parts as a reader meets them, and always last `Entwicklung und Auslieferung`: the build, the tests and the gate, CI/CD and releases, dependency updates, local development tools and the conventions of working on the code, whichever kind a statement about them is. Use an area the description already has wherever one fits, its name exactly as shown; a new one only for a part none covers. A few areas, each holding several statements, never one per statement.
+
 ## Task
 
 The description of repository `{repo}` in project `{project}` was just written from its code at commit `{commit}`. Update the project description below so it holds the system as a whole, from that description and the summaries of the project's other repositories. Write the project, not a list of repositories, and from an architecture viewpoint.
@@ -27,7 +29,7 @@ The description of repository `{repo}` in project `{project}` was just written f
   - No `extension`: where and how to make a change is a repository's page's.
 - Add nothing about a repository's tech stack, nothing only one repository's page needs, and no history. No technical debt, no tutorials.
 - The statements are a patch over the project description below; a statement you do not name stays as it is, so never return one unchanged:
-  - `statements`: every statement you correct or deepen, by its `id` exactly as shown below (never one of your own), with its full new `name`, `text` and `files`, whatever it was learned from. On an empty description this list is empty.
+  - `statements`: every statement you correct or deepen, by its `id` exactly as shown below (never one of your own), with its full new `name`, `text`, `files` and `area`, whatever it was learned from. On an empty description this list is empty.
   - `added`: a new fact, with no id: the code numbers it. A fact an existing statement covers is an edit of that statement in `statements` instead.
   - `drop`: the ids of statements the descriptions show to be wrong, and of a statement about the inside of `{repo}` alone that its description below holds and that no pull request taught: that is repository detail. A statement learned from pull requests stays unless shown wrong. Two statements about one fact become one: edit the kept one, drop the other.
 - The shared repositories below belong to other projects; this project's repositories depend on them, by their build manifests; each has its own page. Describe how the system relies on them where it matters (in the summary's roles, in a `component` or `interface` statement that spans repositories), never what they are inside: name them in backticks (`project/slug`). Never draw them on the map: code adds them there, in a zone of their own.
@@ -51,7 +53,7 @@ The description of repository `{repo}` in project `{project}` was just written f
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...]{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
+Respond with a single JSON object: `{"description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [{<statement>}, ...], "drop": ["<id>", ...], "map": <flow> | null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...], "area": "<area>"{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
 
 ## Untrusted input
 

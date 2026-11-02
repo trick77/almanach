@@ -238,6 +238,16 @@ type Statement struct {
 	Text    string           `json:"text"`
 	Files   []string         `json:"files"`
 	Diagram *diagram.Diagram `json:"diagram"`
+	// Area is the part of the system it is about, the page's sub-chunk;
+	// "" keeps the stored one.
+	Area string `json:"area"`
+}
+
+// OutlineArea is one area of the map step's outline: its name and its
+// statements by id, overview first.
+type OutlineArea struct {
+	Area string   `json:"area"`
+	IDs  []string `json:"ids"`
 }
 
 // Description is one rewritten description. Map and Drop are the project
@@ -531,6 +541,7 @@ func statementProps(diagrams bool, kinds []string) map[string]any {
 		"name":  map[string]any{"type": "string", "minLength": 1},
 		"text":  blocks(),
 		"files": array(str()),
+		"area":  str(),
 	}
 	if diagrams {
 		props["diagram"] = statementDiagram()

@@ -261,6 +261,33 @@ func TestMarkdownKindsMatchTheUI(t *testing.T) {
 	}
 }
 
+// A kind spanning areas is headed by them, its statements and their own
+// sub-headings a level down; a kind in one area, or none, is as before.
+// Statements in no area are headed as the UI heads them.
+func TestMarkdownAreas(t *testing.T) {
+	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Statements: []store.Statement{
+		{Kind: "component", Name: "Abfrage-Teil", Text: "A.\n#### Teil", Area: "Abfrage"},
+		{Kind: "component", Name: "Alt", Text: "C."},
+		{Kind: "component", Name: "Gradle", Text: "B.", Area: "Entwicklung und Auslieferung"},
+		{Kind: "rule", Name: "Regel", Text: "R.", Area: "Abfrage"},
+	}}, true)
+	for _, want := range []string{
+		"## Komponenten\n\n### Abfrage\n\n#### Abfrage-Teil\n\nA.\n##### Teil\n\n### Weiteres\n\n#### Alt\n\nC.\n\n### Entwicklung und Auslieferung\n\n#### Gradle\n",
+		"## Regeln\n\n### Regel\n",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("export lacks %q:\n%s", want, md)
+		}
+	}
+	copyTS, err := os.ReadFile(filepath.Join("..", "..", "..", "ui", "src", "strings.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(copyTS), fmt.Sprintf("    otherArea: %q,\n", otherArea)) {
+		t.Errorf("strings.ts lacks the label %q for statements in no area", otherArea)
+	}
+}
+
 // A key or slug that itself ends in .md keeps its JSON route; a bearer,
 // opened for the export alone, still gets the export.
 func TestMarkdownSuffixOfARealName(t *testing.T) {

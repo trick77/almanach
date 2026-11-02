@@ -36,6 +36,7 @@ type RunStore interface {
 	SaveRun(ctx context.Context, r store.BaselineRun) (bool, error)
 	ApplyBaselineStep(ctx context.Context, rev store.NewRevision, r store.BaselineRun) (int, bool, error)
 	SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r store.BaselineRun) (bool, error)
+	ArrangePage(ctx context.Context, revisionID int64, statements []store.Statement) (bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
@@ -1846,7 +1847,9 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		w.log.InfoContext(ctx, at+" skipped: no repository description to draw it from")
 		return w.finish(ctx, r, plan)
 	}
-	if retry == nil && page.MapStands() {
+	// A page not laid out yet (written before areas, or a statement given
+	// none) is asked for, its map standing or not: one call lays it out.
+	if retry == nil && page.MapStands() && baseline.Arranged(page.Statements) {
 		w.log.InfoContext(ctx, at+" skipped: drawn from the description as it stands, the stored one kept")
 		return w.finish(ctx, r, plan)
 	}
@@ -1871,6 +1874,7 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		w.log.WarnContext(ctx, at+" skipped: the call failed: "+res.Outcome.String()+", the stored one kept")
 		return w.finish(ctx, r, plan)
 	}
+	w.arrangePage(ctx, at, &page, res.Outline)
 	tries := 1
 	if retry != nil {
 		tries = retry.Tries + 1
@@ -1953,6 +1957,45 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	return nil
 }
 
+// arrangePage lays the repository page out as the map step's outline says
+// (baseline.ApplyOutline), in place on its current revision: the same
+// statements, no source, no revision. None returned, or one that changes
+// no order and no area, writes nothing. The layout is optional, as the map
+// is: a failed write is logged and the page stays as it was, laid out by
+// the next run.
+func (w *Worker) arrangePage(ctx context.Context, at string, page *store.Page, outline []inference.OutlineArea) {
+	if outline == nil {
+		if !baseline.Arranged(page.Statements) {
+			w.log.WarnContext(ctx, at+": no outline returned, the page not laid out")
+		}
+		return
+	}
+	arranged, bad := baseline.ApplyOutline(page.Statements, outline)
+	if len(bad) > 0 {
+		w.log.WarnContext(ctx, at+": outline items left out", slog.Any("items", bad))
+	}
+	if slices.EqualFunc(arranged, page.Statements, func(a, b store.Statement) bool { return a.ID == b.ID && a.Area == b.Area }) {
+		w.log.InfoContext(ctx, at+": page laid out as it stands")
+		return
+	}
+	ok, err := w.base.Store.ArrangePage(ctx, page.RevisionID, arranged)
+	if err != nil || !ok {
+		w.log.WarnContext(ctx, at+": layout not written, the page kept as it was", logging.Err(err))
+		return
+	}
+	page.Statements = arranged
+	w.log.InfoContext(ctx, fmt.Sprintf("%s: page laid out in %s", at, plural(areaCount(arranged), "area")))
+}
+
+// areaCount is how many areas a page's statements stand in.
+func areaCount(statements []store.Statement) int {
+	seen := map[string]bool{}
+	for _, s := range statements {
+		seen[s.Area] = true
+	}
+	return len(seen)
+}
+
 // runSource is the source a run attaches: its commit, the commit's time and
 // the repository, which on the project page names whose commit it is.
 func runSource(r store.BaselineRun, plan runPlan) store.Source {
@@ -1981,9 +2024,15 @@ func (w *Worker) finish(ctx context.Context, r *store.BaselineRun, plan runPlan)
 	return w.save(ctx, *r)
 }
 
+// sameChecks reports whether a's statements carry b's last checks, by id:
+// the two may stand in another order.
 func sameChecks(a, b []store.Statement) bool {
-	for i := range a {
-		if a[i].Checked != b[i].Checked {
+	checked := make(map[string]string, len(b))
+	for _, s := range b {
+		checked[s.ID] = s.Checked
+	}
+	for _, s := range a {
+		if c, ok := checked[s.ID]; !ok || c != s.Checked {
 			return false
 		}
 	}

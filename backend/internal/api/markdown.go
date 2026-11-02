@@ -170,15 +170,54 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 			continue
 		}
 		fmt.Fprintf(&b, "## %s\n\n", heading)
+		// A kind spanning areas is headed by them, as the page is: its
+		// statements one level down, the outline never skipping one.
+		if !spansAreas(list) {
+			for _, s := range list {
+				writeStatement(&b, s, "### ", markup.Heading)
+			}
+			continue
+		}
+		area := "\x00"
 		for _, s := range list {
-			writeStatement(&b, s)
+			if s.Area != area {
+				area = s.Area
+				fmt.Fprintf(&b, "### %s\n\n", areaHeading(area))
+			}
+			writeStatement(&b, s, "#### ", "##### ")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
-func writeStatement(b *strings.Builder, s store.Statement) {
-	fmt.Fprintf(b, "### %s\n\n%s\n\n", strings.Join(strings.Fields(s.Name), " "), prose(s.Text, markup.Heading))
+// spansAreas reports whether a kind's statements stand in more than one
+// area: one area, or none, needs no heading of its own.
+func spansAreas(list []store.Statement) bool {
+	for _, s := range list[1:] {
+		if s.Area != list[0].Area {
+			return true
+		}
+	}
+	return false
+}
+
+// areaHeading is an area as a heading, the page's word for statements laid
+// out under none.
+func areaHeading(area string) string {
+	if area == "" {
+		return otherArea
+	}
+	return area
+}
+
+// otherArea heads the statements of a kind that stand in no area: the UI's
+// S.description.otherArea, held to it by a test.
+const otherArea = "Weiteres"
+
+// writeStatement writes one statement, its name a level heading and its
+// text's sub-headings sub.
+func writeStatement(b *strings.Builder, s store.Statement, level, sub string) {
+	fmt.Fprintf(b, "%s%s\n\n%s\n\n", level, strings.Join(strings.Fields(s.Name), " "), prose(s.Text, sub))
 	if len(s.Files) > 0 {
 		files := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {

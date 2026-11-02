@@ -12,15 +12,18 @@ import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
-import { statementMatches } from "./Description";
+import { DescriptionView, statementMatches } from "./Description";
+import { S } from "./strings";
 import { armSignIn } from "./signin";
 import { Doc, Marked, matchesQuery } from "./ui";
 import type {
+  Description,
   Me,
   NoteDetail,
   ProjectDetail,
   Projects,
   RepoDetail,
+  Statement,
 } from "./api";
 import type { FlowIR } from "./diagramIR";
 
@@ -1422,5 +1425,68 @@ describe("session gate", () => {
     expect(
       await screen.findByText(/Die Anmeldung ist falsch eingerichtet/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("DescriptionView areas", () => {
+  const st = (
+    id: string,
+    kind: Statement["kind"],
+    name: string,
+    area?: string,
+  ): Statement => ({
+    id,
+    kind,
+    name,
+    text: name + ".",
+    files: [],
+    sources: [],
+    area,
+  });
+  const description: Description = {
+    revision: 1,
+    summary: "Ein Dienst.",
+    statements: [
+      st("s1", "component", "Abfrage-Teil", "Abfrage"),
+      st("s2", "component", "Alt"),
+      st("s3", "component", "Gradle-Build", "Entwicklung und Auslieferung"),
+      st("s4", "rule", "Regel", "Abfrage"),
+    ],
+    source_pr_key: "",
+    updated_at: mergedAt,
+  };
+  const areasOf = (kind: string) =>
+    within(document.getElementById("kind-" + kind)!)
+      .queryAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+
+  it("heads a kind's statements by area when they span more than one", () => {
+    render(
+      <DescriptionView description={description} emptyHint="" pageRepo="svc" />,
+    );
+    expect(areasOf("component")).toEqual([
+      "Abfrage",
+      S.areas.otherArea,
+      "Entwicklung und Auslieferung",
+    ]);
+    expect(areasOf("rule")).toEqual([]);
+    expect(
+      within(document.getElementById("kind-rule")!).getByRole("heading", {
+        level: 4,
+      }).textContent,
+    ).toBe("Regel");
+  });
+
+  it("keeps only the areas a search hits, and finds an area by its name", () => {
+    render(
+      <DescriptionView
+        description={description}
+        emptyHint=""
+        pageRepo="svc"
+        query="Gradle"
+      />,
+    );
+    expect(areasOf("component")).toEqual(["Entwicklung und Auslieferung"]);
+    expect(statementMatches(description.statements[0], "abfrage")).toBe(true);
   });
 });

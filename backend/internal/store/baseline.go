@@ -306,6 +306,28 @@ func (s *Store) SetRepoMap(ctx context.Context, project, repo string, m *diagram
 	return true, nil
 }
 
+// ArrangePage is the map step's layout of a repository page: the same
+// statements in their areas and order (baseline.ApplyOutline), set on the
+// revision in place while it is the page's current one. No revision of its
+// own, as SetRepoMap: no statement's text changed. ok false, and nothing
+// written, when revisionID is no longer the page's current revision.
+func (s *Store) ArrangePage(ctx context.Context, revisionID int64, statements []Statement) (bool, error) {
+	raw, err := jsonOf(orEmptyStatements(statements))
+	if err != nil {
+		return false, err
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE revisions SET statements = ?
+		 WHERE scope = 'repository' AND id = ?
+		   AND id IN (SELECT current_revision_id FROM pages WHERE scope = 'repository')`,
+		raw, revisionID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // RepoRuns is what the source page shows of one repository's runs: the
 // newest run, what its priced calls cost (nil when none was priced), the
 // commit last documented and how many of the newest runs in a

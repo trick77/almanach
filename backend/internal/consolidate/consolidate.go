@@ -707,6 +707,11 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 		if old != nil {
 			s.ID = old.ID
 			s.Sources = old.Sources
+			// An area is no text: none returned keeps the stored one, and
+			// a new one alone credits nothing.
+			if s.Area == "" {
+				s.Area = old.Area
+			}
 			// Umlauts written in where old text had ae, oe, ue are spelling,
 			// a list or a bold term where there was a sentence is layout:
 			// not something this source taught, stored, never credited.
@@ -721,14 +726,16 @@ func attach(scope string, current []store.Statement, proposed []inference.Statem
 			s.Sources = []store.Source{src}
 		}
 	}
-	return out, leftOut, ""
+	// Every page written is laid out by its areas: a statement given an
+	// area joins its own, wherever the answer put it.
+	return baseline.Arrange(out), leftOut, ""
 }
 
 // cleanStatement is a returned statement's kind, name, text and files as
 // attach stores them: trimmed, Swiss, empty paths dropped, the text in
 // the stored layout (lang.Laid).
 func cleanStatement(p inference.Statement) store.Statement {
-	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Laid(p.Text), Files: cleanFiles(p.Files)}
+	return store.Statement{Kind: p.Kind, Name: lang.Prose(p.Name), Text: lang.Laid(p.Text), Files: cleanFiles(p.Files), Area: baseline.CleanArea(p.Area)}
 }
 
 // proseSummary is a returned summary as stored: a statement's layout,
@@ -921,13 +928,20 @@ func sameStatement(stored, returned store.Statement) bool {
 }
 
 // sameStatements is sameStatement over a page's stored and returned
-// statements, in order.
+// statements, by id: an answer that only lays the page out anew (another
+// order, other areas) changed no text and writes no revision; the map
+// step lays it out in place (baseline.ApplyOutline).
 func sameStatements(stored, returned []store.Statement) bool {
 	if len(stored) != len(returned) {
 		return false
 	}
-	for i := range stored {
-		if !sameStatement(stored[i], returned[i]) {
+	byID := make(map[string]store.Statement, len(returned))
+	for _, s := range returned {
+		byID[s.ID] = s
+	}
+	for _, s := range stored {
+		r, ok := byID[s.ID]
+		if !ok || !sameStatement(s, r) {
 			return false
 		}
 	}
@@ -1070,6 +1084,9 @@ func describePage(p store.Page, v pageView) string {
 		// would be struck.
 		if !v.read && v.newer[s.ID] == "" && markup.LayoutLost(s.Text) {
 			b.WriteString(lostText)
+		}
+		if s.Area != "" {
+			fmt.Fprintf(&b, "\nArea: %s\n", s.Area)
 		}
 		if len(s.Files) > 0 {
 			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))

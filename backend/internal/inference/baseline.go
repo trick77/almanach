@@ -61,10 +61,13 @@ type DescriptionResult struct {
 }
 
 // RepoMapResult is one map call, a repository's map or the system map
-// asked again: Map nil means keep the map the page has.
+// asked again: Map nil means keep the map the page has. Outline is the
+// repository map step's layout of the page, nil to keep it (and always nil
+// on the system map's call).
 type RepoMapResult struct {
 	Call
-	Map *diagram.Diagram
+	Map     *diagram.Diagram
+	Outline []OutlineArea
 }
 
 // Schema names on the wire.
@@ -129,16 +132,19 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 // RepoMap asks for the repository's map drawn from its description, or
 // null to keep the one it has.
 func (c *Client) RepoMap(ctx context.Context, prompt string) RepoMapResult {
-	return c.mapCall(ctx, prompt, repoMapFormat())
+	return c.mapCall(ctx, prompt, repoMapFormat(), true)
 }
 
 // ProjectMap asks the project step's prompt again for its system map alone,
 // after the one it returned was refused; null keeps the stored one.
 func (c *Client) ProjectMap(ctx context.Context, prompt string) RepoMapResult {
-	return c.mapCall(ctx, prompt, strict(ProjectMapSchemaName, map[string]any{"map": nullable(mapSchema())}))
+	return c.mapCall(ctx, prompt, strict(ProjectMapSchemaName, map[string]any{"map": nullable(mapSchema())}), false)
 }
 
-func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.ResponseFormat) RepoMapResult {
+// mapCall is one map call; outline, the repository map step's, whose
+// answer lays the page out too. An outline that does not parse costs
+// only itself: the map is the call's answer.
+func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.ResponseFormat, outline bool) RepoMapResult {
 	content, call := c.call(ctx, prompt, format)
 	out := RepoMapResult{Call: call}
 	if call.Outcome != OutcomeOK {
@@ -146,11 +152,18 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 	}
 	// The key must be there: {} is no answer, not "keep".
 	var answer *struct {
-		Map json.RawMessage `json:"map"`
+		Map     json.RawMessage `json:"map"`
+		Outline json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &answer) || answer == nil || answer.Map == nil {
 		out.Outcome = OutcomeUnparseable
 		return out
+	}
+	if outline && answer.Outline != nil && string(answer.Outline) != "null" {
+		var o []OutlineArea
+		if json.Unmarshal(answer.Outline, &o) == nil {
+			out.Outline = o
+		}
 	}
 	if string(answer.Map) == "null" {
 		return out
@@ -165,7 +178,9 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 }
 
 func repoMapFormat() llmwire.ResponseFormat {
-	return strict(RepoMapSchemaName, map[string]any{"map": nullable(repoMapSchema())})
+	outline := array(object(map[string]any{"area": str(), "ids": array(str())}))
+	outline["type"] = []any{"array", "null"}
+	return strict(RepoMapSchemaName, map[string]any{"map": nullable(repoMapSchema()), "outline": outline})
 }
 
 func strict(name string, properties map[string]any) llmwire.ResponseFormat {

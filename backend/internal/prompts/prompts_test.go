@@ -25,6 +25,21 @@ func TestPromptsStateTheSpelling(t *testing.T) {
 	}
 }
 
+// Every prompt that writes statements, or lays the page out, states the one
+// rule for areas; every statement it asks for carries one.
+func TestPromptsStateTheAreas(t *testing.T) {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "repo map": RepoMap} {
+		if !strings.Contains(p, Areas) {
+			t.Errorf("%s prompt lacks the area rule %q", name, Areas)
+		}
+	}
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture} {
+		if !strings.Contains(p, `"area": "<area>"`) {
+			t.Errorf("%s prompt's statement has no area", name)
+		}
+	}
+}
+
 // Every prompt that writes statement text and a summary states the one
 // layout rule and how the summary takes it; none bars the summary from it.
 func TestPromptsStateTheLayout(t *testing.T) {
