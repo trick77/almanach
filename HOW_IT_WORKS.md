@@ -747,13 +747,22 @@ none), and only a new or changed one meets today's caps, so lowering a
 cap never freezes a page; a page over the count may keep it, not grow.
 Every project with no more source repositories than a map holds (21,
 room left for one more node) carries an architecture overview, the project step's alone
-(`revisions.map`): zones `clients`, `repositories`, `stores`, `external`,
+(`revisions.map`): zones `clients`, `entry`, `repositories`, `stores`, `external`,
 a repository node named and labelled by a source repository's slug (code
 sets the label on a new map, whatever the model wrote, unless the slug is
 longer than a label), an edge labelled
 by how the parts talk (HTTP, event, DB, library, file), held to the
 drawing's limits. A larger project gets none, and the prompt asks for
-null. The map never costs the description: an edge pointing at its own
+null. The overview is the system at runtime, in production (user,
+2026-11-02): a configuration-as-code repository once put its build
+servers, registries, monitoring and one box per stage on it. The model
+tags each edge's `layer` (runtime, library, build, deploy, monitoring)
+and each node's `stage` (production, other, none: whatever the stage is
+called, the model's to tell); code (`baseline.RuntimeOnly`) takes out
+build, deploy and monitoring edges, a node outside the repositories they
+left without an edge, and a node of another stage with its edges. A
+repository always stays; an untagged map (stored before) is kept as it
+is. Repository maps carry no tags. The map never costs the description: an edge pointing at its own
 node or repeating one before it is taken out (one "almanach → almanach"
 edge refused a whole map once), a repository that left the
 project is taken out of it first. A map that still breaks a rule leaves

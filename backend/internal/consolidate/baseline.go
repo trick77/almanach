@@ -1464,14 +1464,19 @@ func (w *Worker) revisionMap(ctx context.Context, r *store.BaselineRun, page sto
 }
 
 // projectMapOf is a proposed system map repaired and checked: its self and
-// repeated edges and its departed repositories out, its repository nodes
-// labelled by slug, held to the map's rules and caps. A refusal is logged
-// with the map's labels by zone.
+// repeated edges, what it shows of the build, the deployment, the
+// monitoring and the other stages, and its departed repositories out, its
+// repository nodes labelled by slug, held to the map's rules and caps. A
+// refusal is logged with the map's labels by zone.
 func (w *Worker) projectMapOf(ctx context.Context, proposed *diagram.Diagram, slugs []string) (*diagram.Diagram, string) {
 	at := "baseline: " + projectLabel + " map"
 	repaired, dropped := baseline.RepairEdges(proposed)
 	if len(dropped) > 0 {
 		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
+	}
+	repaired, dropped = baseline.RuntimeOnly(repaired)
+	if len(dropped) > 0 {
+		w.log.InfoContext(ctx, at+": not the system at runtime in production, left out: "+strings.Join(dropped, ", "))
 	}
 	drawn, why := baseline.CheckMap(baseline.LabelRepos(w.withoutDeparted(ctx, repaired, slugs)), slugs, baseline.MapCaps)
 	if why != "" {

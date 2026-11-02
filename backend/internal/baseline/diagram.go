@@ -48,6 +48,8 @@ var (
 	directions = ir.Directions
 	shapes     = ir.Shapes
 	heads      = ir.Heads
+	layers     = ir.Layers
+	stages     = ir.Stages
 	seqLines   = ir.SeqLines
 	seqHeads   = ir.SeqHeads
 	sides      = ir.Sides
@@ -79,7 +81,7 @@ func CheckDiagram(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 }
 
 // CheckMap holds the project's system map to the rules of a flow and to its
-// own: the four zones only, every node in one, a node in the repositories
+// own: the five zones only, every node in one, a node in the repositories
 // zone named by a source repository's slug, and a slug nowhere else. A map
 // without a repository is no map of the project.
 func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, string) {
@@ -213,6 +215,63 @@ func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
 	return &out, names
 }
 
+// RuntimeOnly takes out of a proposed system map what the system does not
+// do at runtime, in production, by the model's tags, never by a name: a box
+// of another stage outside the repositories (its production box drawn
+// beside it) with its arrows, an arrow of the build, the deployment or the
+// monitoring, and then a box outside the repositories those took its last
+// arrow from. A repository stays, arrows or not; an untagged box or arrow
+// (a map stored before the tags) stays; an unknown tag is checkFlow's to
+// refuse. What went is named, "label (why)". A copy; d itself when nothing
+// goes; nil stays nil.
+func RuntimeOnly(d *ir.Diagram) (*ir.Diagram, []string) {
+	if d == nil {
+		return nil, nil
+	}
+	label := map[string]string{}
+	stage := map[string]bool{}
+	for _, n := range d.Nodes {
+		label[n.ID] = n.Label
+		stage[n.ID] = n.Zone != ir.ZoneRepositories && n.Stage == ir.StageOther
+	}
+	var dropped []string
+	var edges []ir.Edge
+	had := map[string]bool{}
+	for _, e := range d.Edges {
+		had[e.From], had[e.To] = true, true
+		if stage[e.From] || stage[e.To] {
+			continue
+		}
+		switch e.Layer {
+		case ir.LayerBuild, ir.LayerDeploy, ir.LayerMonitoring:
+			dropped = append(dropped, label[e.From]+" → "+label[e.To]+" ("+e.Layer+")")
+			continue
+		}
+		edges = append(edges, e)
+	}
+	kept := map[string]bool{}
+	for _, e := range edges {
+		kept[e.From], kept[e.To] = true, true
+	}
+	var nodes []ir.Node
+	for _, n := range d.Nodes {
+		switch {
+		case stage[n.ID]:
+			dropped = append(dropped, n.Label+" ("+ir.StageOther+" stage)")
+		case n.Zone != ir.ZoneRepositories && had[n.ID] && !kept[n.ID]:
+			dropped = append(dropped, n.Label+" (no runtime arrow)")
+		default:
+			nodes = append(nodes, n)
+		}
+	}
+	if len(dropped) == 0 {
+		return d, nil
+	}
+	out := *d
+	out.Nodes, out.Edges = nodes, edges
+	return &out, dropped
+}
+
 func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 	if !slices.Contains(directions, d.Direction) {
 		return nil, fmt.Sprintf("direction %q is neither TB nor LR", d.Direction)
@@ -248,6 +307,9 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 		if n.Zone != "" && !zones[n.Zone] {
 			return nil, fmt.Sprintf("node %q: undeclared zone %q", n.ID, n.Zone)
 		}
+		if n.Stage != "" && !slices.Contains(stages, n.Stage) {
+			return nil, fmt.Sprintf("node %q: unknown stage %q", n.ID, n.Stage)
+		}
 		used[n.Zone] = true
 		// A start or a stop is a dot: it carries no text.
 		text := ""
@@ -257,7 +319,7 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 				return nil, reason
 			}
 		}
-		out.Nodes = append(out.Nodes, ir.Node{ID: n.ID, Label: text, Shape: n.Shape, Zone: n.Zone})
+		out.Nodes = append(out.Nodes, ir.Node{ID: n.ID, Label: text, Shape: n.Shape, Zone: n.Zone, Stage: n.Stage})
 	}
 	// A zone holding no node is no zone: drawn it is an empty frame, and it
 	// would keep the flow from the layouts built for it.
@@ -273,6 +335,9 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 		if !slices.Contains(heads, e.Head) {
 			return nil, fmt.Sprintf("edge %s → %s: unknown head %q", e.From, e.To, e.Head)
 		}
+		if e.Layer != "" && !slices.Contains(layers, e.Layer) {
+			return nil, fmt.Sprintf("edge %s → %s: unknown layer %q", e.From, e.To, e.Layer)
+		}
 		text, reason := label("edge "+e.From+" → "+e.To, e.Label, false)
 		if reason != "" {
 			return nil, reason
@@ -282,7 +347,7 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 			return nil, fmt.Sprintf("edge %s → %s %q twice", e.From, e.To, text)
 		}
 		seen[key] = true
-		out.Edges = append(out.Edges, ir.Edge{From: e.From, To: e.To, Label: text, Dashed: e.Dashed, Head: e.Head})
+		out.Edges = append(out.Edges, ir.Edge{From: e.From, To: e.To, Label: text, Dashed: e.Dashed, Head: e.Head, Layer: e.Layer})
 	}
 	return out, ""
 }

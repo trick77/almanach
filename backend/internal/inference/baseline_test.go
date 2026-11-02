@@ -230,8 +230,33 @@ func TestDiagramSchemas(t *testing.T) {
 		t.Error("the merge's description carries a map")
 	}
 	zone := mapSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["zone"].(map[string]any)
-	if !slices.Equal(zone["enum"].([]any), []any{"clients", "repositories", "stores", "external"}) {
+	if !slices.Equal(zone["enum"].([]any), []any{"clients", "entry", "repositories", "stores", "external"}) {
 		t.Errorf("map node zone = %v", zone)
+	}
+	// Stage and layer: the system map's alone, required there.
+	items := func(m map[string]any, list string) map[string]any {
+		return m["properties"].(map[string]any)[list].(map[string]any)["items"].(map[string]any)
+	}
+	tagged := map[string]map[string]any{"node stage": items(mapSchema(), "nodes"), "edge layer": items(mapSchema(), "edges")}
+	for name, it := range tagged {
+		key := strings.Fields(name)[1]
+		p, ok := it["properties"].(map[string]any)[key].(map[string]any)
+		if !ok || !slices.Contains(it["required"].([]any), any(key)) {
+			t.Errorf("system map %s missing or not required: %v", name, it)
+			continue
+		}
+		want := map[string][]any{"stage": {"production", "other", "none"}, "layer": {"runtime", "library", "build", "deploy", "monitoring"}}[key]
+		if !slices.Equal(p["enum"].([]any), want) {
+			t.Errorf("system map %s = %v", name, p["enum"])
+		}
+	}
+	for name, m := range map[string]map[string]any{"repository map": repoMapSchema(), "flow": flowSchema()} {
+		if _, ok := items(m, "nodes")["properties"].(map[string]any)["stage"]; ok {
+			t.Errorf("%s: nodes carry a stage", name)
+		}
+		if _, ok := items(m, "edges")["properties"].(map[string]any)["layer"]; ok {
+			t.Errorf("%s: edges carry a layer", name)
+		}
 	}
 	// No array bound past minItems: a strict schema rejects one.
 	for name, m := range map[string]map[string]any{"system map": mapSchema(), "repository map": repoMapSchema(), "flow": flowSchema()} {

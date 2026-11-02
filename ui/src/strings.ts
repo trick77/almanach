@@ -110,9 +110,10 @@ export const S = {
       map: "Architekturübersicht",
       repoMap: "Aufbau",
     },
-    // The map's zones by id: the backend allows these four and no other.
+    // The map's zones by id: the backend allows these five and no other.
     zones: {
       clients: "Clients",
+      entry: "Eingang",
       repositories: "Repositories",
       stores: "Datenspeicher",
       external: "Externe Systeme",

@@ -72,3 +72,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   derived: no project call/page (`projectStands`).
 - Deps code's: manifests depth ≤1; edges joined at read, never stored; ambiguous = no edge; 1
   clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
+- System map = runtime, production (user, 2026-11-02): model tags `layer`/`stage`, code filters
+  (`RuntimeOnly`), never by name. Repo maps untagged.
