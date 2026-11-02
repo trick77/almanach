@@ -30,7 +30,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Description = documentation, no one-liners: statement as long as subject needs, no
   sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
   (user, 2026-11-01); bad path: off file list. Same rewrite = no revision.
-- Provenance is code's: `sources` carried by id, current PR appended on text change. Bad item
+- Provenance is code's: `sources` carried by id, current PR/run appended on text change; departure
+  run neither credits nor adds (removal teaches nothing; user, 2026-11-02). Bad item
   (unknown/repeated id, bad kind, empty): merge (whole page) rejected; step's patch never, item
   left out, logged, stored kept (user, 2026-11-01). Page without statements: edits taken as new.
   New statements in id-less `added`; id from `NextStatementID` over whole history, never reissued.
