@@ -267,7 +267,7 @@ describe("ProjectsPage", () => {
             repo: {
               slug: "loom",
               revision: 3,
-              summary: "Ein Recherche-Agent.",
+              summary: "#### Zweck\n\nEin Recherche-Agent, `loom`.",
               notes: 0,
               last_merge: null,
             },
@@ -288,9 +288,16 @@ describe("ProjectsPage", () => {
       },
     });
     render(<ProjectsPage />);
-    const tile = (await screen.findByText("loom")).closest("a")!;
+    const tile = (await screen.findByRole("heading", { name: "loom" })).closest(
+      "a",
+    )!;
     expect(tile.getAttribute("href")).toBe("/projects/loom");
-    expect(within(tile).getByText("Ein Recherche-Agent.")).toBeInTheDocument();
+    expect(within(tile).getByText(/Ein Recherche-Agent,/)).toBeInTheDocument();
+    // Code spans as the repository table sets them, no part's title.
+    expect(
+      within(tile).getByText("loom", { selector: "code" }),
+    ).toBeInTheDocument();
+    expect(within(tile).queryByText(/Zweck/)).toBeNull();
     expect(within(tile).getByText(/Revision 3/)).toBeInTheDocument();
     expect(within(tile).getByText("llmwire")).toBeInTheDocument();
     // No headings splitting projects: one grid.
@@ -328,6 +335,79 @@ describe("ProjectPage", () => {
     expect(document.title).toContain("PAY");
     // The start tab has no hash.
     expect(window.location.hash).toBe("");
+  });
+
+  it("reads a repository's summary as the tile does: code spans, no heading", async () => {
+    serve({
+      "projects/PAY": {
+        ...project,
+        repos: [
+          {
+            slug: "pay-api",
+            revision: 5,
+            summary:
+              "#### Zweck\n\n`pay-api` nimmt Aufträge an.\n\n1. prüft `limit`\n2. bucht",
+            notes: 11,
+            last_merge: mergedAt,
+          },
+          // Sub-headings alone: no teaser, so no description.
+          {
+            slug: "pay-lib",
+            revision: 1,
+            summary: "#### Zweck",
+            notes: 0,
+            last_merge: null,
+          },
+        ],
+      },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    const code = within(overview).getByText("limit");
+    expect(code.closest("code")).not.toBeNull();
+    const row = code.closest("tr")!;
+    expect(within(row).queryByText(/Zweck/)).toBeNull();
+    expect(row.textContent).not.toContain("`");
+    // An item keeps its marker: the list's order reads on.
+    expect(row.textContent).toContain("an. 1. prüft limit 2. bucht");
+    const lib = within(overview).getByText("pay-lib").closest("tr")!;
+    expect(
+      within(lib).getByText("Noch keine Beschreibung."),
+    ).toBeInTheDocument();
+    // The name stays the row's one link; a click anywhere on the row opens it.
+    const links = within(row).getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0]!.getAttribute("href")).toBe("/projects/PAY/repos/pay-api");
+    fireEvent.click(code);
+    expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api");
+  });
+
+  it("opens a row's page from anywhere on it, but not after a selection", async () => {
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const here = window.location.pathname;
+    const note = within(overview).getByText(
+      "Tageslimit und Kontolimit gemeinsam prüfen",
+    );
+    // Text selected in a cell: the drag copies, it opens nothing.
+    const sel = vi
+      .spyOn(window, "getSelection")
+      .mockReturnValue({ isCollapsed: false } as Selection);
+    fireEvent.click(note);
+    expect(window.location.pathname).toBe(here);
+    sel.mockRestore();
+    // A middle or ⌘ click opens a tab, a plain one navigates.
+    fireEvent(note, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    fireEvent.click(note, { metaKey: true });
+    const to = note.closest("tr")!.querySelector("a")!.getAttribute("href")!;
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledWith(to, "_blank", "noopener");
+    expect(window.location.pathname).toBe(here);
+    fireEvent.click(note);
+    expect(window.location.pathname).toBe(to);
+    open.mockRestore();
   });
 
   it("renders the description as paragraphs, the statements with chips", async () => {

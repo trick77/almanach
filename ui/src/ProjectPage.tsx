@@ -31,6 +31,8 @@ import {
   h2,
   meta,
   page,
+  rowLink,
+  rowOpens,
   table,
   tableBox,
   td,
@@ -38,6 +40,8 @@ import {
   tdNum,
   th,
   thNum,
+  Teaser,
+  teaserLines,
 } from "./ui";
 
 /** The project page's tabs by their hash: the overview first, the hub's
@@ -262,33 +266,34 @@ function Overview({
                 </tr>
               </thead>
               <tbody>
-                {data.repos.map((r) => (
-                  <tr key={r.slug}>
-                    <td className={tdMono}>
-                      <Link
-                        to={repoPath(data.key, r.slug)}
-                        className="text-ink-dim hover:text-ink"
-                      >
-                        {r.slug}
-                      </Link>
-                    </td>
-                    <td className={td}>
-                      {r.summary === "" ? (
-                        <span className="text-faint">
-                          {S.project.noDescription}
-                        </span>
-                      ) : (
-                        r.summary
-                      )}
-                    </td>
-                    <td className={tdNum}>{r.notes}</td>
-                    <td className={td + " whitespace-nowrap"}>
-                      {r.last_merge === null
-                        ? S.common.never
-                        : day(r.last_merge)}
-                    </td>
-                  </tr>
-                ))}
+                {data.repos.map((r) => {
+                  const to = repoPath(data.key, r.slug);
+                  const teaser = teaserLines(r.summary);
+                  return (
+                    <tr key={r.slug} {...rowOpens(to)}>
+                      <td className={tdMono}>
+                        <Link to={to} className={rowLink}>
+                          {r.slug}
+                        </Link>
+                      </td>
+                      <td className={td}>
+                        {teaser.length === 0 ? (
+                          <span className="text-faint">
+                            {S.project.noDescription}
+                          </span>
+                        ) : (
+                          <Teaser lines={teaser} />
+                        )}
+                      </td>
+                      <td className={tdNum}>{r.notes}</td>
+                      <td className={td + " whitespace-nowrap"}>
+                        {r.last_merge === null
+                          ? S.common.never
+                          : day(r.last_merge)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

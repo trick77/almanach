@@ -1,10 +1,22 @@
 // The small shared vocabulary, after ../noergler's ui.tsx: class strings
 // hoisted to named consts where a component would add nothing, components
 // where there is behaviour or a shape worth a name.
-import { Fragment, type CSSProperties, type ReactNode } from "react";
-import { blocks, codeSpans, paragraphs, runs, type Tone } from "./format";
+import {
+  Fragment,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
+import {
+  blocks,
+  codeSpans,
+  lines,
+  paragraphs,
+  runs,
+  type Tone,
+} from "./format";
 import { S } from "./strings";
-import { onNav } from "./routing";
+import { navigateTo, onNav } from "./routing";
 
 export const page = "h-full overflow-auto";
 /** The page column: 1400px, centred, ../noergler's width. Tables, source
@@ -72,11 +84,15 @@ export function Link({
 export function Chip({
   to,
   quiet = false,
+  row = false,
   title,
   children,
 }: {
   to: string | null;
   quiet?: boolean;
+  /** row: the chip names its row's page (rowOpens), lit by the row's
+   *  hover rather than its own. */
+  row?: boolean;
   title?: string;
   children: ReactNode;
 }) {
@@ -93,7 +109,12 @@ export function Chip({
     <Link
       to={to}
       title={title}
-      className={cls + " hover:border-accent hover:text-ink"}
+      className={
+        cls +
+        (row
+          ? " group-hover:border-accent group-hover:text-ink"
+          : " hover:border-accent hover:text-ink")
+      }
     >
       {children}
     </Link>
@@ -169,6 +190,34 @@ export function Prose({
   );
 }
 
+/** codePill is a backtick-quoted identifier, every one in the app the
+ *  same: mono on a slight pill, a soft border that still reads on a row's
+ *  hover (bg-active); cloned per line when one wraps. */
+const codePill =
+  "rounded-[5px] border border-elevated-border/75 bg-active px-[0.4em] py-[0.05em] font-mono text-[0.84em] text-ink box-decoration-clone";
+
+/** teaserLines is what a Teaser shows of a summary; none when it holds
+ *  only sub-headings, so the caller says it has no description. */
+export function teaserLines(text: string): string[] {
+  return lines(text, { headings: false, markers: true });
+}
+
+/** Teaser is a summary read on in a list, a table cell's or a tile's
+ *  (teaserLines): paragraphs and items run together, each item with its
+ *  marker, code spans and bold as Doc sets them. */
+export function Teaser({ lines }: { lines: string[] }) {
+  return (
+    <>
+      {lines.map((t, i) => (
+        <Fragment key={i}>
+          {i > 0 && " "}
+          <Inline text={t} bold />
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 /** Inline is a line of model text with its backtick-quoted identifiers in
  *  the mono face (codeSpans): a paragraph of Prose, a statement's name.
  *  bold reads **bold** as well (runs), for Doc's laid-out text only; its
@@ -204,13 +253,7 @@ export function Inline({
         ) : (
           <Marked text={s.text} query={query} />
         );
-        const run = s.code ? (
-          <code className="rounded-sm bg-active px-[0.3em] font-mono text-[0.84em] text-ink">
-            {body}
-          </code>
-        ) : (
-          body
-        );
+        const run = s.code ? <code className={codePill}>{body}</code> : body;
         return s.bold ? (
           <strong key={j} className="font-semibold text-ink">
             {run}
@@ -381,6 +424,27 @@ export const td =
   "border-b border-border-soft py-[7px] pr-2.5 align-top text-ink-dim";
 export const tdNum = td + " text-right tabular-nums whitespace-nowrap";
 export const tdMono = td + " " + mono + " whitespace-nowrap";
+/** rowOpens makes a <tr> open its subject's page from anywhere on it: a
+ *  click navigates, a middle or ⌘/Ctrl click opens a tab. The name stays a
+ *  real Link (rowLink), what the keyboard and a copied address use; a
+ *  click on it is its own. A drag that selected text opens nothing, so a
+ *  cell's text still copies. */
+export function rowOpens(to: string) {
+  const own = (e: MouseEvent<HTMLElement>) =>
+    e.target instanceof Element && e.target.closest("a, button") !== null;
+  return {
+    className: "group cursor-pointer hover:bg-active",
+    onClick: (e: MouseEvent<HTMLElement>) => {
+      if (own(e) || !(window.getSelection()?.isCollapsed ?? true)) return;
+      if (e.metaKey || e.ctrlKey) window.open(to, "_blank", "noopener");
+      else navigateTo(to);
+    },
+    onAuxClick: (e: MouseEvent<HTMLElement>) => {
+      if (e.button === 1 && !own(e)) window.open(to, "_blank", "noopener");
+    },
+  };
+}
+export const rowLink = "text-ink-dim group-hover:text-ink";
 
 /** Buttons, the Quellen pages' only ones: a quiet default, one primary
  *  per row, a dangerous one that only reddens on hover. */

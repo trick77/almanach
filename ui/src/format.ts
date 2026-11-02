@@ -174,14 +174,31 @@ export function blocks(text: string): Block[] {
   return out;
 }
 
+/** lines is laid-out text one block a line, as blocks reads it (an item's
+ *  continuation joined to it): plain's and a teaser's. A teaser drops the
+ *  sub-headings and keeps each item's marker, so a list still reads as
+ *  one, its order too. */
+export function lines(
+  text: string,
+  { headings = true, markers = false } = {},
+): string[] {
+  return blocks(text).flatMap((b) => {
+    if (b.kind === "p") return [b.text];
+    if (b.kind === "h") return headings ? [b.text] : [];
+    if (!markers) return b.items;
+    return b.items.map(
+      (t, i) => (b.kind === "ol" ? `${b.start + i}. ` : "– ") + t,
+    );
+  });
+}
+
 /** plain is laid-out text as Doc shows it, what a search reads, so a
  *  statement kept is one with a mark: read by blocks itself (an item's
  *  continuation joined to it, a #### a title), each block's text as runs
  *  leaves it (the ** that pair and the code spans' backticks gone), one
  *  block a line. */
 export function plain(text: string): string {
-  return blocks(text)
-    .flatMap((b) => (b.kind === "p" || b.kind === "h" ? [b.text] : b.items))
+  return lines(text)
     .map((t) =>
       runs(t)
         .map((r) => r.text)
