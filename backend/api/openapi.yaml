@@ -1078,7 +1078,7 @@ components:
           properties:
             cost_usd:
               type: string
-              description: 3 decimals; omitted when the gateway priced none.
+              description: 3 decimals; omitted when none was priced.
             calls:
               type: integer
         recent:
@@ -1179,7 +1179,7 @@ components:
           format: date-time
         cost_usd:
           type: string
-          description: 3 decimals; omitted when the gateway priced none of its calls.
+          description: 3 decimals; omitted when none of its calls was priced.
         steps:
           type: array
           description: The catalogue, the overview, the subjects in reading order, the project, the repository map; a queued run lists the catalogue, the project and the map alone.
@@ -1325,7 +1325,7 @@ components:
                 description: Why it was left out; empty for a run from before reasons were kept.
         cost_usd:
           type: string
-          description: What the gateway priced of the run's calls, 3 decimals; omitted when it priced none.
+          description: What the run's priced calls cost, 3 decimals; omitted when none was priced.
         error:
           type: string
         queued_at:
@@ -1480,7 +1480,7 @@ components:
 
     Money:
       type: [string, "null"]
-      description: USD as a decimal string, never a float. Null when the gateway did not price the call.
+      description: USD as a decimal string, never a float. Null when the call was unpriced.
       examples: ["0.012"]
 
     NoteDelivery:

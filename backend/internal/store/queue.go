@@ -210,8 +210,8 @@ func (s *Store) FoldedNotes(ctx context.Context, since time.Time, limit int) ([]
 	return out, rows.Err()
 }
 
-// RunCosts is what each run's calls cost, by run id; a run whose calls the
-// gateway priced none of is absent.
+// RunCosts is what each run's calls cost, by run id; a run none of whose
+// calls was priced is absent.
 func (s *Store) RunCosts(ctx context.Context, ids []int64) (map[int64]int64, error) {
 	out := map[int64]int64{}
 	if len(ids) == 0 {
@@ -245,7 +245,7 @@ func (s *Store) RunCosts(ctx context.Context, ids []int64) (map[int64]int64, err
 }
 
 // Spent is what Almanach's own model calls since a time cost, and how many
-// there were; cost nil when the gateway priced none of them.
+// there were; cost nil when none of them was priced.
 func (s *Store) Spent(ctx context.Context, since time.Time) (*int64, int, error) {
 	var cost sql.NullInt64
 	var calls int

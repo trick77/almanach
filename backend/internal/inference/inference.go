@@ -276,14 +276,15 @@ type MergeRequest struct {
 	Prompt string
 }
 
-// CallCost is what the gateway reported for the call.
+// CallCost is what the call used and cost.
 type CallCost struct {
 	Model        string
 	CallID       string
 	InputTokens  int64
 	CachedTokens int64
 	OutputTokens int64
-	// NanoUSD is nil when the gateway did not price the call.
+	// NanoUSD is nil when the call was unpriced: neither the gateway nor
+	// llmwire's table priced it.
 	NanoUSD  *int64
 	Answered bool
 }
@@ -338,7 +339,7 @@ type Call struct {
 // call is one Chat with a strict schema, never streaming, no retry. The
 // content is the answer to parse when the outcome is ok.
 func (c *Client) call(ctx context.Context, prompt string, format llmwire.ResponseFormat) (string, Call) {
-	resp, _, err := c.wire.Chat(ctx, llmwire.ChatRequest{
+	resp, warnings, err := c.wire.Chat(ctx, llmwire.ChatRequest{
 		Model:          c.model,
 		Reasoning:      c.reasoning(),
 		Messages:       []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(prompt)},
@@ -352,6 +353,9 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		return "", out
 	}
 	out := Call{Cost: costFrom(resp)}
+	if out.Cost.NanoUSD == nil {
+		c.logUnpriced(resp.Gateway.CallID, warnings)
+	}
 	if resp.FinishReason == "length" {
 		// Cut by the model's output cap, so the JSON is incomplete: say so,
 		// rather than reporting the cut as an answer off the schema.
@@ -360,6 +364,24 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		return "", out
 	}
 	return resp.Content, out
+}
+
+// logUnpriced says why an answered call has no cost: llmwire's reason is
+// said only in its warnings, and without this line the cost is missing with
+// nothing naming the cause. Keyed on the cost, not on the warning, so a
+// reason llmwire files elsewhere still leaves a line.
+func (c *Client) logUnpriced(callID string, warnings []llmwire.Warning) {
+	var reasons []string
+	for _, w := range warnings {
+		if w.Feature == "cost" {
+			reasons = append(reasons, w.Details)
+		}
+	}
+	reason := strings.Join(reasons, "; ")
+	if reason == "" {
+		reason = "none given"
+	}
+	c.log.Warn("call unpriced", "model", c.model, "call_id", callID, "reason", reason)
 }
 
 // ParseMerge reads the model's answer. A bare null is a non-answer.
@@ -390,7 +412,9 @@ func parse(content string, dst any) bool {
 func costFrom(resp *llmwire.ChatResponse) CallCost {
 	out := CallCost{Model: resp.Model, CallID: resp.Gateway.CallID, Answered: true,
 		InputTokens: deref(resp.Usage.Input.Total), CachedTokens: deref(resp.Usage.Input.CacheRead), OutputTokens: deref(resp.Usage.Output.Total)}
-	if resp.Usage.Cost.Provenance == llmwire.Reported {
+	// Reported is the gateway's charge; FromTable is llmwire's list rate, the
+	// only figure a direct-route call has. Unpriced alone is unknown.
+	if resp.Usage.Cost.Provenance != llmwire.Unpriced {
 		n := resp.Usage.Cost.NanoUSD
 		out.NanoUSD = &n
 	}

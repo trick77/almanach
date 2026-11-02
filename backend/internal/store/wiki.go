@@ -400,7 +400,7 @@ const (
 	PurposeProjectMap = "project_map"
 )
 
-// LLMCall is one model call as the gateway described it. SourceKind "" and
+// LLMCall is one model call as llmwire described it. SourceKind "" and
 // Purpose "" are a note's merge (SourcePR); a baseline step sets
 // FromBaseline, SourceCommit, its Purpose and BaselineRunID.
 type LLMCall struct {
