@@ -963,11 +963,13 @@ describe("App with sources", () => {
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
     expect(await screen.findByText("Quellen")).toBeInTheDocument();
-    // Abhängigkeiten before Quellen, no FAQ.
-    const entries = within(
-      screen.getByRole("navigation", { name: "Seiten" }),
-    ).getAllByRole("link");
-    expect(entries.map((a) => a.textContent)).toEqual([
+    // Abhängigkeiten before Quellen, no FAQ. The label alone: the queue's
+    // count sits in its link beside it.
+    const entries = () =>
+      within(screen.getByRole("navigation", { name: "Seiten" }))
+        .getAllByRole("link")
+        .map((a) => a.firstElementChild?.textContent);
+    expect(entries()).toEqual([
       "Projekte",
       "Abhängigkeiten",
       "Quellen",
@@ -986,5 +988,6 @@ describe("App with sources", () => {
     await waitFor(() =>
       expect(screen.queryByText("Quellen")).not.toBeInTheDocument(),
     );
+    expect(entries()).toEqual(["Projekte", "Warteschlange"]);
   });
 });

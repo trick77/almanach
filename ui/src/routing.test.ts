@@ -12,7 +12,6 @@ import {
 describe("routeFromPath", () => {
   it("reads every page and falls back to the projects list", () => {
     expect(routeFromPath("/")).toEqual({ page: "projects" });
-    expect(routeFromPath("/faq")).toEqual({ page: "projects" });
     expect(routeFromPath("/projects/PLAT")).toEqual({
       page: "project",
       key: "PLAT",
@@ -45,6 +44,8 @@ describe("routeFromPath", () => {
       "/projects/PLAT/repos",
       "/projects/PLAT/repos/files/notes/0",
       "/projects/PLAT/repos/files/notes/x",
+      // The FAQ page: removed, the server answers 404.
+      "/faq",
     ]) {
       expect(routeFromPath(p)).toEqual({ page: "projects" });
     }

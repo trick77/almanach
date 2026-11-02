@@ -1149,8 +1149,11 @@ describe("App", () => {
     screen.getByText("PAY").closest("a")!.click();
     await waitFor(() => expect(window.location.pathname).toBe("/projects/PAY"));
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
+    expect(document.title).toContain("PAY");
     screen.getByText("Almanach").closest("a")!.click();
     await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(await screen.findByText("PAY")).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toContain("Projekte"));
   });
 });
 
