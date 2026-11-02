@@ -23,7 +23,7 @@ export const S = {
   deps: {
     title: "Abhängigkeiten",
     what: "die Abhängigkeiten",
-    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json, im Wurzelverzeichnis oder eine Ebene darunter) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
+    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json und Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; im Wurzelverzeichnis oder eine Ebene darunter) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
     disabled:
       "Abhängigkeiten gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
     empty:

@@ -57,6 +57,12 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		"go.mod":                   "module example.invalid/loom\n\nrequire example.invalid/wire v0.1.8\n",
 		"web/package.json":         `{"name": "loom-ui", "dependencies": {"left-pad": "^1.3.0"}}`,
 		"corpus/checkout/a/go.mod": "module example.invalid/copied\n",
+		// A Gradle build's files pass the reader's filters too.
+		"build.gradle":              "dependencies { implementation libs.wire.api }\n",
+		"gradle/libs.versions.toml": "[libraries]\nwire-api = \"example.wire:wire-api:2.0\"\n",
+		"jvm/settings.gradle.kts":   "rootProject.name = \"loom-jvm\"\n",
+		"jvm/gradle.properties":     "group=example.loom\n",
+		"jvm/build.gradle.kts":      "dependencies { implementation(\"example.wire:wire-core:1.0\") }\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(work, p)), 0o750); err != nil {
 			t.Fatal(err)
@@ -87,8 +93,13 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := manifest.Read{
-		Provides: []string{"go:example.invalid/loom", "npm:loom-ui"},
-		Requires: []manifest.Dep{{Coord: "go:example.invalid/wire", Version: "v0.1.8"}, {Coord: "npm:left-pad", Version: "^1.3.0"}},
+		Provides: []string{"go:example.invalid/loom", "maven:example.loom:loom-jvm", "npm:loom-ui"},
+		Requires: []manifest.Dep{
+			{Coord: "go:example.invalid/wire", Version: "v0.1.8"},
+			{Coord: "maven:example.wire:wire-api", Version: "2.0"},
+			{Coord: "maven:example.wire:wire-core", Version: "1.0"},
+			{Coord: "npm:left-pad", Version: "^1.3.0"},
+		},
 	}
 	rid := idOf("tools/loom")
 	if got := m.saved[rid]; !reflect.DeepEqual(got, want) || m.commit[rid] != head {
