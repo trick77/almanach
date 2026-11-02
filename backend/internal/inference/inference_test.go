@@ -88,6 +88,91 @@ func TestOutcomeString(t *testing.T) {
 	}
 }
 
+func TestCostFromProvenance(t *testing.T) {
+	// A direct-route call is priced off llmwire's table, a gateway call by
+	// the gateway: both are a cost, only Unpriced is none.
+	for _, tc := range []struct {
+		prov llmwire.CostProvenance
+		want *int64
+	}{
+		{llmwire.Reported, new(int64(1_500_000))},
+		{llmwire.FromTable, new(int64(1_500_000))},
+		{llmwire.Unpriced, nil},
+	} {
+		resp := &llmwire.ChatResponse{Usage: llmwire.Usage{Cost: llmwire.Cost{NanoUSD: 1_500_000, Provenance: tc.prov}}}
+		got := costFrom(resp).NanoUSD
+		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("%s: NanoUSD = %v, want %v", tc.prov, got, tc.want)
+		}
+	}
+}
+
+// A gateway that sends no cost header leaves the call unpriced; llmwire
+// says why, and that reason is the only trace of it.
+func TestUnpricedCallLogsReason(t *testing.T) {
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model": "sol", "choices": [{"finish_reason": "stop", "message": {"content": "{\"repository\": null, \"project\": null}"}}],`+
+			`"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}`)
+	}))
+	t.Cleanup(gw.Close)
+	env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
+	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wire, err := llmwire.FromEnv("mimo-v2.6-pro", llmwire.Config{Logger: quiet, Lookup: lookup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	c := &Client{wire: wire, model: "mimo-v2.6-pro", log: slog.New(slog.NewTextHandler(&logs, nil))}
+
+	res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if res.Outcome != OutcomeOK || res.Cost.NanoUSD != nil {
+		t.Fatalf("Outcome = %s (err %v), NanoUSD = %v, want ok and unpriced", res.Outcome, res.Err, res.Cost.NanoUSD)
+	}
+	if !strings.Contains(logs.String(), "call unpriced") || !strings.Contains(logs.String(), "reported no cost") {
+		t.Errorf("an unpriced call logged no reason: %q", logs.String())
+	}
+}
+
+// The test model has a table rate and goes straight to its endpoint: the
+// direct route. Its cost is the table's, kept, not dropped as unpriced.
+func TestDirectRouteCallIsPriced(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(`{"repository": null, "project": null}`)
+	res := testClient(srv.Client()).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if res.Cost.NanoUSD == nil || *res.Cost.NanoUSD <= 0 {
+		t.Errorf("NanoUSD = %v, want the table's figure", res.Cost.NanoUSD)
+	}
+}
+
+// Every model almanach could be configured with (strict JSON) is priced on
+// the direct route: a profile without a table rate, or an endpoint whose
+// usage llmwire cannot price, would leave every call unpriced again.
+func TestEveryModelPricedDirect(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(`{"repository": null, "project": null}`)
+	reg := llmwire.Default()
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, id := range reg.Models() {
+		if _, err := reg.Require(id, llmwire.Needs{JSONSchema: true}); err != nil {
+			continue
+		}
+		t.Run(id, func(t *testing.T) {
+			wire := llmwire.New(llmwire.Config{BaseURL: srv.URL, APIKey: "k", Registry: reg, Logger: quiet})
+			var logs strings.Builder
+			c := &Client{wire: wire, model: id, log: slog.New(slog.NewTextHandler(&logs, nil))}
+			res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
+			if res.Outcome != OutcomeOK {
+				t.Fatalf("Outcome = %s, err %v", res.Outcome, res.Err)
+			}
+			if res.Cost.NanoUSD == nil || *res.Cost.NanoUSD <= 0 {
+				t.Errorf("NanoUSD = %v, want priced; log: %s", res.Cost.NanoUSD, logs.String())
+			}
+		})
+	}
+}
+
 func testClient(wire *llmwire.Client) *Client {
 	return &Client{wire: wire, model: llmwiretest.ChatModel, log: slog.New(slog.NewTextHandler(io.Discard, nil)), diagrams: true}
 }

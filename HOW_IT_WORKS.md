@@ -1284,8 +1284,10 @@ things a change must not undo by accident.
 - A mark or a defer the store refuses pauses the drain until the next wake
   or poll rather than paying for the same fold again.
 - Every model call leaves an `llm_calls` row, whatever its outcome, with
-  the tokens and the cost the gateway reported (cost NULL when it reported
-  none).
+  the tokens and the cost: on the gateway route what the gateway charged,
+  on the direct route llmwire's list rate for the model (a comparable
+  figure, not an invoice). Cost NULL when neither priced it; llmwire's
+  reason is logged (`call unpriced`).
 - Shutdown lets the fold in flight finish for up to the call timeout plus
   fifteen seconds, then cancels it. A fold cancelled this way leaves its
   note queued (nothing was marked) and is folded again after the restart.
@@ -1370,8 +1372,7 @@ baseline step's patch never is: its bad items are left out one by one (see
   appears for a row that predates the delivery's call, which the current
   ingest never produces.
 - Money: nano-USD integers in the store; on the wire a 3-decimal USD
-  string rounded half up, or omitted when the gateway did not price the
-  call. Never a float, never summed across `note_calls` and `llm_calls`.
+  string rounded half up, or omitted when the call was unpriced. Never a float, never summed across `note_calls` and `llm_calls`.
 - `files` and every array are `[]` on the wire, never `null`.
 - In oidc mode the reader (kit's username: preferred username, else
   email, else subject) is written to the access
