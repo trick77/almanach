@@ -1548,11 +1548,7 @@ func (w *Worker) projectMapOf(ctx context.Context, proposed *diagram.Diagram, sl
 		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
 	}
 	runtime := w.runtimeOnly(ctx, at, w.withoutDeparted(ctx, repaired, slugs))
-	why := baseline.CheckTagged(runtime)
-	var drawn *diagram.Diagram
-	if why == "" {
-		drawn, why = baseline.CheckMap(baseline.LabelRepos(runtime), slugs, baseline.MapCaps)
-	}
+	drawn, why := baseline.CheckNewMap(baseline.LabelRepos(runtime), slugs, baseline.MapCaps)
 	if why != "" {
 		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(runtime)))
 		return nil, why, runtime
@@ -1821,12 +1817,12 @@ func (w *Worker) projectOver(ctx context.Context, r *store.BaselineRun, plan run
 // revision in place, with its basis, and the run's end, in one
 // transaction: no revision of its own, the text did not change. Before the
 // check, RepoRuntimeOnly takes out what does not run in production (build,
-// CI, delivery, monitoring, other stages). A map still refused, or one the
-// filter empties, keeps a stored one, writing nothing; with none stored
-// and every try run and refused, or the map emptied (a CI library: nothing
-// of it runs, no use asking again), the sentinel is set with the basis:
-// declined, said on the page, not asked again until the text changes. A
-// map stored before the tags counts as none. A skip, a failed call, the
+// CI, delivery, monitoring, other stages); a map it empties is refused like
+// any. A map still refused keeps a stored one, writing nothing; with none
+// stored and every try run and refused, or emptied still on the last try
+// (a CI library: nothing of it runs) whatever is stored, the sentinel is set with
+// the basis: declined, said on the page, not asked again until the text
+// changes. A map stored before the tags counts as none. A skip, a failed call, the
 // calls spent before every try ran, or null for a page without a map write
 // nothing, so the basis stays stale and the next run asks again (null was
 // recorded once, and a map then never came). A hold
@@ -1890,24 +1886,28 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 			w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
 		}
 		draft = w.repoRuntimeOnly(ctx, at, repaired)
-		// Every box taken out is the model's word that nothing of the
-		// repository runs in production (a CI library): not a refusal
-		// asked again.
-		emptied = len(draft.Nodes) == 0 && len(repaired.Nodes) > 0
-		if !emptied {
-			if drawn, refused = baseline.CheckRepoMap(draft, baseline.MapCaps); refused != "" {
-				w.log.WarnContext(ctx, at+" refused ("+refused+")", slog.String("nodes", mapLabels(draft)))
-			}
+		// Untagged, the filter cannot be trusted to have emptied it.
+		refused = baseline.CheckTagged(repaired)
+		switch {
+		case refused != "":
+		case len(draft.Nodes) == 0:
+			// Every box went with its arrows (one drawn with none stays):
+			// the model's tags say nothing of the repository runs in
+			// production. A refusal like any, asked again with the answer,
+			// so one slip never costs a map; said on the last try, declined.
+			emptied = true
+			refused = "every node was taken out: by your tags nothing of the repository runs in production"
+			draft = repaired
+		default:
+			drawn, refused = baseline.CheckRepoMap(draft, baseline.MapCaps)
+		}
+		if refused != "" {
+			w.log.WarnContext(ctx, at+" refused ("+refused+")", slog.String("nodes", mapLabels(draft)))
 		}
 	}
 	switch {
-	case emptied && keep != nil:
-		// One answer tagged all build may be the model's slip: a stored
-		// map stays, as for a refusal, and the next run asks again.
-		w.log.WarnContext(ctx, at+": nothing of it runs in production, the stored one kept")
-		return w.finish(ctx, r, plan)
-	case emptied:
-		w.log.InfoContext(ctx, at+": nothing of it runs in production, declined")
+	case emptied && tries >= 1+mapRetries:
+		w.log.InfoContext(ctx, at+": nothing of it runs in production, still, declined")
 		keep = diagram.Sentinel()
 	case drawn != nil && diagram.Equal(drawn, keep), res.Map == nil && keep != nil:
 		w.log.InfoContext(ctx, at+": no change")

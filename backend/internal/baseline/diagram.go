@@ -106,6 +106,15 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 	return checkFlow(d, caps, true)
 }
 
+// CheckNewMap is CheckMap on a newly drawn system map, every tag required
+// (CheckTagged); CheckMap alone is for a stored one.
+func CheckNewMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, string) {
+	if why := CheckTagged(d); why != "" {
+		return nil, why
+	}
+	return CheckMap(d, slugs, caps)
+}
+
 // CheckRepoMap holds a repository's map to the rules of a flow and to its
 // own: the four zones only, every node in one. No slug rule: its nodes are
 // the repository's parts, not repositories. Its tags carried, as the
@@ -264,10 +273,11 @@ func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
 func RuntimeOnly(d *ir.Diagram) (*ir.Diagram, []string) { return runtimeOnly(d, false) }
 
 // RepoRuntimeOnly is RuntimeOnly on a repository map (user, 2026-11-02:
-// build, CI and CD are no architecture overview). Its parts take the
-// repositories' place, but a CI pipeline is drawn as a part: a part whose
-// every arrow went goes with them. A part drawn with no arrow stays: a
-// library's or a one-part service's parts may talk to nothing on the map.
+// build, CI and CD are no architecture overview), but it judges a box by
+// the arrows it had: one whose every arrow went goes with them (a CI
+// pipeline drawn as a part, its job, its workspace), one drawn with no
+// arrow stays (a library's parts and entry point may link to nothing on
+// the map). So a map it empties had arrows, all of them the tags' to take.
 func RepoRuntimeOnly(d *ir.Diagram) (*ir.Diagram, []string) { return runtimeOnly(d, true) }
 
 func runtimeOnly(d *ir.Diagram, repoMap bool) (*ir.Diagram, []string) {
@@ -310,7 +320,7 @@ func runtimeOnly(d *ir.Diagram, repoMap bool) (*ir.Diagram, []string) {
 		switch {
 		case other[n.ID]:
 			dropped = append(dropped, n.Label+" ("+ir.StageOther+" stage)")
-		case repoMap && n.Zone == ir.ZoneParts && !drawn[n.ID]:
+		case repoMap && !drawn[n.ID]:
 			nodes = append(nodes, n)
 		case droppable(n) && !linked[n.ID]:
 			dropped = append(dropped, n.Label+" (no runtime arrow)")

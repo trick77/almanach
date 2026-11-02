@@ -860,13 +860,14 @@ toward none. It shows what runs in production as well, by the same tags
 and `RuntimeOnly` (user, 2026-11-02: a Jenkins pipeline, its job, the
 Maven command line, the build workspace, the forge and code analysis
 filled a library's map; build, CI and CD are no architecture overview).
-Its parts take the repositories' place (`RepoRuntimeOnly`), but a CI
-pipeline is drawn as a part: a part whose every arrow went goes with
-them, a part drawn with no arrow stays (a library's parts may talk to
-nothing on the map). A map the filter empties is the model's word that
-nothing of the repository runs (a CI library): the sentinel where none is
-stored, not a refusal asked again; a stored map outlives one such answer,
-as likely the model's slip. A new map, either one, needs every tag
+It judges a box by the arrows it had (`RepoRuntimeOnly`): one whose
+every arrow went goes with them (a CI pipeline drawn as a part, its job,
+its workspace), one drawn with no arrow stays (a library's parts and
+entry point may link to nothing on the map). A map it empties is refused
+like any and asked again with the answer, so one slip never costs a map;
+still empty on the last try, the model's word that nothing of the
+repository runs (a CI library), it is declined, a stored map too. A new
+map, either one, needs every tag
 (`CheckTagged`): one without would read as stored before the tags. A
 repository map stored before the tags never stands (`MapStands`), so the
 poller's retry below redraws it at an unchanged head, while it holds

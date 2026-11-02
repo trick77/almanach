@@ -1357,18 +1357,19 @@ func TestRun_RepoMapStep(t *testing.T) {
 		"declined holds": {16, true, true, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, nil, "drawn from the description as it stands"},
 		"stale on null":  {16, true, false, stored, inference.RepoMapResult{Call: called}, true, true, stored, "no change"},
 		// Build and CI are no part of it (user, 2026-11-02): left out. A map
-		// of nothing else is none, not asked again; a stored map outlives
-		// one such answer, the model's slip as likely.
-		"CI left out":            {16, true, false, stored, inference.RepoMapResult{Call: called, Map: withCI}, true, true, drawnRepoMap(), "not run in production, left out: Jenkins-Job → Pipeline (build)"},
-		"nothing runs":           {16, true, false, nil, inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "nothing of it runs in production, declined"},
-		"nothing runs, stored":   {16, true, false, stored, inference.RepoMapResult{Call: called, Map: ciOnly}, true, false, stored, "nothing of it runs in production, the stored one kept"},
-		"nothing runs, untagged": {16, true, true, untagged(stored), inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "nothing of it runs in production, declined"},
+		// of nothing else is refused and asked again, so one slip never costs
+		// a map; still nothing on the last try, it is declined, a stored map
+		// too.
+		"CI left out":          {16, true, false, stored, inference.RepoMapResult{Call: called, Map: withCI}, true, true, drawnRepoMap(), "not run in production, left out: Jenkins-Job → Pipeline (build)"},
+		"nothing runs":         {16, true, false, nil, inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "nothing of it runs in production, still, declined"},
+		"nothing runs, stored": {16, true, false, stored, inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "by your tags nothing of the repository runs"},
 		// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
 		// A map stored before the tags never stands and is never carried: the
 		// same drawing tagged is written; null records nothing, as for a page
 		// without a map, so the next run asks again.
-		"untagged redrawn": {16, true, true, untagged(stored), inference.RepoMapResult{Call: called, Map: stored}, true, true, stored, "repository map: drawn"},
-		"untagged, null":   {16, true, true, untagged(stored), inference.RepoMapResult{Call: called}, true, false, stored, "none drawn, asked again by the next run"},
+		"nothing runs, untagged": {16, true, true, untagged(stored), inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "nothing of it runs in production, still, declined"},
+		"untagged redrawn":       {16, true, true, untagged(stored), inference.RepoMapResult{Call: called, Map: stored}, true, true, stored, "repository map: drawn"},
+		"untagged, null":         {16, true, true, untagged(stored), inference.RepoMapResult{Call: called}, true, false, stored, "none drawn, asked again by the next run"},
 	} {
 		x := newWorld(t, c.calls)
 		var logs strings.Builder
@@ -1403,7 +1404,7 @@ func TestRun_RepoMapStep(t *testing.T) {
 		want := 0
 		if c.called {
 			want = 1
-			if c.answer.Map == broken {
+			if c.answer.Map == broken || c.answer.Map == ciOnly {
 				want = 1 + mapRetries
 			}
 		}
@@ -1430,6 +1431,7 @@ func TestRun_RepoMapStep(t *testing.T) {
 			t.Errorf("%s: log lacks %q:\n%s", name, c.wantLog, logs.String())
 		}
 		// Shown, a map stored before the tags would be kept as it stands.
+		// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
 		if diagram.Untagged(c.stored) && (len(x.models.prompts) == 0 || !strings.Contains(x.models.prompts[0], "_None yet: draw it._")) {
 			t.Errorf("%s: the map stored before the tags was shown", name)
 		}

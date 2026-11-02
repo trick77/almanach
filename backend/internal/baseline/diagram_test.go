@@ -494,14 +494,16 @@ func TestRuntimeOnly_RepoMap(t *testing.T) {
 	if why != "" || got.Nodes[0].Stage != ir.StageNone || got.Edges[0].Layer != ir.LayerLibrary || len(got.Zones) != 2 {
 		t.Errorf("filtered repository map: %+v, %q; want it held, tags carried, emptied zones gone", got, why)
 	}
-	// A part drawn with no arrow stays (a library's parts may talk to
-	// nothing on the map); a box elsewhere with none goes, as on the system
-	// map.
+	// A box drawn with no arrow stays, a part or an entry point (a
+	// library's may link to nothing on the map); on the system map one
+	// outside the repositories goes.
 	bare := &ir.Diagram{Kind: ir.KindFlow, Direction: "TB", Zones: m.Zones,
-		Nodes: []ir.Node{node("codec", ir.ZoneParts), node("schemas", ir.ZoneParts), node("lonely", ir.ZoneExternal)}}
-	kept, gone := RepoRuntimeOnly(bare)
-	if len(kept.Nodes) != 2 || !slices.Equal(gone, []string{"lonely (no runtime arrow)"}) {
-		t.Errorf("bare parts: %+v, gone %v", kept.Nodes, gone)
+		Nodes: []ir.Node{node("api", ir.ZoneEntry), node("codec", ir.ZoneParts), node("schemas", ir.ZoneParts)}}
+	if kept, gone := RepoRuntimeOnly(bare); kept != bare || gone != nil {
+		t.Errorf("bare boxes: %+v, gone %v", kept.Nodes, gone)
+	}
+	if _, gone := RuntimeOnly(bare); !slices.Equal(gone, []string{"api (no runtime arrow)", "codec (no runtime arrow)", "schemas (no runtime arrow)"}) {
+		t.Errorf("system map filter on bare boxes: gone %v", gone)
 	}
 	// Nothing at runtime: every box goes, the caller's to read as no map.
 	ci := &ir.Diagram{Kind: ir.KindFlow, Direction: "TB", Zones: m.Zones[:2],
