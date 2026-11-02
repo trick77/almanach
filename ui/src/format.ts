@@ -349,6 +349,40 @@ export function shortSHA(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
 
+/** bitbucketProject reads a Bitbucket project's page as the browser shows
+ *  it, https://<host>/projects/<KEY>, a page under it (a repository, a
+ *  file) too, into the host the API is reached on and the project key:
+ *  the host keeps a context path before /projects/ (https://x/bitbucket),
+ *  query and fragment are dropped. null when the URL names no project.
+ *  The key is the Bitbucket project's identity: the source keeps it. */
+export function bitbucketProject(
+  url: string,
+): { host: string; key: string } | null {
+  let u: URL;
+  try {
+    u = new URL(url.trim());
+  } catch {
+    return null;
+  }
+  const segs = u.pathname.split("/");
+  const i = segs.indexOf("projects");
+  const raw = i < 0 ? "" : (segs[i + 1] ?? "");
+  if (raw === "") return null;
+  let key: string;
+  try {
+    key = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  return { host: u.origin + segs.slice(0, i).join("/"), key };
+}
+
+/** projectURL is a Bitbucket source's project page, the URL it was
+ *  created from: its host and key put back together. */
+export function projectURL(host: string, key: string): string {
+  return `${host.replace(/\/+$/, "")}/projects/${encodeURIComponent(key)}`;
+}
+
 /** slugFromURL is the repository's name in a clone URL: its last path
  *  segment without a trailing slash or ".git", as the backend derives it
  *  (store.SlugFromURL); "" when the URL has none. */

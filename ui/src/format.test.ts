@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bitbucketProject,
   blocks,
   causeLabel,
   changeLabel,
@@ -11,6 +12,7 @@ import {
   paragraphs,
   plain,
   problemTone,
+  projectURL,
   runs,
   share,
   refName,
@@ -224,6 +226,52 @@ describe("labels and tones", () => {
     expect(problemTone(1)).toBe("none");
     expect(problemTone(2)).toBe("warn");
     expect(problemTone(4)).toBe("fail");
+  });
+});
+
+describe("bitbucketProject", () => {
+  it("reads host and key off the project page and pages under it", () => {
+    const want = { host: "https://forge.example.invalid", key: "SHOP" };
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/SHOP"),
+    ).toEqual(want);
+    expect(
+      bitbucketProject(" https://forge.example.invalid/projects/SHOP/ "),
+    ).toEqual(want);
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/projects/SHOP/repos/api/browse?at=main#x",
+      ),
+    ).toEqual(want);
+  });
+  it("keeps a context path in the host", () => {
+    expect(
+      bitbucketProject("https://forge.example.invalid/bitbucket/projects/SHOP"),
+    ).toEqual({
+      host: "https://forge.example.invalid/bitbucket",
+      key: "SHOP",
+    });
+  });
+  it("names no project without a key", () => {
+    expect(bitbucketProject("")).toBeNull();
+    expect(bitbucketProject("forge.example.invalid/projects/SHOP")).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/"),
+    ).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/scm/shop/api.git"),
+    ).toBeNull();
+  });
+  it("is undone by projectURL", () => {
+    const p = bitbucketProject(
+      "https://forge.example.invalid/bitbucket/projects/SHOP",
+    );
+    expect(p && projectURL(p.host, p.key)).toBe(
+      "https://forge.example.invalid/bitbucket/projects/SHOP",
+    );
+    expect(projectURL("https://forge.example.invalid/", "SHOP")).toBe(
+      "https://forge.example.invalid/projects/SHOP",
+    );
   });
 });
 

@@ -15,6 +15,7 @@ import {
   day,
   dayTime,
   money,
+  projectURL,
   shortSHA,
   slugFromURL,
   stateLabel,
@@ -172,7 +173,17 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         {isStatic ? (
           <>{S.sources.manual}</>
         ) : (
-          <span className={mono}>{data.host}</span>
+          <>
+            {S.sources.project}{" "}
+            <a
+              className={mono + " text-accent-strong hover:text-ink"}
+              href={projectURL(data.host, data.project_key)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {projectURL(data.host, data.project_key)}
+            </a>
+          </>
         )}
         <Sep />
         {data.has_token ? (
@@ -267,13 +278,16 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         >
           {S.sources.actions.access[data.kind]}
         </button>
-        <button
-          type="button"
-          className={btn}
-          onClick={() => setOpen(open === "rename" ? "none" : "rename")}
-        >
-          {S.sources.actions.rename}
-        </button>
+        {/* A Bitbucket source is its Bitbucket project's key: no rename. */}
+        {isStatic && (
+          <button
+            type="button"
+            className={btn}
+            onClick={() => setOpen(open === "rename" ? "none" : "rename")}
+          >
+            {S.sources.actions.rename}
+          </button>
+        )}
         <button
           type="button"
           className={btnDanger}
@@ -314,7 +328,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           onCancel={() => setOpen("none")}
         />
       )}
-      {open === "rename" && (
+      {open === "rename" && isStatic && (
         <RenameForm
           data={data}
           onDone={(key) => {

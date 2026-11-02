@@ -8,7 +8,7 @@ import {
   type Sources,
   type TokenAuth,
 } from "./api";
-import { dayTime, slugFromURL } from "./format";
+import { bitbucketProject, dayTime, projectURL, slugFromURL } from "./format";
 import { navigateTo, sourcePath } from "./routing";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
@@ -208,7 +208,8 @@ function authFor(kind: SourceKind): TokenAuth {
 
 /** NewSourceForm is the create form: the token is optional and comes
  *  first; how it travels and the username appear only once one is typed.
- *  The host starts as BACKEND_BITBUCKET_HOST and stays editable. */
+ *  A Bitbucket project comes by its page's URL, which starts as
+ *  BACKEND_BITBUCKET_HOST/projects/; host and key are read off it. */
 function NewSourceForm({
   defaultHost,
   onDone,
@@ -220,11 +221,12 @@ function NewSourceForm({
 }) {
   // One repository by its clone URL comes first: the usual case.
   const [kind, setKind] = useState<SourceKind>("static");
-  // Each kind keeps its own name: a Bitbucket project's key, a single
+  // Each kind keeps its own: a Bitbucket project's page, a single
   // repository's slug. A switch never carries one into the other.
-  const [key, setKey] = useState("");
+  const [projectAt, setProjectAt] = useState(
+    defaultHost === "" ? "" : projectURL(defaultHost, ""),
+  );
   const [slug, setSlug] = useState("");
-  const [host, setHost] = useState(defaultHost);
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>(authFor(kind));
   const [user, setUser] = useState("");
@@ -237,6 +239,11 @@ function NewSourceForm({
   const [error, setError] = useState("");
   const f = S.sources.form;
   const isStatic = kind === "static";
+  const project = bitbucketProject(projectAt);
+  // Empty, or as prefilled (host and /projects/ only), is not wrong yet.
+  const typed = projectAt.trim();
+  const projectUnread =
+    project === null && typed !== "" && !typed.endsWith("/projects/");
 
   // The kind's own token header, only on a change: a click on the
   // selected kind keeps a header picked by hand.
@@ -251,9 +258,9 @@ function NewSourceForm({
     setError("");
     try {
       const created = await send<SourceDetail>("POST", "sources", {
-        project_key: isStatic ? slug.trim() : key.trim(),
+        project_key: isStatic ? slug.trim() : (project?.key ?? ""),
         kind,
-        host: kind === "bitbucket" ? host.trim() : "",
+        host: isStatic ? "" : (project?.host ?? ""),
         token: token.trim(),
         token_auth: token.trim() === "" ? "" : auth,
         token_user: token.trim() !== "" && auth === "basic" ? user.trim() : "",
@@ -292,16 +299,33 @@ function NewSourceForm({
           <span className={fieldHint}>{S.sources.kindHint[kind]}</span>
         </div>
         {!isStatic && (
-          <label>
-            <span className={fieldLabel}>{f.slug}</span>
-            <input
-              className={input + " " + mono}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="SHOP"
-            />
-            <span className={fieldHint}>{f.slugHint}</span>
-          </label>
+          <>
+            <label className="sm:col-span-2">
+              <span className={fieldLabel}>{f.projectURL}</span>
+              <input
+                className={input + " " + mono}
+                value={projectAt}
+                onChange={(e) => setProjectAt(e.target.value)}
+                placeholder="https://bitbucket.example.invalid/projects/SHOP"
+              />
+              <span
+                className={
+                  projectUnread
+                    ? fieldHint.replace("text-faint", "text-danger-ink")
+                    : fieldHint
+                }
+              >
+                {projectUnread ? f.projectURLInvalid : f.projectURLHint}
+              </span>
+            </label>
+            <div className="sm:col-span-2">
+              <span className={fieldLabel}>{f.projectKey}</span>
+              <span className={"block text-[14px] text-ink " + mono}>
+                {project?.key ?? "–"}
+              </span>
+              <span className={fieldHint}>{f.projectKeyHint}</span>
+            </div>
+          </>
         )}
         {isStatic && (
           <>
@@ -343,18 +367,6 @@ function NewSourceForm({
               />
             </label>
           </>
-        )}
-        {kind === "bitbucket" && (
-          <label className="sm:col-span-2">
-            <span className={fieldLabel}>{f.host}</span>
-            <input
-              className={input}
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              placeholder="https://bitbucket.example.invalid"
-            />
-            <span className={fieldHint}>{f.hostHint}</span>
-          </label>
         )}
         <label className="sm:col-span-2">
           <span className={fieldLabel}>
@@ -404,7 +416,7 @@ function NewSourceForm({
         <button
           type="button"
           className={btnPrimary}
-          disabled={busy || (isStatic ? url.trim() === "" : key.trim() === "")}
+          disabled={busy || (isStatic ? url.trim() === "" : project === null)}
           onClick={submit}
         >
           {busy ? f.saving : f.create}
