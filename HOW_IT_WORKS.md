@@ -438,9 +438,16 @@ keeps its page.
 A project and a repository are ids; the key and the slug are names. Every
 name either ever had stays a name of it, so a renamed project or repository
 keeps its pages, notes, runs and clone, and a URL, a note or a listing
-entry under the old name still lands on it. A project is renamed on its
-source page (a change of case included), a hand-entered repository on its
-row. A Bitbucket repository follows its name in Bitbucket: the listing
+entry under the old name still lands on it. A static folder's project is
+renamed on its source page (a change of case included), a hand-entered
+repository on its row. A Bitbucket source is never renamed but in case
+(another key is a 422): its key is the Bitbucket project's, the one the
+listing reads and noergler's notes are filed under, so another key would
+list another project or none. The create form takes the project's page,
+`https://<host>/projects/<key>` (a page under it too; https, Bitbucket
+Server's, not Cloud's), reads host and key off it, the key upper-cased as
+Bitbucket keeps it, and shows both before the create; the source page
+links it back. A Bitbucket repository follows its name in Bitbucket: the listing
 knows it by Bitbucket's own repository id, so a rename there changes the
 slug on the next sync instead of adding a second repository. A name once
 used is never given to another project or repository, in any case. PR keys
@@ -1391,7 +1398,8 @@ baseline step's patch never is: its bad items are left out one by one (see
   `..`; a clone URL is https without credentials; a Bitbucket source has a
   host (https, no query, no credentials), a static one has none.
   Checked on the way in (422 naming the field) and again before a removal.
-- `BACKEND_BITBUCKET_HOST` only prefills the create form's host, checked
+- `BACKEND_BITBUCKET_HOST` only prefills the create form's project URL
+  (`<host>/projects/`, the key left to type), checked
   at startup by the same rule (`gitrepo.ValidHost`); the host stored on
   the source is the one used.
 - `token_auth` defaults to `bearer` for Bitbucket and `basic` for static;

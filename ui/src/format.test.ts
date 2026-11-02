@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bitbucketProject,
   blocks,
   causeLabel,
   changeLabel,
@@ -11,6 +12,7 @@ import {
   paragraphs,
   plain,
   problemTone,
+  projectURL,
   runs,
   share,
   refName,
@@ -224,6 +226,104 @@ describe("labels and tones", () => {
     expect(problemTone(1)).toBe("none");
     expect(problemTone(2)).toBe("warn");
     expect(problemTone(4)).toBe("fail");
+  });
+});
+
+describe("bitbucketProject", () => {
+  it("reads host and key off the project page and pages under it", () => {
+    const want = { host: "https://forge.example.invalid", key: "SHOP" };
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/SHOP"),
+    ).toEqual(want);
+    expect(
+      bitbucketProject(" https://forge.example.invalid/projects/SHOP/ "),
+    ).toEqual(want);
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/projects/SHOP/repos/api/browse?at=main#x",
+      ),
+    ).toEqual(want);
+  });
+  it("keeps a context path in the host", () => {
+    expect(
+      bitbucketProject("https://forge.example.invalid/bitbucket/projects/SHOP"),
+    ).toEqual({
+      host: "https://forge.example.invalid/bitbucket",
+      key: "SHOP",
+    });
+  });
+  it("names no project without a key", () => {
+    expect(bitbucketProject("")).toBeNull();
+    expect(bitbucketProject("forge.example.invalid/projects/SHOP")).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/"),
+    ).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/scm/shop/api.git"),
+    ).toBeNull();
+  });
+  it("upper-cases the key, as Bitbucket keeps it", () => {
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/shop_2"),
+    ).toEqual({ host: "https://forge.example.invalid", key: "SHOP_2" });
+  });
+  it("refuses what the server would: not https, Cloud, a key Bitbucket never makes", () => {
+    expect(
+      bitbucketProject("http://forge.example.invalid/projects/SHOP"),
+    ).toBeNull();
+    expect(bitbucketProject("foo://x/projects/SHOP")).toBeNull();
+    expect(
+      bitbucketProject("https://bitbucket.org/acme/workspace/projects/KEY"),
+    ).toBeNull();
+    expect(
+      bitbucketProject("https://www.bitbucket.org/ws/workspace/projects/KEY"),
+    ).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/SH%20OP"),
+    ).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/1SHOP"),
+    ).toBeNull();
+  });
+  it("takes the project's /projects/, not a repository's or a person's", () => {
+    // A repository named projects, under the project.
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/projects/SHOP/repos/projects/browse",
+      ),
+    ).toEqual({ host: "https://forge.example.invalid", key: "SHOP" });
+    // A personal repository named projects: no project page.
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/users/bob/repos/projects/browse",
+      ),
+    ).toBeNull();
+    // A context path that is itself called projects.
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/projects/bb/projects/SHOP",
+      ),
+    ).toEqual({
+      host: "https://forge.example.invalid/projects/bb",
+      key: "SHOP",
+    });
+    // A context path called repos or users is no repository.
+    for (const ctx of ["repos", "users", "a/repos"]) {
+      expect(
+        bitbucketProject(`https://forge.example.invalid/${ctx}/projects/SHOP`),
+      ).toEqual({ host: `https://forge.example.invalid/${ctx}`, key: "SHOP" });
+    }
+  });
+  it("is undone by projectURL", () => {
+    const p = bitbucketProject(
+      "https://forge.example.invalid/bitbucket/projects/SHOP",
+    );
+    expect(p && projectURL(p.host, p.key)).toBe(
+      "https://forge.example.invalid/bitbucket/projects/SHOP",
+    );
+    expect(projectURL("https://forge.example.invalid/", "SHOP")).toBe(
+      "https://forge.example.invalid/projects/SHOP",
+    );
   });
 });
 

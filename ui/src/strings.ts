@@ -285,8 +285,9 @@ export const S = {
     listingFailed: "Listing fehlgeschlagen",
     listedAt: "gelistet",
     neverListed: "noch nie gelistet",
-    // Beside the Von Hand chip, where a Bitbucket source names its host.
+    // Beside the Von Hand chip, where a Bitbucket source links its project.
     manual: "Per Clone-URL",
+    project: "Projekt",
     counts: {
       ready: (n: number) => `${n} bereit`,
       active: (n: number) => `${n} läuft`,
@@ -298,8 +299,18 @@ export const S = {
     form: {
       kind: "Art",
       slug: "Slug",
-      slugHint:
-        "Buchstaben, Ziffern, Punkt, Strich, Unterstrich, Tilde. Lässt sich später umbenennen.",
+      // A Bitbucket project comes by its page's URL: host and key are read
+      // off it, the key shown read-only. The key is Bitbucket's, not a name
+      // Almanach gives: no rename.
+      projectURL: "Projekt-URL",
+      projectURLPlaceholder: "https://bitbucket.example.invalid/projects/SHOP",
+      projectURLHint:
+        "Die Seite des Projekts in Bitbucket, aus der Adresszeile kopiert: https://<host>/projects/<Projektschlüssel>. Eine Seite darunter, etwa die eines Repositories, geht auch.",
+      projectURLInvalid:
+        "Keine Projekt-URL von Bitbucket Server: erwartet wird https://<host>/projects/<Projektschlüssel>.",
+      projectKey: "Projektschlüssel",
+      projectKeyHint:
+        "Aus der URL, in Grossbuchstaben wie in Bitbucket. Unter ihm listet Almanach die Repositories, und an ihm finden die Notizen von noergler das Projekt; er lässt sich nicht ändern.",
       // A hand-filled project's first repository, created with it.
       firstRepo: "Clone-URL des ersten Repositories",
       firstRepoHint:
@@ -310,7 +321,7 @@ export const S = {
       branchPlaceholder: "Default-Branch des Remotes",
       host: "Bitbucket-Host",
       hostHint:
-        "Nur https. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen.",
+        "Aus der URL. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen: über einen anderen Namen erreicht, scheitert jeder Sync.",
       token: "Personal Access Token",
       optional: "(optional)",
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",

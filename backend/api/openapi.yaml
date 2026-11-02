@@ -410,6 +410,10 @@ paths:
       summary: Create a source
       description: |
         A Bitbucket source needs `host`; a static one must not have one.
+        A Bitbucket source's `project_key` is a Bitbucket project key (a letter,
+        then letters, digits, underscore), else a 422; one noergler already
+        delivers in another case is stored in noergler's spelling. A static
+        key spelled otherwise than noergler's is a 422 naming that spelling.
         `token_auth` defaults to bearer for Bitbucket and basic for static;
         `token_user` goes with basic only. A token needs `BACKEND_SOURCE_TOKEN_KEY`
         on the instance. The next sync cycle starts at once.
@@ -473,7 +477,8 @@ paths:
         `project_key` renames the project, a change of case included: it keeps its pages, notes and clones, and the
         old key stays a name of it (every route still answers under it, with the current key in the body). A key
         another project ever had, in any case, is a 409. A rename comes alone: a changed `project_key` with any
-        other field is a 422; an unchanged one is no rename.
+        other field is a 422; an unchanged one is no rename. A Bitbucket source changes case only, another key is a
+        422: its key is its Bitbucket project's, the one the listing reads and noergler's notes are filed under.
       operationId: updateSource
       parameters:
         - $ref: "#/components/parameters/projectKey"

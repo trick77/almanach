@@ -58,6 +58,9 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
+// The Bitbucket form's one field: the project's page.
+const projectPlaceholder = S.sources.form.projectURLPlaceholder;
+
 const when = new Date(2026, 9, 30, 14, 2).toISOString();
 const synced = new Date(2026, 9, 31, 9, 5).toISOString();
 
@@ -204,13 +207,17 @@ describe("SourcesPage", () => {
     fireEvent.click(await screen.findByText("Neue Quelle"));
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     expect(screen.queryByText("Token senden als")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
-      target: { value: "neu" },
+    // The project's page as the browser shows it: host and key read off it.
+    fireEvent.change(screen.getByPlaceholderText(projectPlaceholder), {
+      target: {
+        value: "https://forge.example.invalid/projects/neu/repos/api/browse",
+      },
     });
-    fireEvent.change(
-      screen.getByPlaceholderText("https://bitbucket.example.invalid"),
-      { target: { value: "https://forge.example.invalid" } },
-    );
+    // Both shown before the create; the key upper-cased, as Bitbucket's.
+    expect(screen.getByText("NEU")).toBeInTheDocument();
+    expect(
+      screen.getByText("https://forge.example.invalid"),
+    ).toBeInTheDocument();
     fireEvent.change(
       screen.getByPlaceholderText("Leer lassen für öffentliche Repositories"),
       { target: { value: "pat" } },
@@ -225,7 +232,7 @@ describe("SourcesPage", () => {
       method: "POST",
       path: "sources",
       body: {
-        project_key: "neu",
+        project_key: "NEU",
         kind: "bitbucket",
         host: "https://forge.example.invalid",
         token: "pat",
@@ -252,7 +259,7 @@ describe("SourcesPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("never carries a repository's name into a Bitbucket project key", async () => {
+  it("never carries a repository's URL into a Bitbucket project's", async () => {
     serve({ sources });
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
@@ -262,22 +269,59 @@ describe("SourcesPage", () => {
     );
     expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop-api");
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
-    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("");
-    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
-      target: { value: "SHOP" },
+    const project = screen.getByPlaceholderText(projectPlaceholder);
+    expect(project).toHaveValue("");
+    fireEvent.change(project, {
+      target: { value: "https://forge.example.invalid/projects/SHOP" },
     });
     // A click on the selected kind keeps what was typed.
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
-    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("SHOP");
+    expect(screen.getByPlaceholderText(projectPlaceholder)).toHaveValue(
+      "https://forge.example.invalid/projects/SHOP",
+    );
     // Back to the single repository: its slug as it was, typed by hand too.
     fireEvent.click(screen.getByText(/^Einzelnes Repository/));
     const slug = screen.getByPlaceholderText("acme-api");
     expect(slug).toHaveValue("shop-api");
     fireEvent.change(slug, { target: { value: "shop" } });
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
-    expect(screen.getByPlaceholderText("SHOP")).toHaveValue("SHOP");
     fireEvent.click(screen.getByText(/^Einzelnes Repository/));
     expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
+    // Typed by hand, the slug stays when the URL changes after the trip.
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      { target: { value: "https://forge.example.invalid/x/other.git" } },
+    );
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
+  });
+
+  it("refuses a URL that names no Bitbucket project", async () => {
+    const writes = serve({ sources });
+    render(<SourcesPage />);
+    fireEvent.click(await screen.findByText("Neue Quelle"));
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    const field = screen.getByPlaceholderText(projectPlaceholder);
+    // Half a URL while it is typed is no error yet; leaving it, it is.
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: "https://forge.example" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.blur(field);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    // A clone URL, and an address that only ends like the prefill: both
+    // say so, as an alert, and the create stays off.
+    for (const value of [
+      "https://forge.example.invalid/scm/shop/api.git",
+      "garbage/projects/",
+    ]) {
+      fireEvent.change(field, { target: { value } });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        S.sources.form.projectURLInvalid,
+      );
+      const create = screen.getByText("Anlegen und synchronisieren");
+      expect(create).toBeDisabled();
+      fireEvent.click(create);
+    }
+    expect(writes).toHaveLength(0);
   });
 
   it("creates a source on the configured host", async () => {
@@ -287,16 +331,21 @@ describe("SourcesPage", () => {
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
-    fireEvent.change(screen.getByPlaceholderText("SHOP"), {
-      target: { value: "neu" },
-    });
+    // Prefilled up to the key: only the key is typed. Not wrong yet.
+    const project = screen.getByPlaceholderText(projectPlaceholder);
+    expect(project).toHaveValue("https://forge.example.invalid/projects/");
     expect(
-      screen.getByPlaceholderText("https://bitbucket.example.invalid"),
-    ).toHaveValue("https://forge.example.invalid");
+      screen.queryByText(S.sources.form.projectURLInvalid),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Anlegen und synchronisieren")).toBeDisabled();
+    fireEvent.change(project, {
+      target: { value: "https://forge.example.invalid/projects/neu" },
+    });
     fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
     await waitFor(() => expect(writes).toHaveLength(1));
-    const body = writes[0]?.body as { host: string };
+    const body = writes[0]?.body as { host: string; project_key: string };
     expect(body.host).toBe("https://forge.example.invalid");
+    expect(body.project_key).toBe("NEU");
     // A Bitbucket project takes the server's rule: no system sent.
     expect(body).not.toHaveProperty("system");
   });
@@ -687,6 +736,28 @@ describe("SourcePage", () => {
     await waitFor(() =>
       expect(window.location.pathname).toBe("/sources/Werkzeuge"),
     );
+  });
+
+  it("links a Bitbucket source's project and offers no rename", async () => {
+    const bb: SourceDetail = {
+      ...detail,
+      project_key: "SHOP",
+      kind: "bitbucket",
+      host: "https://forge.example.invalid/bitbucket",
+      repos: [],
+    };
+    serve({ "sources/SHOP": bb });
+    render(<SourcePage projectKey="SHOP" />);
+    const link = await screen.findByRole("link", {
+      name: "https://forge.example.invalid/bitbucket/projects/SHOP",
+    });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://forge.example.invalid/bitbucket/projects/SHOP",
+    );
+    expect(
+      screen.queryByRole("button", { name: S.sources.actions.rename }),
+    ).not.toBeInTheDocument();
   });
 
   it("renames a hand-entered repository", async () => {

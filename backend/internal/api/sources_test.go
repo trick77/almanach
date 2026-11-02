@@ -362,6 +362,50 @@ func TestSources_CreateValidatesAndSeals(t *testing.T) {
 	}
 }
 
+// A Bitbucket source keeps its Bitbucket project's key: another key is a
+// 422 and leaves it as it was; its case may change, the one fix for a key
+// typed otherwise than noergler spells it; the key sent back unchanged with
+// an access change is no rename.
+func TestSources_RenameBitbucketRefused(t *testing.T) {
+	fs := newFakeSources()
+	h, _, _ := sourcesHandler(t, fs, false)
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"shop","kind":"bitbucket","host":"https://forge.example.invalid"}`, jsonHdr); code != 201 {
+		t.Fatal("create")
+	}
+	code, body := do(t, h, http.MethodPatch, "/api/sources/shop", "", `{"project_key":"OTHER"}`, jsonHdr)
+	if code != 422 || !strings.Contains(fmt.Sprint(body), "Bitbucket") {
+		t.Errorf("rename to another key: %d %v, want 422", code, body)
+	}
+	if _, ok := fs.sources["shop"]; !ok {
+		t.Fatal("a refused rename renamed")
+	}
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/shop", "", `{"project_key":"SHOP"}`, jsonHdr); code != 200 || field(t, body, "project_key") != "SHOP" {
+		t.Errorf("case-only rename: %d %v", code, body)
+	}
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/SHOP", "", `{"project_key":"SHOP","host":"https://forge2.example.invalid"}`, jsonHdr); code != 200 || fs.sources["SHOP"].Host != "https://forge2.example.invalid" {
+		t.Errorf("unchanged key with a host change: %d %v", code, body)
+	}
+}
+
+// A Bitbucket source's key names a Bitbucket project: a key Bitbucket never
+// makes is refused at create, and one noergler delivers in another case is
+// taken in noergler's spelling, not refused (the form cannot type another).
+func TestSources_CreateBitbucketKey(t *testing.T) {
+	fs := newFakeSources()
+	h, _, _ := sourcesHandler(t, fs, false)
+	for _, key := range []string{"my.shop", "1SHOP", "SH-OP"} {
+		code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"`+key+`","kind":"bitbucket","host":"https://forge.example.invalid"}`, jsonHdr)
+		if code != 422 || !strings.Contains(field(t, body, "error"), "Bitbucket project key") {
+			t.Errorf("key %s: %d %v, want 422", key, code, body)
+		}
+	}
+	fs.noerglerKeys = []string{"Shop"}
+	code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"SHOP","kind":"bitbucket","host":"https://forge.example.invalid"}`, jsonHdr)
+	if code != 201 || field(t, body, "project_key") != "Shop" {
+		t.Fatalf("noergler's spelling taken: %d %v", code, body)
+	}
+}
+
 // A project key is renamed through the source, a change of case included;
 // a hand-entered repository through its own PATCH. A name another had is a
 // 409, a listed repository follows Bitbucket (422), an open run blocks.

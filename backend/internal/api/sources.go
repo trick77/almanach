@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -465,6 +466,9 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	case !gitrepo.ValidSegment(in.ProjectKey):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
 		return
+	case in.Kind == store.SourceBitbucket && !bitbucketKey.MatchString(in.ProjectKey):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a Bitbucket project key: a letter, then letters, digits, underscore")
+		return
 	case in.Kind == store.SourceBitbucket && !gitrepo.ValidHost(in.Host):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an https URL is required for a Bitbucket source")
 		return
@@ -484,11 +488,15 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	}
 	// The key is how noergler's notes find the source, exactly: a key that
 	// differs from one noergler delivers only by case would have every note
-	// of the project ignored.
+	// of the project ignored. A Bitbucket source takes noergler's spelling:
+	// it is the same Bitbucket project, and the form cannot type another.
 	known, clash, err := d.Sources.Store.ProjectSpelledOtherwise(ctx, in.ProjectKey)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project key")
 		return
+	}
+	if clash && in.Kind == store.SourceBitbucket {
+		in.ProjectKey, clash = known, false
 	}
 	if clash {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
@@ -550,8 +558,15 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, out)
 }
 
+// bitbucketKey is a Bitbucket Server project key: a letter, then letters,
+// digits and underscores. Anything else names no Bitbucket project, and a
+// Bitbucket source's key changes case only, so it is refused at create.
+var bitbucketKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+
 type updateSourceBody struct {
-	// ProjectKey renames the project, a change of case included.
+	// ProjectKey renames the project, a change of case included. A
+	// Bitbucket source's key is its Bitbucket project's, which the listing
+	// reads and noergler's notes are filed under: its case only.
 	ProjectKey *string `json:"project_key"`
 	Host       *string `json:"host"`
 	Token      *string `json:"token"`
@@ -645,9 +660,16 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 // project keeps its id, pages, notes and clones, and the old key stays a
 // name of it. Alone in its PATCH, so a request is the rename or the access
 // change, never half of both. A key another project ever had, in any case,
-// is never given away.
+// is never given away. A Bitbucket source changes case only: its key names
+// the project the listing reads, and another key would list another
+// project, or none; the case is the one fix, for a key typed otherwise
+// than noergler's notes spell it.
 func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
 	ctx := r.Context()
+	if src.Kind == store.SourceBitbucket && !strings.EqualFold(strings.TrimSpace(*in.ProjectKey), src.ProjectKey) {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a Bitbucket source keeps its Bitbucket project's key")
+		return
+	}
 	if in.Host != nil || in.Token != nil || in.TokenAuth != nil || in.TokenUser != nil {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a rename comes alone, the other fields in their own PATCH")
 		return
