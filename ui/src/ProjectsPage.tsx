@@ -12,6 +12,7 @@ import {
   Skeleton,
   Teaser,
   column,
+  teaserLines,
   h2,
   lede,
   page,
@@ -87,6 +88,7 @@ export function ProjectsPage() {
 function ProjectTile({ p, links }: { p: Project; links?: Links }) {
   // A project of one reads as its repository: its revision and summary.
   const revision = p.repo ? p.repo.revision : p.revision;
+  const teaser = p.repo ? teaserLines(p.repo.summary) : [];
   return (
     <Link to={projectPath(p.key)} className={tile}>
       <h3 className="font-serif text-[20px] font-medium text-ink">{p.key}</h3>
@@ -108,9 +110,9 @@ function ProjectTile({ p, links }: { p: Project; links?: Links }) {
           <span className="text-faint">{S.projects.noDescription}</span>
         )}
       </div>
-      {p.repo !== null && p.repo.summary !== "" && (
+      {teaser.length > 0 && (
         <div className="mt-3 line-clamp-3 text-[13.5px] text-muted">
-          <Teaser text={p.repo.summary} />
+          <Teaser lines={teaser} />
         </div>
       )}
       {links && (links.uses.length > 0 || links.usedBy > 0) && (

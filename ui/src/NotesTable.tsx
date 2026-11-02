@@ -6,7 +6,7 @@ import {
   Chip,
   Empty,
   Pill,
-  rowLinked,
+  rowOpens,
   table,
   tableBox,
   td,
@@ -40,26 +40,31 @@ export function NotesTable({
           </tr>
         </thead>
         <tbody>
-          {notes.map((n) => (
-            <tr key={n.pr_key} className={rowLinked}>
-              <td className={td}>
-                <Chip to={notePath(projectKey, n.repo_slug, n.pr_id)} row>
-                  {n.pr_key}
-                </Chip>
-              </td>
-              <td className={td}>{n.pr_title}</td>
-              <td className={td}>
-                <Pill tone={changeTone(n.change_kind ?? "")}>
-                  {changeLabel(n.change_kind ?? "")}
-                </Pill>
-              </td>
-              <td className={tdNum}>{n.items}</td>
-              <td className={tdNum}>
-                {n.issues_posted} / {n.suggestions_posted}
-              </td>
-              <td className={td + " whitespace-nowrap"}>{day(n.merged_at)}</td>
-            </tr>
-          ))}
+          {notes.map((n) => {
+            const to = notePath(projectKey, n.repo_slug, n.pr_id);
+            return (
+              <tr key={n.pr_key} {...rowOpens(to)}>
+                <td className={td}>
+                  <Chip to={to} row>
+                    {n.pr_key}
+                  </Chip>
+                </td>
+                <td className={td}>{n.pr_title}</td>
+                <td className={td}>
+                  <Pill tone={changeTone(n.change_kind ?? "")}>
+                    {changeLabel(n.change_kind ?? "")}
+                  </Pill>
+                </td>
+                <td className={tdNum}>{n.items}</td>
+                <td className={tdNum}>
+                  {n.issues_posted} / {n.suggestions_posted}
+                </td>
+                <td className={td + " whitespace-nowrap"}>
+                  {day(n.merged_at)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

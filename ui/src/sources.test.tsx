@@ -185,6 +185,10 @@ describe("SourcesPage", () => {
       "href",
       "/sources/SHOP",
     );
+    // The whole row opens the source, as a repository's row does.
+    fireEvent.click(screen.getByText("forge.example.invalid"));
+    expect(window.location.pathname).toBe("/sources/SHOP");
+    window.history.replaceState({}, "", "/");
   });
 
   it("says when the feature is off", async () => {

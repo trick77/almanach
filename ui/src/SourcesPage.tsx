@@ -33,7 +33,7 @@ import {
   mono,
   page,
   rowLink,
-  rowLinked,
+  rowOpens,
   table,
   tableBox,
   td,
@@ -115,7 +115,7 @@ function SourcesTable({ sources }: { sources: SourceSummary[] }) {
         </thead>
         <tbody>
           {sources.map((s) => (
-            <tr key={s.project_key} className={rowLinked}>
+            <tr key={s.project_key} {...rowOpens(sourcePath(s.project_key))}>
               <td className={tdMono}>
                 <Link to={sourcePath(s.project_key)} className={rowLink}>
                   {s.project_key}
