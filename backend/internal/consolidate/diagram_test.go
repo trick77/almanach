@@ -3,6 +3,7 @@ package consolidate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -414,7 +415,7 @@ func TestRun_QuietReconcileRedrawsAnUntaggedMap(t *testing.T) {
 		t.Error("the untagged map was shown to the model, not asked afresh")
 	}
 	p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
-	if !diagram.Tagged(p.Map) || !diagram.Equal(p.Map, drawnMap("svc")) {
+	if untaggedMap(p.Map) || !diagram.Equal(p.Map, drawnMap("svc")) {
 		t.Fatalf("project map = %+v; want the tagged redraw written", p.Map)
 	}
 	again := newWorld(t, 16)
@@ -422,12 +423,55 @@ func TestRun_QuietReconcileRedrawsAnUntaggedMap(t *testing.T) {
 	if again = reconcileQuietly(again); len(again.st.calls) != 0 {
 		t.Errorf("tagged map: %d calls; want the reconcile done without one", len(again.st.calls))
 	}
+	// Answered without a map, it is asked for and not drawn, as a missing
+	// one: the sentinel, so no later reconcile pays for it again.
+	null := newWorld(t, 16)
+	null.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.",
+		Statements: []store.Statement{}, Map: untagged(drawnMap("svc"))}
+	null.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
+		Statements: []inference.Statement{}}}
+	null = reconcileQuietly(null, false)
+	if m := null.st.pages[pageKey(store.ScopeProject, "tools", "")].Map; !diagram.IsSentinel(m) {
+		t.Fatalf("null answer: map = %+v; want the sentinel", m)
+	}
+	then := newWorld(t, 16)
+	then.st.pages[pageKey(store.ScopeProject, "tools", "")] = null.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	if then = reconcileQuietly(then); len(then.st.calls) != 0 {
+		t.Errorf("after the sentinel: %d calls; want none", len(then.st.calls))
+	}
+}
+
+// projectPage reads an untagged map as none, a tagged one and the sentinel
+// as stored; a failed read pauses the drain.
+//
+// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+func TestProjectPageReadsAnUntaggedMapAsNone(t *testing.T) {
+	x := newWorld(t, 16)
+	key := pageKey(store.ScopeProject, "tools", "")
+	for name, c := range map[string]struct {
+		stored *diagram.Diagram
+		none   bool
+	}{
+		"untagged": {untagged(drawnMap("svc")), true},
+		"tagged":   {drawnMap("svc"), false},
+		"sentinel": {diagram.Sentinel(), false},
+	} {
+		x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Map: c.stored}
+		p, err := x.w.projectPage(context.Background(), "tools")
+		if err != nil || (p.Map == nil) != c.none {
+			t.Errorf("%s: map %+v, err %v", name, p.Map, err)
+		}
+	}
+	x.st.pageErr = store.ErrBusy
+	if _, err := x.w.projectPage(context.Background(), "tools"); !errors.Is(err, errStop) {
+		t.Errorf("failed read: err %v, want the drain paused", err)
+	}
 }
 
 // reconcileQuietly runs a reconcile of svc whose diff reads nothing again:
 // only the project step may call, answering the description as it stands
-// with drawnMap("svc").
-func reconcileQuietly(x world) world {
+// with drawnMap("svc"), or as the world has it set with answer false.
+func reconcileQuietly(x world, answer ...bool) world {
 	plan, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p",
 		Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: plan, State: store.RunDone}
@@ -439,8 +483,10 @@ func reconcileQuietly(x world) world {
 	x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 	x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 	x.queue(store.RunReconcile, older40)
-	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
-		Statements: []inference.Statement{}, Map: drawnMap("svc")}}
+	if len(answer) == 0 || answer[0] {
+		x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
+			Statements: []inference.Statement{}, Map: drawnMap("svc")}}
+	}
 	x.w.drain(context.Background())
 	return x
 }

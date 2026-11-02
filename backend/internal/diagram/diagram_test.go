@@ -60,9 +60,6 @@ func TestEqual(t *testing.T) {
 	if !Equal(untagged, tagged) || tagged.Nodes[1].Stage != StageProduction || tagged.Edges[0].Layer != LayerRuntime {
 		t.Errorf("retag: equal %v, tags kept %+v", Equal(untagged, tagged), tagged)
 	}
-	if !Tagged(tagged) || Tagged(untagged) || Tagged(Sentinel()) || Tagged(nil) {
-		t.Error("Tagged: want a map with stages only")
-	}
 }
 
 // The order of nodes, zones, edges, tables and relationships says nothing;

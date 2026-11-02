@@ -347,10 +347,9 @@ func (w *Worker) maxSubjects() int {
 // it can: best effort.
 func (w *Worker) keptCalls(ctx context.Context, r *store.BaselineRun, plan runPlan) (int, error) {
 	kept := 1
-	project, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	project, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return 0, errStop
+		return 0, err
 	}
 	stands, _, err := w.projectStands(ctx, r, plan, project)
 	if err != nil {
@@ -541,10 +540,9 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 		// folds when the last run skipped it.
 		w.log.InfoContext(ctx, "baseline: nothing to read again")
 		if r.Mode == store.RunReconcile && !plan.SummaryChanged {
-			page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+			page, err := w.projectPage(ctx, r.ProjectKey)
 			if err != nil {
-				w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-				return errStop
+				return err
 			}
 			skip, _, err := w.projectStands(ctx, r, plan, page)
 			if err != nil {
@@ -1176,10 +1174,9 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if plan.ProjectMap != nil {
 		return w.projectMapStep(ctx, r, plan)
 	}
-	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	projectPage, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return errStop
+		return err
 	}
 	skip, repos, err := w.projectStands(ctx, r, plan, projectPage)
 	if err != nil {
@@ -1303,7 +1300,7 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 			return false, nil, nil
 		}
 	}
-	if page.Map != nil && !untaggedMap(page.Map) {
+	if page.Map != nil {
 		return true, nil, nil
 	}
 	repos, err := w.repoSummaries(ctx, r)
@@ -1335,27 +1332,47 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 	return mapRevision(r, page, m)
 }
 
-// untaggedMap is a system map stored before the tags (layer, stage): drawn
-// with every build, monitoring and stage box the filter now takes out. It
-// counts as missing: a quiet reconcile runs the project step for it, the
-// prompt shows none, and the map drawn then is written even when it looks
-// the same, so it is asked once, not on every reconcile.
+// projectPage is the project's current page as a baseline run reads it. A
+// system map stored before the tags (layer, stage) reads as none: it was
+// drawn with every build, monitoring and stage box the filter now takes
+// out. So every rule for a missing map holds for it, in one place: a quiet
+// reconcile runs the project step, the prompt shows no map, the redraw is
+// written (one revision, the tags its change where the drawing is the
+// same), and a null or refused answer leaves the sentinel, never a map
+// asked for again on every reconcile.
+func (w *Worker) projectPage(ctx context.Context, key string) (store.Page, error) {
+	page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, key, "")
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
+		return store.Page{}, errStop
+	}
+	// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+	if untaggedMap(page.Map) {
+		page.Map = nil
+	}
+	return page, nil
+}
+
+// untaggedMap is a system map stored before the tags: no node has a stage,
+// which every node of one drawn since has.
 //
 // TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
 func untaggedMap(m *diagram.Diagram) bool {
-	return m != nil && m.Kind == diagram.KindFlow && !diagram.Tagged(m)
-}
-
-// sameMap reports whether m is the stored map: equal as drawn, and not the
-// tagged redraw of an untagged one (diagram.Equal ignores tags).
-func sameMap(m, stored *diagram.Diagram) bool {
-	return diagram.Equal(m, stored) && (!untaggedMap(stored) || !diagram.Tagged(m))
+	if m == nil || m.Kind != diagram.KindFlow {
+		return false
+	}
+	for _, n := range m.Nodes {
+		if n.Stage != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // mapRevision is the page's text with the map m: what a map changes alone
 // writes; nil when m is the page's map.
 func mapRevision(r *store.BaselineRun, page store.Page, m *diagram.Diagram) *store.NewRevision {
-	if sameMap(m, page.Map) {
+	if diagram.Equal(m, page.Map) {
 		return nil
 	}
 	runID := r.ID
@@ -1432,7 +1449,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if summary == page.Summary && sameStatements(page.Statements, statements) && sameMap(drawn, page.Map) {
+	if summary == page.Summary && sameStatements(page.Statements, statements) && diagram.Equal(drawn, page.Map) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, retry, "", nil
 	}
@@ -1560,10 +1577,9 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if !room {
 		return cut("no call to spare")
 	}
-	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	projectPage, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return errStop
+		return err
 	}
 	repoPage, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
@@ -2103,11 +2119,9 @@ func mapDue(repos int) string {
 }
 
 // projectMap is the current system map as the JSON the model returns, so
-// keeping it means repeating it. The sentinel is no map; nor is an untagged
-// one, drawn afresh under today's rules, not repeated with its build and
-// stage boxes.
+// keeping it means repeating it. The sentinel is no map.
 func projectMap(p store.Page) string {
-	if p.Map == nil || diagram.IsSentinel(p.Map) || untaggedMap(p.Map) {
+	if p.Map == nil || diagram.IsSentinel(p.Map) {
 		return "_None yet: draw it._"
 	}
 	j, err := json.Marshal(p.Map)
