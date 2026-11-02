@@ -889,8 +889,30 @@ describe("SourcePage", () => {
     expect(alert).toHaveTextContent(`acme-cli: ${running}`);
     expect(alert.closest("table")).not.toBeNull();
     expect(
-      screen.getByText(/Repository acme-cli deaktivieren\?/),
+      screen.getByText(S.sources.confirmDeactivateRepo("acme-cli")),
     ).toBeInTheDocument();
+    // Cancelled, the panel and its stale alert go.
+    fireEvent.click(screen.getByText(S.sources.form.cancel));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("opens a failed repository's confirm above its failure line", async () => {
+    serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-legacy");
+    // acme-legacy sorts second; its sync failed, a line under its row.
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.deactivate)[1]);
+    const panel = screen
+      .getByText(S.sources.confirmDeactivateRepo("acme-legacy"))
+      .closest("tr");
+    // Right under the repository's own row (its clone URL), the failure
+    // line after the panel.
+    expect(panel?.previousElementSibling).toHaveTextContent(
+      "https://github.com/acme/acme-legacy.git",
+    );
+    expect(panel?.nextElementSibling).toHaveTextContent(
+      "configured branch not found",
+    );
   });
 
   it("shows a deactivated repository with only its comeback", async () => {
