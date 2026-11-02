@@ -331,11 +331,21 @@ func Equal(a, b *Diagram) bool {
 // canonical is a diagram with every list whose order says nothing sorted:
 // a flow's nodes and zones by id, its edges by their ends and label, an
 // entity model's tables by id and relationships likewise. A table's
-// fields and a sequence's rows keep their order: it is what they say.
+// fields and a sequence's rows keep their order: it is what they say. The
+// system map's stage and layer are left out: what is left of the map after
+// the filter is drawn the same whatever its tags, so a retag is no change
+// (and a map stored before the tags no revision).
 func canonical(d Diagram) Diagram {
 	d.Nodes = sorted(d.Nodes, func(n Node) string { return n.ID })
 	d.Zones = sorted(d.Zones, func(z Zone) string { return z.ID })
 	d.Edges = sorted(d.Edges, func(e Edge) string { return e.From + "\x00" + e.To + "\x00" + e.Label })
+	// On the sorted copies: the caller's lists keep their tags.
+	for i := range d.Nodes {
+		d.Nodes[i].Stage = ""
+	}
+	for i := range d.Edges {
+		d.Edges[i].Layer = ""
+	}
 	d.Entities = sorted(d.Entities, func(e Entity) string { return e.ID })
 	d.Rels = sorted(d.Rels, func(r Rel) string { return r.From + "\x00" + r.To + "\x00" + r.Label })
 	return d

@@ -758,11 +758,16 @@ null. The overview is the system at runtime, in production (user,
 servers, registries, monitoring and one box per stage on it. The model
 tags each edge's `layer` (runtime, library, build, deploy, monitoring)
 and each node's `stage` (production, other, none: whatever the stage is
-called, the model's to tell); code (`baseline.RuntimeOnly`) takes out
-build, deploy and monitoring edges, a node outside the repositories they
-left without an edge, and a node of another stage with its edges. A
-repository always stays; an untagged map (stored before) is kept as it
-is. Repository maps carry no tags. The map never costs the description: an edge pointing at its own
+called, the model's to tell); code (`baseline.RuntimeOnly`, after the
+departed repositories) takes out a node of another stage with its edges
+(the model's word that its production twin is drawn: code cannot tell
+two boxes are one system), build, deploy and monitoring edges, and then
+every node outside the repositories without an edge (a build server drawn
+edgeless too). A repository always stays; a stored map is carried as it
+is. A refused map is asked again with the filtered draft, the one the
+reason counts. `diagram.Equal` ignores the tags: a retag is no revision.
+Only the system map carries them; `checkFlow` drops them on any other
+flow. The map never costs the description: an edge pointing at its own
 node or repeating one before it is taken out (one "almanach → almanach"
 edge refused a whole map once), a repository that left the
 project is taken out of it first. A map that still breaks a rule leaves

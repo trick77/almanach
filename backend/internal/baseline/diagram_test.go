@@ -337,9 +337,10 @@ func TestDropDeparted(t *testing.T) {
 }
 
 // The system map keeps the system at runtime, in production: build,
-// deployment and monitoring arrows go, a box left without an arrow by them
-// goes, a box of another stage goes with its arrows; repositories, library
-// arrows and anything untagged stay.
+// deployment and monitoring arrows go, a box of another stage goes with its
+// arrows, and any box outside the repositories left without an arrow goes
+// (a build server drawn edgeless too); repositories, library arrows and
+// untagged arrows stay.
 func TestRuntimeOnly(t *testing.T) {
 	tag := func(e ir.Edge, layer string) ir.Edge { e.Layer = layer; return e }
 	staged := func(n ir.Node, s string) ir.Node { n.Stage = s; return n }
@@ -373,14 +374,15 @@ func TestRuntimeOnly(t *testing.T) {
 	for _, n := range out.Nodes {
 		ids = append(ids, n.ID)
 	}
-	if want := []string{"browser", "route", "web", "api", "infra", "pg-prod", "idp", "lonely"}; !slices.Equal(ids, want) {
+	if want := []string{"browser", "route", "web", "api", "infra", "pg-prod", "idp"}; !slices.Equal(ids, want) {
 		t.Errorf("nodes = %v, want %v", ids, want)
 	}
 	if len(out.Edges) != 5 {
 		t.Errorf("edges = %+v, want the runtime, library and untagged five", out.Edges)
 	}
-	wantDropped := []string{"infra → api (deploy)", "ci → infra (build)", "metrics → api (monitoring)",
-		"pg-test (other stage)", "ci (no runtime arrow)", "metrics (no runtime arrow)"}
+	wantDropped := []string{"pg-test (other stage)", "api → pg-test (to another stage)",
+		"infra → api (deploy)", "ci → infra (build)", "metrics → api (monitoring)",
+		"ci (no runtime arrow)", "metrics (no runtime arrow)", "lonely (no runtime arrow)"}
 	if !slices.Equal(dropped, wantDropped) {
 		t.Errorf("dropped = %v, want %v", dropped, wantDropped)
 	}
@@ -402,9 +404,22 @@ func TestRuntimeOnly(t *testing.T) {
 	if d, gone := RuntimeOnly(nil); d != nil || gone != nil {
 		t.Error("nil map")
 	}
-	// What is left holds as a map, its emptied zones gone.
-	if held, why := CheckMap(out, []string{"web", "api", "infra"}, DiagramCaps{MaxNodes: 22, MaxEdges: 33}); why != "" || len(held.Edges) != 5 {
+	// What is left holds as a map, its emptied zones gone, its tags carried.
+	held, why := CheckMap(out, []string{"web", "api", "infra"}, DiagramCaps{MaxNodes: 22, MaxEdges: 33})
+	if why != "" || len(held.Edges) != 5 || held.Edges[0].Layer != ir.LayerRuntime {
 		t.Errorf("filtered map refused: %q", why)
+	}
+	// Any other flow drops the tags: only the system map is filtered by them.
+	repoMap := &ir.Diagram{Kind: ir.KindFlow, Direction: "LR", Zones: []ir.Zone{{ID: ir.ZoneEntry, Title: "Eingang"}, {ID: ir.ZoneStores, Title: "Speicher"}},
+		Nodes: []ir.Node{staged(node("api", ir.ZoneEntry), ir.StageOther), node("pg", ir.ZoneStores)},
+		Edges: []ir.Edge{tag(edge("api", "pg", "DB"), ir.LayerBuild)}}
+	if got, why := CheckRepoMap(repoMap, caps); why != "" || got.Nodes[0].Stage != "" || got.Edges[0].Layer != "" {
+		t.Errorf("repository map kept tags: %+v, %q", got, why)
+	}
+	flow := flowOf("a", "b")
+	flow.Edges = []ir.Edge{tag(edge("a", "b", "call"), ir.LayerRuntime)}
+	if got, why := CheckDiagram(flow, caps); why != "" || got.Edges[0].Layer != "" {
+		t.Errorf("statement flow kept a layer: %+v, %q", got, why)
 	}
 }
 

@@ -1507,6 +1507,8 @@ func TestRun_RepoMapRetrySteps(t *testing.T) {
 func TestRun_ProjectMapAskedAgain(t *testing.T) {
 	broken := drawnMap("svc")
 	broken.Nodes = append(broken.Nodes, diagram.Node{ID: "web", Label: "web", Shape: "step", Zone: "external"})
+	// An arrow: an external box without one is taken out before the check.
+	broken.Edges = append(broken.Edges, diagram.Edge{From: "svc", To: "web", Label: "HTTP", Head: "end"})
 	for name, c := range map[string]struct {
 		calls   int
 		again   []inference.RepoMapResult

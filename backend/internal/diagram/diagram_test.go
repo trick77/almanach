@@ -51,6 +51,15 @@ func TestEqual(t *testing.T) {
 	if Equal(a, b) {
 		t.Error("Equal of a changed label")
 	}
+	// The system map's tags say nothing drawn: a retag is no change, and
+	// the caller's tags stay.
+	untagged := &Diagram{Kind: KindFlow, Direction: "TB", Nodes: []Node{{ID: "a", Label: "A", Shape: "step"}, {ID: "b", Label: "B", Shape: "step"}},
+		Edges: []Edge{{From: "a", To: "b", Label: "HTTP", Head: "end"}}}
+	tagged := &Diagram{Kind: KindFlow, Direction: "TB", Nodes: []Node{{ID: "a", Label: "A", Shape: "step", Stage: StageNone}, {ID: "b", Label: "B", Shape: "step", Stage: StageProduction}},
+		Edges: []Edge{{From: "a", To: "b", Label: "HTTP", Head: "end", Layer: LayerRuntime}}}
+	if !Equal(untagged, tagged) || tagged.Nodes[1].Stage != StageProduction || tagged.Edges[0].Layer != LayerRuntime {
+		t.Errorf("retag: equal %v, tags kept %+v", Equal(untagged, tagged), tagged)
+	}
 }
 
 // The order of nodes, zones, edges, tables and relationships says nothing;

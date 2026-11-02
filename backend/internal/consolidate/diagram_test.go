@@ -581,7 +581,9 @@ func TestRun_ProjectMap(t *testing.T) {
 	// 13 nodes: over the statement diagrams' cap (12), within the drawing's.
 	wide := drawnMap("svc", "portal")
 	for i := range 9 {
-		wide.Nodes = append(wide.Nodes, diagram.Node{ID: fmt.Sprintf("x%d", i), Label: "Extern", Shape: "step", Zone: "external"})
+		id := fmt.Sprintf("x%d", i)
+		wide.Nodes = append(wide.Nodes, diagram.Node{ID: id, Label: "Extern", Shape: "step", Zone: "external"})
+		wide.Edges = append(wide.Edges, diagram.Edge{From: "svc", To: id, Label: "HTTP", Head: "end"})
 	}
 	if revs := projectRevisions(project(wide)); len(revs) != 1 || len(revs[0].Map.Nodes) != 13 {
 		t.Errorf("13-node map: revisions = %+v, want it drawn", revs)
