@@ -7,7 +7,6 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { FaqPage } from "./FaqPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
@@ -1150,13 +1149,8 @@ describe("App", () => {
     screen.getByText("PAY").closest("a")!.click();
     await waitFor(() => expect(window.location.pathname).toBe("/projects/PAY"));
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
-    screen.getByText("FAQ").click();
-    expect(await screen.findByText("Was ist Almanach?")).toBeInTheDocument();
-    expect(document.title).toContain("FAQ");
-  });
-  it("renders the FAQ", () => {
-    render(<FaqPage />);
-    expect(screen.getByText("Wer schreibt hier?")).toBeInTheDocument();
+    screen.getByText("Almanach").closest("a")!.click();
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
   });
 });
 

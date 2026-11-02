@@ -963,6 +963,16 @@ describe("App with sources", () => {
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
     expect(await screen.findByText("Quellen")).toBeInTheDocument();
+    // Abhängigkeiten before Quellen, no FAQ.
+    const entries = within(
+      screen.getByRole("navigation", { name: "Seiten" }),
+    ).getAllByRole("link");
+    expect(entries.map((a) => a.textContent)).toEqual([
+      "Projekte",
+      "Abhängigkeiten",
+      "Quellen",
+      "Warteschlange",
+    ]);
     unmount();
     vi.unstubAllGlobals();
     serve({

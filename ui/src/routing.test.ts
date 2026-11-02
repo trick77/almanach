@@ -12,7 +12,7 @@ import {
 describe("routeFromPath", () => {
   it("reads every page and falls back to the projects list", () => {
     expect(routeFromPath("/")).toEqual({ page: "projects" });
-    expect(routeFromPath("/faq")).toEqual({ page: "faq" });
+    expect(routeFromPath("/faq")).toEqual({ page: "projects" });
     expect(routeFromPath("/projects/PLAT")).toEqual({
       page: "project",
       key: "PLAT",

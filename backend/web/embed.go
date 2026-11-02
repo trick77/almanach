@@ -33,7 +33,6 @@ var placeholderHTML []byte
 // positive integer.
 var routes = []*regexp.Regexp{
 	regexp.MustCompile(`^/$`),
-	regexp.MustCompile(`^/faq$`),
 	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+$`),
 	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+$`),
 	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+/notes/[1-9][0-9]{0,8}$`),

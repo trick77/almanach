@@ -986,7 +986,7 @@ one.
 | --- | --- | --- |
 | `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
 | `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, and `/` handed to `web`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | config, httpapi, ingest, store, teamkeys, web |
-| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/faq`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
+| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
 | `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |

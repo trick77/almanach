@@ -29,7 +29,7 @@ func req(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 	h := handler(built())
 	for _, path := range []string{
-		"/", "/faq", "/queue", "/dependencies", "/projects/PLAT", "/projects/pay.v2/repos/pay-api", "/projects/PLAT/repos/files/notes/42",
+		"/", "/queue", "/dependencies", "/projects/PLAT", "/projects/pay.v2/repos/pay-api", "/projects/PLAT/repos/files/notes/42",
 		"/projects/PLAT/repos/files/notes/123456789", "/projects/~jan/repos/scratch", "/sources", "/sources/~jan",
 	} {
 		w := req(t, h, path)
@@ -44,6 +44,8 @@ func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 		"/assets/missing.js", "/queue/x", "/dependencies/x", "/sources/", "/sources/a%20b", "/sources/a/b",
 		// The German paths the UI had first: gone, no redirect.
 		"/projekte/PLAT", "/quellen",
+		// The FAQ page: removed (user, 2026-11-02).
+		"/faq",
 	} {
 		if code := req(t, h, path).Code; code != http.StatusNotFound {
 			t.Errorf("%s: status = %d, want 404", path, code)
