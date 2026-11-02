@@ -265,7 +265,7 @@ export const S = {
       "Zustand",
       "Letzter Run",
     ],
-    kind: { bitbucket: "Bitbucket", static: "Von Hand" } as Record<
+    kind: { bitbucket: "Bitbucket", static: "Einzeln" } as Record<
       string,
       string
     >,
@@ -286,7 +286,7 @@ export const S = {
     listingFailed: "Listing fehlgeschlagen",
     listedAt: "gelistet",
     neverListed: "noch nie gelistet",
-    // Beside the Von Hand chip, where a Bitbucket source links its project.
+    // Beside the Einzeln chip, where a Bitbucket source links its project.
     manual: "Per Clone-URL",
     project: "Projekt",
     counts: {
@@ -355,7 +355,7 @@ export const S = {
       repos: "Repositories",
       reposNote: {
         bitbucket: "aus der API",
-        static: "von Hand eingetragen",
+        static: "einzeln eingetragen",
       } as Record<string, string>,
       ready: "Bereit",
       lastSync: "Letzter Sync",
@@ -545,7 +545,7 @@ export const S = {
       progress: (repo: string, done: number, total: number) =>
         `${repo}, ${done + 1} von ${total}`,
       next: (at: string) => `Nächster Zyklus ${at}`,
-      manual: "Nur von Hand",
+      manual: "Nur manuell",
     },
     lane: {
       now: "Jetzt",
@@ -559,7 +559,7 @@ export const S = {
       string
     >,
     trigger: {
-      manual: "von Hand",
+      manual: "manuell",
       first_ready: "Erster Clone",
       monthly: "Monatlich",
       retry: "Erneut",
