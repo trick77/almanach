@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,21 +100,28 @@ func TestCostFromProvenance(t *testing.T) {
 		{llmwire.FromTable, new(int64(1_500_000))},
 		{llmwire.Unpriced, nil},
 	} {
-		resp := &llmwire.ChatResponse{Usage: llmwire.Usage{Cost: llmwire.Cost{NanoUSD: 1_500_000, Provenance: tc.prov}}}
-		got := costFrom(resp).NanoUSD
+		res := llmwire.StreamResult{Usage: llmwire.Usage{Cost: llmwire.Cost{NanoUSD: 1_500_000, Provenance: tc.prov}}}
+		got := (&Client{model: "m"}).costFrom(res).NanoUSD
 		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
 			t.Errorf("%s: NanoUSD = %v, want %v", tc.prov, got, tc.want)
 		}
 	}
 }
 
-// A gateway that sends no cost header leaves the call unpriced; llmwire
-// says why, and that reason is the only trace of it.
+// A gateway stream without a cost on its usage (LiteLLM without
+// include_cost_in_streaming_usage) leaves the call unpriced; llmwire says
+// why, and that reason is the only trace of it.
 func TestUnpricedCallLogsReason(t *testing.T) {
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"model": "sol", "choices": [{"finish_reason": "stop", "message": {"content": "{\"repository\": null, \"project\": null}"}}],`+
-			`"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, frame := range []string{
+			`{"model": "sol", "choices": [{"index": 0, "delta": {"content": "{\"repository\": null, \"project\": null}"}, "finish_reason": null}]}`,
+			`{"model": "sol", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}`,
+			`{"model": "sol", "choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}`,
+			`[DONE]`,
+		} {
+			_, _ = io.WriteString(w, "data: "+frame+"\n\n")
+		}
 	}))
 	t.Cleanup(gw.Close)
 	env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
@@ -133,6 +141,76 @@ func TestUnpricedCallLogsReason(t *testing.T) {
 	got := logs.String()
 	if !strings.Contains(got, "call unpriced") || !strings.Contains(got, "reason=") || strings.Contains(got, "reason=\"none given\"") {
 		t.Errorf("an unpriced call logged no reason: %q", got)
+	}
+}
+
+// streamGateway is a LiteLLM-shaped gateway answering every call with
+// frames as one SSE stream, then holding the connection while hang is set;
+// the client reads it with idle as its silence bound.
+func streamGateway(t *testing.T, frames []string, hang bool, idle time.Duration) *Client {
+	t.Helper()
+	release := make(chan struct{})
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range frames {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+		w.(http.Flusher).Flush()
+		if hang {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}
+	}))
+	t.Cleanup(gw.Close)
+	t.Cleanup(func() { close(release) })
+	env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
+	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wire, err := llmwire.FromEnv("mimo-v2.6-pro", llmwire.Config{Logger: quiet, Lookup: lookup, IdleTimeout: idle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Client{wire: wire, model: "mimo-v2.6-pro", log: quiet}
+}
+
+const (
+	answerFrame = `{"model": "sol", "choices": [{"index": 0, "delta": {"content": "{\"repository\": null, \"project\": null}"}, "finish_reason": null}]}`
+	stopFrame   = `{"model": "sol", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}`
+)
+
+// A gateway that puts the cost on the stream's usage (LiteLLM with
+// include_cost_in_streaming_usage) prices the call as reported; the model
+// is the deployment its header names.
+func TestStreamPricedByGateway(t *testing.T) {
+	c := streamGateway(t, []string{answerFrame, stopFrame,
+		`{"model": "sol", "choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost": 0.0015}}`, `[DONE]`},
+		false, time.Minute)
+	res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if res.Outcome != OutcomeOK || res.Cost.NanoUSD == nil || *res.Cost.NanoUSD != 1_500_000 || res.Cost.InputTokens != 10 {
+		t.Fatalf("Outcome = %s (err %v), cost %+v, want ok at 1.5 m nano-USD", res.Outcome, res.Err, res.Cost)
+	}
+	if res.Cost.Model != "mimo-v2.6-pro" {
+		t.Errorf("model = %q, want the profile when the gateway names no deployment", res.Cost.Model)
+	}
+}
+
+// A stream that ends without its finish is no answer, whatever it sent:
+// an error, never the half read as the whole.
+func TestStreamCutIsNoAnswer(t *testing.T) {
+	res := streamGateway(t, []string{answerFrame}, false, time.Minute).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if res.Outcome != OutcomeError || res.Err == nil {
+		t.Fatalf("Outcome = %s, err %v, want an error", res.Outcome, res.Err)
+	}
+}
+
+// A stream gone silent past the idle bound timed out: the worker holds and
+// takes the step again, as for a call that never answered.
+func TestStreamSilentTimesOut(t *testing.T) {
+	res := streamGateway(t, []string{answerFrame}, true, 50*time.Millisecond).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if res.Outcome != OutcomeTimedOut || !errors.Is(res.Err, llmwire.ErrStreamIdle) {
+		t.Fatalf("Outcome = %s, err %v, want timed out on the idle bound", res.Outcome, res.Err)
 	}
 }
 
@@ -217,8 +295,8 @@ func TestMergeSendsMessagesAndSchema(t *testing.T) {
 	if js["name"] != MergeSchemaName || js["strict"] != true || js["schema"] == nil {
 		t.Errorf("json_schema = %v", js)
 	}
-	if req.Stream() {
-		t.Error("the merge call asked for a stream")
+	if !req.Stream() {
+		t.Error("the merge call did not stream")
 	}
 }
 

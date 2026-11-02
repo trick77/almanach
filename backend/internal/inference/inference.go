@@ -87,11 +87,11 @@ func New(opt Options) (*Client, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	// No call streams. llmwire arms its idle bound (90s) at the response
-	// headers, and a host may send those at once and the body only when the
-	// whole answer is written: mimo's did, and a baseline overview took 4m48s
-	// to write (2026-10-31), cut at every bound short of that. For a client
-	// that never streams the call cap is bound enough, the merger included.
+	// Every call streams (call). The idle bound is the call cap all the
+	// same: a reasoning model may send nothing between its headers and its
+	// first token, and a host may hold the whole body back: mimo's did, and a
+	// baseline overview took 4m48s to write (2026-10-31), cut at every bound
+	// short of that. The call cap is bound enough, the merger included.
 	wire, err := llmwire.FromEnv(opt.Model, llmwire.Config{CallTimeout: CallTimeout, IdleTimeout: CallTimeout, Logger: opt.Logger, Lookup: opt.Lookup})
 	if err != nil {
 		return nil, fmt.Errorf("inference: build client for %s: %w", opt.Model, err)
@@ -336,34 +336,55 @@ type Call struct {
 	Err     error
 }
 
-// call is one Chat with a strict schema, never streaming, no retry. The
-// content is the answer to parse when the outcome is ok.
+// call is one streamed Chat with a strict schema, no retry, the stream read
+// to its end and the answer assembled. Streamed, so the connection carries
+// bytes from the first token on: a host in between that gave up on a
+// non-streamed call waiting for its headers cut every long project step at
+// 300 s (2026-11-02). The content is the answer to parse when the outcome is
+// ok. A stream cut after its usage arrived was paid for: its cost is kept.
 func (c *Client) call(ctx context.Context, prompt string, format llmwire.ResponseFormat) (string, Call) {
-	resp, warnings, err := c.wire.Chat(ctx, llmwire.ChatRequest{
+	stream, _, err := c.wire.ChatStream(ctx, llmwire.ChatRequest{
 		Model:          c.model,
 		Reasoning:      c.reasoning(),
 		Messages:       []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(prompt)},
 		ResponseFormat: format,
 	})
 	if err != nil {
-		out := Call{Outcome: OutcomeError, Err: err}
-		if errors.Is(err, llmwire.ErrCallCap) || errors.Is(err, llmwire.ErrNoResponseHeaders) || errors.Is(err, context.DeadlineExceeded) {
-			out.Outcome = OutcomeTimedOut
+		return "", failed(err)
+	}
+	defer func() { _ = stream.Close() }()
+	res, err := stream.Collect(nil)
+	if err != nil {
+		out := failed(err)
+		if n, ok := res.Usage.Total(); ok && n > 0 {
+			out.Cost = c.costFrom(res)
 		}
 		return "", out
 	}
-	out := Call{Cost: costFrom(resp)}
+	out := Call{Cost: c.costFrom(res)}
 	if out.Cost.NanoUSD == nil {
-		c.logUnpriced(resp.Gateway.CallID, warnings)
+		c.logUnpriced(res.Gateway.CallID, stream.Warnings())
 	}
-	if resp.FinishReason == "length" {
+	if res.FinishReason == "length" {
 		// Cut by the model's output cap, so the JSON is incomplete: say so,
 		// rather than reporting the cut as an answer off the schema.
 		out.Outcome = OutcomeTooLong
 		out.Err = errors.New("the answer was cut by the model's output limit")
 		return "", out
 	}
-	return resp.Content, out
+	return res.Content, out
+}
+
+// failed is a call that got no answer: timed out when a bound fired (the
+// whole call's, the headers', a stream gone silent), an error otherwise.
+func failed(err error) Call {
+	out := Call{Outcome: OutcomeError, Err: err}
+	for _, bound := range []error{llmwire.ErrCallCap, llmwire.ErrNoResponseHeaders, llmwire.ErrStreamIdle, context.DeadlineExceeded} {
+		if errors.Is(err, bound) {
+			out.Outcome = OutcomeTimedOut
+		}
+	}
+	return out
 }
 
 // logUnpriced says why an answered call has no cost: llmwire's reason is
@@ -409,13 +430,22 @@ func parse(content string, dst any) bool {
 	return json.Unmarshal([]byte(content), dst) == nil
 }
 
-func costFrom(resp *llmwire.ChatResponse) CallCost {
-	out := CallCost{Model: resp.Model, CallID: resp.Gateway.CallID, Answered: true,
-		InputTokens: deref(resp.Usage.Input.Total), CachedTokens: deref(resp.Usage.Input.CacheRead), OutputTokens: deref(resp.Usage.Output.Total)}
-	// Reported is the gateway's charge; FromTable is llmwire's list rate, the
+// costFrom is a stream's usage and cost. The model is the deployment the
+// gateway says ran, else the profile asked for: a stream carries no model
+// of its own.
+func (c *Client) costFrom(res llmwire.StreamResult) CallCost {
+	model := res.Gateway.ModelName
+	if model == "" {
+		model = c.model
+	}
+	u := res.Usage
+	out := CallCost{Model: model, CallID: res.Gateway.CallID, Answered: true,
+		InputTokens: deref(u.Input.Total), CachedTokens: deref(u.Input.CacheRead), OutputTokens: deref(u.Output.Total)}
+	// Reported is the gateway's charge, on a stream only with LiteLLM's
+	// include_cost_in_streaming_usage; FromTable is llmwire's list rate, the
 	// only figure a direct-route call has. Unpriced alone is unknown.
-	if resp.Usage.Cost.Provenance != llmwire.Unpriced {
-		n := resp.Usage.Cost.NanoUSD
+	if u.Cost.Provenance != llmwire.Unpriced {
+		n := u.Cost.NanoUSD
 		out.NanoUSD = &n
 	}
 	return out
