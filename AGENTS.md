@@ -9,22 +9,21 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   browser write. Text, summary: schema blocks, never newlines in a JSON string (models drop
   them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
   rongo's code; maps by `mapLayout.ts`, banded, grow down (ELK holds no rows in zones).
-- Gate = `make check` (`SHIP_CMD=<binary>` locally). GitHub never first to find failure.
+- Gate = `make check`. GitHub never first to find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.
-- Fresh clone: `ship hooks` before the first push (check, conform and init install it too); without the pre-push hook a push skips the gate.
+- Fresh clone: `ship hooks` (or check/conform/init) before first push, else push skips gate.
 - Release: `gh workflow run Release`, GitHub-hosted runners only.
 - ship, kit never hand-pinned: `ship init`, kit `@latest`, Dependabot.
 - No web framework, ORM, logging lib beyond kit's.
 
 ## Everywhere
 
-- Bearer token IS the team, no payload names one; webhook: bearer only. Constant-time compare, each
-  entry. Keys file hot-reloads (mtime); malformed keeps last good, logs.
+- Bearer token IS the team, no payload names one; webhook: bearer only. Constant-time compare,
+  each entry.
 - `deliveries` append-only, keyed by dedup id; retry = `deduped`, never update. Persist failure =
   500, never swallowed.
-- Envelope strict (`DisallowUnknownFields`, 422 names field; non-JSON 422, not 400); `note`,
-  `review_totals` verbatim. `webhook_processed` once per request read; each 500 its own line; 401
-  access log only. openapi.yaml = api.go.
+- Envelope strict; `note`, `review_totals` verbatim. Each 500 its own line; 401 access log only.
+  openapi.yaml = api.go.
 - Swiss German (`lang.Prose` on model prose, never paths), generic masculine, no Eszett.
 - Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
   read (rows verbatim), `lang.Prose`/`Laid`. Shapes need a value's mark, prose stays. New shape → test.
@@ -39,14 +38,12 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:
   worker holds, doubling backoff, note kept, attempts ≤ `maxFoldAttempts`: none blocks queue
-  forever. Failed mark pauses drain (else one paid call per lap). Shutdown: in-flight fold gets
-  grace, then cut.
-- Startup listing: unreachable = warning, refused key = fault.
+  forever. Failed mark pauses drain (else one paid call per lap).
 - One `Chat` per fold, strict schema, no streaming, no in-call retry. Models = llmwire profile ids
   in config, not code.
-- Money: nano-USD INTEGER, JSON 3-decimal string, no float. `llm_calls` (own), `note_calls`
+- Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls`
   (noergler's) never summed.
-- SQLite: one file, own volume, WAL, writes BEGIN IMMEDIATE; no shared FS. `serve` never migrates;
+- SQLite: `serve` never migrates;
   never edit applied migration (0001 squashed once, DB dropped, 2026-11-01). Probes exec.
 - oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,
   gates nothing.
@@ -54,14 +51,12 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   used, any case, never to another; own may change case (user, 2026-11-01). Carry-over:
   `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
 - Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
-  2026-10-30). Clones only at `BACKEND_REPOS_DIR/p<id>/r<id>`; segments `filepath.Rel`-checked
-  before `RemoveAll`. Clone URLs https, no creds; bare. Token: per-command `GIT_CONFIG_*` header,
-  never in URL; stderr redacted; AES-GCM-sealed, not returned/logged; one origin only (static
-  folder = one host, header bound to it).
+  2026-10-30). Clone path segments `filepath.Rel`-checked before `RemoveAll`. Token never in URL,
+  stderr, response or log; sealed at rest; one origin only (static folder = one host).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
   poller; repo failure on its row. Lock per clone (project removal: all); removal: lock,
   folder, then row. Run due = read from rows each cycle, never from an event.
-  `BACKEND_REPOS_DIR` unset = off. UI copy: capital only if first char letter ("Bereit",
+  UI copy: capital only if first char letter ("Bereit",
   "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
   source key: from project URL, case-only rename.
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
