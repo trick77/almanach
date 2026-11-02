@@ -1795,7 +1795,7 @@ components:
 
     Project:
       type: object
-      required: [key, team, repos, notes, revision, last_merge, repo]
+      required: [key, team, repos, notes, revision, summary, last_merge, repo]
       properties:
         key:
           type: string
@@ -1808,6 +1808,11 @@ components:
         revision:
           type: integer
           description: The project description's current revision, 0 when none.
+        summary:
+          type: string
+          description: >-
+            The first sentence of the project description's current
+            summary, "" when none. A project of one: its repo's summary.
         last_merge:
           type: [string, "null"]
           format: date-time

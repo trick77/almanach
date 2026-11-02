@@ -33,14 +33,14 @@ func TestProjectsAndRepos(t *testing.T) {
 		t.Fatalf("Projects = %+v, want PRJ, ZED", ps)
 	}
 	p := ps[0]
-	if p.Team != "alpha" || p.Repos != 2 || p.Notes != 3 || p.Revision != 1 {
-		t.Errorf("PRJ = %+v, want team alpha, 2 repos, 3 notes, revision 1", p)
+	if p.Team != "alpha" || p.Repos != 2 || p.Notes != 3 || p.Revision != 1 || p.Summary != "project" {
+		t.Errorf("PRJ = %+v, want team alpha, 2 repos, 3 notes, revision 1, summary project", p)
 	}
 	if p.LastMerge == nil || !p.LastMerge.Equal(mergedBase.Add(3*time.Minute)) {
 		t.Errorf("PRJ last merge = %v, want PR 3's", p.LastMerge)
 	}
-	if ps[1].Revision != 0 || ps[1].Repos != 1 || ps[1].Notes != 1 {
-		t.Errorf("ZED = %+v, want revision 0, 1 repo, 1 note", ps[1])
+	if ps[1].Revision != 0 || ps[1].Summary != "" || ps[1].Repos != 1 || ps[1].Notes != 1 {
+		t.Errorf("ZED = %+v, want revision 0, no summary, 1 repo, 1 note", ps[1])
 	}
 
 	rs, err := s.Repos(ctx, "PRJ", false)

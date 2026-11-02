@@ -278,11 +278,14 @@ func (d Deps) reader(r *http.Request) {
 // --- read API ----------------------------------------------------------------
 
 type projectBody struct {
-	Key       string     `json:"key"`
-	Team      string     `json:"team"`
-	Repos     int        `json:"repos"`
-	Notes     int        `json:"notes"`
-	Revision  int        `json:"revision"`
+	Key      string `json:"key"`
+	Team     string `json:"team"`
+	Repos    int    `json:"repos"`
+	Notes    int    `json:"notes"`
+	Revision int    `json:"revision"`
+	// Summary is the first sentence of the project page's summary, "" before
+	// the first; a project of one's is its repository's (Repo's).
+	Summary   string     `json:"summary"`
 	LastMerge *time.Time `json:"last_merge"`
 	// Repo is the repository of a project of one (a source with one
 	// repository): its page is the project's. Null for every other project.
@@ -311,10 +314,14 @@ func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 	}
 	out := projectsBody{Projects: make([]projectBody, 0, len(rows))}
 	for _, p := range rows {
-		body := projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision, LastMerge: p.LastMerge}
+		body := projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision,
+			Summary: firstSentence(lead(p.Summary)), LastMerge: p.LastMerge}
 		if rp, ok := single[p.Key]; ok {
 			b := repoBodies([]store.RepoRow{rp})[0]
 			body.Repo = &b
+			// Its page is the repository's, a project page left from when
+			// it had more stays off the list.
+			body.Summary = b.Summary
 		}
 		out.Projects = append(out.Projects, body)
 	}
