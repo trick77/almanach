@@ -777,6 +777,12 @@ after its departed repositories, so a box only they talked to goes. A
 repeated edge counts as one only within the same keep-or-drop layer: a
 build arrow never takes a runtime one's place. A refused map is asked again with the filtered draft, the one the
 reason counts. `diagram.Equal` ignores the tags: a retag is no revision.
+A map stored before the tags (no node has a stage, `untaggedMap`,
+TRANSITIONAL) reads as none in a baseline run (`projectPage`), so every
+rule for a missing map holds: a quiet reconcile of any one repository
+runs the project step for it alone, the prompt shows no current map, the
+redraw is written even when it looks the same, and a null or refused
+answer leaves the sentinel. A note's fold carries it as stored.
 Only the system map carries them; `checkFlow` drops them on any other
 flow. The map never costs the description: an edge pointing at its own
 node or repeating one before it is taken out (one "almanach → almanach"

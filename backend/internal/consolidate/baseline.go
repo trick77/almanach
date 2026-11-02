@@ -347,10 +347,9 @@ func (w *Worker) maxSubjects() int {
 // it can: best effort.
 func (w *Worker) keptCalls(ctx context.Context, r *store.BaselineRun, plan runPlan) (int, error) {
 	kept := 1
-	project, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	project, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return 0, errStop
+		return 0, err
 	}
 	stands, _, err := w.projectStands(ctx, r, plan, project)
 	if err != nil {
@@ -541,10 +540,9 @@ func (w *Worker) planned(ctx context.Context, r *store.BaselineRun, plan runPlan
 		// folds when the last run skipped it.
 		w.log.InfoContext(ctx, "baseline: nothing to read again")
 		if r.Mode == store.RunReconcile && !plan.SummaryChanged {
-			page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+			page, err := w.projectPage(ctx, r.ProjectKey)
 			if err != nil {
-				w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-				return errStop
+				return err
 			}
 			skip, _, err := w.projectStands(ctx, r, plan, page)
 			if err != nil {
@@ -1176,10 +1174,9 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if plan.ProjectMap != nil {
 		return w.projectMapStep(ctx, r, plan)
 	}
-	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	projectPage, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return errStop
+		return err
 	}
 	skip, repos, err := w.projectStands(ctx, r, plan, projectPage)
 	if err != nil {
@@ -1333,6 +1330,43 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 		m = w.carriedMap(ctx, page, slugs)
 	}
 	return mapRevision(r, page, m)
+}
+
+// projectPage is the project's current page as a baseline run reads it. A
+// system map stored before the tags (layer, stage) reads as none: it was
+// drawn with every build, monitoring and stage box the filter now takes
+// out. So every rule for a missing map holds for it, in one place: a quiet
+// reconcile runs the project step, the prompt shows no map, the redraw is
+// written (one revision, the tags its change where the drawing is the
+// same), and a null or refused answer leaves the sentinel, never a map
+// asked for again on every reconcile.
+func (w *Worker) projectPage(ctx context.Context, key string) (store.Page, error) {
+	page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, key, "")
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
+		return store.Page{}, errStop
+	}
+	// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+	if untaggedMap(page.Map) {
+		page.Map = nil
+	}
+	return page, nil
+}
+
+// untaggedMap is a system map stored before the tags: no node has a stage,
+// which every node of one drawn since has.
+//
+// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+func untaggedMap(m *diagram.Diagram) bool {
+	if m == nil || m.Kind != diagram.KindFlow {
+		return false
+	}
+	for _, n := range m.Nodes {
+		if n.Stage != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // mapRevision is the page's text with the map m: what a map changes alone
@@ -1543,10 +1577,9 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if !room {
 		return cut("no call to spare")
 	}
-	projectPage, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	projectPage, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return errStop
+		return err
 	}
 	repoPage, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
