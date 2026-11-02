@@ -167,7 +167,7 @@ export function Pill({
 
 /** Prose renders a text as paragraphs, split on blank lines, with a
  *  backtick-quoted identifier in the mono face (codeSpans) and nothing
- *  else read: a note's text, the FAQ's. Almanach's own laid-out text is
+ *  else read: a note's text. Almanach's own laid-out text is
  *  Doc's. Held at measure, in the font size the caller's className sets;
  *  a caller sets no max-w of its own. query sets off a search's matches. */
 export function Prose({

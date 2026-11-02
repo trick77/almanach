@@ -15,10 +15,9 @@ export const S = {
   nav: {
     label: "Seiten",
     projects: "Projekte",
-    sources: "Quellen",
     deps: "Abhängigkeiten",
+    sources: "Quellen",
     queue: "Warteschlange",
-    faq: "FAQ",
   },
   deps: {
     title: "Abhängigkeiten",
@@ -625,21 +624,6 @@ export const S = {
       error: "Nicht gefaltet: Aufruf fehlgeschlagen",
       "": "Ohne Modellaufruf abgeschlossen",
     } as Record<string, string>,
-  },
-  faq: {
-    title: "FAQ",
-    what: "Was ist Almanach?",
-    whatText:
-      "Almanach ist das lebende Wiki, das noergler beim Reviewen füttert: nach jedem Review schreibt das Modell eine Notiz, was der Pull Request über das Repository lehrt, und beim Merge kommt sie hierher. Almanach fügt jede Notiz in die Beschreibung des Repositorys und des Projekts ein, als Dokumentation mit Quellen, nie von Hand geschrieben.",
-    who: "Wer schreibt hier?",
-    whoText:
-      "Niemand von Hand. Eine Beschreibung schreibt Almanach aus dem Code (beim ersten Clone und einmal im Monat) und aus jedem gemergten Pull Request fort; was falsch ist, korrigiert der nächste Run oder Pull Request. Jede Revision bleibt erhalten.",
-    sources: "Woher kommt eine Aussage?",
-    sourcesText:
-      "Jede Aussage trägt die Pull Requests, aus denen sie gelernt oder zuletzt geändert wurde, als Chips, und den Commit, bei dem Almanach sie aus dem Code gelesen hat (Basis). «Geprüft» nennt den Commit, gegen dessen Code sie zuletzt bestätigt wurde. Die Quellen setzt der Code, nie das Modell.",
-    clones: "Was sind die Quellen?",
-    clonesText:
-      "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories Almanach über die API liest, oder ein Projekt, dessen Repositories von Hand eingetragen werden. Almanach liest jeden Clone und schreibt daraus die Grundbeschreibung des Repositorys; ab dann schreiben die Notizen der Pull Requests sie fort, und einmal im Monat liest Almanach, was sich im Code geändert hat. Notizen für Repositories, die keine Quelle sind, werden ignoriert.",
   },
   auth: {
     checking: "Sitzung wird geprüft …",

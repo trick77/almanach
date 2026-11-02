@@ -307,7 +307,7 @@ func TestProviderDownLeavesTheFeedUp(t *testing.T) {
 	if code, _ := do(t, h, "GET", "/auth/ping", "tok-platform", "", nil); code != 200 {
 		t.Errorf("ping = %d", code)
 	}
-	for _, p := range []string{"/api/auth/login?next=/faq", "/api/auth/callback?code=x&state=y"} {
+	for _, p := range []string{"/api/auth/login?next=/queue", "/api/auth/callback?code=x&state=y"} {
 		rec := get(h, http.MethodGet, p)
 		if rec.Code != http.StatusFound || rec.Header().Get("Location") != auth.UnavailableURL {
 			t.Errorf("%s = %d %q, want the halting page", p, rec.Code, rec.Header().Get("Location"))

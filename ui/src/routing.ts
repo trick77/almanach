@@ -4,7 +4,6 @@
 
 export type Route =
   | { page: "projects" }
-  | { page: "faq" }
   | { page: "project"; key: string }
   | { page: "repo"; key: string; slug: string }
   | { page: "note"; key: string; slug: string; pr: number }
@@ -48,7 +47,6 @@ export function routeFromPath(path: string): Route {
   m = SOURCE.exec(path);
   if (m) return { page: "source", key: m[1] };
   if (path === sourcesPath) return { page: "sources" };
-  if (path === "/faq") return { page: "faq" };
   if (path === queuePath) return { page: "queue" };
   if (path === depsPath) return { page: "deps" };
   return { page: "projects" };

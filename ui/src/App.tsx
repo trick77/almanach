@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Me, QueueCount, Sources } from "./api";
 import { DepsPage } from "./DepsPage";
-import { FaqPage } from "./FaqPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
@@ -123,15 +122,11 @@ function Shell({ me }: { me: Me }) {
           {nav(
             S.nav.projects,
             "/",
-            route.page !== "faq" &&
-              route.page !== "queue" &&
-              route.page !== "deps" &&
-              !inSources,
+            route.page !== "queue" && route.page !== "deps" && !inSources,
           )}
-          {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
           {sourcesOn && nav(S.nav.deps, depsPath, route.page === "deps")}
+          {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
           {nav(S.nav.queue, queuePath, route.page === "queue", queued)}
-          {nav(S.nav.faq, "/faq", route.page === "faq")}
         </nav>
         <span
           className="flex items-center gap-3 text-[13px] text-muted"
@@ -161,7 +156,6 @@ function Shell({ me }: { me: Me }) {
 
       <main className="min-h-0 min-w-0">
         {route.page === "projects" && <ProjectsPage />}
-        {route.page === "faq" && <FaqPage />}
         {route.page === "sources" && <SourcesPage />}
         {route.page === "queue" && <QueuePage />}
         {route.page === "deps" && <DepsPage />}
