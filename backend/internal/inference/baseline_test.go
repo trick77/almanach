@@ -14,8 +14,8 @@ import (
 func schemaName(t *testing.T, srv *llmwiretest.Server) string {
 	t.Helper()
 	req := srv.Last()
-	if req.Stream() {
-		t.Error("a baseline call asked for a stream")
+	if !req.Stream() {
+		t.Error("a baseline call did not stream")
 	}
 	rf, _ := req.Body["response_format"].(map[string]any)
 	js, _ := rf["json_schema"].(map[string]any)
