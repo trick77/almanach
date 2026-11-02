@@ -9,22 +9,27 @@ import (
 
 // Gradle: a build's files read together, since a build file alone does
 // not say what its project is called. settings.gradle(.kts) names the root
-// project (`rootProject.name`) and includes the others; a project's group
-// is its build file's `group = "..."`, else gradle.properties' `group`,
-// else the root project's. Its coordinate is maven:<group>:<name>, as
-// Gradle publishes it, so a Gradle build and a Maven one meet; a
+// project (`rootProject.name`) and includes the others. A project's group
+// is, as Gradle evaluates it: its own build file's top-level
+// `group = "..."`, else the root build file's `subprojects { }` (for a
+// subproject) or `allprojects { }` one, else its folder's gradle.properties
+// `group`, else the root folder's. Its coordinate is maven:<group>:<name>,
+// as Gradle publishes it, so a Gradle build and a Maven one meet; a
 // publication renaming its artifactId is not seen. A build with no
 // settings file, or no group, provides nothing: its name would be the
 // clone's folder, its coordinate a guess.
 //
-// Requires are what a dependency configuration names: a literal
-// "group:artifact[:version]", the map notation (group, name, version), or
-// a version catalog accessor (`libs.x.y`, `libs.bundles.z`) resolved in
-// gradle/libs.versions.toml. `$x` and `${x}` are resolved from
-// gradle.properties and the build files' plain assignments (`ext`, `val`,
-// `set(...)`, `extra[...]`). Build files are scripts: what only running one
-// would tell (a coordinate built of an unresolved variable, a convention
-// plugin's dependencies) is left out, never guessed.
+// Requires are what a dependency configuration names: literal
+// "group:artifact[:version]" strings, the map notation (group, name,
+// version, in any order), or a version catalog accessor (`libs.x.y`,
+// `libs.bundles.z`) resolved in gradle/libs.versions.toml, exactly. `$x`
+// and `${x}` are resolved from gradle.properties and the build files'
+// plain assignments (`ext`, `val`, `set(...)`, `extra[...]`). buildSrc and
+// a build pluginManagement includes are build logic, a plugin's classpath,
+// not what the repository uses: left out. Build files are scripts: what
+// only running one would tell (a coordinate built of an unresolved
+// variable, a convention plugin's dependencies) is left out, never
+// guessed.
 
 // gradleCatalog is the version catalog Gradle reads without being told.
 const gradleCatalog = "gradle/libs.versions.toml"
@@ -41,14 +46,18 @@ var (
 	// A configuration name, then (optionally) `(` and platform(...).
 	gradleConf = `\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(?\s*(?:(?:platform|enforcedPlatform|testFixtures)[ \t]*\(\s*)?`
 
-	reGradleCoord   = regexp.MustCompile(gradleConf + gradleStr)
-	reGradleMap     = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(?\s*group[ \t]*[:=][ \t]*` + gradleStr + `[ \t]*,\s*name[ \t]*[:=][ \t]*` + gradleStr + `(?:[ \t]*,\s*version[ \t]*[:=][ \t]*` + gradleStr + `)?`)
-	reGradleCatalog = regexp.MustCompile(gradleConf + `libs\.([A-Za-z0-9_.]+)`)
-	// A project's own group: the whole line, so a named argument
+	// One string or several, comma separated (Groovy lists them in one call).
+	reGradleCoord = regexp.MustCompile(gradleConf + `(` + gradleStr + `(?:[ \t]*,\s*` + gradleStr + `)*)`)
+	// The map notation's entries, any order.
+	reGradleMap      = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(?\s*((?:\b(?:group|name|version|classifier|ext|configuration)[ \t]*[:=][ \t]*` + gradleStr + `[ \t]*,?\s*)+)`)
+	reGradleMapEntry = regexp.MustCompile(`\b(group|name|version)[ \t]*[:=][ \t]*` + gradleStr)
+	reGradleCatalog  = regexp.MustCompile(gradleConf + `libs\.([A-Za-z0-9_.]+)`)
+	// A group assignment: the whole line, so a named argument
 	// (`group = "x",`) inside a dependency is not one.
 	reGradleGroup = regexp.MustCompile(`(?m)^[ \t]*(?:project\.)?group[ \t]*=?[ \t]*` + gradleStr + `[ \t]*;?[ \t]*$`)
 	reRootName    = regexp.MustCompile(`rootProject\.name[ \t]*=[ \t]*` + gradleStr)
 	reInclude     = regexp.MustCompile(`\binclude\b[ \t]*\(?((?:\s*` + gradleStr + `[ \t]*,?)+)`)
+	reIncludeBld  = regexp.MustCompile(`\bincludeBuild\b[ \t]*\(?[ \t]*` + gradleStr)
 	reQuoted      = regexp.MustCompile(gradleStr)
 	// Plain assignments a version may be taken from.
 	reAssign = regexp.MustCompile(`(?m)^[ \t]*(?:(?:val|var|def|ext\.|project\.ext\.)[ \t]*)?([A-Za-z_][A-Za-z0-9_]*)(?:[ \t]*:[ \t]*String)?[ \t]*=[ \t]*` + gradleStr + `[ \t]*;?[ \t]*$`)
@@ -57,6 +66,8 @@ var (
 	// `${property("x")}` and its kin, `${x}`, `$x`.
 	reRef       = regexp.MustCompile(`\$\{[ \t]*(?:project\.|rootProject\.)?(?:property|findProperty)\([ \t]*"([^"]+)"[ \t]*\)(?:[ \t]*as[ \t]+String\??)?[ \t]*\}|\$\{[ \t]*([A-Za-z_][A-Za-z0-9_.]*)[ \t]*\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 	reCoordPart = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.\-]*$`)
+	// An alias's `-` and `_` are `.` in its accessor.
+	catalogSeparators = strings.NewReplacer("-", ".", "_", ".")
 )
 
 // gradleConfs are the dependency configurations by name; any name ending
@@ -96,6 +107,14 @@ func strMatch(m []string, i int) string {
 	return m[i+1]
 }
 
+// dirOf is a path's folder, "" for the root.
+func dirOf(p string) string {
+	if d := path.Dir(p); d != "." {
+		return d
+	}
+	return ""
+}
+
 type gradleDir struct {
 	props    map[string]string // gradle.properties
 	vars     map[string]string // the build file's plain assignments
@@ -107,6 +126,7 @@ type gradleDir struct {
 // gradle reads the Gradle files among files: the coordinates their builds
 // provide, and per build file what it requires.
 func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
+	logic := buildLogic(files)
 	dirs := map[string]*gradleDir{}
 	dir := func(d string) *gradleDir {
 		if dirs[d] == nil {
@@ -117,9 +137,9 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	var cat *catalog
 	builds := map[string]string{}
 	for p, body := range files {
-		d := path.Dir(p)
-		if d == "." {
-			d = ""
+		d := dirOf(p)
+		if logic[d] {
+			continue
 		}
 		switch b := path.Base(p); {
 		case p == gradleCatalog:
@@ -154,24 +174,57 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	// What `$x` resolves to in folder d: gradle.properties of the build
 	// root, then the folder's, then the build root's assignments, then the
 	// folder's; a later one wins.
+	propsMemo := map[string]map[string]string{}
 	propsOf := func(d string) map[string]string {
+		if m, ok := propsMemo[d]; ok {
+			return m
+		}
 		out := map[string]string{}
 		r := rootOf(d)
-		for _, src := range []string{r, d} {
-			if g := dirs[src]; g != nil {
-				for k, v := range g.props {
+		for _, vars := range []bool{false, true} {
+			for _, src := range []string{r, d} {
+				g := dirs[src]
+				if g == nil {
+					continue
+				}
+				from := g.props
+				if vars {
+					from = g.vars
+				}
+				for k, v := range from {
 					out[k] = v
 				}
 			}
 		}
-		for _, src := range []string{r, d} {
-			if g := dirs[src]; g != nil {
-				for k, v := range g.vars {
-					out[k] = v
-				}
-			}
-		}
+		propsMemo[d] = out
 		return out
+	}
+	// groupOf is the group of the project in folder pd of the build rooted
+	// at r: its own, the root build file's subprojects/allprojects one, its
+	// folder's gradle.properties, the root folder's.
+	groupOf := func(r, pd string) string {
+		root := buildGroups(dirs[r].build, propsOf(r))
+		var own groups
+		var props map[string]string
+		if g := dirs[pd]; g != nil && rootOf(pd) == r {
+			if pd != r {
+				own = buildGroups(g.build, propsOf(pd))
+			} else {
+				own = root
+			}
+			props = g.props
+		}
+		cands := []string{own.own}
+		if pd != r {
+			cands = append(cands, root.sub)
+		}
+		cands = append(cands, root.all, props["group"], dirs[r].props["group"])
+		for _, c := range cands {
+			if c != "" {
+				return c
+			}
+		}
+		return ""
 	}
 
 	var prov []string
@@ -179,12 +232,7 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		if !g.hasSet {
 			continue
 		}
-		props := propsOf(d)
-		rootGroup := buildGroup(g.build, props)
-		if rootGroup == "" {
-			rootGroup = g.props["group"]
-		}
-		if c, ok := gradleCoord(rootGroup, firstStr(reRootName, g.settings)); ok {
+		if c, ok := gradleCoord(groupOf(d, d), firstStr(reRootName, g.settings)); ok {
 			prov = append(prov, c)
 		}
 		for _, inc := range includes(g.settings) {
@@ -192,28 +240,15 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 			if len(segs) == 0 {
 				continue
 			}
-			group := ""
 			pd := path.Join(d, strings.Join(segs, "/"))
-			if sub := dirs[pd]; sub != nil && rootOf(pd) == d {
-				group = buildGroup(sub.build, propsOf(pd))
-				if group == "" {
-					group = sub.props["group"]
-				}
-			}
-			if group == "" {
-				group = rootGroup
-			}
-			if c, ok := gradleCoord(group, segs[len(segs)-1]); ok {
+			if c, ok := gradleCoord(groupOf(d, pd), segs[len(segs)-1]); ok {
 				prov = append(prov, c)
 			}
 		}
 	}
 	reqs := map[string][]Dep{}
 	for p, text := range builds {
-		d := path.Dir(p)
-		if d == "." {
-			d = ""
-		}
+		d := dirOf(p)
 		var c *catalog
 		if rootOf(d) == "" {
 			c = cat
@@ -222,6 +257,33 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	}
 	sort.Strings(prov)
 	return prov, reqs
+}
+
+// buildLogic is the folders one down that hold build logic: buildSrc, and
+// each build the root settings file includes in pluginManagement { }.
+func buildLogic(files map[string][]byte) map[string]bool {
+	out := map[string]bool{"buildSrc": true}
+	for _, name := range []string{"settings.gradle", "settings.gradle.kts"} {
+		body, ok := files[name]
+		if !ok {
+			continue
+		}
+		text := stripComments(body)
+		for _, m := range reIncludeBld.FindAllStringSubmatchIndex(text, -1) {
+			in := false
+			for _, b := range blocks(text, m[0]) {
+				in = in || b == "pluginManagement"
+			}
+			if !in {
+				continue
+			}
+			p := path.Clean(strMatch(subs(text, m), 1))
+			if p != "." && p != ".." && !strings.Contains(p, "/") {
+				out[p] = true
+			}
+		}
+	}
+	return out
 }
 
 // buildDeps is what one build file's dependency configurations name, in
@@ -237,21 +299,10 @@ func buildDeps(text string, props map[string]string, cat *catalog) []Dep {
 		if !gradleConfName(s[1]) {
 			continue
 		}
-		parts := strings.Split(resolve(strMatch(s, 2), props), ":")
-		if len(parts) < 2 || len(parts) > 4 {
-			continue
-		}
-		// An artifact type (`@aar`) ends the last part.
-		last := len(parts) - 1
-		if i := strings.IndexByte(parts[last], '@'); i >= 0 {
-			parts[last] = parts[last][:i]
-		}
-		version := ""
-		if len(parts) >= 3 {
-			version = parts[2]
-		}
-		if c, ok := gradleCoord(parts[0], parts[1]); ok {
-			hits = append(hits, hit{m[0], Dep{Coord: c, Version: cleanVersion(version)}})
+		for n, q := range reQuoted.FindAllStringSubmatch(s[2], -1) {
+			if d, ok := coordString(resolve(strMatch(q, 1), props)); ok {
+				hits = append(hits, hit{m[0] + n, d})
+			}
 		}
 	}
 	for _, m := range reGradleMap.FindAllStringSubmatchIndex(text, -1) {
@@ -259,8 +310,12 @@ func buildDeps(text string, props map[string]string, cat *catalog) []Dep {
 		if !gradleConfName(s[1]) {
 			continue
 		}
-		if c, ok := gradleCoord(resolve(strMatch(s, 2), props), resolve(strMatch(s, 4), props)); ok {
-			hits = append(hits, hit{m[0], Dep{Coord: c, Version: cleanVersion(resolve(strMatch(s, 6), props))}})
+		e := map[string]string{}
+		for _, q := range reGradleMapEntry.FindAllStringSubmatch(s[2], -1) {
+			e[q[1]] = resolve(strMatch(q, 2), props)
+		}
+		if c, ok := gradleCoord(e["group"], e["name"]); ok {
+			hits = append(hits, hit{m[0], Dep{Coord: c, Version: cleanVersion(e["version"])}})
 		}
 	}
 	if cat != nil {
@@ -280,6 +335,27 @@ func buildDeps(text string, props map[string]string, cat *catalog) []Dep {
 		out = append(out, h.dep)
 	}
 	return out
+}
+
+// coordString reads "group:artifact[:version[:classifier]][@type]".
+func coordString(s string) (Dep, bool) {
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 4 {
+		return Dep{}, false
+	}
+	last := len(parts) - 1
+	if i := strings.IndexByte(parts[last], '@'); i >= 0 {
+		parts[last] = parts[last][:i]
+	}
+	version := ""
+	if len(parts) >= 3 {
+		version = parts[2]
+	}
+	c, ok := gradleCoord(parts[0], parts[1])
+	if !ok {
+		return Dep{}, false
+	}
+	return Dep{Coord: c, Version: cleanVersion(version)}, true
 }
 
 // subs is the submatches of one FindAllStringSubmatchIndex hit, "" for a
@@ -314,18 +390,64 @@ func cleanVersion(v string) string {
 	return v
 }
 
-// buildGroup is a build file's own `group = "..."`, resolved; "" when it
-// names none or one not resolved.
-func buildGroup(text string, props map[string]string) string {
-	m := reGradleGroup.FindStringSubmatch(text)
-	if m == nil {
-		return ""
+// groups is a build file's group assignments by where they stand: top
+// level (the project's own), in allprojects { }, in subprojects { }.
+// Anywhere else (a publication, a project(":x") { } block) is none of these.
+type groups struct{ own, all, sub string }
+
+func buildGroups(text string, props map[string]string) groups {
+	var out groups
+	for _, m := range reGradleGroup.FindAllStringSubmatchIndex(text, -1) {
+		g := strings.TrimSpace(resolve(strMatch(subs(text, m), 1), props))
+		if g == "" || strings.Contains(g, "$") {
+			continue
+		}
+		var slot *string
+		switch b := blocks(text, m[0]); {
+		case len(b) == 0:
+			slot = &out.own
+		case len(b) == 1 && b[0] == "allprojects":
+			slot = &out.all
+		case len(b) == 1 && b[0] == "subprojects":
+			slot = &out.sub
+		default:
+			continue
+		}
+		if *slot == "" {
+			*slot = g
+		}
 	}
-	g := strings.TrimSpace(resolve(strMatch(m, 1), props))
-	if strings.Contains(g, "$") {
-		return ""
+	return out
+}
+
+// blocks is the names of the blocks open at pos, outermost first: the
+// identifier just before each `{` (allprojects, pluginManagement), "" for
+// one with none. Strings are skipped, so a `{` in one opens nothing.
+func blocks(text string, pos int) []string {
+	var stack []string
+	for i := 0; i < pos && i < len(text); {
+		switch text[i] {
+		case '"', '\'':
+			i = stringEnd(text, i)
+			continue
+		case '{':
+			j := i
+			for j > 0 && strings.ContainsRune(" \t\r\n", rune(text[j-1])) {
+				j--
+			}
+			k := j
+			for k > 0 && (bareKeyChar(text[k-1]) && text[k-1] != '-') {
+				k--
+			}
+			stack = append(stack, text[k:j])
+		case '}':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+		i++
 	}
-	return g
+	return stack
 }
 
 // includes is every project path a settings file includes.
@@ -429,7 +551,7 @@ func stripComments(src []byte) string {
 
 // stringEnd is the index just past the string literal opening at i: one
 // quote or three, backslash escapes, and in a double-quoted one `${...}`
-// taken whole. Unclosed: the end of s.
+// taken whole. Unclosed: the end of its line (one quote) or of s.
 func stringEnd(s string, i int) int {
 	q := s[i]
 	delim := string(q)
@@ -473,10 +595,6 @@ func stringEnd(s string, i int) int {
 type catalog struct {
 	libs    map[string]Dep
 	bundles map[string][]string
-}
-
-func catalogAccessor(alias string) string {
-	return strings.NewReplacer("-", ".", "_", ".").Replace(alias)
 }
 
 // readCatalog reads gradle/libs.versions.toml; nil when it does not parse.
@@ -530,15 +648,16 @@ func readCatalog(body []byte) *catalog {
 			version = versionOf(t["version"], 0)
 		}
 		if coord, ok := gradleCoord(group, artifact); ok {
-			c.libs[catalogAccessor(alias)] = Dep{Coord: coord, Version: cleanVersion(version)}
+			c.libs[catalogSeparators.Replace(alias)] = Dep{Coord: coord, Version: cleanVersion(version)}
 		}
 	}
 	bundles, _ := doc["bundles"].(map[string]any)
 	for alias, v := range bundles {
+		acc := catalogSeparators.Replace(alias)
 		list, _ := v.([]any)
 		for _, e := range list {
 			if s, ok := e.(string); ok {
-				c.bundles[catalogAccessor(alias)] = append(c.bundles[catalogAccessor(alias)], catalogAccessor(s))
+				c.bundles[acc] = append(c.bundles[acc], catalogSeparators.Replace(s))
 			}
 		}
 	}
@@ -546,35 +665,29 @@ func readCatalog(body []byte) *catalog {
 }
 
 // lookup is what an accessor after `libs.` stands for: a library, or a
-// bundle's libraries. The longest prefix that names one counts, so a
-// trailing `.get()` or a longer alias sharing a prefix reads right.
-// Plugins and versions are no dependency.
+// bundle's libraries; exactly, but for a trailing `.get()` or
+// `.asProvider()`. A library the catalog names but this package could not
+// read (an unresolved part) is nothing, never a shorter alias sharing its
+// prefix. Plugins and versions are no dependency.
 func (c *catalog) lookup(acc string) []Dep {
 	segs := strings.Split(strings.Trim(acc, "."), ".")
-	if len(segs) == 0 {
-		return nil
+	if n := len(segs); n > 1 && (segs[n-1] == "get" || segs[n-1] == "asProvider") {
+		segs = segs[:n-1]
 	}
 	switch segs[0] {
 	case "plugins", "versions":
 		return nil
 	case "bundles":
-		for n := len(segs); n > 1; n-- {
-			if libs, ok := c.bundles[strings.Join(segs[1:n], ".")]; ok {
-				var out []Dep
-				for _, l := range libs {
-					if d, ok := c.libs[l]; ok {
-						out = append(out, d)
-					}
-				}
-				return out
+		var out []Dep
+		for _, l := range c.bundles[strings.Join(segs[1:], ".")] {
+			if d, ok := c.libs[l]; ok {
+				out = append(out, d)
 			}
 		}
-		return nil
+		return out
 	}
-	for n := len(segs); n > 0; n-- {
-		if d, ok := c.libs[strings.Join(segs[:n], ".")]; ok {
-			return []Dep{d}
-		}
+	if d, ok := c.libs[strings.Join(segs, ".")]; ok {
+		return []Dep{d}
 	}
 	return nil
 }

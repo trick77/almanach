@@ -55,14 +55,15 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 	run(t, filepath.Dir(work), "init", "-q", "-b", "main", work)
 	for p, body := range map[string]string{
 		"go.mod":                   "module example.invalid/loom\n\nrequire example.invalid/wire v0.1.8\n",
-		"web/package.json":         `{"name": "loom-ui", "dependencies": {"left-pad": "^1.3.0"}}`,
+		"web/package.json":         `{"name": "loom-ui", "dependencies": {"left-pad": "^1.3.0", "vault": "git+https://svc:hunter2@git.example.invalid/vault.git"}}`,
 		"corpus/checkout/a/go.mod": "module example.invalid/copied\n",
-		// A Gradle build's files pass the reader's filters too.
-		"build.gradle":              "dependencies { implementation libs.wire.api }\n",
-		"gradle/libs.versions.toml": "[libraries]\nwire-api = \"example.wire:wire-api:2.0\"\n",
+		// A Gradle build's files pass the reader's filters too, and no key
+		// rule takes a catalog alias or a property name for a secret.
+		"build.gradle":              "dependencies {\n implementation libs.wire.api\n implementation libs.jjwt.api\n}\n",
+		"gradle/libs.versions.toml": "[libraries]\nwire-api = \"example.wire:wire-api:2.0\"\njjwt-api = { module = \"io.jsonwebtoken:jjwt-api\", version = \"0.12.5\" }\n",
 		"jvm/settings.gradle.kts":   "rootProject.name = \"loom-jvm\"\n",
-		"jvm/gradle.properties":     "group=example.loom\n",
-		"jvm/build.gradle.kts":      "dependencies { implementation(\"example.wire:wire-core:1.0\") }\n",
+		"jvm/gradle.properties":     "group=example.loom\ntokenLibVersion=1.2.3\n",
+		"jvm/build.gradle.kts":      "dependencies {\n implementation(\"example.wire:wire-core:1.0\")\n implementation(\"example.wire:token-lib:$tokenLibVersion\")\n}\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(work, p)), 0o750); err != nil {
 			t.Fatal(err)
@@ -96,9 +97,13 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		Provides: []string{"go:example.invalid/loom", "maven:example.loom:loom-jvm", "npm:loom-ui"},
 		Requires: []manifest.Dep{
 			{Coord: "go:example.invalid/wire", Version: "v0.1.8"},
+			{Coord: "maven:example.wire:token-lib", Version: "1.2.3"},
 			{Coord: "maven:example.wire:wire-api", Version: "2.0"},
 			{Coord: "maven:example.wire:wire-core", Version: "1.0"},
+			{Coord: "maven:io.jsonwebtoken:jjwt-api", Version: "0.12.5"},
 			{Coord: "npm:left-pad", Version: "^1.3.0"},
+			// A credential in a dependency URL never leaves.
+			{Coord: "npm:vault", Version: "git+https://<redacted>@git.example.invalid/vault.git"},
 		},
 	}
 	rid := idOf("tools/loom")

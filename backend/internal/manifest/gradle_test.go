@@ -132,7 +132,9 @@ dependencies {
 `),
 	})
 	want := Read{
-		Provides: []string{"maven:com.acme:app", "maven:com.acme:checkout"},
+		// The root's top-level group is the root project's only: app has
+		// none, so provides nothing.
+		Provides: []string{"maven:com.acme:checkout"},
 		Requires: []Dep{
 			{Coord: "maven:com.acme:bom", Version: "4.1"},
 			{Coord: "maven:com.acme:commons", Version: "4.1"},
@@ -252,5 +254,90 @@ n = "2"
 		if _, err := parseTOML([]byte(bad)); err == nil {
 			t.Errorf("parseTOML(%q) = nil error, want one", bad)
 		}
+	}
+}
+
+// A catalog library that could not be read is nothing, never a shorter
+// alias sharing its prefix; a byte order mark does not fail the catalog.
+func TestParse_GradleCatalogExact(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"gradle/libs.versions.toml": []byte("\xef\xbb\xbf[libraries]\naws-sdk = \"org.aws:core:2.0\"\naws-sdk-extra = { group = \"${g}\", name = \"extra\" }\n"),
+		"build.gradle":              []byte("dependencies {\n implementation libs.aws.sdk.extra\n implementation libs.aws.sdk.asProvider()\n}\n"),
+	})
+	want := Read{Provides: []string{}, Requires: []Dep{{Coord: "maven:org.aws:core", Version: "2.0"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// Groups as Gradle evaluates them: subprojects { } is not the root's, a
+// root allprojects { } beats a subproject's gradle.properties, a
+// subproject's own top-level group beats both.
+func TestParse_GradleGroupScopes(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle":       []byte("rootProject.name = 'parent'\ninclude 'app', 'lib', 'own'\n"),
+		"build.gradle":          []byte("allprojects {\n    group = 'com.all'\n}\nsubprojects {\n    group = 'com.sub'\n}\n"),
+		"app/gradle.properties": []byte("group=com.other\n"),
+		"own/build.gradle":      []byte("group = 'com.own'\n"),
+	})
+	want := []string{"maven:com.all:parent", "maven:com.own:own", "maven:com.sub:app", "maven:com.sub:lib"}
+	if !reflect.DeepEqual(got.Provides, want) {
+		t.Fatalf("Provides = %v, want %v", got.Provides, want)
+	}
+
+	got = Parse(map[string][]byte{
+		"settings.gradle":       []byte("rootProject.name = 'parent'\ninclude 'app'\n"),
+		"build.gradle":          []byte("allprojects {\n    group = 'com.acme'\n}\n"),
+		"app/gradle.properties": []byte("group=com.other\n"),
+	})
+	want = []string{"maven:com.acme:app", "maven:com.acme:parent"}
+	if !reflect.DeepEqual(got.Provides, want) {
+		t.Fatalf("Provides = %v, want %v", got.Provides, want)
+	}
+}
+
+// Several coordinates in one Groovy call, map entries in any order.
+func TestParse_GradleListsAndMapOrder(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"build.gradle": []byte("dependencies {\n implementation 'a.b:one:1', 'a.b:two:2'\n compile name: 'n', group: 'g.h', version: '3'\n implementation(version = \"4\", name = \"k\", group = \"g.h\")\n}\n"),
+	})
+	want := []Dep{
+		{Coord: "maven:a.b:one", Version: "1"},
+		{Coord: "maven:a.b:two", Version: "2"},
+		{Coord: "maven:g.h:k", Version: "4"},
+		{Coord: "maven:g.h:n", Version: "3"},
+	}
+	if !reflect.DeepEqual(got.Requires, want) {
+		t.Fatalf("Requires = %+v, want %+v", got.Requires, want)
+	}
+}
+
+// buildSrc and a build pluginManagement includes are build logic: their
+// dependencies are a plugin's classpath, not the repository's; a build
+// included outside pluginManagement is code and counts.
+func TestParse_GradleBuildLogic(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle.kts":             []byte("pluginManagement {\n    includeBuild(\"build-logic\")\n}\nincludeBuild(\"shared\")\nrootProject.name = \"svc\"\n"),
+		"build.gradle.kts":                []byte("group = \"com.acme\"\n"),
+		"buildSrc/build.gradle.kts":       []byte("dependencies { implementation(\"org.boot:boot-plugin:3.2.0\") }\n"),
+		"build-logic/settings.gradle.kts": []byte("rootProject.name = \"build-logic\"\n"),
+		"build-logic/build.gradle.kts":    []byte("group = \"com.acme\"\ndependencies { implementation(\"org.kotlin:kotlin-plugin:2.0\") }\n"),
+		"shared/settings.gradle.kts":      []byte("rootProject.name = \"shared\"\n"),
+		"shared/build.gradle.kts":         []byte("group = \"com.acme\"\ndependencies { implementation(\"org.lib:util:1\") }\n"),
+	})
+	want := Read{
+		Provides: []string{"maven:com.acme:shared", "maven:com.acme:svc"},
+		Requires: []Dep{{Coord: "maven:org.lib:util", Version: "1"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// A package.json with a byte order mark parses too.
+func TestParse_BOM(t *testing.T) {
+	got := Parse(map[string][]byte{"package.json": []byte("\xef\xbb\xbf{\"name\": \"x\"}")})
+	if !reflect.DeepEqual(got.Provides, []string{"npm:x"}) {
+		t.Fatalf("Provides = %v, want [npm:x]", got.Provides)
 	}
 }

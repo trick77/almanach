@@ -63,7 +63,13 @@ func Is(p string) bool {
 
 // Parse reads the manifests given (path to body). A manifest that does not
 // parse is left out; the rest still count.
-func Parse(files map[string][]byte) Read {
+func Parse(in map[string][]byte) Read {
+	// A UTF-8 byte order mark (an editor's on Windows) would fail JSON and
+	// TOML at the first byte; the tools themselves skip it.
+	files := make(map[string][]byte, len(in))
+	for p, body := range in {
+		files[p] = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
+	}
 	provides := map[string]bool{}
 	requires := map[string]string{}
 	add := func(coord, version string) {
