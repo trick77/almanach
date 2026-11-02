@@ -88,7 +88,7 @@ export function ProjectsPage() {
 function ProjectTile({ p, links }: { p: Project; links?: Links }) {
   // A project of one reads as its repository: its revision and summary.
   const revision = p.repo ? p.repo.revision : p.revision;
-  const teaser = p.repo ? teaserLines(p.repo.summary) : [];
+  const teaser = teaserLines(p.repo ? p.repo.summary : p.summary);
   return (
     <Link to={projectPath(p.key)} className={tile}>
       <h3 className="font-serif text-[20px] font-medium text-ink">{p.key}</h3>

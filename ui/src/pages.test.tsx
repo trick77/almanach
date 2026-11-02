@@ -54,6 +54,7 @@ const projects: Projects = {
       repos: 4,
       notes: 23,
       revision: 7,
+      summary: "Der Zahlungsverkehr über alle Kanäle.",
       last_merge: mergedAt,
       repo: null,
     },
@@ -63,6 +64,7 @@ const projects: Projects = {
       repos: 1,
       notes: 2,
       revision: 0,
+      summary: "",
       last_merge: null,
       repo: null,
     },
@@ -234,6 +236,10 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage />);
     expect(await screen.findByText("PAY")).toBeInTheDocument();
     expect(screen.getByText(/Revision 7/)).toBeInTheDocument();
+    // A project of several shows its own page's summary.
+    expect(
+      screen.getByText("Der Zahlungsverkehr über alle Kanäle."),
+    ).toBeInTheDocument();
     expect(screen.getByText("noch keine Beschreibung")).toBeInTheDocument();
     expect(screen.getByText(/letzter Merge nie/)).toHaveClass(
       "first-letter:uppercase",
@@ -263,6 +269,7 @@ describe("ProjectsPage", () => {
             repos: 1,
             notes: 0,
             revision: 0,
+            summary: "",
             last_merge: null,
             repo: {
               slug: "loom",

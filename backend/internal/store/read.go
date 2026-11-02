@@ -22,11 +22,13 @@ func noteOut(title string, bugfix, body []byte) (string, json.RawMessage, json.R
 
 // ProjectRow is one project in the list.
 type ProjectRow struct {
-	Key       string
-	Team      string
-	Repos     int
-	Notes     int
-	Revision  int
+	Key      string
+	Team     string
+	Repos    int
+	Notes    int
+	Revision int
+	// Summary is the current project page's, "" before the first.
+	Summary   string
 	LastMerge *time.Time
 }
 
@@ -52,17 +54,19 @@ func reposFrom(sourced bool) string {
 }
 
 // Projects lists every project with its repo and note counts and its
-// current project-revision number (0 when none).
+// current project-revision number (0 when none) and summary.
 func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error) {
 	//nolint:gosec // G202: constant fragments of this file, no value spliced in
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.key, p.team,
 		       (SELECT COUNT(*) FROM `+reposFrom(sourced)+` r WHERE r.project_id = p.id),
 		       (SELECT COUNT(*) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
-		       COALESCE((SELECT rv.revision FROM pages pg JOIN revisions rv ON rv.id = pg.current_revision_id
-		                  WHERE pg.scope = 'project' AND pg.project_id = p.id AND pg.repo_id = 0), 0),
+		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
 		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id)
-		  FROM `+projectsFrom(sourced)+` p ORDER BY p.key`)
+		  FROM `+projectsFrom(sourced)+` p
+		  LEFT JOIN pages pg ON pg.scope = 'project' AND pg.project_id = p.id AND pg.repo_id = 0
+		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
+		 ORDER BY p.key`)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +74,7 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 	out := []ProjectRow{}
 	for rows.Next() {
 		var r ProjectRow
-		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, timeOrNil(&r.LastMerge)); err != nil {
+		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, &r.Summary, timeOrNil(&r.LastMerge)); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -370,18 +370,19 @@ func TestProjects(t *testing.T) {
 		t.Errorf("empty: %d %s", code, body["projects"])
 	}
 	last := mergedAt
-	st.projects = []store.ProjectRow{{Key: "PLAT", Team: "platform", Repos: 2, Notes: 5, Revision: 3, LastMerge: &last}, {Key: "ZED", Team: "billing"}}
+	st.projects = []store.ProjectRow{{Key: "PLAT", Team: "platform", Repos: 2, Notes: 5, Revision: 3, Summary: "Die Plattform.", LastMerge: &last},
+		{Key: "ZED", Team: "billing"}}
 	code, body = do(t, h, "GET", "/api/projects", "", "", nil)
 	var rows []map[string]any
 	if err := json.Unmarshal(body["projects"], &rows); err != nil || code != 200 {
 		t.Fatalf("code %d, projects %s: %v", code, body["projects"], err)
 	}
 	if len(rows) != 2 || rows[0]["key"] != "PLAT" || rows[0]["team"] != "platform" || rows[0]["repos"] != 2.0 || rows[0]["notes"] != 5.0 ||
-		rows[0]["revision"] != 3.0 || rows[0]["last_merge"] != "2026-10-20T10:00:00Z" {
+		rows[0]["revision"] != 3.0 || rows[0]["summary"] != "Die Plattform." || rows[0]["last_merge"] != "2026-10-20T10:00:00Z" {
 		t.Errorf("rows = %v", rows)
 	}
-	if rows[1]["last_merge"] != nil {
-		t.Errorf("ZED last_merge = %v, want null", rows[1]["last_merge"])
+	if rows[1]["last_merge"] != nil || rows[1]["summary"] != "" {
+		t.Errorf("ZED last_merge = %v, summary = %v, want null and \"\"", rows[1]["last_merge"], rows[1]["summary"])
 	}
 }
 

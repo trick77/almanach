@@ -13,6 +13,8 @@ export interface Project {
   repos: number;
   notes: number;
   revision: number;
+  /** The project page's summary, "" before the first. */
+  summary: string;
   last_merge: string | null;
   /** The repository of a project of one (a source with one repository):
    *  its page is the project's. null for every other project. */
