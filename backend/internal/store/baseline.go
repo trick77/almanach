@@ -175,15 +175,16 @@ const (
 	retriedB = `(SELECT COUNT(*) FROM baseline_runs t
 	  WHERE t.repo_id = b.repo_id AND t.trigger = 'retry'
 	    AND t.id > COALESCE((SELECT MAX(n.id) FROM baseline_runs n
-	                          WHERE n.repo_id = b.repo_id AND n.trigger <> 'retry'), 0))`
+	                          WHERE n.repo_id = b.repo_id AND n.trigger NOT IN ('retry', 'departure')), 0))`
 	retriedL = `(SELECT COUNT(*) FROM baseline_runs t
 	  WHERE t.repo_id = l.repo_id AND t.trigger = 'retry'
 	    AND t.id > COALESCE((SELECT MAX(n.id) FROM baseline_runs n
-	                          WHERE n.repo_id = l.repo_id AND n.trigger <> 'retry'), 0))`
+	                          WHERE n.repo_id = l.repo_id AND n.trigger NOT IN ('retry', 'departure')), 0))`
 )
 
-// LastRun is a repository's newest run, open or not, and its streak, read
-// in the same query.
+// LastRun is a repository's newest run that reads it (never a departure),
+// open or not, and its streak, read in the same query: what the poller
+// decides the next run by.
 func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, RunStreak, bool, error) {
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil || !ok {
@@ -193,12 +194,12 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, Run
 	r, err := scanRun(s.db.QueryRowContext(ctx, `
 		SELECT `+runColumns+`,
 		       (SELECT COUNT(*) FROM baseline_runs f
-		         WHERE f.repo_id = b.repo_id AND f.state = 'failed'
+		         WHERE f.repo_id = b.repo_id AND f.state = 'failed' AND f.trigger <> 'departure'
 		           AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
-		                                 WHERE d.repo_id = b.repo_id AND d.state = 'done'), 0)),
+		                                 WHERE d.repo_id = b.repo_id AND d.state = 'done' AND d.trigger <> 'departure'), 0)),
 		       `+retriedB+`
 		  FROM `+runsFrom+`
-		 WHERE b.repo_id = ? ORDER BY b.id DESC LIMIT 1`, rid), &st.Failed, &st.Retried)
+		 WHERE b.repo_id = ? AND b.trigger <> 'departure' ORDER BY b.id DESC LIMIT 1`, rid), &st.Failed, &st.Retried)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BaselineRun{}, RunStreak{}, false, nil
 	}

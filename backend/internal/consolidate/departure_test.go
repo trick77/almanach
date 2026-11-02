@@ -14,13 +14,13 @@ import (
 )
 
 // departureWorld is a project of svc, web and old, old just deactivated:
-// its page has a statement only old's commit taught, one only a pull
-// request of old taught, one old and svc taught together, one without a
-// source, and a map with old on it.
+// its page has a statement only old's commit taught (under its name of
+// that day, Old), one only a pull request of old taught, one old and svc
+// taught together, one without a source, and a map with old on it.
 func departureWorld(t *testing.T, calls int) world {
 	t.Helper()
 	x := newWorld(t, calls)
-	oldCommit := store.Source{Kind: store.FromBaseline, Commit: older40, Repo: "old"}
+	oldCommit := store.Source{Kind: store.FromBaseline, Commit: older40, Repo: "Old"}
 	svcCommit := store.Source{Kind: store.FromBaseline, Commit: head, Repo: "svc"}
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge aus svc, web und old.",
 		Statements: []store.Statement{
@@ -31,7 +31,7 @@ func departureWorld(t *testing.T, calls int) world {
 		},
 		Map: drawnMap("svc", "web", "old")}
 	x.st.others = []store.RepoSummary{{Slug: "svc", Summary: "Der Dienst."}, {Slug: "web", Summary: "Die Oberfläche."}}
-	x.st.departed = []string{"old"}
+	x.st.departed = []store.DepartedRepo{{Slug: "old", Names: []string{"Old", "old"}}}
 	x.st.prRepos = map[string]string{"tools/old#1": "old"}
 	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "old", Mode: store.RunFull,
 		Trigger: store.TriggerDeparture, Commit: older40, State: store.RunQueued, Plan: []byte(`{"departure":true}`)})
@@ -94,9 +94,26 @@ func TestDeparture_CodeThenCall(t *testing.T) {
 	if page.Summary != "Werkzeuge aus svc und web." || page.Statements[0].Text != "svc bietet sie." {
 		t.Errorf("page = %+v", page)
 	}
+	// Taking old out teaches nothing: s3 keeps the sources it had, never
+	// credited to the departed repository's run.
+	if got := page.Statements[0].Sources; len(got) != 2 || got[0].Repo != "Old" || got[1].Repo != "svc" {
+		t.Errorf("s3 sources = %+v, want old's and svc's as before", got)
+	}
 	// The map is the code's, whatever the call returned: old is off.
 	if slices.Contains(mapSlugs(page.Map), "old") || !slices.Contains(mapSlugs(page.Map), "svc") {
 		t.Errorf("map nodes = %v", mapSlugs(page.Map))
+	}
+}
+
+// A statement the call adds is left out: a departure only takes away.
+func TestDeparture_NoStatementAdded(t *testing.T) {
+	x := departureWorld(t, 16)
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge aus svc und web.",
+		Statements: []inference.Statement{stmt(nil, "rule", "Neu", "Erfunden.")}}}
+	x.w.drain(context.Background())
+	page := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	if got := ids(page.Statements); !slices.Equal(got, []string{"s3", "s4"}) || page.Summary != "Werkzeuge aus svc und web." {
+		t.Errorf("statements = %v, summary %q", got, page.Summary)
 	}
 }
 
@@ -213,6 +230,21 @@ func TestDeparture_BusyWriteHolds(t *testing.T) {
 	x.w.drain(context.Background())
 	if r := x.run(); r.State != store.RunProject {
 		t.Fatalf("run = %+v, want still in its project step", r)
+	}
+}
+
+// A deactivation no departure run took out of the page makes a quiet
+// reconcile of another repository fold the project.
+func TestProjectStands_DepartureDue(t *testing.T) {
+	x := newWorld(t, 16)
+	page := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
+	r := store.BaselineRun{ProjectKey: "tools", Slug: "svc", Mode: store.RunReconcile}
+	if skip, _, err := x.w.projectStands(context.Background(), &r, runPlan{}, page); err != nil || !skip {
+		t.Fatalf("quiet reconcile: skip=%v err=%v, want it skipped", skip, err)
+	}
+	x.st.departureDue = true
+	if skip, _, err := x.w.projectStands(context.Background(), &r, runPlan{}, page); err != nil || skip {
+		t.Fatalf("with a departure due: skip=%v err=%v, want the project folded", skip, err)
 	}
 }
 

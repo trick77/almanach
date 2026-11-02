@@ -46,6 +46,7 @@ type SourceStore interface {
 	RenameProject(ctx context.Context, key, to string) (int64, error)
 	RenameRepo(ctx context.Context, key, slug, to, cloneURL string) error
 	DeactivateSourceRepo(ctx context.Context, key, slug string) (bool, error)
+	RepoRunStarted(ctx context.Context, key, slug string) (bool, error)
 	ActivateSourceRepo(ctx context.Context, key, slug string) error
 }
 
@@ -925,9 +926,13 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 // listing never adds it back: instant for the store (no source any more,
 // its notes ignored, its page out of the wiki) and the clone, which goes;
 // the project page is the worker's, by the departure run the store queued.
-// The row first, then the clone: a run past queued refuses the whole of it
-// (409) before the clone is touched. A clone that would not go is a 500
-// with the row deactivated; deactivating again removes it then.
+// The folder first, then the row, as every removal: a run past queued
+// refuses it (409) before the clone is touched; a clone that would not go
+// is a 500 with the row still active, so the button tries again. A run
+// that started between the check and the row refuses the row too (409);
+// the clone it lost comes back with the next cycle. After the row the
+// folder is removed once more: a cycle that cloned it again in between is
+// left no clone of a deactivated repository.
 func (d Deps) deactivateRepo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
@@ -942,10 +947,22 @@ func (d Deps) deactivateRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	const running = "a run of this repository is running, deactivate it once it ends"
+	if started, err := d.Sources.Store.RepoRunStarted(ctx, src.ProjectKey, rp.Slug); err != nil {
+		httpx.ServerError(w, r, err, "run state")
+		return
+	} else if started {
+		httpx.WriteError(w, http.StatusConflict, running)
+		return
+	}
+	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
+		httpx.ServerError(w, r, err, "remove clone")
+		return
+	}
 	queued, err := d.Sources.Store.DeactivateSourceRepo(ctx, src.ProjectKey, rp.Slug)
 	switch {
 	case errors.Is(err, store.ErrRunOpen):
-		httpx.WriteError(w, http.StatusConflict, "a run of this repository is running, deactivate it once it ends")
+		httpx.WriteError(w, http.StatusConflict, running)
 		return
 	case errors.Is(err, store.ErrNoRepo):
 		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
@@ -955,8 +972,7 @@ func (d Deps) deactivateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
-		httpx.ServerError(w, r, err, "remove clone")
-		return
+		d.Log.WarnContext(ctx, "source_repo_deactivated: clone not removed again", "project", src.ProjectKey, "repo", rp.Slug, "err", err.Error())
 	}
 	d.Log.InfoContext(ctx, "source_repo_deactivated", "project", src.ProjectKey, "repo", rp.Slug, "departure_queued", queued, "user", d.user(r))
 	if queued && d.Worker != nil {

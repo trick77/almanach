@@ -42,7 +42,8 @@ type RunStore interface {
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
-	DepartedRepos(ctx context.Context, key string) ([]string, error)
+	DepartedRepos(ctx context.Context, key string) ([]store.DepartedRepo, error)
+	DepartureDue(ctx context.Context, key string, since time.Time) (bool, error)
 	PRRepos(ctx context.Context, key string, prKeys []string) (map[string]string, error)
 }
 
@@ -1232,7 +1233,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed,
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departedSlugs(departed),
 		w.limits, nil))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
@@ -1330,6 +1331,16 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 			return false, nil, nil
 		}
 	}
+	// A deactivation no departure run took out of the page (it failed): the
+	// fold does, its prompt naming the departed.
+	due, err := w.base.Store.DepartureDue(ctx, r.ProjectKey, page.UpdatedAt)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: departure read failed, drain paused", logging.Err(err))
+		return false, nil, errStop
+	}
+	if due {
+		return false, nil, nil
+	}
 	if page.Map != nil {
 		return true, nil, nil
 	}
@@ -1402,13 +1413,20 @@ func untaggedMap(m *diagram.Diagram) bool {
 // mapRevision is the page's text with the map m: what a map changes alone
 // writes; nil when m is the page's map.
 func mapRevision(r *store.BaselineRun, page store.Page, m *diagram.Diagram) *store.NewRevision {
-	if diagram.Equal(m, page.Map) {
+	return carriedPage(r, page, page.Statements, m)
+}
+
+// carriedPage is the page's summary with statements and the map m, the
+// run's revision of it: what a map alone, or a departure's code, writes;
+// nil when that is the page as it stands.
+func carriedPage(r *store.BaselineRun, page store.Page, statements []store.Statement, m *diagram.Diagram) *store.NewRevision {
+	if sameStatements(page.Statements, statements) && diagram.Equal(m, page.Map) {
 		return nil
 	}
 	runID := r.ID
 	return &store.NewRevision{
-		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: page.Summary, Statements: page.Statements,
-		Chars: prose(page.Summary, page.Statements), SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID, Map: m,
+		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: page.Summary, Statements: statements,
+		Chars: prose(page.Summary, statements), SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID, Map: m,
 	}
 }
 
@@ -1629,7 +1647,7 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if err != nil {
 		return err
 	}
-	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed, w.limits, retry)
+	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departedSlugs(departed), w.limits, retry)
 	res := w.base.Describer.ProjectMap(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeProjectMap, res.Call)
 	if errors.Is(err, errStop) {

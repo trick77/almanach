@@ -530,7 +530,10 @@ has a page. Activating it again makes it a source once more: the next
 cycle clones it, and its first run reconciles from the commit last
 documented, its kept page back in the wiki and folded into the project's
 again. A run already reading the clone refuses a deactivation (409), and
-a departure run already working refuses an activation.
+a departure run already working refuses an activation. As every removal,
+the folder goes before the row: a clone that would not go leaves the row
+active, and the action is tried again; the poller's own writes (state,
+head, manifests) never land on a deactivated row.
 
 The token at rest is sealed with AES-256-GCM under `BACKEND_SOURCE_TOKEN_KEY`,
 a fresh nonce per seal, stdlib only. Without the key a public source still
@@ -1514,12 +1517,18 @@ baseline step's patch never is: its bad items are left out one by one (see
   the system map (as a carried map), every project statement whose sources
   are all theirs dropped (a baseline commit by its repository, a PR by the
   repository its note was for); a statement with no source, or one the code
-  cannot place, stays. Then one project call (`ProjectDeparture`) rewrites
-  what still names them, the patch rules of the project step holding (a
-  PR-taught statement is edited, never dropped), the map always the
-  code's. One revision; a failed call, no call left or a project left with
-  fewer than two repositories writes the code's part alone. It documents
-  nothing: `DocumentedRun` never returns it.
+  cannot place, stays; a baseline source names the slug of its day, so
+  every name the repository ever had counts. Then one project call
+  (`ProjectDeparture`) rewrites what still names them, the patch rules of
+  the project step holding (a PR-taught statement is edited, never
+  dropped), the map always the code's. Taking a repository out teaches
+  nothing: an edited statement keeps the sources it had, one the call adds
+  is left out. One revision; a failed call, no call left or a project left
+  with fewer than two repositories writes the code's part alone. It
+  documents nothing and counts in no streak: `DocumentedRun` and `LastRun`
+  never return it. A departure no done run took out (it failed) makes the
+  next project step fold the page whatever a reconcile would skip, its
+  prompt naming the departed.
 
 ### Startup and operations
 

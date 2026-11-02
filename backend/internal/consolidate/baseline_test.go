@@ -59,11 +59,19 @@ type runStore struct {
 	libReads map[string]int
 	// departed is the project's deactivated repositories; prRepos the
 	// repository each pull request was noted for.
-	departed []string
+	departed []store.DepartedRepo
 	prRepos  map[string]string
+	// departureDue is what DepartureDue answers.
+	departureDue bool
 }
 
-func (s *runStore) DepartedRepos(context.Context, string) ([]string, error) { return s.departed, nil }
+func (s *runStore) DepartedRepos(context.Context, string) ([]store.DepartedRepo, error) {
+	return s.departed, nil
+}
+
+func (s *runStore) DepartureDue(context.Context, string, time.Time) (bool, error) {
+	return s.departureDue, nil
+}
 
 func (s *runStore) PRRepos(_ context.Context, _ string, prKeys []string) (map[string]string, error) {
 	out := map[string]string{}

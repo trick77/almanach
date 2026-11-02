@@ -218,6 +218,11 @@ func (f *fakeSources) ActivateSourceRepo(_ context.Context, key, slug string) er
 	return f.setActive(key, slug, true)
 }
 
+func (f *fakeSources) RepoRunStarted(_ context.Context, _, slug string) (bool, error) {
+	rr, ok := f.runs[slug]
+	return ok && rr.Last.Open() && rr.Last.State != store.RunQueued, nil
+}
+
 func (f *fakeSources) setActive(key, slug string, on bool) error {
 	if f.activeErr != nil {
 		return f.activeErr
@@ -679,8 +684,9 @@ func TestSources_DeactivateActivate(t *testing.T) {
 	if code != 200 || deactivatedAt(body) == "" {
 		t.Fatalf("deactivate: %d %v", code, body)
 	}
-	if want := fmt.Sprintf("p%d/r%d", fs.id("tools"), fs.id("tools/cli")); strings.Join(checkouts.removed, ",") != want {
-		t.Fatalf("checkouts removed = %v, want %s", checkouts.removed, want)
+	// The folder before the row, and once more after it.
+	if want := fmt.Sprintf("p%d/r%d", fs.id("tools"), fs.id("tools/cli")); strings.Join(checkouts.removed, ",") != want+","+want {
+		t.Fatalf("checkouts removed = %v, want %s twice", checkouts.removed, want)
 	}
 	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/nope/deactivate", "", "", nil); code != 404 {
 		t.Fatal("deactivate of an unknown repo was not a 404")
@@ -707,9 +713,14 @@ func TestSources_DeactivateActivate(t *testing.T) {
 			}
 		}
 	}
+	// A clone that would not go: a 500, the row untouched, so the button
+	// tries again.
 	fs.activeErr, checkouts.removeErr = nil, errors.New("busy disk")
 	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/cli/deactivate", "", "", nil); code != 500 {
 		t.Errorf("a clone that would not go: %d, want 500", code)
+	}
+	if fs.repos["tools"][0].DeactivatedAt != nil {
+		t.Error("a deactivation whose clone would not go deactivated the row")
 	}
 }
 

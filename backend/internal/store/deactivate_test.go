@@ -5,7 +5,20 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/trick77/almanach/internal/manifest"
 )
+
+// row is the source row of slug in tools.
+func row(t *testing.T, s *Store, slug string) SourceRepo {
+	t.Helper()
+	r, ok, err := s.SourceRepoByName(context.Background(), "tools", slug)
+	if err != nil || !ok {
+		t.Fatalf("row %s: ok=%v err=%v", slug, ok, err)
+	}
+	return r
+}
 
 // projectPage gives the project a page, so a deactivation has one to take
 // the repository out of.
@@ -129,12 +142,33 @@ func TestDeactivateSourceRepo_DepartureRun(t *testing.T) {
 	if err != nil || !ok || next.Trigger != TriggerDeparture || next.Slug != "svc" || next.Commit != "aaa" || string(next.Plan) != `{"departure":true}` {
 		t.Fatalf("the departure run: %+v ok=%v err=%v", next, ok, err)
 	}
-	if departed, _ := s.DepartedRepos(ctx, "tools"); !reflect.DeepEqual(departed, []string{"svc"}) {
+	if departed, _ := s.DepartedRepos(ctx, "tools"); !reflect.DeepEqual(departed, []DepartedRepo{{Slug: "svc", Names: []string{"svc"}}}) {
 		t.Errorf("DepartedRepos = %v", departed)
 	}
+	long := time.Now().Add(-time.Hour)
+	if due, err := s.DepartureDue(ctx, "tools", long); err != nil || !due {
+		t.Errorf("DepartureDue before the run: %v %v, want due", due, err)
+	}
 	finish(t, s, next, RunDone)
+	if due, _ := s.DepartureDue(ctx, "tools", long); due {
+		t.Error("DepartureDue after the done departure run")
+	}
 	if doc, ok, _ := s.DocumentedRun(ctx, "tools", "svc"); !ok || doc.ID != documented.ID {
 		t.Errorf("DocumentedRun = %+v, want the reading run %d, never the departure", doc, documented.ID)
+	}
+	// The poller's last run and streak know no departure either.
+	if last, streak, ok, _ := s.LastRun(ctx, "tools", "svc"); !ok || last.Trigger == TriggerDeparture || streak.Failed != 1 {
+		t.Errorf("LastRun = %+v %+v, want the failed reading run, its failure counted", last, streak)
+	}
+	// The cycle's writes never land on the deactivated row.
+	if err := s.MarkRepoReady(ctx, "tools", "svc", "main", "bbb"); err != nil {
+		t.Fatal(err)
+	}
+	if row, _, _ := s.SourceRepoByName(ctx, "tools", "svc"); row.HeadCommit != "" || row.State != RepoPending {
+		t.Errorf("a sync in flight wrote on the deactivated row: %+v", row)
+	}
+	if err := s.SaveManifests(ctx, row(t, s, "svc").RepoID, "bbb", manifest.Read{}); !errors.Is(err, ErrNoRepo) {
+		t.Errorf("SaveManifests on a deactivated row: %v, want ErrNoRepo", err)
 	}
 
 	// Activated and deactivated again: the second departure run is dropped
@@ -144,6 +178,11 @@ func TestDeactivateSourceRepo_DepartureRun(t *testing.T) {
 	}
 	if _, err := s.DeactivateSourceRepo(ctx, "tools", "svc"); err != nil {
 		t.Fatal(err)
+	}
+	// Its head was forgotten and never synced back: the departure names
+	// the commit last documented.
+	if again, ok, _ := s.NextRun(ctx); !ok || again.Commit != documented.Commit {
+		t.Errorf("second departure at %q, want the documented %q", again.Commit, documented.Commit)
 	}
 	if err := s.ActivateSourceRepo(ctx, "tools", "svc"); err != nil {
 		t.Fatal(err)

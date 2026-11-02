@@ -25,7 +25,7 @@ func (s *Store) ManifestCommit(ctx context.Context, repoID int64) (string, bool,
 
 // SaveManifests stores what a source repository's manifests say at commit,
 // in place of what they said before. ErrNoRepo when the row went meanwhile
-// (removed while its manifests were read).
+// (removed, or deactivated, while its manifests were read).
 func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, read manifest.Read) error {
 	if read.Provides == nil {
 		read.Provides = []string{}
@@ -41,12 +41,13 @@ func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, reader, read_at) VALUES (?, ?, ?, ?, ?, ?)
+	n, err := affected(s.db.ExecContext(ctx, `
+		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, reader, read_at)
+		SELECT sr.repo_id, ?, ?, ?, ?, ? FROM source_repos sr WHERE sr.repo_id = ? AND `+activeRow+`
 		ON CONFLICT (repo_id) DO UPDATE SET "commit" = excluded."commit", provides = excluded.provides,
 		       requires = excluded.requires, reader = excluded.reader, read_at = excluded.read_at`,
-		repoID, commit, provides, requires, manifest.Version, nowStamp())
-	if isForeignKey(err) {
+		commit, provides, requires, manifest.Version, nowStamp(), repoID))
+	if isForeignKey(err) || err == nil && n == 0 {
 		return ErrNoRepo
 	}
 	return err

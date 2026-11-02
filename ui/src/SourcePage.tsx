@@ -69,11 +69,14 @@ export function runOpen(b: Baseline | null): boolean {
 }
 
 /** running reports whether a clone or a baseline run is in progress, which
- *  is when the page polls. */
+ *  is when the page polls. A deactivated repository stays pending, waiting
+ *  for no sync: only its departure run counts. */
 function running(d: SourceDetail | null): number {
   return d?.repos.some(
     (r) =>
-      r.state === "pending" || r.state === "syncing" || runOpen(r.baseline),
+      (r.deactivated_at === null &&
+        (r.state === "pending" || r.state === "syncing")) ||
+      runOpen(r.baseline),
   )
     ? pollEvery
     : 0;
@@ -130,8 +133,8 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   ).length;
   const syncing = on.some((r) => r.state === "syncing");
   const failed = on.filter((r) => r.state === "failed").length;
-  const describing = data.repos.filter((r) => runOpen(r.baseline)).length;
-  const described = data.repos.filter(
+  const describing = on.filter((r) => runOpen(r.baseline)).length;
+  const described = on.filter(
     (r) => r.baseline !== null && r.baseline.documented_commit !== "",
   ).length;
   const lastSync = data.repos

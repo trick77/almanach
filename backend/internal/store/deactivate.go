@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
 
 // Deactivation: a source repository the operator takes out without removing
@@ -63,6 +64,15 @@ func (s *Store) DeactivateSourceRepo(ctx context.Context, key, slug string) (boo
 			pid).Scan(&page); err != nil || !page {
 			return err
 		}
+		if head == "" {
+			// Never cloned, or deactivated while pending: the commit last
+			// documented names the repository's history, else none.
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COALESCE((SELECT "commit" FROM baseline_runs WHERE repo_id = ? AND state = 'done' AND trigger <> 'departure'
+				                  ORDER BY id DESC LIMIT 1), '')`, rid).Scan(&head); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO baseline_runs (repo_id, mode, trigger, base_commit, "commit", state, plan, queued_at)
 			VALUES (?, 'full', 'departure', '', ?, 'queued', '{"departure":true}', ?)`, rid, head, now); err != nil {
@@ -112,6 +122,17 @@ func (s *Store) ActivateSourceRepo(ctx context.Context, key, slug string) error 
 	})
 }
 
+// RepoRunStarted reports whether a run of the repository is open and past
+// queued: it reads the clone. The API asks before it removes the clone of
+// a deactivation; the transaction asks again.
+func (s *Store) RepoRunStarted(ctx context.Context, key, slug string) (bool, error) {
+	var started bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM baseline_runs WHERE repo_id = `+repoByName+` AND state NOT IN ('queued', 'done', 'failed'))`,
+		key, slug).Scan(&started)
+	return started, err
+}
+
 // runStarted reports whether a run of the repository is open and past
 // queued.
 func runStarted(ctx context.Context, tx *sql.Tx, rid int64) (bool, error) {
@@ -121,25 +142,52 @@ func runStarted(ctx context.Context, tx *sql.Tx, rid int64) (bool, error) {
 	return started, err
 }
 
+// DepartedRepo is a deactivated source repository: its current slug and
+// every name it ever had (a baseline source names the slug of its day).
+type DepartedRepo struct {
+	Slug  string
+	Names []string
+}
+
 // DepartedRepos is a project's deactivated source repositories, by current
 // slug: what the project page must no longer hold.
-func (s *Store) DepartedRepos(ctx context.Context, key string) ([]string, error) {
+func (s *Store) DepartedRepos(ctx context.Context, key string) ([]DepartedRepo, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.slug FROM source_repos sr JOIN repos r ON r.id = sr.repo_id
-		 WHERE sr.deactivated_at IS NOT NULL AND sr.project_id = `+projectByName+` ORDER BY r.slug`, key)
+		SELECT r.slug, rn.slug FROM source_repos sr JOIN repos r ON r.id = sr.repo_id
+		  JOIN repo_names rn ON rn.repo_id = r.id
+		 WHERE sr.deactivated_at IS NOT NULL AND sr.project_id = `+projectByName+` ORDER BY r.slug, rn.slug`, key)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := []string{}
+	out := []DepartedRepo{}
 	for rows.Next() {
-		var slug string
-		if err := rows.Scan(&slug); err != nil {
+		var slug, name string
+		if err := rows.Scan(&slug, &name); err != nil {
 			return nil, err
 		}
-		out = append(out, slug)
+		if len(out) == 0 || out[len(out)-1].Slug != slug {
+			out = append(out, DepartedRepo{Slug: slug})
+		}
+		out[len(out)-1].Names = append(out[len(out)-1].Names, name)
 	}
 	return out, rows.Err()
+}
+
+// DepartureDue reports whether a repository of the project was deactivated
+// after since (the project page's time) and no departure run has taken it
+// out since its deactivation: its run failed, or never ran. The project
+// step then folds the page whatever a reconcile would skip, so the next
+// run of any repository takes it out.
+func (s *Store) DepartureDue(ctx context.Context, key string, since time.Time) (bool, error) {
+	var due bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM source_repos sr
+		 WHERE sr.project_id = `+projectByName+` AND sr.deactivated_at IS NOT NULL AND sr.deactivated_at > ?
+		   AND NOT EXISTS (SELECT 1 FROM baseline_runs b
+		                    WHERE b.repo_id = sr.repo_id AND b.trigger = 'departure' AND b.state = 'done'
+		                      AND b.queued_at >= sr.deactivated_at))`, key, stamp(since)).Scan(&due)
+	return due, err
 }
 
 // PRRepos is the repository, by current slug, each pull request of the

@@ -737,9 +737,13 @@ func (s *Store) SyncJobs(ctx context.Context) ([]SyncJob, error) {
 	return out, rows.Err()
 }
 
+// The cycle's writes below never land on a deactivated row: a sync in
+// flight when the deactivation committed would put a head, a state and a
+// time back on a repository that has no clone.
+
 // MarkRepoSyncing is the cycle taking a repo on.
 func (s *Store) MarkRepoSyncing(ctx context.Context, key, slug string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE source_repos SET state = 'syncing' WHERE repo_id = `+repoByName, key, slug)
+	_, err := s.db.ExecContext(ctx, `UPDATE source_repos SET state = 'syncing' WHERE deactivated_at IS NULL AND repo_id = `+repoByName, key, slug)
 	return err
 }
 
@@ -749,14 +753,14 @@ func (s *Store) MarkRepoReady(ctx context.Context, key, slug, branch, head strin
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE source_repos SET state = 'ready', branch = NULLIF(?, ''), head_commit = ?,
 		       last_synced_at = ?, last_error = ''
-		 WHERE repo_id = `+repoByName, branch, head, nowStamp(), key, slug)
+		 WHERE deactivated_at IS NULL AND repo_id = `+repoByName, branch, head, nowStamp(), key, slug)
 	return err
 }
 
 // MarkRepoFailed records why a sync failed; the head stays what it was.
 func (s *Store) MarkRepoFailed(ctx context.Context, key, slug, errText string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE source_repos SET state = 'failed', last_error = ? WHERE repo_id = `+repoByName, errText, key, slug)
+		UPDATE source_repos SET state = 'failed', last_error = ? WHERE deactivated_at IS NULL AND repo_id = `+repoByName, errText, key, slug)
 	return err
 }
 
