@@ -821,14 +821,13 @@ after its departed repositories, so a box only they talked to goes. A
 repeated edge counts as one only within the same keep-or-drop layer: a
 build arrow never takes a runtime one's place. A refused map is asked again with the filtered draft, the one the
 reason counts. `diagram.Equal` ignores the tags: a retag is no revision.
-A map stored before the tags (no node has a stage, `untaggedMap`,
+A map stored before the tags (no node has a stage, `diagram.Untagged`,
 TRANSITIONAL) reads as none in a baseline run (`projectPage`), so every
 rule for a missing map holds: a quiet reconcile of any one repository
 runs the project step for it alone, the prompt shows no current map, the
 redraw is written even when it looks the same, and a null or refused
 answer leaves the sentinel. A note's fold carries it as stored.
-Only the system map carries them; `checkFlow` drops them on any other
-flow. The map never costs the description: an edge pointing at its own
+Only the two maps carry them; `checkFlow` drops them on any other flow. The map never costs the description: an edge pointing at its own
 node or repeating one before it is taken out (one "almanach → almanach"
 edge refused a whole map once), a repository that left the
 project is taken out of it first. A map that still breaks a rule leaves
@@ -857,7 +856,18 @@ from inside, zones `entry`, `parts`, `stores`, `external`, an edge
 labelled HTTP, event, DB, library, file or call, the same limits
 (`diagram.MapMax*`, 22 nodes, 33 edges: every external system its own
 node, never merged) and the same repairs as the architecture overview. No statement diagram, it counts
-toward none. A map that breaks a rule keeps the stored one, logged with
+toward none. It shows what runs in production as well, by the same tags
+and `RuntimeOnly` (user, 2026-11-02: a Jenkins pipeline, its job, the
+Maven command line, the build workspace, the forge and code analysis
+filled a library's map; build, CI and CD are no architecture overview).
+It has no repositories zone, so a part goes like any box: a CI pipeline
+drawn as a part goes with its build arrows, and a part drawn with no
+arrow goes too. A map the filter empties is the model's word that nothing
+of the repository runs (a CI library): the sentinel, not a refusal asked
+again. A repository map stored before the tags never stands
+(`MapStands`), so the poller's retry below redraws it at an unchanged
+head; the prompt shows no current map, and a null answer declines it
+rather than keep it. A map that breaks a rule keeps the stored one, logged with
 its node labels by zone; declined with none stored, the API says
 `map_declined` and the page says why there is no map.
 Both maps are laid out by code, not ELK (`ui/src/mapLayout.ts`): the

@@ -103,9 +103,10 @@ type Page struct {
 // MapStands reports whether the map step answered for a repository page's
 // description as it stands, a map drawn or none (a model that drew none
 // for this text is not asked again until it changes): then a run has
-// nothing new to draw from.
+// nothing new to draw from. A map stored before the tags never stands.
 func (p Page) MapStands() bool {
-	return p.RepoMapBasis != "" && p.RepoMapBasis == p.MapBasis()
+	// TRANSITIONAL(untagged-map): Remove the Untagged term when every stored map carries tags.
+	return p.RepoMapBasis != "" && p.RepoMapBasis == p.MapBasis() && !diagram.Untagged(p.RepoMap)
 }
 
 // MapBasis is the description a repository map is drawn from, as a hash:

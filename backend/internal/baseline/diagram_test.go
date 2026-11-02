@@ -426,17 +426,54 @@ func TestRuntimeOnly(t *testing.T) {
 	if why != "" || len(held.Edges) != 5 || held.Edges[0].Layer != ir.LayerRuntime {
 		t.Errorf("filtered map refused: %q", why)
 	}
-	// Any other flow drops the tags: only the system map is filtered by them.
-	repoMap := &ir.Diagram{Kind: ir.KindFlow, Direction: "LR", Zones: []ir.Zone{{ID: ir.ZoneEntry, Title: "Eingang"}, {ID: ir.ZoneStores, Title: "Speicher"}},
-		Nodes: []ir.Node{staged(node("api", ir.ZoneEntry), ir.StageOther), node("pg", ir.ZoneStores)},
-		Edges: []ir.Edge{tag(edge("api", "pg", "DB"), ir.LayerBuild)}}
-	if got, why := CheckRepoMap(repoMap, caps); why != "" || got.Nodes[0].Stage != "" || got.Edges[0].Layer != "" {
-		t.Errorf("repository map kept tags: %+v, %q", got, why)
-	}
+	// A statement's flow drops the tags: only the maps are filtered by them.
 	flow := flowOf("a", "b")
 	flow.Edges = []ir.Edge{tag(edge("a", "b", "call"), ir.LayerRuntime)}
 	if got, why := CheckDiagram(flow, caps); why != "" || got.Edges[0].Layer != "" {
 		t.Errorf("statement flow kept a layer: %+v, %q", got, why)
+	}
+}
+
+// A repository map is filtered as the system map is, and it has no
+// repositories zone: a CI pipeline drawn as a part goes with its build
+// arrows, so do the CI job entering it, the build workspace it writes, the
+// forge and the code analysis it reports to (user, 2026-11-02). The part
+// the library is made of stays by its library arrow, the tags carried.
+func TestRuntimeOnly_RepoMap(t *testing.T) {
+	tag := func(e ir.Edge, layer string) ir.Edge { e.Layer = layer; return e }
+	m := &ir.Diagram{Kind: ir.KindFlow, Direction: "TB", Zones: []ir.Zone{{ID: ir.ZoneEntry, Title: "Eingang"},
+		{ID: ir.ZoneParts, Title: "Teile"}, {ID: ir.ZoneStores, Title: "Datenspeicher"}, {ID: ir.ZoneExternal, Title: "Externe Systeme"}},
+		Nodes: []ir.Node{node("job", ir.ZoneEntry), node("pipeline", ir.ZoneParts), node("avro", ir.ZoneParts),
+			node("workspace", ir.ZoneStores), node("forge", ir.ZoneExternal), node("sonar", ir.ZoneExternal), node("consumer", ir.ZoneExternal)},
+		Edges: []ir.Edge{
+			tag(edge("job", "pipeline", "call"), ir.LayerBuild),
+			tag(edge("pipeline", "avro", "call: Build"), ir.LayerBuild),
+			tag(edge("pipeline", "workspace", "file"), ir.LayerBuild),
+			tag(edge("forge", "job", "HTTP: Webhook"), ir.LayerBuild),
+			tag(edge("pipeline", "sonar", "HTTP"), ir.LayerBuild),
+			tag(edge("consumer", "avro", "library"), ir.LayerLibrary),
+		}}
+	for i := range m.Nodes {
+		m.Nodes[i].Stage = ir.StageNone
+	}
+	out, _ := RuntimeOnly(m)
+	var ids []string
+	for _, n := range out.Nodes {
+		ids = append(ids, n.ID)
+	}
+	if want := []string{"avro", "consumer"}; !slices.Equal(ids, want) || len(out.Edges) != 1 {
+		t.Fatalf("nodes = %v, edges %+v; want %v by the library arrow", ids, out.Edges, want)
+	}
+	got, why := CheckRepoMap(out, caps)
+	if why != "" || got.Nodes[0].Stage != ir.StageNone || got.Edges[0].Layer != ir.LayerLibrary || len(got.Zones) != 2 {
+		t.Errorf("filtered repository map: %+v, %q; want it held, tags carried, emptied zones gone", got, why)
+	}
+	// Nothing at runtime: every box goes, the caller's to read as no map.
+	ci := &ir.Diagram{Kind: ir.KindFlow, Direction: "TB", Zones: m.Zones[:2],
+		Nodes: []ir.Node{node("job", ir.ZoneEntry), node("pipeline", ir.ZoneParts)},
+		Edges: []ir.Edge{tag(edge("job", "pipeline", "call"), ir.LayerBuild)}}
+	if out, _ := RuntimeOnly(ci); len(out.Nodes) != 0 {
+		t.Errorf("CI-only map kept %+v", out.Nodes)
 	}
 }
 

@@ -51,12 +51,13 @@ func mapSchema() map[string]any {
 }
 
 // repoMapSchema is a repository's map: a flow whose every node sits in one
-// of its four zones.
+// of its four zones, tagged as the system map is, so code keeps what runs
+// in production.
 func repoMapSchema() map[string]any {
-	return flow(enum(diagram.RepoMapZones...), enum(diagram.RepoMapZones...), false)
+	return flow(enum(diagram.RepoMapZones...), enum(diagram.RepoMapZones...), true)
 }
 
-// flow is a flow's schema; tagged, the system map's stage and layer. No
+// flow is a flow's schema; tagged, the maps' stage and layer. No
 // maxItems: a strict schema takes no array bound past minItems 0 or 1 on
 // every provider; the caps are the prompt's and the check's, a map over them
 // asked again.

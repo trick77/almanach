@@ -108,12 +108,13 @@ func CheckMap(d *ir.Diagram, slugs []string, caps DiagramCaps) (*ir.Diagram, str
 
 // CheckRepoMap holds a repository's map to the rules of a flow and to its
 // own: the four zones only, every node in one. No slug rule: its nodes are
-// the repository's parts, not repositories.
+// the repository's parts, not repositories. Its tags carried, as the
+// system map's: RuntimeOnly filters it the same.
 func CheckRepoMap(d *ir.Diagram, caps DiagramCaps) (*ir.Diagram, string) {
 	if why := checkZoned(d, ir.RepoMapZones); why != "" {
 		return nil, why
 	}
-	return checkFlow(d, caps, false)
+	return checkFlow(d, caps, true)
 }
 
 // checkZoned is the rules both maps share before their own: a flow, its
@@ -154,7 +155,7 @@ func RepairEdges(d *ir.Diagram) (*ir.Diagram, []string) {
 	seen := map[[4]string]bool{}
 	for _, e := range d.Edges {
 		// The label as checkFlow compares it: trimmed and Swiss. And whether
-		// the system map keeps it: a build arrow repeating a runtime one must
+		// the map keeps it: a build arrow repeating a runtime one must
 		// not take its place, RuntimeOnly takes it out after.
 		kept := ""
 		if e.Layer == ir.LayerBuild || e.Layer == ir.LayerDeploy || e.Layer == ir.LayerMonitoring {
@@ -222,8 +223,8 @@ func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
 	return &out, slices.Sorted(maps.Keys(gone))
 }
 
-// RuntimeOnly takes out of a proposed system map what the system does not
-// do at runtime, in production, by the model's tags, never by a name: a box
+// RuntimeOnly takes out of a proposed map, the system's or a repository's,
+// what does not run in production, by the model's tags, never by a name: a box
 // outside the repositories tagged with another stage, with its arrows (the
 // model's word that the system's production box is on the map: code cannot
 // tell two boxes are one system), an arrow of the build, the deployment or
@@ -231,9 +232,12 @@ func DropDeparted(d *ir.Diagram, slugs []string) (*ir.Diagram, []string) {
 // an arrow: the map shows only what the system calls at runtime, so a box
 // with no arrow says nothing (a build server drawn without its edge). A
 // repository stays, arrows or not; an untagged arrow stays; an unknown tag
-// is checkFlow's to refuse. Run after the departed repositories are out, so
-// a box they left alone goes too. What went is named, "label (why)". A
-// copy; d itself when nothing goes; nil stays nil.
+// is checkFlow's to refuse. A repository map has no repositories zone: a
+// part goes like any box, so a CI pipeline drawn as a part goes with its
+// build arrows (user, 2026-11-02), and so does a part drawn with no arrow.
+// Run after the departed repositories are out, so a box they left alone
+// goes too. What went is named, "label (why)". A copy; d itself when
+// nothing goes; nil stays nil.
 func RuntimeOnly(d *ir.Diagram) (*ir.Diagram, []string) {
 	if d == nil {
 		return nil, nil
@@ -291,9 +295,9 @@ func RuntimeOnly(d *ir.Diagram) (*ir.Diagram, []string) {
 // repository.
 func droppable(n ir.Node) bool { return n.Zone != "" && n.Zone != ir.ZoneRepositories }
 
-// checkFlow holds a flow to the rules. tagged: the system map, whose stage
-// and layer are carried; every other flow drops them, so no tag reaches a
-// diagram RuntimeOnly never filters.
+// checkFlow holds a flow to the rules. tagged: a map, the system's or a
+// repository's, whose stage and layer are carried; every other flow drops
+// them, so no tag reaches a diagram RuntimeOnly never filters.
 func checkFlow(d *ir.Diagram, caps DiagramCaps, tagged bool) (*ir.Diagram, string) {
 	if !slices.Contains(directions, d.Direction) {
 		return nil, fmt.Sprintf("direction %q is neither TB nor LR", d.Direction)
