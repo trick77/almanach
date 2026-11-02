@@ -303,6 +303,7 @@ export const S = {
       // off it, the key shown read-only. The key is Bitbucket's, not a name
       // Almanach gives: no rename.
       projectURL: "Projekt-URL",
+      projectURLPlaceholder: "https://bitbucket.example.invalid/projects/SHOP",
       projectURLHint:
         "Die Seite des Projekts in Bitbucket, aus der Adresszeile kopiert: https://<host>/projects/<Projektschlüssel>. Eine Seite darunter, etwa die eines Repositories, geht auch.",
       projectURLInvalid:

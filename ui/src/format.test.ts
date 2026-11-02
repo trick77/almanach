@@ -276,6 +276,9 @@ describe("bitbucketProject", () => {
       bitbucketProject("https://bitbucket.org/acme/workspace/projects/KEY"),
     ).toBeNull();
     expect(
+      bitbucketProject("https://www.bitbucket.org/ws/workspace/projects/KEY"),
+    ).toBeNull();
+    expect(
       bitbucketProject("https://forge.example.invalid/projects/SH%20OP"),
     ).toBeNull();
     expect(
@@ -304,6 +307,12 @@ describe("bitbucketProject", () => {
       host: "https://forge.example.invalid/projects/bb",
       key: "SHOP",
     });
+    // A context path called repos or users is no repository.
+    for (const ctx of ["repos", "users", "a/repos"]) {
+      expect(
+        bitbucketProject(`https://forge.example.invalid/${ctx}/projects/SHOP`),
+      ).toEqual({ host: `https://forge.example.invalid/${ctx}`, key: "SHOP" });
+    }
   });
   it("is undone by projectURL", () => {
     const p = bitbucketProject(

@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 // The Bitbucket form's one field: the project's page.
-const projectPlaceholder = "https://bitbucket.example.invalid/projects/SHOP";
+const projectPlaceholder = S.sources.form.projectURLPlaceholder;
 
 const when = new Date(2026, 9, 30, 14, 2).toISOString();
 const synced = new Date(2026, 9, 31, 9, 5).toISOString();
@@ -297,6 +297,12 @@ describe("SourcesPage", () => {
     fireEvent.click(await screen.findByText("Neue Quelle"));
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     const field = screen.getByPlaceholderText(projectPlaceholder);
+    // Half a URL while it is typed is no error yet; leaving it, it is.
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: "https://forge.example" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.blur(field);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
     // A clone URL, and an address that only ends like the prefill: both
     // say so, as an alert, and the create stays off.
     for (const value of [

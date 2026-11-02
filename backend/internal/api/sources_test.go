@@ -387,6 +387,25 @@ func TestSources_RenameBitbucketRefused(t *testing.T) {
 	}
 }
 
+// A Bitbucket source's key names a Bitbucket project: a key Bitbucket never
+// makes is refused at create, and one noergler delivers in another case is
+// taken in noergler's spelling, not refused (the form cannot type another).
+func TestSources_CreateBitbucketKey(t *testing.T) {
+	fs := newFakeSources()
+	h, _, _ := sourcesHandler(t, fs, false)
+	for _, key := range []string{"my.shop", "1SHOP", "SH-OP"} {
+		code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"`+key+`","kind":"bitbucket","host":"https://forge.example.invalid"}`, jsonHdr)
+		if code != 422 || !strings.Contains(field(t, body, "error"), "Bitbucket project key") {
+			t.Errorf("key %s: %d %v, want 422", key, code, body)
+		}
+	}
+	fs.noerglerKeys = []string{"Shop"}
+	code, body := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"SHOP","kind":"bitbucket","host":"https://forge.example.invalid"}`, jsonHdr)
+	if code != 201 || field(t, body, "project_key") != "Shop" {
+		t.Fatalf("noergler's spelling taken: %d %v", code, body)
+	}
+}
+
 // A project key is renamed through the source, a change of case included;
 // a hand-entered repository through its own PATCH. A name another had is a
 // 409, a listed repository follows Bitbucket (422), an open run blocks.

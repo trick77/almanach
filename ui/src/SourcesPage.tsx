@@ -240,9 +240,13 @@ function NewSourceForm({
   const f = S.sources.form;
   const isStatic = kind === "static";
   const project = bitbucketProject(projectAt);
-  // Empty, or as prefilled (host and /projects/ only), is not wrong yet.
+  // Said once the field is left: while it is typed in, half a URL is no
+  // error, and an alert would be read out on every key. Empty, or as
+  // prefilled (host and /projects/ only), is not wrong yet either.
+  const [editing, setEditing] = useState(false);
   const typed = projectAt.trim();
-  const projectUnread = project === null && typed !== "" && typed !== prefill;
+  const projectUnread =
+    !editing && project === null && typed !== "" && typed !== prefill;
 
   // The kind's own token header, only on a change: a click on the
   // selected kind keeps a header picked by hand.
@@ -305,7 +309,9 @@ function NewSourceForm({
                 className={input + " " + mono}
                 value={projectAt}
                 onChange={(e) => setProjectAt(e.target.value)}
-                placeholder="https://bitbucket.example.invalid/projects/SHOP"
+                onFocus={() => setEditing(true)}
+                onBlur={() => setEditing(false)}
+                placeholder={f.projectURLPlaceholder}
               />
               {projectUnread ? (
                 <span role="alert" className={fieldError}>

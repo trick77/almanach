@@ -359,11 +359,13 @@ const bitbucketKey = /^[A-Za-z][A-Za-z0-9_]*$/;
  *  a file) too, into the host the API is reached on and the project key,
  *  upper-cased as Bitbucket keeps it. The host keeps a context path before
  *  /projects/ (https://x/bitbucket); query and fragment are dropped. The
- *  last /projects/ that no /users/ or /repos/ precedes is the project's: a
- *  repository named "projects" or a personal repository is no project
- *  page. null when the URL names no project, is not https, or is
- *  Bitbucket Cloud's (its API is another). The key is the Bitbucket
- *  project's identity: the source keeps it. */
+ *  last /projects/ that is no repository's name is the project's: a
+ *  repository sits at /projects/<KEY>/repos/<name> or
+ *  /users/<name>/repos/<name>, so a "projects" right after such a repos is
+ *  one, under a project or a person, and is skipped. null when the URL
+ *  names no project, is not https, or is Bitbucket Cloud's (its API is
+ *  another). The key is the Bitbucket project's identity: the source keeps
+ *  it. */
 export function bitbucketProject(
   url: string,
 ): { host: string; key: string } | null {
@@ -373,21 +375,27 @@ export function bitbucketProject(
   } catch {
     return null;
   }
-  if (u.protocol !== "https:" || u.hostname === "bitbucket.org") return null;
+  const cloud =
+    u.hostname === "bitbucket.org" || u.hostname.endsWith(".bitbucket.org");
+  if (u.protocol !== "https:" || cloud) return null;
   const segs = u.pathname.split("/");
   for (let i = segs.length - 2; i >= 0; i--) {
     if (segs[i] !== "projects") continue;
-    const prefix = segs.slice(0, i);
-    if (prefix.includes("users") || prefix.includes("repos")) continue;
+    const owner = segs[i - 3];
+    if (segs[i - 1] === "repos" && (owner === "projects" || owner === "users"))
+      continue;
     const key = segs[i + 1] ?? "";
     if (!bitbucketKey.test(key)) return null;
-    return { host: u.origin + prefix.join("/"), key: key.toUpperCase() };
+    return {
+      host: u.origin + segs.slice(0, i).join("/"),
+      key: key.toUpperCase(),
+    };
   }
   return null;
 }
 
-/** projectURL is a Bitbucket source's project page, the URL it was
- *  created from: its host and key put back together. */
+/** projectURL is a Bitbucket source's project page: its host and key put
+ *  back together, the page the create form read them off. */
 export function projectURL(host: string, key: string): string {
   return `${host.replace(/\/+$/, "")}/projects/${encodeURIComponent(key)}`;
 }

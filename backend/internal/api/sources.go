@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -465,6 +466,9 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	case !gitrepo.ValidSegment(in.ProjectKey):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: letters, digits, dot, dash, underscore, tilde; not . or ..")
 		return
+	case in.Kind == store.SourceBitbucket && !bitbucketKey.MatchString(in.ProjectKey):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a Bitbucket project key: a letter, then letters, digits, underscore")
+		return
 	case in.Kind == store.SourceBitbucket && !gitrepo.ValidHost(in.Host):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "host: an https URL is required for a Bitbucket source")
 		return
@@ -484,11 +488,15 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	}
 	// The key is how noergler's notes find the source, exactly: a key that
 	// differs from one noergler delivers only by case would have every note
-	// of the project ignored.
+	// of the project ignored. A Bitbucket source takes noergler's spelling:
+	// it is the same Bitbucket project, and the form cannot type another.
 	known, clash, err := d.Sources.Store.ProjectSpelledOtherwise(ctx, in.ProjectKey)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project key")
 		return
+	}
+	if clash && in.Kind == store.SourceBitbucket {
+		in.ProjectKey, clash = known, false
 	}
 	if clash {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: noergler delivers this project as "+known+"; use that spelling")
@@ -549,6 +557,11 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusCreated, out)
 }
+
+// bitbucketKey is a Bitbucket Server project key: a letter, then letters,
+// digits and underscores. Anything else names no Bitbucket project, and a
+// Bitbucket source's key changes case only, so it is refused at create.
+var bitbucketKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
 type updateSourceBody struct {
 	// ProjectKey renames the project, a change of case included. A
