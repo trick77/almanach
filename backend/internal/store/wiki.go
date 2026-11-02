@@ -105,7 +105,7 @@ type Page struct {
 // for this text is not asked again until it changes): then a run has
 // nothing new to draw from. A map stored before the tags never stands.
 func (p Page) MapStands() bool {
-	// TRANSITIONAL(untagged-map): Remove the Untagged term when every stored map carries tags.
+	// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
 	return p.RepoMapBasis != "" && p.RepoMapBasis == p.MapBasis() && !diagram.Untagged(p.RepoMap)
 }
 

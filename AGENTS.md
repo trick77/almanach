@@ -65,6 +65,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   derived: no project call/page (`projectStands`).
 - Deps code's: manifests depth ≤1; edges joined at read, never stored; ambiguous = no edge; 1
   clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
-- Flow: self/repeated edges dropped first. Both maps (system, repo) runtime+prod only: build/CI/CD,
-  forge, code analysis no architecture info (user, 2026-11-02, asked twice): model's `layer`/`stage`
-  tags, `RuntimeOnly` filters.
+- Flow: self/repeated edges dropped first. Both maps runtime+prod only, no build/CI/CD (user,
+  2026-11-02, twice): model's tags, `RuntimeOnly`.

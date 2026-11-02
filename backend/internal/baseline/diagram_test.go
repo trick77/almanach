@@ -283,9 +283,31 @@ func TestCheckRepoMap(t *testing.T) {
 		return &ir.Diagram{Kind: ir.KindFlow, Direction: "LR", Nodes: nodes, Zones: []ir.Zone{
 			{ID: ir.ZoneEntry, Title: "Eingang"}, {ID: ir.ZoneParts, Title: "Teile"}, {ID: ir.ZoneStores, Title: "Speicher"}, {ID: ir.ZoneExternal, Title: "Extern"}}}
 	}
+	// tagged is d with every node's stage and edge's layer, as the schema
+	// asks: only the cases about the tags go without.
+	tagged := func(d *ir.Diagram) *ir.Diagram {
+		if d == nil {
+			return nil
+		}
+		for i := range d.Nodes {
+			d.Nodes[i].Stage = ir.StageNone
+		}
+		for i := range d.Edges {
+			d.Edges[i].Layer = ir.LayerRuntime
+		}
+		return d
+	}
 	good := repoMapOf(node("api", ir.ZoneEntry), node("billing", ir.ZoneParts), node("pg", ir.ZoneStores))
 	good.Edges = []ir.Edge{edge("api", "billing", "call"), edge("billing", "pg", "DB")}
-	out, reason := CheckRepoMap(good, caps)
+	if _, reason := CheckRepoMap(good, caps); !strings.Contains(reason, `node "api" has no stage`) {
+		t.Errorf("untagged node: reason = %q", reason)
+	}
+	noLayer := tagged(repoMapOf(node("api", ir.ZoneEntry), node("pg", ir.ZoneStores)))
+	noLayer.Edges = []ir.Edge{edge("api", "pg", "DB")}
+	if _, reason := CheckRepoMap(noLayer, caps); !strings.Contains(reason, "api → pg has no layer") {
+		t.Errorf("untagged edge: reason = %q", reason)
+	}
+	out, reason := CheckRepoMap(tagged(good), caps)
 	if reason != "" || len(out.Zones) != 3 || len(out.Edges) != 2 {
 		t.Fatalf("map = %+v, reason %q; want held, the unused zone gone", out, reason)
 	}
@@ -309,7 +331,11 @@ func TestCheckRepoMap(t *testing.T) {
 		"over the cap":    {repoMapOf(node("a", ir.ZoneEntry), node("b", ir.ZoneParts), node("c", ir.ZoneParts), node("d", ir.ZoneParts), node("e", ir.ZoneStores)), "5 nodes"},
 	}
 	for name, c := range cases {
-		_, reason := CheckRepoMap(c.d, caps)
+		d := c.d
+		if d != nil && d.Kind == ir.KindFlow {
+			d = tagged(d)
+		}
+		_, reason := CheckRepoMap(d, caps)
 		if !strings.Contains(reason, c.want) {
 			t.Errorf("%s: reason = %q, want %q", name, reason, c.want)
 		}
@@ -434,11 +460,11 @@ func TestRuntimeOnly(t *testing.T) {
 	}
 }
 
-// A repository map is filtered as the system map is, and it has no
-// repositories zone: a CI pipeline drawn as a part goes with its build
-// arrows, so do the CI job entering it, the build workspace it writes, the
-// forge and the code analysis it reports to (user, 2026-11-02). The part
-// the library is made of stays by its library arrow, the tags carried.
+// A repository map is filtered as the system map is: a CI pipeline drawn
+// as a part goes with its build arrows, so do the CI job entering it, the
+// build workspace it writes, the forge and the code analysis it reports to
+// (user, 2026-11-02). The part the library is made of stays by its library
+// arrow, the tags carried.
 func TestRuntimeOnly_RepoMap(t *testing.T) {
 	tag := func(e ir.Edge, layer string) ir.Edge { e.Layer = layer; return e }
 	m := &ir.Diagram{Kind: ir.KindFlow, Direction: "TB", Zones: []ir.Zone{{ID: ir.ZoneEntry, Title: "Eingang"},
@@ -456,7 +482,7 @@ func TestRuntimeOnly_RepoMap(t *testing.T) {
 	for i := range m.Nodes {
 		m.Nodes[i].Stage = ir.StageNone
 	}
-	out, _ := RuntimeOnly(m)
+	out, _ := RepoRuntimeOnly(m)
 	var ids []string
 	for _, n := range out.Nodes {
 		ids = append(ids, n.ID)
@@ -468,11 +494,20 @@ func TestRuntimeOnly_RepoMap(t *testing.T) {
 	if why != "" || got.Nodes[0].Stage != ir.StageNone || got.Edges[0].Layer != ir.LayerLibrary || len(got.Zones) != 2 {
 		t.Errorf("filtered repository map: %+v, %q; want it held, tags carried, emptied zones gone", got, why)
 	}
+	// A part drawn with no arrow stays (a library's parts may talk to
+	// nothing on the map); a box elsewhere with none goes, as on the system
+	// map.
+	bare := &ir.Diagram{Kind: ir.KindFlow, Direction: "TB", Zones: m.Zones,
+		Nodes: []ir.Node{node("codec", ir.ZoneParts), node("schemas", ir.ZoneParts), node("lonely", ir.ZoneExternal)}}
+	kept, gone := RepoRuntimeOnly(bare)
+	if len(kept.Nodes) != 2 || !slices.Equal(gone, []string{"lonely (no runtime arrow)"}) {
+		t.Errorf("bare parts: %+v, gone %v", kept.Nodes, gone)
+	}
 	// Nothing at runtime: every box goes, the caller's to read as no map.
 	ci := &ir.Diagram{Kind: ir.KindFlow, Direction: "TB", Zones: m.Zones[:2],
 		Nodes: []ir.Node{node("job", ir.ZoneEntry), node("pipeline", ir.ZoneParts)},
 		Edges: []ir.Edge{tag(edge("job", "pipeline", "call"), ir.LayerBuild)}}
-	if out, _ := RuntimeOnly(ci); len(out.Nodes) != 0 {
+	if out, _ := RepoRuntimeOnly(ci); len(out.Nodes) != 0 {
 		t.Errorf("CI-only map kept %+v", out.Nodes)
 	}
 }

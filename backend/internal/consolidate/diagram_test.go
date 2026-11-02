@@ -665,8 +665,8 @@ func TestRun_ProjectMap(t *testing.T) {
 	wide := drawnMap("svc", "portal")
 	for i := range 9 {
 		id := fmt.Sprintf("x%d", i)
-		wide.Nodes = append(wide.Nodes, diagram.Node{ID: id, Label: "Extern", Shape: "step", Zone: "external"})
-		wide.Edges = append(wide.Edges, diagram.Edge{From: "svc", To: id, Label: "HTTP", Head: "end"})
+		wide.Nodes = append(wide.Nodes, diagram.Node{ID: id, Label: "Extern", Shape: "step", Zone: "external", Stage: diagram.StageNone})
+		wide.Edges = append(wide.Edges, diagram.Edge{From: "svc", To: id, Label: "HTTP", Head: "end", Layer: diagram.LayerRuntime})
 	}
 	if revs := projectRevisions(project(wide)); len(revs) != 1 || len(revs[0].Map.Nodes) != 13 {
 		t.Errorf("13-node map: revisions = %+v, want it drawn", revs)

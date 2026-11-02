@@ -1356,15 +1356,19 @@ func TestRun_RepoMapStep(t *testing.T) {
 		"none, no map":   {16, true, false, nil, inference.RepoMapResult{Call: called}, true, false, nil, "none drawn, asked again by the next run"},
 		"declined holds": {16, true, true, nil, inference.RepoMapResult{Call: called, Map: drawnRepoMap()}, false, false, nil, "drawn from the description as it stands"},
 		"stale on null":  {16, true, false, stored, inference.RepoMapResult{Call: called}, true, true, stored, "no change"},
-		// Build and CI are no part of it (user, 2026-11-02): left out, and a
-		// map of nothing else is none, not asked again.
-		"CI left out":  {16, true, false, stored, inference.RepoMapResult{Call: called, Map: withCI}, true, true, drawnRepoMap(), "not run in production, left out: Jenkins-Job → Pipeline (build)"},
-		"nothing runs": {16, true, false, stored, inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "nothing of it runs in production, declined"},
+		// Build and CI are no part of it (user, 2026-11-02): left out. A map
+		// of nothing else is none, not asked again; a stored map outlives
+		// one such answer, the model's slip as likely.
+		"CI left out":            {16, true, false, stored, inference.RepoMapResult{Call: called, Map: withCI}, true, true, drawnRepoMap(), "not run in production, left out: Jenkins-Job → Pipeline (build)"},
+		"nothing runs":           {16, true, false, nil, inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "nothing of it runs in production, declined"},
+		"nothing runs, stored":   {16, true, false, stored, inference.RepoMapResult{Call: called, Map: ciOnly}, true, false, stored, "nothing of it runs in production, the stored one kept"},
+		"nothing runs, untagged": {16, true, true, untagged(stored), inference.RepoMapResult{Call: called, Map: ciOnly}, true, true, diagram.Sentinel(), "nothing of it runs in production, declined"},
 		// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
 		// A map stored before the tags never stands and is never carried: the
-		// same drawing tagged is written, null declines it.
+		// same drawing tagged is written; null records nothing, as for a page
+		// without a map, so the next run asks again.
 		"untagged redrawn": {16, true, true, untagged(stored), inference.RepoMapResult{Call: called, Map: stored}, true, true, stored, "repository map: drawn"},
-		"untagged, null":   {16, true, true, untagged(stored), inference.RepoMapResult{Call: called}, true, true, diagram.Sentinel(), "the one stored before the tags declined"},
+		"untagged, null":   {16, true, true, untagged(stored), inference.RepoMapResult{Call: called}, true, false, stored, "none drawn, asked again by the next run"},
 	} {
 		x := newWorld(t, c.calls)
 		var logs strings.Builder
@@ -1438,12 +1442,12 @@ func TestRun_RepoMapStep(t *testing.T) {
 // partsMap is a repository map of n nodes: the API, then parts.
 func partsMap(n int) *diagram.Diagram {
 	d := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "TB",
-		Nodes: []diagram.Node{{ID: "api", Label: "HTTP-API", Shape: "step", Zone: "entry"}},
+		Nodes: []diagram.Node{{ID: "api", Label: "HTTP-API", Shape: "step", Zone: "entry", Stage: diagram.StageNone}},
 		Zones: []diagram.Zone{{ID: "entry", Title: "Eingang"}, {ID: "parts", Title: "Teile"}}}
 	for i := 1; i < n; i++ {
 		id := fmt.Sprintf("p%d", i)
-		d.Nodes = append(d.Nodes, diagram.Node{ID: id, Label: fmt.Sprintf("Teil %d", i), Shape: "step", Zone: "parts"})
-		d.Edges = append(d.Edges, diagram.Edge{From: "api", To: id, Label: "call", Head: "end"})
+		d.Nodes = append(d.Nodes, diagram.Node{ID: id, Label: fmt.Sprintf("Teil %d", i), Shape: "step", Zone: "parts", Stage: diagram.StageNone})
+		d.Edges = append(d.Edges, diagram.Edge{From: "api", To: id, Label: "call", Head: "end", Layer: diagram.LayerRuntime})
 	}
 	return d
 }
@@ -1568,9 +1572,9 @@ func TestRun_RepoMapRetrySteps(t *testing.T) {
 // the first answer; the retry keeps the repository map's call.
 func TestRun_ProjectMapAskedAgain(t *testing.T) {
 	broken := drawnMap("svc")
-	broken.Nodes = append(broken.Nodes, diagram.Node{ID: "web", Label: "web", Shape: "step", Zone: "external"})
+	broken.Nodes = append(broken.Nodes, diagram.Node{ID: "web", Label: "web", Shape: "step", Zone: "external", Stage: diagram.StageNone})
 	// An arrow: an external box without one is taken out before the check.
-	broken.Edges = append(broken.Edges, diagram.Edge{From: "svc", To: "web", Label: "HTTP", Head: "end"})
+	broken.Edges = append(broken.Edges, diagram.Edge{From: "svc", To: "web", Label: "HTTP", Head: "end", Layer: diagram.LayerRuntime})
 	for name, c := range map[string]struct {
 		calls   int
 		again   []inference.RepoMapResult

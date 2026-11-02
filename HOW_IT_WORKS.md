@@ -860,14 +860,19 @@ toward none. It shows what runs in production as well, by the same tags
 and `RuntimeOnly` (user, 2026-11-02: a Jenkins pipeline, its job, the
 Maven command line, the build workspace, the forge and code analysis
 filled a library's map; build, CI and CD are no architecture overview).
-It has no repositories zone, so a part goes like any box: a CI pipeline
-drawn as a part goes with its build arrows, and a part drawn with no
-arrow goes too. A map the filter empties is the model's word that nothing
-of the repository runs (a CI library): the sentinel, not a refusal asked
-again. A repository map stored before the tags never stands
-(`MapStands`), so the poller's retry below redraws it at an unchanged
-head; the prompt shows no current map, and a null answer declines it
-rather than keep it. A map that breaks a rule keeps the stored one, logged with
+Its parts take the repositories' place (`RepoRuntimeOnly`), but a CI
+pipeline is drawn as a part: a part whose every arrow went goes with
+them, a part drawn with no arrow stays (a library's parts may talk to
+nothing on the map). A map the filter empties is the model's word that
+nothing of the repository runs (a CI library): the sentinel where none is
+stored, not a refusal asked again; a stored map outlives one such answer,
+as likely the model's slip. A new map, either one, needs every tag
+(`CheckTagged`): one without would read as stored before the tags. A
+repository map stored before the tags never stands (`MapStands`), so the
+poller's retry below redraws it at an unchanged head, while it holds
+(reconcile on, under its retry cap; else a run by hand); the prompt shows
+no current map, and null records nothing, as for a page without one. A
+map that breaks a rule keeps the stored one, logged with
 its node labels by zone; declined with none stored, the API says
 `map_declined` and the page says why there is no map.
 Both maps are laid out by code, not ELK (`ui/src/mapLayout.ts`): the
