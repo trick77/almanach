@@ -473,8 +473,8 @@ paths:
         `project_key` renames the project, a change of case included: it keeps its pages, notes and clones, and the
         old key stays a name of it (every route still answers under it, with the current key in the body). A key
         another project ever had, in any case, is a 409. A rename comes alone: a changed `project_key` with any
-        other field is a 422; an unchanged one is no rename. A Bitbucket source is never renamed (422): its key is
-        its Bitbucket project's, the one the listing reads and noergler's notes are filed under.
+        other field is a 422; an unchanged one is no rename. A Bitbucket source changes case only, another key is a
+        422: its key is its Bitbucket project's, the one the listing reads and noergler's notes are filed under.
       operationId: updateSource
       parameters:
         - $ref: "#/components/parameters/projectKey"

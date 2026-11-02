@@ -262,6 +262,49 @@ describe("bitbucketProject", () => {
       bitbucketProject("https://forge.example.invalid/scm/shop/api.git"),
     ).toBeNull();
   });
+  it("upper-cases the key, as Bitbucket keeps it", () => {
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/shop_2"),
+    ).toEqual({ host: "https://forge.example.invalid", key: "SHOP_2" });
+  });
+  it("refuses what the server would: not https, Cloud, a key Bitbucket never makes", () => {
+    expect(
+      bitbucketProject("http://forge.example.invalid/projects/SHOP"),
+    ).toBeNull();
+    expect(bitbucketProject("foo://x/projects/SHOP")).toBeNull();
+    expect(
+      bitbucketProject("https://bitbucket.org/acme/workspace/projects/KEY"),
+    ).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/SH%20OP"),
+    ).toBeNull();
+    expect(
+      bitbucketProject("https://forge.example.invalid/projects/1SHOP"),
+    ).toBeNull();
+  });
+  it("takes the project's /projects/, not a repository's or a person's", () => {
+    // A repository named projects, under the project.
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/projects/SHOP/repos/projects/browse",
+      ),
+    ).toEqual({ host: "https://forge.example.invalid", key: "SHOP" });
+    // A personal repository named projects: no project page.
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/users/bob/repos/projects/browse",
+      ),
+    ).toBeNull();
+    // A context path that is itself called projects.
+    expect(
+      bitbucketProject(
+        "https://forge.example.invalid/projects/bb/projects/SHOP",
+      ),
+    ).toEqual({
+      host: "https://forge.example.invalid/projects/bb",
+      key: "SHOP",
+    });
+  });
   it("is undone by projectURL", () => {
     const p = bitbucketProject(
       "https://forge.example.invalid/bitbucket/projects/SHOP",

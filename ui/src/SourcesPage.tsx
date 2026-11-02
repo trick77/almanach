@@ -25,6 +25,7 @@ import {
   btnPrimary,
   column,
   eyebrow,
+  fieldError,
   fieldHint,
   fieldLabel,
   h2,
@@ -223,9 +224,8 @@ function NewSourceForm({
   const [kind, setKind] = useState<SourceKind>("static");
   // Each kind keeps its own: a Bitbucket project's page, a single
   // repository's slug. A switch never carries one into the other.
-  const [projectAt, setProjectAt] = useState(
-    defaultHost === "" ? "" : projectURL(defaultHost, ""),
-  );
+  const prefill = defaultHost === "" ? "" : projectURL(defaultHost, "");
+  const [projectAt, setProjectAt] = useState(prefill);
   const [slug, setSlug] = useState("");
   const [token, setToken] = useState("");
   const [auth, setAuth] = useState<TokenAuth>(authFor(kind));
@@ -242,8 +242,7 @@ function NewSourceForm({
   const project = bitbucketProject(projectAt);
   // Empty, or as prefilled (host and /projects/ only), is not wrong yet.
   const typed = projectAt.trim();
-  const projectUnread =
-    project === null && typed !== "" && !typed.endsWith("/projects/");
+  const projectUnread = project === null && typed !== "" && typed !== prefill;
 
   // The kind's own token header, only on a change: a click on the
   // selected kind keeps a header picked by hand.
@@ -308,17 +307,25 @@ function NewSourceForm({
                 onChange={(e) => setProjectAt(e.target.value)}
                 placeholder="https://bitbucket.example.invalid/projects/SHOP"
               />
-              <span
-                className={
-                  projectUnread
-                    ? fieldHint.replace("text-faint", "text-danger-ink")
-                    : fieldHint
-                }
-              >
-                {projectUnread ? f.projectURLInvalid : f.projectURLHint}
-              </span>
+              {projectUnread ? (
+                <span role="alert" className={fieldError}>
+                  {f.projectURLInvalid}
+                </span>
+              ) : (
+                <span className={fieldHint}>{f.projectURLHint}</span>
+              )}
             </label>
-            <div className="sm:col-span-2">
+            {/* Both read off the URL, shown before the create: a host the
+                browser reached through an alias is seen here, not at the
+                first failed sync. */}
+            <div>
+              <span className={fieldLabel}>{f.host}</span>
+              <span className={"block text-[14px] text-ink " + mono}>
+                {project?.host ?? "–"}
+              </span>
+              <span className={fieldHint}>{f.hostHint}</span>
+            </div>
+            <div>
               <span className={fieldLabel}>{f.projectKey}</span>
               <span className={"block text-[14px] text-ink " + mono}>
                 {project?.key ?? "–"}

@@ -306,10 +306,10 @@ export const S = {
       projectURLHint:
         "Die Seite des Projekts in Bitbucket, aus der Adresszeile kopiert: https://<host>/projects/<Projektschlüssel>. Eine Seite darunter, etwa die eines Repositories, geht auch.",
       projectURLInvalid:
-        "Keine Projekt-URL: erwartet wird https://<host>/projects/<Projektschlüssel>.",
+        "Keine Projekt-URL von Bitbucket Server: erwartet wird https://<host>/projects/<Projektschlüssel>.",
       projectKey: "Projektschlüssel",
       projectKeyHint:
-        "Der Schlüssel des Projekts in Bitbucket. Unter ihm listet Almanach die Repositories, und an ihm finden die Notizen von noergler das Projekt; er lässt sich nicht ändern.",
+        "Aus der URL, in Grossbuchstaben wie in Bitbucket. Unter ihm listet Almanach die Repositories, und an ihm finden die Notizen von noergler das Projekt; er lässt sich nicht ändern.",
       // A hand-filled project's first repository, created with it.
       firstRepo: "Clone-URL des ersten Repositories",
       firstRepoHint:
@@ -319,6 +319,8 @@ export const S = {
       branch: "Branch",
       branchPlaceholder: "Default-Branch des Remotes",
       host: "Bitbucket-Host",
+      hostHint:
+        "Aus der URL. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen: über einen anderen Namen erreicht, scheitert jeder Sync.",
       token: "Personal Access Token",
       optional: "(optional)",
       tokenPlaceholder: "Leer lassen für öffentliche Repositories",

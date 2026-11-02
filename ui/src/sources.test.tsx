@@ -209,7 +209,11 @@ describe("SourcesPage", () => {
         value: "https://forge.example.invalid/projects/neu/repos/api/browse",
       },
     });
-    expect(screen.getByText("neu")).toBeInTheDocument();
+    // Both shown before the create; the key upper-cased, as Bitbucket's.
+    expect(screen.getByText("NEU")).toBeInTheDocument();
+    expect(
+      screen.getByText("https://forge.example.invalid"),
+    ).toBeInTheDocument();
     fireEvent.change(
       screen.getByPlaceholderText("Leer lassen für öffentliche Repositories"),
       { target: { value: "pat" } },
@@ -224,7 +228,7 @@ describe("SourcesPage", () => {
       method: "POST",
       path: "sources",
       body: {
-        project_key: "neu",
+        project_key: "NEU",
         kind: "bitbucket",
         host: "https://forge.example.invalid",
         token: "pat",
@@ -271,9 +275,20 @@ describe("SourcesPage", () => {
     expect(screen.getByPlaceholderText(projectPlaceholder)).toHaveValue(
       "https://forge.example.invalid/projects/SHOP",
     );
-    // Back to the single repository: its slug as it was.
+    // Back to the single repository: its slug as it was, typed by hand too.
     fireEvent.click(screen.getByText(/^Einzelnes Repository/));
-    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop-api");
+    const slug = screen.getByPlaceholderText("acme-api");
+    expect(slug).toHaveValue("shop-api");
+    fireEvent.change(slug, { target: { value: "shop" } });
+    fireEvent.click(screen.getByText(/^Ganzes Projekt/));
+    fireEvent.click(screen.getByText(/^Einzelnes Repository/));
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
+    // Typed by hand, the slug stays when the URL changes after the trip.
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      { target: { value: "https://forge.example.invalid/x/other.git" } },
+    );
+    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
   });
 
   it("refuses a URL that names no Bitbucket project", async () => {
@@ -281,15 +296,21 @@ describe("SourcesPage", () => {
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
-    fireEvent.change(screen.getByPlaceholderText(projectPlaceholder), {
-      target: { value: "https://forge.example.invalid/scm/shop/api.git" },
-    });
-    expect(
-      screen.getByText(S.sources.form.projectURLInvalid),
-    ).toBeInTheDocument();
-    const create = screen.getByText("Anlegen und synchronisieren");
-    expect(create).toBeDisabled();
-    fireEvent.click(create);
+    const field = screen.getByPlaceholderText(projectPlaceholder);
+    // A clone URL, and an address that only ends like the prefill: both
+    // say so, as an alert, and the create stays off.
+    for (const value of [
+      "https://forge.example.invalid/scm/shop/api.git",
+      "garbage/projects/",
+    ]) {
+      fireEvent.change(field, { target: { value } });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        S.sources.form.projectURLInvalid,
+      );
+      const create = screen.getByText("Anlegen und synchronisieren");
+      expect(create).toBeDisabled();
+      fireEvent.click(create);
+    }
     expect(writes).toHaveLength(0);
   });
 
@@ -314,7 +335,7 @@ describe("SourcesPage", () => {
     await waitFor(() => expect(writes).toHaveLength(1));
     const body = writes[0]?.body as { host: string; project_key: string };
     expect(body.host).toBe("https://forge.example.invalid");
-    expect(body.project_key).toBe("neu");
+    expect(body.project_key).toBe("NEU");
     // A Bitbucket project takes the server's rule: no system sent.
     expect(body).not.toHaveProperty("system");
   });

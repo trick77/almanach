@@ -63,8 +63,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   poller; repo failure on its row. Lock per clone (project removal: all); removal: lock,
   folder, then row. Run due = read from rows each cycle, never from an event.
   `BACKEND_REPOS_DIR` unset = off. UI copy: capital only if first char letter ("Bereit",
-  "7 bereit"); "Slug", never "Schlüssel", but Bitbucket's "Projektschlüssel" (user,
-  2026-11-02). Bitbucket source: key = Bitbucket's, from project URL, never renamed.
+  "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
+  source key: from project URL, case-only rename.
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
   stored (user, 2026-10-30). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped

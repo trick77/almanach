@@ -440,12 +440,14 @@ name either ever had stays a name of it, so a renamed project or repository
 keeps its pages, notes, runs and clone, and a URL, a note or a listing
 entry under the old name still lands on it. A static folder's project is
 renamed on its source page (a change of case included), a hand-entered
-repository on its row. A Bitbucket source is never renamed (422): its key
-is the Bitbucket project's, the one the listing reads and noergler's notes
-are filed under, so another key would list another project or none. The
-create form takes the project's page, `https://<host>/projects/<key>` (a
-page under it too), and reads host and key off it; the source page links
-it back. A Bitbucket repository follows its name in Bitbucket: the listing
+repository on its row. A Bitbucket source is never renamed but in case
+(another key is a 422): its key is the Bitbucket project's, the one the
+listing reads and noergler's notes are filed under, so another key would
+list another project or none. The create form takes the project's page,
+`https://<host>/projects/<key>` (a page under it too; https, Bitbucket
+Server's, not Cloud's), reads host and key off it, the key upper-cased as
+Bitbucket keeps it, and shows both before the create; the source page
+links it back. A Bitbucket repository follows its name in Bitbucket: the listing
 knows it by Bitbucket's own repository id, so a rename there changes the
 slug on the next sync instead of adding a second repository. A name once
 used is never given to another project or repository, in any case. PR keys

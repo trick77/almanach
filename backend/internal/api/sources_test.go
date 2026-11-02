@@ -362,23 +362,25 @@ func TestSources_CreateValidatesAndSeals(t *testing.T) {
 	}
 }
 
-// A Bitbucket source keeps its Bitbucket project's key: a rename, a change
-// of case included, is a 422 and leaves it as it was; the key sent back
-// unchanged with an access change is no rename.
+// A Bitbucket source keeps its Bitbucket project's key: another key is a
+// 422 and leaves it as it was; its case may change, the one fix for a key
+// typed otherwise than noergler spells it; the key sent back unchanged with
+// an access change is no rename.
 func TestSources_RenameBitbucketRefused(t *testing.T) {
 	fs := newFakeSources()
 	h, _, _ := sourcesHandler(t, fs, false)
-	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"SHOP","kind":"bitbucket","host":"https://forge.example.invalid"}`, jsonHdr); code != 201 {
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"shop","kind":"bitbucket","host":"https://forge.example.invalid"}`, jsonHdr); code != 201 {
 		t.Fatal("create")
 	}
-	for _, to := range []string{"OTHER", "shop"} {
-		code, body := do(t, h, http.MethodPatch, "/api/sources/SHOP", "", `{"project_key":"`+to+`"}`, jsonHdr)
-		if code != 422 || !strings.Contains(fmt.Sprint(body), "Bitbucket") {
-			t.Errorf("rename to %s: %d %v, want 422", to, code, body)
-		}
+	code, body := do(t, h, http.MethodPatch, "/api/sources/shop", "", `{"project_key":"OTHER"}`, jsonHdr)
+	if code != 422 || !strings.Contains(fmt.Sprint(body), "Bitbucket") {
+		t.Errorf("rename to another key: %d %v, want 422", code, body)
 	}
-	if _, ok := fs.sources["SHOP"]; !ok {
+	if _, ok := fs.sources["shop"]; !ok {
 		t.Fatal("a refused rename renamed")
+	}
+	if code, body := do(t, h, http.MethodPatch, "/api/sources/shop", "", `{"project_key":"SHOP"}`, jsonHdr); code != 200 || field(t, body, "project_key") != "SHOP" {
+		t.Errorf("case-only rename: %d %v", code, body)
 	}
 	if code, body := do(t, h, http.MethodPatch, "/api/sources/SHOP", "", `{"project_key":"SHOP","host":"https://forge2.example.invalid"}`, jsonHdr); code != 200 || fs.sources["SHOP"].Host != "https://forge2.example.invalid" {
 		t.Errorf("unchanged key with a host change: %d %v", code, body)

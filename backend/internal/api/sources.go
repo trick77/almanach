@@ -552,9 +552,8 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 
 type updateSourceBody struct {
 	// ProjectKey renames the project, a change of case included. A
-	// hand-filled source only: a Bitbucket source's key is its Bitbucket
-	// project's, which the listing reads and noergler's notes are filed
-	// under.
+	// Bitbucket source's key is its Bitbucket project's, which the listing
+	// reads and noergler's notes are filed under: its case only.
 	ProjectKey *string `json:"project_key"`
 	Host       *string `json:"host"`
 	Token      *string `json:"token"`
@@ -648,12 +647,13 @@ func (d Deps) updateSource(w http.ResponseWriter, r *http.Request) {
 // project keeps its id, pages, notes and clones, and the old key stays a
 // name of it. Alone in its PATCH, so a request is the rename or the access
 // change, never half of both. A key another project ever had, in any case,
-// is never given away. A Bitbucket source is never renamed: its key names
+// is never given away. A Bitbucket source changes case only: its key names
 // the project the listing reads, and another key would list another
-// project, or none.
+// project, or none; the case is the one fix, for a key typed otherwise
+// than noergler's notes spell it.
 func (d Deps) renameSource(w http.ResponseWriter, r *http.Request, src store.ProjectSource, in updateSourceBody) {
 	ctx := r.Context()
-	if src.Kind == store.SourceBitbucket {
+	if src.Kind == store.SourceBitbucket && !strings.EqualFold(strings.TrimSpace(*in.ProjectKey), src.ProjectKey) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "project_key: a Bitbucket source keeps its Bitbucket project's key")
 		return
 	}

@@ -396,6 +396,8 @@ export const rowBtn =
 /** Form fields: a label over an input, a hint under it. */
 export const fieldLabel = "mb-1 block text-[12px] text-muted";
 export const fieldHint = "mt-1 block text-[12px] text-faint";
+/** A field's error in the hint's place, with role="alert" where used. */
+export const fieldError = "mt-1 block text-[12px] text-danger-ink";
 export const input =
   "w-full rounded-ui-sm border border-border bg-bg px-2.5 py-[7px] text-[14px] text-ink placeholder:text-faint focus:border-accent focus:outline-none";
 

@@ -163,6 +163,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
       await send("DELETE", path);
       navigateTo(sourcesPath);
     });
+  const project = isStatic ? "" : projectURL(data.host, data.project_key);
 
   return (
     <>
@@ -177,11 +178,11 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
             {S.sources.project}{" "}
             <a
               className={mono + " text-accent-strong hover:text-ink"}
-              href={projectURL(data.host, data.project_key)}
+              href={project}
               target="_blank"
               rel="noreferrer"
             >
-              {projectURL(data.host, data.project_key)}
+              {project}
             </a>
           </>
         )}

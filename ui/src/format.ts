@@ -349,12 +349,21 @@ export function shortSHA(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
 
-/** bitbucketProject reads a Bitbucket project's page as the browser shows
- *  it, https://<host>/projects/<KEY>, a page under it (a repository, a
- *  file) too, into the host the API is reached on and the project key:
- *  the host keeps a context path before /projects/ (https://x/bitbucket),
- *  query and fragment are dropped. null when the URL names no project.
- *  The key is the Bitbucket project's identity: the source keeps it. */
+/** bitbucketKey is a Bitbucket Server project key: a letter, then letters,
+ *  digits and underscores. Bitbucket stores it upper-case, and noergler's
+ *  notes carry it so. */
+const bitbucketKey = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** bitbucketProject reads a Bitbucket Server project's page as the browser
+ *  shows it, https://<host>/projects/<KEY>, a page under it (a repository,
+ *  a file) too, into the host the API is reached on and the project key,
+ *  upper-cased as Bitbucket keeps it. The host keeps a context path before
+ *  /projects/ (https://x/bitbucket); query and fragment are dropped. The
+ *  last /projects/ that no /users/ or /repos/ precedes is the project's: a
+ *  repository named "projects" or a personal repository is no project
+ *  page. null when the URL names no project, is not https, or is
+ *  Bitbucket Cloud's (its API is another). The key is the Bitbucket
+ *  project's identity: the source keeps it. */
 export function bitbucketProject(
   url: string,
 ): { host: string; key: string } | null {
@@ -364,17 +373,17 @@ export function bitbucketProject(
   } catch {
     return null;
   }
+  if (u.protocol !== "https:" || u.hostname === "bitbucket.org") return null;
   const segs = u.pathname.split("/");
-  const i = segs.indexOf("projects");
-  const raw = i < 0 ? "" : (segs[i + 1] ?? "");
-  if (raw === "") return null;
-  let key: string;
-  try {
-    key = decodeURIComponent(raw);
-  } catch {
-    return null;
+  for (let i = segs.length - 2; i >= 0; i--) {
+    if (segs[i] !== "projects") continue;
+    const prefix = segs.slice(0, i);
+    if (prefix.includes("users") || prefix.includes("repos")) continue;
+    const key = segs[i + 1] ?? "";
+    if (!bitbucketKey.test(key)) return null;
+    return { host: u.origin + prefix.join("/"), key: key.toUpperCase() };
   }
-  return { host: u.origin + segs.slice(0, i).join("/"), key };
+  return null;
 }
 
 /** projectURL is a Bitbucket source's project page, the URL it was
