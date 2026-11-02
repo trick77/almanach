@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { SourcePage } from "./SourcePage";
@@ -7,8 +13,12 @@ import type { Me, SourceDetail, Sources } from "./api";
 import { dayTime } from "./format";
 import { S } from "./strings";
 
-/** serve answers GET paths from a table and records every write. */
-function serve(table: Record<string, unknown>) {
+/** serve answers GET paths from a table and records every write; a write
+ *  to a path in refuse gets a 409 with that message. */
+function serve(
+  table: Record<string, unknown>,
+  refuse: Record<string, string> = {},
+) {
   const writes: { method: string; path: string; body: unknown }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -21,6 +31,13 @@ function serve(table: Record<string, unknown>) {
           path,
           body: init?.body ? JSON.parse(String(init.body)) : undefined,
         });
+        if (path in refuse) {
+          return {
+            ok: false,
+            status: 409,
+            text: async () => JSON.stringify({ error: refuse[path] }),
+          };
+        }
         if (path === "sources" && method === "POST") {
           return {
             ok: true,
@@ -773,18 +790,21 @@ describe("SourcePage", () => {
       .getAllByRole("button", { name: S.sources.repoActions.rename })
       .filter((b) => b.closest("table") !== null);
     fireEvent.click(row);
-    expect(
-      screen.getByText(S.sources.renameRepoForm.title("acme-cli")),
-    ).toBeInTheDocument();
+    const title = screen.getByText(S.sources.renameRepoForm.title("acme-cli"));
+    // The form opens under its row, not below the whole table.
+    expect(title.closest("tr")?.previousElementSibling).toHaveTextContent(
+      "acme-cli",
+    );
     fireEvent.change(screen.getByDisplayValue("acme-cli"), {
       target: { value: "acme-tool" },
     });
-    const save = screen
-      .getAllByRole("button", { name: S.sources.renameRepoForm.save })
-      .filter((b) => b.closest("table") === null)
-      .at(-1);
-    if (!save) throw new Error("no save button");
-    fireEvent.click(save);
+    const form = title.parentElement;
+    if (!form) throw new Error("no form");
+    fireEvent.click(
+      within(form).getByRole("button", {
+        name: S.sources.renameRepoForm.save,
+      }),
+    );
     await waitFor(() =>
       expect(writes).toEqual([
         {
@@ -835,7 +855,10 @@ describe("SourcePage", () => {
     fireEvent.click(screen.getAllByText(S.sources.repoActions.remove)[0]);
     expect(screen.queryByText(ask)).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByText(S.sources.repoActions.deactivate)[0]);
-    expect(screen.getByText(ask)).toBeInTheDocument();
+    // Under its row: below a long listing's table the click looked dead.
+    expect(
+      screen.getByText(ask).closest("tr")?.previousElementSibling,
+    ).toHaveTextContent("acme-cli");
     expect(writes).toHaveLength(0);
     fireEvent.click(screen.getByText(S.sources.yesDeactivate));
     await waitFor(() =>
@@ -847,6 +870,27 @@ describe("SourcePage", () => {
         },
       ]),
     );
+    await waitFor(() =>
+      expect(screen.queryByText(ask)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("answers a refused deactivation under its row, the panel open", async () => {
+    const running = "a run of this repository is running";
+    serve(
+      { "sources/werkzeuge": detail },
+      { "sources/werkzeuge/repos/acme-cli/deactivate": running },
+    );
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.deactivate)[0]);
+    fireEvent.click(screen.getByText(S.sources.yesDeactivate));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(`acme-cli: ${running}`);
+    expect(alert.closest("table")).not.toBeNull();
+    expect(
+      screen.getByText(/Repository acme-cli deaktivieren\?/),
+    ).toBeInTheDocument();
   });
 
   it("shows a deactivated repository with only its comeback", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import {
   ApiError,
   send,
@@ -115,6 +115,9 @@ export function SourcePage({ projectKey }: { projectKey: string }) {
 
 type Open = "none" | "access" | "add" | "rename" | "remove";
 
+/** RowError is a repository action's failure, shown under its row. */
+type RowError = { slug: string; message: string };
+
 function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const [open, setOpen] = useState<Open>("none");
   const [queued, setQueued] = useState(false);
@@ -122,6 +125,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deactivating, setDeactivating] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [rowError, setRowError] = useState<RowError | null>(null);
   const isStatic = data.kind === "static";
   // A deactivated repository is no source: its state (pending, waiting for
   // a comeback) counts for nothing here.
@@ -154,7 +158,26 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
       );
     }
   };
+  // A repository's action answers under its row: on a long Bitbucket listing
+  // the alert beside the page's buttons is out of sight.
+  const rowAct = async (slug: string, fn: () => Promise<unknown>) => {
+    setRowError(null);
+    try {
+      await fn();
+      reload();
+    } catch (e) {
+      setRowError({
+        slug,
+        message:
+          e instanceof ApiError
+            ? e.message
+            : S.common.failed(S.sources.whatOne),
+      });
+    }
+  };
   const path = `sources/${encodeURIComponent(data.project_key)}`;
+  const repoPath = (slug: string) =>
+    `${path}/repos/${encodeURIComponent(slug)}`;
   const sync = () =>
     act(async () => {
       setQueued(true);
@@ -388,59 +411,47 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
       ) : (
         <ReposTable
           data={data}
+          rowError={rowError}
           onSync={(slug) =>
-            act(() =>
-              send("POST", `${path}/repos/${encodeURIComponent(slug)}/sync`),
-            )
+            rowAct(slug, () => send("POST", `${repoPath(slug)}/sync`))
           }
           onDescribe={(slug, mode) =>
-            act(() =>
-              send(
-                "POST",
-                `${path}/repos/${encodeURIComponent(slug)}/describe`,
-                {
-                  mode,
-                },
-              ),
+            rowAct(slug, () =>
+              send("POST", `${repoPath(slug)}/describe`, { mode }),
             )
           }
           removing={removing}
           onAskRemove={(slug) => {
+            setRowError(null);
             setRenaming(null);
             setDeactivating(null);
             setRemoving(slug);
           }}
           deactivating={deactivating}
           onAskDeactivate={(slug) => {
+            setRowError(null);
             setRenaming(null);
             setRemoving(null);
             setDeactivating(slug);
           }}
           onDeactivate={(slug) =>
-            act(async () => {
-              await send(
-                "POST",
-                `${path}/repos/${encodeURIComponent(slug)}/deactivate`,
-              );
+            rowAct(slug, async () => {
+              await send("POST", `${repoPath(slug)}/deactivate`);
               setDeactivating(null);
             })
           }
           onActivate={(slug) =>
-            act(() =>
-              send(
-                "POST",
-                `${path}/repos/${encodeURIComponent(slug)}/activate`,
-              ),
-            )
+            rowAct(slug, () => send("POST", `${repoPath(slug)}/activate`))
           }
           onRemove={(slug) =>
-            act(async () => {
-              await send("DELETE", `${path}/repos/${encodeURIComponent(slug)}`);
+            rowAct(slug, async () => {
+              await send("DELETE", repoPath(slug));
               setRemoving(null);
             })
           }
           renaming={renaming}
           onAskRename={(slug) => {
+            setRowError(null);
             setRemoving(null);
             setDeactivating(null);
             setRenaming(slug);
@@ -458,6 +469,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
 
 function ReposTable({
   data,
+  rowError,
   onSync,
   onDescribe,
   removing,
@@ -472,22 +484,69 @@ function ReposTable({
   onRenamed,
 }: {
   data: SourceDetail;
-  onSync: (slug: string) => void;
+  rowError: RowError | null;
+  onSync: (slug: string) => Promise<void>;
   onDescribe: (slug: string, mode: "reconcile" | "full") => Promise<void>;
   removing: string | null;
   onAskRemove: (slug: string | null) => void;
-  onRemove: (slug: string) => void;
+  onRemove: (slug: string) => Promise<void>;
   deactivating: string | null;
   onAskDeactivate: (slug: string | null) => void;
-  onDeactivate: (slug: string) => void;
-  onActivate: (slug: string) => void;
+  onDeactivate: (slug: string) => Promise<void>;
+  onActivate: (slug: string) => Promise<void>;
   renaming: string | null;
   onAskRename: (slug: string | null) => void;
   onRenamed: () => void;
 }) {
-  const removingDir =
-    data.repos.find((r) => r.slug === removing)?.dir ?? data.dir;
-  const renamingRepo = data.repos.find((r) => r.slug === renaming);
+  // What a row asks or reports opens under that row: below the table it
+  // lands out of sight on a long listing, and the click looks dead.
+  const under = (r: SourceRepo) => {
+    const error =
+      rowError !== null && rowError.slug === r.slug ? rowError.message : "";
+    const panel =
+      renaming === r.slug ? (
+        <RenameRepoForm
+          // A fresh form per repository: switching rows must not carry the
+          // last one's typed slug over.
+          key={r.slug}
+          sourceKey={data.project_key}
+          repo={r}
+          onDone={onRenamed}
+          onCancel={() => onAskRename(null)}
+        />
+      ) : removing === r.slug ? (
+        <RowConfirm
+          key={r.slug}
+          yes={S.sources.yesRemove}
+          onYes={() => onRemove(r.slug)}
+          onCancel={() => onAskRemove(null)}
+        >
+          {S.sources.confirmRemoveRepo(r.slug, r.dir)}
+        </RowConfirm>
+      ) : deactivating === r.slug ? (
+        <RowConfirm
+          key={r.slug}
+          yes={S.sources.yesDeactivate}
+          onYes={() => onDeactivate(r.slug)}
+          onCancel={() => onAskDeactivate(null)}
+        >
+          {S.sources.confirmDeactivateRepo(r.slug)}
+        </RowConfirm>
+      ) : null;
+    if (error === "" && panel === null) return null;
+    return (
+      <tr>
+        <td colSpan={7} className="border-b border-border-soft pt-0.5 pb-3">
+          {error !== "" && (
+            <div role="alert" className="pt-1.5 text-[13px] text-danger-ink">
+              {r.slug}: {error}
+            </div>
+          )}
+          {panel}
+        </td>
+      </tr>
+    );
+  };
   const [hd0, hd1, hd2, hd3, hd4, hd5] = S.sources.repoHeaders;
   const rows = [...data.repos].sort((a, b) => a.slug.localeCompare(b.slug));
   return (
@@ -507,75 +566,66 @@ function ReposTable({
           </thead>
           <tbody>
             {rows.map((r) => (
-              <RepoRow
-                key={r.slug}
-                r={r}
-                isStatic={data.kind === "static"}
-                onSync={() => onSync(r.slug)}
-                onDescribe={(mode) => onDescribe(r.slug, mode)}
-                onAskRemove={() => onAskRemove(r.slug)}
-                onAskRename={() => onAskRename(r.slug)}
-                onAskDeactivate={() => onAskDeactivate(r.slug)}
-                onActivate={() => onActivate(r.slug)}
-              />
+              <Fragment key={r.slug}>
+                <RepoRow
+                  r={r}
+                  isStatic={data.kind === "static"}
+                  onSync={() => onSync(r.slug)}
+                  onDescribe={(mode) => onDescribe(r.slug, mode)}
+                  onAskRemove={() => onAskRemove(r.slug)}
+                  onAskRename={() => onAskRename(r.slug)}
+                  onAskDeactivate={() => onAskDeactivate(r.slug)}
+                  onActivate={() => onActivate(r.slug)}
+                />
+                {under(r)}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
-      {renamingRepo !== undefined && (
-        <RenameRepoForm
-          // A fresh form per repository: switching rows must not carry the
-          // last one's typed slug over.
-          key={renamingRepo.slug}
-          sourceKey={data.project_key}
-          repo={renamingRepo}
-          onDone={onRenamed}
-          onCancel={() => onAskRename(null)}
-        />
-      )}
-      {removing !== null && (
-        <Panel tone="danger">
-          {S.sources.confirmRemoveRepo(removing, removingDir)}
-          <div className="mt-2.5 flex gap-2">
-            <button
-              type="button"
-              className={btnDanger}
-              onClick={() => onRemove(removing)}
-            >
-              {S.sources.yesRemove}
-            </button>
-            <button
-              type="button"
-              className={btn}
-              onClick={() => onAskRemove(null)}
-            >
-              {S.sources.form.cancel}
-            </button>
-          </div>
-        </Panel>
-      )}
-      {deactivating !== null && (
-        <Panel tone="danger">
-          {S.sources.confirmDeactivateRepo(deactivating)}
-          <div className="mt-2.5 flex gap-2">
-            <button
-              type="button"
-              className={btnDanger}
-              onClick={() => onDeactivate(deactivating)}
-            >
-              {S.sources.yesDeactivate}
-            </button>
-            <button
-              type="button"
-              className={btn}
-              onClick={() => onAskDeactivate(null)}
-            >
-              {S.sources.form.cancel}
-            </button>
-          </div>
-        </Panel>
-      )}
     </>
+  );
+}
+
+/** RowConfirm asks before a repository's removal or deactivation; the
+ *  button holds while the answer is out, so a second click sends nothing. */
+function RowConfirm({
+  yes,
+  onYes,
+  onCancel,
+  children,
+}: {
+  yes: string;
+  onYes: () => Promise<void>;
+  onCancel: () => void;
+  children: ReactNode;
+}) {
+  const [busy, setBusy] = useState(false);
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await onYes();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel tone="danger">
+      {children}
+      <div className="mt-2.5 flex gap-2">
+        <button
+          type="button"
+          className={btnDanger}
+          disabled={busy}
+          onClick={confirm}
+        >
+          {yes}
+        </button>
+        <button type="button" className={btn} onClick={onCancel}>
+          {S.sources.form.cancel}
+        </button>
+      </div>
+    </Panel>
   );
 }
 
