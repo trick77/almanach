@@ -405,7 +405,7 @@ func TestRun_QuietReconcileDrawsAMissingMap(t *testing.T) {
 // for it afresh (the prompt shows none), and the redraw is written even
 // when it looks the same, so the next reconcile ends at once.
 //
-// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
 func TestRun_QuietReconcileRedrawsAnUntaggedMap(t *testing.T) {
 	x := newWorld(t, 16)
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.",
@@ -418,7 +418,7 @@ func TestRun_QuietReconcileRedrawsAnUntaggedMap(t *testing.T) {
 		t.Error("the untagged map was shown to the model, not asked afresh")
 	}
 	p := x.st.pages[pageKey(store.ScopeProject, "tools", "")]
-	if untaggedMap(p.Map) || !diagram.Equal(p.Map, drawnMap("svc")) {
+	if diagram.Untagged(p.Map) || !diagram.Equal(p.Map, drawnMap("svc")) {
 		t.Fatalf("project map = %+v; want the tagged redraw written", p.Map)
 	}
 	again := newWorld(t, 16)
@@ -447,7 +447,7 @@ func TestRun_QuietReconcileRedrawsAnUntaggedMap(t *testing.T) {
 // projectPage reads an untagged map as none, a tagged one and the sentinel
 // as stored; a failed read pauses the drain.
 //
-// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
+// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
 func TestProjectPageReadsAnUntaggedMapAsNone(t *testing.T) {
 	x := newWorld(t, 16)
 	key := pageKey(store.ScopeProject, "tools", "")
@@ -665,8 +665,8 @@ func TestRun_ProjectMap(t *testing.T) {
 	wide := drawnMap("svc", "portal")
 	for i := range 9 {
 		id := fmt.Sprintf("x%d", i)
-		wide.Nodes = append(wide.Nodes, diagram.Node{ID: id, Label: "Extern", Shape: "step", Zone: "external"})
-		wide.Edges = append(wide.Edges, diagram.Edge{From: "svc", To: id, Label: "HTTP", Head: "end"})
+		wide.Nodes = append(wide.Nodes, diagram.Node{ID: id, Label: "Extern", Shape: "step", Zone: "external", Stage: diagram.StageNone})
+		wide.Edges = append(wide.Edges, diagram.Edge{From: "svc", To: id, Label: "HTTP", Head: "end", Layer: diagram.LayerRuntime})
 	}
 	if revs := projectRevisions(project(wide)); len(revs) != 1 || len(revs[0].Map.Nodes) != 13 {
 		t.Errorf("13-node map: revisions = %+v, want it drawn", revs)

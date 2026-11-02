@@ -16,8 +16,8 @@ export type FlowNodeIR = {
   zone?: string;
   /** Tagged `:::focus` by the model: the part the question is about. */
   focus?: boolean;
-  /** The system map's: production, other or none; the backend drops a box
-   * of another stage. */
+  /** The maps': production, other or none; the backend drops a box of
+   * another stage. */
   stage?: string;
 };
 export type FlowEdgeIR = {
@@ -27,7 +27,7 @@ export type FlowEdgeIR = {
   dashed: boolean;
   /** Which end carries the arrowhead. */
   head: "end" | "both" | "none";
-  /** The system map's: what the arrow is (runtime, library, build, deploy,
+  /** The maps': what the arrow is (runtime, library, build, deploy,
    * monitoring); the backend keeps runtime and library only. */
   layer?: string;
 };

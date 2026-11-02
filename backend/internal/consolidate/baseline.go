@@ -1071,6 +1071,8 @@ const repoMapName = "the repository map"
 const (
 	overviewLabel = "the overview"
 	projectLabel  = "the project"
+	// projectMapAt heads the system map's log lines, drawn or carried.
+	projectMapAt = "baseline: " + projectLabel + " map"
 )
 
 // partAt is reading step i: the overview, or a subject by name. The name
@@ -1391,27 +1393,11 @@ func (w *Worker) projectPage(ctx context.Context, key string) (store.Page, error
 		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
 		return store.Page{}, errStop
 	}
-	// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
-	if untaggedMap(page.Map) {
+	// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
+	if diagram.Untagged(page.Map) {
 		page.Map = nil
 	}
 	return page, nil
-}
-
-// untaggedMap is a system map stored before the tags: no node has a stage,
-// which every node of one drawn since has.
-//
-// TRANSITIONAL(untagged-map): Remove when every stored system map carries tags.
-func untaggedMap(m *diagram.Diagram) bool {
-	if m == nil || m.Kind != diagram.KindFlow {
-		return false
-	}
-	for _, n := range m.Nodes {
-		if n.Stage != "" {
-			return false
-		}
-	}
-	return true
 }
 
 // mapRevision is the page's text with the map m: what a map changes alone
@@ -1556,13 +1542,13 @@ func (w *Worker) revisionMap(ctx context.Context, r *store.BaselineRun, page sto
 // refusal is logged with the map's labels by zone and returns the draft as
 // checked, the one the reason counts, for the retry to show.
 func (w *Worker) projectMapOf(ctx context.Context, proposed *diagram.Diagram, slugs []string) (*diagram.Diagram, string, *diagram.Diagram) {
-	at := "baseline: " + projectLabel + " map"
+	at := projectMapAt
 	repaired, dropped := baseline.RepairEdges(proposed)
 	if len(dropped) > 0 {
 		w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
 	}
-	runtime := w.runtimeOnly(ctx, w.withoutDeparted(ctx, repaired, slugs))
-	drawn, why := baseline.CheckMap(baseline.LabelRepos(runtime), slugs, baseline.MapCaps)
+	runtime := w.runtimeOnly(ctx, at, w.withoutDeparted(ctx, repaired, slugs))
+	drawn, why := baseline.CheckNewMap(baseline.LabelRepos(runtime), slugs, baseline.MapCaps)
 	if why != "" {
 		w.log.WarnContext(ctx, at+" refused ("+why+")", slog.String("nodes", mapLabels(runtime)))
 		return nil, why, runtime
@@ -1570,14 +1556,25 @@ func (w *Worker) projectMapOf(ctx context.Context, proposed *diagram.Diagram, sl
 	return drawn, "", nil
 }
 
-// runtimeOnly is RuntimeOnly with its log line, after the departed
-// repositories are out: a box only they talked to goes too.
-func (w *Worker) runtimeOnly(ctx context.Context, m *diagram.Diagram) *diagram.Diagram {
+// runtimeOnly is RuntimeOnly on the system map with its log line, after
+// the departed repositories are out: a box only they talked to goes too.
+func (w *Worker) runtimeOnly(ctx context.Context, at string, m *diagram.Diagram) *diagram.Diagram {
 	kept, dropped := baseline.RuntimeOnly(m)
-	if len(dropped) > 0 {
-		w.log.InfoContext(ctx, "baseline: "+projectLabel+" map: not the system at runtime in production, left out: "+strings.Join(dropped, ", "))
-	}
+	w.logLeftOut(ctx, at, dropped)
 	return kept
+}
+
+// repoRuntimeOnly is RepoRuntimeOnly on a repository map with its log line.
+func (w *Worker) repoRuntimeOnly(ctx context.Context, at string, m *diagram.Diagram) *diagram.Diagram {
+	kept, dropped := baseline.RepoRuntimeOnly(m)
+	w.logLeftOut(ctx, at, dropped)
+	return kept
+}
+
+func (w *Worker) logLeftOut(ctx context.Context, at string, dropped []string) {
+	if len(dropped) > 0 {
+		w.log.InfoContext(ctx, at+": not run in production, left out: "+strings.Join(dropped, ", "))
+	}
 }
 
 // asStored is the system map as stored, its departed repositories out:
@@ -1761,7 +1758,7 @@ func (w *Worker) carriedMap(ctx context.Context, page store.Page, slugs []string
 	// repository left holds nothing of the project, and an emptied zone goes.
 	// The filter as on a new map, so a box only a departed repository talked
 	// to goes here too.
-	carried, why := baseline.CheckMap(w.runtimeOnly(ctx, w.withoutDeparted(ctx, page.Map, slugs)), slugs, baseline.MapCaps)
+	carried, why := baseline.CheckMap(w.runtimeOnly(ctx, projectMapAt, w.withoutDeparted(ctx, page.Map, slugs)), slugs, baseline.MapCaps)
 	if why != "" {
 		return diagram.Sentinel()
 	}
@@ -1818,13 +1815,17 @@ func (w *Worker) projectOver(ctx context.Context, r *store.BaselineRun, plan run
 // the run's budget; the description is never touched. What the step keeps
 // (a new map, or the stored one confirmed) is set on the page's current
 // revision in place, with its basis, and the run's end, in one
-// transaction: no revision of its own, the text did not change. A map
-// still refused keeps a stored one, writing nothing; with none stored and
-// every try run and refused, the sentinel is set with the basis: declined,
-// said on the page, not asked again until the text changes. A skip, a
-// failed call, the calls spent before every try ran, or null for a page
-// without a map write nothing, so the basis stays stale and the next run
-// asks again (null was recorded once, and a map then never came). A hold
+// transaction: no revision of its own, the text did not change. Before the
+// check, RepoRuntimeOnly takes out what does not run in production (build,
+// CI, delivery, monitoring, other stages); a map it empties is refused like
+// any. A map still refused keeps a stored one, writing nothing; with none
+// stored and every try run and refused, or emptied still on the last try
+// (a CI library: nothing of it runs) whatever is stored, the sentinel is set with
+// the basis: declined, said on the page, not asked again until the text
+// changes. A map stored before the tags counts as none. A skip, a failed call, the
+// calls spent before every try ran, or null for a page without a map write
+// nothing, so the basis stays stale and the next run asks again (null was
+// recorded once, and a map then never came). A hold
 // of the gateway leaves the step where it is, resumed after the hold. The
 // map is optional: a database busy past its attempts ends the run done
 // without it, never failed.
@@ -1849,9 +1850,13 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		w.log.InfoContext(ctx, at+" skipped: drawn from the description as it stands, the stored one kept")
 		return w.finish(ctx, r, plan)
 	}
-	// The sentinel is no map: declined for an older text.
+	// The sentinel is no map: declined for an older text. Nor is a map
+	// stored before the tags: drawn with the build and CI boxes the filter
+	// takes out, it is drawn again, never carried, and null for it records
+	// nothing, as for a page without a map.
 	keep := page.RepoMap
-	if diagram.IsSentinel(keep) {
+	// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
+	if diagram.IsSentinel(keep) || diagram.Untagged(keep) {
 		keep = nil
 	}
 	res := w.base.Describer.RepoMap(ctx, renderRepoMap(*r, page, retry))
@@ -1870,18 +1875,40 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	if retry != nil {
 		tries = retry.Tries + 1
 	}
-	var drawn *diagram.Diagram
+	// The draft is the map as checked, what the build, CI and the other
+	// stages left: the one a refusal's reason counts, for the retry to show.
+	var drawn, draft *diagram.Diagram
 	var refused string
+	emptied := false
 	if res.Map != nil {
 		repaired, dropped := baseline.RepairEdges(res.Map)
 		if len(dropped) > 0 {
 			w.log.InfoContext(ctx, at+": self or repeated edges taken out: "+strings.Join(dropped, ", "))
 		}
-		if drawn, refused = baseline.CheckRepoMap(repaired, baseline.MapCaps); refused != "" {
-			w.log.WarnContext(ctx, at+" refused ("+refused+")", slog.String("nodes", mapLabels(res.Map)))
+		draft = w.repoRuntimeOnly(ctx, at, repaired)
+		// Untagged, the filter cannot be trusted to have emptied it.
+		refused = baseline.CheckTagged(repaired)
+		switch {
+		case refused != "":
+		case len(draft.Nodes) == 0:
+			// Every box went with its arrows (one drawn with none stays):
+			// the model's tags say nothing of the repository runs in
+			// production. A refusal like any, asked again with the answer,
+			// so one slip never costs a map; said on the last try, declined.
+			emptied = true
+			refused = "every node was taken out: by your tags nothing of the repository runs in production"
+			draft = repaired
+		default:
+			drawn, refused = baseline.CheckRepoMap(draft, baseline.MapCaps)
+		}
+		if refused != "" {
+			w.log.WarnContext(ctx, at+" refused ("+refused+")", slog.String("nodes", mapLabels(draft)))
 		}
 	}
 	switch {
+	case emptied && tries >= 1+mapRetries:
+		w.log.InfoContext(ctx, at+": nothing of it runs in production, still, declined")
+		keep = diagram.Sentinel()
 	case drawn != nil && diagram.Equal(drawn, keep), res.Map == nil && keep != nil:
 		w.log.InfoContext(ctx, at+": no change")
 	case drawn != nil:
@@ -1893,7 +1920,7 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		return w.finish(ctx, r, plan)
 	case tries < 1+mapRetries && r.Calls < w.base.Limits.MaxCalls:
 		w.log.InfoContext(ctx, fmt.Sprintf("%s: asked again, %d of %d", at, tries, mapRetries))
-		plan.RepoMap = &mapRetry{Draft: res.Map, Why: refused, Tries: tries}
+		plan.RepoMap = &mapRetry{Draft: draft, Why: refused, Tries: tries}
 		if err := encodeInto(r, plan); err != nil {
 			return err
 		}
@@ -2154,9 +2181,11 @@ func renderRepoMap(r store.BaselineRun, page store.Page, retry *mapRetry) string
 }
 
 // repoMap is the repository's current map as the JSON the model returns,
-// so the map step can say it stands. The sentinel is no map.
+// so the map step can say it stands. The sentinel is no map, nor one
+// stored before the tags: shown, the model would keep it as it stands.
 func repoMap(p store.Page) string {
-	if p.RepoMap == nil || diagram.IsSentinel(p.RepoMap) {
+	// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
+	if p.RepoMap == nil || diagram.IsSentinel(p.RepoMap) || diagram.Untagged(p.RepoMap) {
 		return "_None yet: draw it._"
 	}
 	j, err := json.Marshal(p.RepoMap)

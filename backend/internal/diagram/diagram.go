@@ -57,11 +57,13 @@ var (
 	KeyMarks   = []string{"PK", "FK", "UK"}
 )
 
-// The system map shows the system at runtime, in production (user,
-// 2026-11-02): the model tags each arrow with its layer and each box with
-// its stage, code keeps the runtime and library arrows and the boxes not of
-// another stage (baseline.RuntimeOnly). Code never reads a stage's name:
-// whatever a repository calls production is the model's to tell.
+// Both maps, the system's and a repository's, show what runs, in
+// production; build, CI, delivery and monitoring are no architecture
+// overview (user, 2026-11-02): the model tags each arrow with its layer and
+// each box with its stage, code keeps the runtime and library arrows and
+// the boxes not of another stage (baseline.RuntimeOnly). Code never reads a
+// stage's name: whatever a repository calls production is the model's to
+// tell.
 const (
 	LayerRuntime    = "runtime"
 	LayerLibrary    = "library"
@@ -74,8 +76,7 @@ const (
 	StageNone       = "none"
 )
 
-// Layers and Stages are the system map's tags, the schema's and the
-// check's.
+// Layers and Stages are the maps' tags, the schema's and the check's.
 var (
 	Layers = []string{LayerRuntime, LayerLibrary, LayerBuild, LayerDeploy, LayerMonitoring}
 	Stages = []string{StageProduction, StageOther, StageNone}
@@ -109,6 +110,25 @@ func Sentinel() *Diagram { return &Diagram{Kind: KindNone} }
 // IsSentinel reports whether d is the sentinel.
 func IsSentinel(d *Diagram) bool { return d != nil && d.Kind == KindNone }
 
+// Untagged reports whether d is a map stored before the tags: a flow no
+// node of which has a stage, which every node of one drawn since has. It
+// was drawn with every build, CI and stage box the filter now takes out,
+// so it reads as no map and is drawn again. A flow of no node is no map
+// ever stored, never untagged.
+//
+// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
+func Untagged(d *Diagram) bool {
+	if d == nil || d.Kind != KindFlow || len(d.Nodes) == 0 {
+		return false
+	}
+	for _, n := range d.Nodes {
+		if n.Stage != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // MapFits reports whether a project of this many source repositories can
 // have a system map: every repository a node, and room for at least one
 // node beside them. A larger project gets none.
@@ -133,8 +153,8 @@ type Diagram struct {
 }
 
 // Node is a flow's box. Shape: pill, step, decision, start, stop. Zone ""
-// is none. Stage: the system map's only, one of Stages; "" on every other
-// flow and on a map stored before it.
+// is none. Stage: the maps' only, one of Stages; "" on every other flow
+// and on a map stored before it.
 type Node struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -143,8 +163,8 @@ type Node struct {
 	Stage string `json:"stage,omitempty"`
 }
 
-// Edge is a flow's arrow. Head: end, both, none. Layer: the system map's
-// only, one of Layers; "" on every other flow and on a map stored before it.
+// Edge is a flow's arrow. Head: end, both, none. Layer: the maps' only, one
+// of Layers; "" on every other flow and on a map stored before it.
 type Edge struct {
 	From   string `json:"from"`
 	To     string `json:"to"`
@@ -332,7 +352,7 @@ func Equal(a, b *Diagram) bool {
 // a flow's nodes and zones by id, its edges by their ends and label, an
 // entity model's tables by id and relationships likewise. A table's
 // fields and a sequence's rows keep their order: it is what they say. The
-// system map's stage and layer are left out: what is left of the map after
+// maps' stage and layer are left out: what is left of the map after
 // the filter is drawn the same whatever its tags, so a retag is no change
 // (and a map stored before the tags no revision).
 func canonical(d Diagram) Diagram {
