@@ -102,6 +102,22 @@ func TestRedact_yamlBlockScalar(t *testing.T) {
 	}
 }
 
+func TestSecretKey(t *testing.T) {
+	for key, want := range map[string]bool{
+		"repoToken":         true,
+		"signing.password":  true,
+		"nexusApiKey":       true,
+		"tokenLibVersion":   false,
+		"jjwt.version":      false,
+		"group":             false,
+		"springBootVersion": false,
+	} {
+		if got := SecretKey(key); got != want {
+			t.Errorf("SecretKey(%q) = %v, want %v", key, got, want)
+		}
+	}
+}
+
 func TestRedact_keepsLineCount(t *testing.T) {
 	in := "a=1\npassword=x\nb=2\n"
 	got := string(Redact("x.properties", []byte(in)))

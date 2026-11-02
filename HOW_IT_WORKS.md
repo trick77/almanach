@@ -579,24 +579,27 @@ empty.
 
 A Gradle build is a script, so it is read, not run, and its files
 together: settings names the root project and includes the others, the
-group is taken as Gradle evaluates it (own top-level `group = "..."`,
-then the root's `subprojects { }`/`allprojects { }`, then
+group is taken as Gradle evaluates it (own `group = "..."`, then the
+root's `allprojects { }`/`subprojects { }`, the later one winning, then
 `gradle.properties`), and a project provides `maven:<group>:<name>`, so a
 Gradle build and a Maven one meet. No settings file or no group: nothing
 provided (the name would be the clone's folder). Required is what a
 dependency configuration names as a literal `"group:artifact:version"`,
 in map notation, or as a catalog accessor (`libs.x.y`, `libs.bundles.z`,
-only the libraries used); `$x` resolves from `gradle.properties` and
-plain assignments in the build files. A coordinate built of anything
+exactly, only the libraries used); `$x` resolves from `gradle.properties`
+and plain assignments in the build file. A coordinate built of anything
 else, a convention plugin's dependencies, a publication renaming its
 artifact: not seen, never guessed. A folder one down with its own
-settings file is its own build, without the root's catalog; `buildSrc`
-and a build `pluginManagement` includes are build logic and left out.
-Every body passes `redact.Text` first, since a version is shown: the
-credential shapes, not `redact.File`'s key rules, which read a catalog
-alias or a property name (`jjwt-api`, `tokenLibVersion`) as a secret and
-would blank the coordinate. Only coordinates and versions leave the
-parser, never a body. One row per source
+settings file is its own build, with its own `gradle/libs.versions.toml`.
+Build logic is no use of the repository's and left out: `buildSrc`, a
+build `pluginManagement` includes, `buildscript { }`; so is
+`constraints { }`, which only pins a version. Every body passes
+`redact.Text` first, since a version is shown: the credential shapes, not
+`redact.File`'s key rules, which read a catalog alias or a property name
+(`jjwt-api`, `tokenLibVersion`) as a secret and would blank the
+coordinate. Only coordinates and versions leave the parser, never a body,
+and no `$x` resolves from a key those rules call secret
+(`redact.SecretKey`; a version-named key is none). One row per source
 repository in `repo_manifests`, replaced on a new head, gone with the row.
 
 The edges are never stored. `store.Dependencies` joins requires against

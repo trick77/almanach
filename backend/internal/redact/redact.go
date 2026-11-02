@@ -346,6 +346,15 @@ func leadingSpace(line string) string {
 	return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 }
 
+// SecretKey reports a key whose value is a credential by the key rules: a
+// secret word or segment in it, unless its last segment names an
+// identifier (`tokenLibVersion`, `jwt.version` name versions). For a value
+// read out of a file whole, not line by line (a build property a
+// coordinate names).
+func SecretKey(key string) bool {
+	return isSecretKey(key) && !isVersionKey(key)
+}
+
 // keySeparators is built once: isSecretKey runs for every key line of every
 // configuration file indexed.
 var keySeparators = strings.NewReplacer("-", "", "_", "")

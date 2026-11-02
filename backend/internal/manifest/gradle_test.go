@@ -14,7 +14,9 @@ func TestIs_Gradle(t *testing.T) {
 		"gradle.properties":                        true,
 		"gradle/libs.versions.toml":                true,
 		"libs.versions.toml":                       false,
-		"service/gradle/libs.versions.toml":        false,
+		"service/gradle/libs.versions.toml":        true,
+		"a/b/gradle/libs.versions.toml":            false,
+		"service/conf/libs.versions.toml":          false,
 		"a/b/build.gradle":                         false,
 		"gradle/wrapper/gradle-wrapper.properties": false,
 	} {
@@ -331,6 +333,74 @@ func TestParse_GradleBuildLogic(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// buildscript { } is the build's own classpath and constraints { } only pin
+// versions: neither is required. A Kotlin-quoted configuration counts.
+func TestParse_GradleExcludedBlocks(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"build.gradle.kts": []byte(`buildscript {
+    dependencies { classpath("com.android.tools.build:gradle:8.0.0") }
+}
+dependencies {
+    constraints {
+        implementation("a.b:pinned:9")
+    }
+    "implementation"("a.b:quoted:1")
+    implementation("a.b:real:2")
+}
+`),
+	})
+	want := []Dep{{Coord: "maven:a.b:quoted", Version: "1"}, {Coord: "maven:a.b:real", Version: "2"}}
+	if !reflect.DeepEqual(got.Requires, want) {
+		t.Fatalf("Requires = %+v, want %+v", got.Requires, want)
+	}
+}
+
+// A group set in a one-line block counts; of allprojects and subprojects
+// the later one wins for a subproject, of own and allprojects for the
+// root.
+func TestParse_GradleGroupOrder(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle": []byte("rootProject.name = 'svc'\ninclude 'app'\n"),
+		"build.gradle":    []byte("group = 'com.early'\nsubprojects { group = 'old' }\nallprojects { group = 'com.x'; version = '1' }\n"),
+	})
+	want := []string{"maven:com.x:app", "maven:com.x:svc"}
+	if !reflect.DeepEqual(got.Provides, want) {
+		t.Fatalf("Provides = %v, want %v", got.Provides, want)
+	}
+}
+
+// A property under a secret key is never resolved into a version; a
+// version-named one is.
+func TestParse_GradleSecretProperty(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"gradle.properties": []byte("repoToken=s3cr3tvalue\ntokenLibVersion=1.2.3\n"),
+		"build.gradle":      []byte("dependencies {\n implementation \"a.b:c:$repoToken\"\n implementation \"a.b:token-lib:$tokenLibVersion\"\n}\n"),
+	})
+	want := []Dep{{Coord: "maven:a.b:c", Version: ""}, {Coord: "maven:a.b:token-lib", Version: "1.2.3"}}
+	if !reflect.DeepEqual(got.Requires, want) {
+		t.Fatalf("Requires = %+v, want %+v", got.Requires, want)
+	}
+}
+
+// Of a Groovy and a Kotlin build file in one folder the Groovy one counts,
+// every time; a nested build reads its own catalog; a rich version shows
+// prefer.
+func TestParse_GradleOneFileNestedCatalog(t *testing.T) {
+	files := map[string][]byte{
+		"build.gradle":                  []byte("ext.v = '1'\ndependencies { implementation \"a.b:c:$v\" }\n"),
+		"build.gradle.kts":              []byte("val v = \"2\"\ndependencies { implementation(\"a.b:kts:$v\") }\n"),
+		"jvm/settings.gradle.kts":       []byte("rootProject.name = \"jvm\"\n"),
+		"jvm/gradle/libs.versions.toml": []byte("[libraries]\nwire = { module = \"a.b:wire\", version = { strictly = \"[1.0,2.0[\", prefer = \"1.5\" } }\n"),
+		"jvm/build.gradle.kts":          []byte("dependencies { implementation(libs.wire) }\n"),
+	}
+	want := []Dep{{Coord: "maven:a.b:c", Version: "1"}, {Coord: "maven:a.b:wire", Version: "1.5"}}
+	for range 20 {
+		if got := Parse(files); !reflect.DeepEqual(got.Requires, want) {
+			t.Fatalf("Requires = %+v, want %+v", got.Requires, want)
+		}
 	}
 }
 

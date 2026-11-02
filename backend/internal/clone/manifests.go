@@ -59,8 +59,8 @@ func (p *Poller) manifestsDue(ctx context.Context, j store.SyncJob, head string)
 // key rules for .properties and .toml read a catalog alias or a property
 // as a secret (`jjwt-api` holds `jsonwebtoken:`, `tokenLibVersion`) and
 // would blank the coordinate itself. Only coordinates and versions leave
-// Parse, never a body, so a value under a secret key goes nowhere unless a
-// coordinate names it.
+// Parse, never a body, and Parse resolves no `$x` from a key those rules
+// call secret (redact.SecretKey).
 func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.Read, error) {
 	entries, err := p.Manifests.Reads.ListEntries(ctx, dir, head)
 	if err != nil {

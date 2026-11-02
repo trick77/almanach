@@ -5,34 +5,43 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/trick77/almanach/internal/redact"
 )
 
 // Gradle: a build's files read together, since a build file alone does
 // not say what its project is called. settings.gradle(.kts) names the root
 // project (`rootProject.name`) and includes the others. A project's group
-// is, as Gradle evaluates it: its own build file's top-level
-// `group = "..."`, else the root build file's `subprojects { }` (for a
-// subproject) or `allprojects { }` one, else its folder's gradle.properties
+// is, as Gradle evaluates it: its own build file's `group = "..."`; else,
+// whichever comes last, the root build file's `allprojects { }` or (for a
+// subproject) `subprojects { }` one; else its folder's gradle.properties
 // `group`, else the root folder's. Its coordinate is maven:<group>:<name>,
 // as Gradle publishes it, so a Gradle build and a Maven one meet; a
 // publication renaming its artifactId is not seen. A build with no
 // settings file, or no group, provides nothing: its name would be the
-// clone's folder, its coordinate a guess.
+// clone's folder, its coordinate a guess. A folder holding both a Groovy
+// and a Kotlin file of one kind: the Groovy one counts, as with Gradle.
 //
 // Requires are what a dependency configuration names: literal
 // "group:artifact[:version]" strings, the map notation (group, name,
 // version, in any order), or a version catalog accessor (`libs.x.y`,
-// `libs.bundles.z`) resolved in gradle/libs.versions.toml, exactly. `$x`
-// and `${x}` are resolved from gradle.properties and the build files'
-// plain assignments (`ext`, `val`, `set(...)`, `extra[...]`). buildSrc and
-// a build pluginManagement includes are build logic, a plugin's classpath,
-// not what the repository uses: left out. Build files are scripts: what
-// only running one would tell (a coordinate built of an unresolved
-// variable, a convention plugin's dependencies) is left out, never
-// guessed.
+// `libs.bundles.z`) resolved exactly in the build's gradle/libs.versions.toml.
+// `$x` and `${x}` are resolved from gradle.properties and the build file's
+// plain assignments (`ext`, `val`, `set(...)`, `extra[...]`), never from a
+// key the redact key rules call secret: a version is shown. Build logic is
+// a plugin's classpath, not what the repository uses, and left out:
+// buildSrc, a build pluginManagement includes, buildscript { }. So is a
+// constraints { } entry, which pins a version and adds nothing. Build
+// files are scripts: what only running one would tell (a coordinate built
+// of an unresolved variable, a convention plugin's dependencies) is left
+// out, never guessed.
 
-// gradleCatalog is the version catalog Gradle reads without being told.
+// gradleCatalog is the version catalog Gradle reads without being told,
+// in a build's root folder.
 const gradleCatalog = "gradle/libs.versions.toml"
+
+// catalogPath is the catalog of the build rooted in folder d.
+func catalogPath(d string) string { return path.Join(d, gradleCatalog) }
 
 func gradleBuild(base string) bool { return base == "build.gradle" || base == "build.gradle.kts" }
 func gradleSettings(base string) bool {
@@ -43,8 +52,9 @@ var (
 	// A Groovy or Kotlin string: double quoted with `${...}` taken whole
 	// (it may hold quotes of its own), or single quoted.
 	gradleStr = `(?:"((?:\$\{[^}\n]*\}|[^"\n])*)"|'([^'\n]*)')`
-	// A configuration name, then (optionally) `(` and platform(...).
-	gradleConf = `\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(?\s*(?:(?:platform|enforcedPlatform|testFixtures)[ \t]*\(\s*)?`
+	// A configuration name, bare or (Kotlin) quoted, then (optionally) `(`
+	// and platform(...). Groups 1 and 2: the name.
+	gradleConf = `(?:"([A-Za-z_][A-Za-z0-9_]*)"|\b([A-Za-z_][A-Za-z0-9_]*))[ \t]*\(?\s*(?:(?:platform|enforcedPlatform|testFixtures)[ \t]*\(\s*)?`
 
 	// One string or several, comma separated (Groovy lists them in one call).
 	reGradleCoord = regexp.MustCompile(gradleConf + `(` + gradleStr + `(?:[ \t]*,\s*` + gradleStr + `)*)`)
@@ -52,9 +62,10 @@ var (
 	reGradleMap      = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(?\s*((?:\b(?:group|name|version|classifier|ext|configuration)[ \t]*[:=][ \t]*` + gradleStr + `[ \t]*,?\s*)+)`)
 	reGradleMapEntry = regexp.MustCompile(`\b(group|name|version)[ \t]*[:=][ \t]*` + gradleStr)
 	reGradleCatalog  = regexp.MustCompile(gradleConf + `libs\.([A-Za-z0-9_.]+)`)
-	// A group assignment: the whole line, so a named argument
+	// A group assignment: a statement of its own (line start, `{` or `;`
+	// before it; `;`, `}` or line end after), so a named argument
 	// (`group = "x",`) inside a dependency is not one.
-	reGradleGroup = regexp.MustCompile(`(?m)^[ \t]*(?:project\.)?group[ \t]*=?[ \t]*` + gradleStr + `[ \t]*;?[ \t]*$`)
+	reGradleGroup = regexp.MustCompile(`(?m)(?:^|[{;])[ \t]*(?:project\.)?group[ \t]*=?[ \t]*` + gradleStr + `[ \t]*(?:[;}]|$)`)
 	reRootName    = regexp.MustCompile(`rootProject\.name[ \t]*=[ \t]*` + gradleStr)
 	reInclude     = regexp.MustCompile(`\binclude\b[ \t]*\(?((?:\s*` + gradleStr + `[ \t]*,?)+)`)
 	reIncludeBld  = regexp.MustCompile(`\bincludeBuild\b[ \t]*\(?[ \t]*` + gradleStr)
@@ -76,9 +87,13 @@ var (
 var gradleConfs = map[string]bool{
 	"implementation": true, "api": true, "compileOnly": true, "runtimeOnly": true,
 	"annotationProcessor": true, "compile": true, "runtime": true, "testCompile": true,
-	"testRuntime": true, "providedCompile": true, "providedRuntime": true, "classpath": true,
+	"testRuntime": true, "providedCompile": true, "providedRuntime": true,
 	"developmentOnly": true, "kapt": true, "ksp": true, "mavenBom": true,
 }
+
+// excludedBlocks hold no dependency of the repository's: buildscript's is
+// the build's own classpath, constraints only pin versions.
+var excludedBlocks = map[string]bool{"buildscript": true, "constraints": true}
 
 var gradleConfSuffixes = []string{"Implementation", "Api", "CompileOnly", "RuntimeOnly", "AnnotationProcessor"}
 
@@ -116,9 +131,10 @@ func dirOf(p string) string {
 }
 
 type gradleDir struct {
-	props    map[string]string // gradle.properties
-	vars     map[string]string // the build file's plain assignments
+	props    map[string]string // gradle.properties, secret keys left out
+	vars     map[string]string // the build file's plain assignments, same
 	build    string            // the build file, comments out
+	blocks   blockIndex        // the build file's blocks
 	settings string            // the settings file, comments out
 	hasSet   bool
 }
@@ -134,7 +150,7 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		}
 		return dirs[d]
 	}
-	var cat *catalog
+	has := func(p string) bool { _, ok := files[p]; return ok }
 	builds := map[string]string{}
 	for p, body := range files {
 		d := dirOf(p)
@@ -142,26 +158,38 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 			continue
 		}
 		switch b := path.Base(p); {
-		case p == gradleCatalog:
-			cat = readCatalog(body)
 		case b == "gradle.properties":
-			dir(d).props = properties(body)
+			dir(d).props = plainValues(properties(body))
 		case gradleBuild(b):
+			// Groovy's first, as Gradle looks for it first.
+			if b == "build.gradle.kts" && has(path.Join(d, "build.gradle")) {
+				continue
+			}
 			text := stripComments(body)
 			builds[p] = text
 			g := dir(d)
-			g.build += text + "\n"
-			for k, v := range assignments(text) {
-				g.vars[k] = v
-			}
+			g.build, g.blocks, g.vars = text, indexBlocks(text), plainValues(assignments(text))
 		case gradleSettings(b):
+			if b == "settings.gradle.kts" && has(path.Join(d, "settings.gradle")) {
+				continue
+			}
 			g := dir(d)
-			g.settings += stripComments(body) + "\n"
-			g.hasSet = true
+			g.settings, g.hasSet = stripComments(body), true
 		}
 	}
 	if len(dirs) == 0 {
 		return nil, nil
+	}
+	cats := map[string]*catalog{}
+	catOf := func(r string) *catalog {
+		c, ok := cats[r]
+		if !ok {
+			if body, found := files[catalogPath(r)]; found {
+				c = readCatalog(body)
+			}
+			cats[r] = c
+		}
+		return c
 	}
 	// A folder one down is its own build when it has a settings file;
 	// otherwise it is (at most) a project of the root build.
@@ -199,27 +227,37 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		propsMemo[d] = out
 		return out
 	}
+	groupsMemo := map[string]groups{}
+	groupsOf := func(d string) groups {
+		gs, ok := groupsMemo[d]
+		if !ok {
+			gs = buildGroups(dirs[d].build, dirs[d].blocks, propsOf(d))
+			groupsMemo[d] = gs
+		}
+		return gs
+	}
 	// groupOf is the group of the project in folder pd of the build rooted
-	// at r: its own, the root build file's subprojects/allprojects one, its
+	// at r. The root project: its own or allprojects', whichever is last. A
+	// subproject: its own (its script runs after the root's), else the
+	// root's allprojects or subprojects one, whichever is last. Then the
 	// folder's gradle.properties, the root folder's.
 	groupOf := func(r, pd string) string {
-		root := buildGroups(dirs[r].build, propsOf(r))
-		var own groups
+		root := groupsOf(r)
+		var g string
 		var props map[string]string
-		if g := dirs[pd]; g != nil && rootOf(pd) == r {
-			if pd != r {
-				own = buildGroups(g.build, propsOf(pd))
-			} else {
-				own = root
+		if pd == r {
+			g = latest(root.own, root.all)
+			props = dirs[r].props
+		} else {
+			if sub := dirs[pd]; sub != nil && rootOf(pd) == r {
+				g = groupsOf(pd).own.v
+				props = sub.props
 			}
-			props = g.props
+			if g == "" {
+				g = latest(root.all, root.sub)
+			}
 		}
-		cands := []string{own.own}
-		if pd != r {
-			cands = append(cands, root.sub)
-		}
-		cands = append(cands, root.all, props["group"], dirs[r].props["group"])
-		for _, c := range cands {
+		for _, c := range []string{g, props["group"], dirs[r].props["group"]} {
 			if c != "" {
 				return c
 			}
@@ -249,11 +287,7 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	reqs := map[string][]Dep{}
 	for p, text := range builds {
 		d := dirOf(p)
-		var c *catalog
-		if rootOf(d) == "" {
-			c = cat
-		}
-		reqs[p] = buildDeps(text, propsOf(d), c)
+		reqs[p] = buildDeps(text, dirs[d].blocks, propsOf(d), catOf(rootOf(d)))
 	}
 	sort.Strings(prov)
 	return prov, reqs
@@ -269,9 +303,10 @@ func buildLogic(files map[string][]byte) map[string]bool {
 			continue
 		}
 		text := stripComments(body)
+		idx := indexBlocks(text)
 		for _, m := range reIncludeBld.FindAllStringSubmatchIndex(text, -1) {
 			in := false
-			for _, b := range blocks(text, m[0]) {
+			for _, b := range idx.at(m[0]) {
 				in = in || b == "pluginManagement"
 			}
 			if !in {
@@ -287,19 +322,30 @@ func buildLogic(files map[string][]byte) map[string]bool {
 }
 
 // buildDeps is what one build file's dependency configurations name, in
-// the order written.
-func buildDeps(text string, props map[string]string, cat *catalog) []Dep {
+// the order written, but in an excluded block.
+func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalog) []Dep {
 	type hit struct {
 		at  int
 		dep Dep
 	}
+	counts := func(m []int, name string) bool {
+		if !gradleConfName(name) {
+			return false
+		}
+		for _, b := range idx.at(m[0]) {
+			if excludedBlocks[b] {
+				return false
+			}
+		}
+		return true
+	}
 	var hits []hit
 	for _, m := range reGradleCoord.FindAllStringSubmatchIndex(text, -1) {
 		s := subs(text, m)
-		if !gradleConfName(s[1]) {
+		if !counts(m, s[1]+s[2]) {
 			continue
 		}
-		for n, q := range reQuoted.FindAllStringSubmatch(s[2], -1) {
+		for n, q := range reQuoted.FindAllStringSubmatch(s[3], -1) {
 			if d, ok := coordString(resolve(strMatch(q, 1), props)); ok {
 				hits = append(hits, hit{m[0] + n, d})
 			}
@@ -307,7 +353,7 @@ func buildDeps(text string, props map[string]string, cat *catalog) []Dep {
 	}
 	for _, m := range reGradleMap.FindAllStringSubmatchIndex(text, -1) {
 		s := subs(text, m)
-		if !gradleConfName(s[1]) {
+		if !counts(m, s[1]) {
 			continue
 		}
 		e := map[string]string{}
@@ -321,10 +367,10 @@ func buildDeps(text string, props map[string]string, cat *catalog) []Dep {
 	if cat != nil {
 		for _, m := range reGradleCatalog.FindAllStringSubmatchIndex(text, -1) {
 			s := subs(text, m)
-			if !gradleConfName(s[1]) {
+			if !counts(m, s[1]+s[2]) {
 				continue
 			}
-			for _, d := range cat.lookup(s[2]) {
+			for _, d := range cat.lookup(s[3]) {
 				hits = append(hits, hit{m[0], d})
 			}
 		}
@@ -393,39 +439,64 @@ func cleanVersion(v string) string {
 // groups is a build file's group assignments by where they stand: top
 // level (the project's own), in allprojects { }, in subprojects { }.
 // Anywhere else (a publication, a project(":x") { } block) is none of these.
-type groups struct{ own, all, sub string }
+// Each is the last assignment of its kind, with where it stands.
+type groups struct{ own, all, sub assigned }
 
-func buildGroups(text string, props map[string]string) groups {
+type assigned struct {
+	v  string
+	at int
+}
+
+// latest is the value assigned last among those given, "" for none.
+func latest(as ...assigned) string {
+	best := assigned{at: -1}
+	for _, a := range as {
+		if a.v != "" && a.at > best.at {
+			best = a
+		}
+	}
+	return best.v
+}
+
+func buildGroups(text string, idx blockIndex, props map[string]string) groups {
 	var out groups
 	for _, m := range reGradleGroup.FindAllStringSubmatchIndex(text, -1) {
 		g := strings.TrimSpace(resolve(strMatch(subs(text, m), 1), props))
 		if g == "" || strings.Contains(g, "$") {
 			continue
 		}
-		var slot *string
-		switch b := blocks(text, m[0]); {
-		case len(b) == 0:
-			slot = &out.own
-		case len(b) == 1 && b[0] == "allprojects":
-			slot = &out.all
-		case len(b) == 1 && b[0] == "subprojects":
-			slot = &out.sub
-		default:
-			continue
+		// Where the string stands: the match may start at the `{` before it.
+		at := m[2]
+		if at < 0 {
+			at = m[4]
 		}
-		if *slot == "" {
-			*slot = g
+		switch b := idx.at(at); {
+		case len(b) == 0:
+			out.own = assigned{g, at}
+		case len(b) == 1 && b[0] == "allprojects":
+			out.all = assigned{g, at}
+		case len(b) == 1 && b[0] == "subprojects":
+			out.sub = assigned{g, at}
 		}
 	}
 	return out
 }
 
-// blocks is the names of the blocks open at pos, outermost first: the
-// identifier just before each `{` (allprojects, pluginManagement), "" for
-// one with none. Strings are skipped, so a `{` in one opens nothing.
-func blocks(text string, pos int) []string {
-	var stack []string
-	for i := 0; i < pos && i < len(text); {
+// blockIndex is a script's braces in order, so the blocks open at a
+// position are read without scanning the text again.
+type blockIndex []blockEvent
+
+type blockEvent struct {
+	at   int
+	open bool
+	name string // an open's: the identifier just before it, "" for none
+}
+
+// indexBlocks indexes a script's braces; strings are skipped, so a `{` in
+// one opens nothing.
+func indexBlocks(text string) blockIndex {
+	var out blockIndex
+	for i := 0; i < len(text); {
 		switch text[i] {
 		case '"', '\'':
 			i = stringEnd(text, i)
@@ -436,18 +507,46 @@ func blocks(text string, pos int) []string {
 				j--
 			}
 			k := j
-			for k > 0 && (bareKeyChar(text[k-1]) && text[k-1] != '-') {
+			for k > 0 && bareKeyChar(text[k-1]) && text[k-1] != '-' {
 				k--
 			}
-			stack = append(stack, text[k:j])
+			out = append(out, blockEvent{at: i, open: true, name: text[k:j]})
 		case '}':
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-			}
+			out = append(out, blockEvent{at: i})
 		}
 		i++
 	}
+	return out
+}
+
+// at is the names of the blocks open at pos, outermost first
+// (allprojects, pluginManagement).
+func (b blockIndex) at(pos int) []string {
+	var stack []string
+	for _, e := range b {
+		if e.at >= pos {
+			break
+		}
+		switch {
+		case e.open:
+			stack = append(stack, e.name)
+		case len(stack) > 0:
+			stack = stack[:len(stack)-1]
+		}
+	}
 	return stack
+}
+
+// plainValues is a property map without the values the redact key rules
+// call secret: a `$x` naming one stays unresolved, its version empty,
+// rather than show a credential.
+func plainValues(m map[string]string) map[string]string {
+	for k := range m {
+		if redact.SecretKey(k) {
+			delete(m, k)
+		}
+	}
+	return m
 }
 
 // includes is every project path a settings file includes.
@@ -600,7 +699,7 @@ type catalog struct {
 // readCatalog reads gradle/libs.versions.toml; nil when it does not parse.
 // A library is "group:artifact[:version]" or a table of module (or group
 // and name) and version: a string, a `ref` into [versions], or a rich
-// version (require, strictly, prefer).
+// version (prefer, require, strictly).
 func readCatalog(body []byte) *catalog {
 	doc, err := parseTOML(body)
 	if err != nil {
@@ -616,7 +715,9 @@ func readCatalog(body []byte) *catalog {
 			if ref, ok := t["ref"].(string); ok && depth == 0 {
 				return versionOf(versions[ref], depth+1)
 			}
-			for _, k := range []string{"require", "strictly", "prefer"} {
+			// The version Gradle picks when nothing else asks: prefer,
+			// then require; strictly is often a range.
+			for _, k := range []string{"prefer", "require", "strictly"} {
 				if s, ok := t[k].(string); ok {
 					return s
 				}

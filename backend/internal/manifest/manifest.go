@@ -47,11 +47,13 @@ type Read struct {
 // root or one level down: deeper ones are copies (a checked-out corpus, a
 // fixture) and would make the repository provide what it only carries.
 func Is(p string) bool {
+	// A build's catalog sits in its gradle/ folder: the root's, or a build's
+	// one down (read only for a folder that is a build, see gradle).
+	if p == gradleCatalog || strings.Count(p, "/") == 2 && strings.HasSuffix(p, "/"+gradleCatalog) {
+		return true
+	}
 	if strings.Count(p, "/") > 1 {
 		return false
-	}
-	if p == gradleCatalog {
-		return true
 	}
 	switch b := path.Base(p); b {
 	case "go.mod", "pom.xml", "package.json", "gradle.properties":
