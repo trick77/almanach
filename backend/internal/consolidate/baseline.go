@@ -42,9 +42,9 @@ type RunStore interface {
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
-	DepartedRepos(ctx context.Context, key string) ([]store.DepartedRepo, error)
-	DepartureDue(ctx context.Context, key string, since time.Time) (bool, error)
-	PRRepos(ctx context.Context, key string, prKeys []string) (map[string]string, error)
+	DepartedRepos(ctx context.Context, key string) ([]string, error)
+	DepartureDue(ctx context.Context, key string) (bool, error)
+	SettleDepartures(ctx context.Context, key string, slugs []string) error
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -1233,7 +1233,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departedSlugs(departed),
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed,
 		w.limits, nil))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
@@ -1242,6 +1242,10 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if !okCall {
 		return w.skipProject(ctx, r, plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
 	}
+	// The call answered with the departed in its prompt: a departure still
+	// due (its run's call failed) is taken out here. A retried write asks
+	// with the same prompt.
+	w.settle(ctx, r.ProjectKey, departed)
 	var rev *store.NewRevision
 	if res.Description == nil {
 		// No change carries the text and the map forward; a project with no
@@ -1333,7 +1337,7 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 	}
 	// A deactivation no departure run took out of the page (it failed): the
 	// fold does, its prompt naming the departed.
-	due, err := w.base.Store.DepartureDue(ctx, r.ProjectKey, page.UpdatedAt)
+	due, err := w.base.Store.DepartureDue(ctx, r.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: departure read failed, drain paused", logging.Err(err))
 		return false, nil, errStop
@@ -1647,7 +1651,7 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if err != nil {
 		return err
 	}
-	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departedSlugs(departed), w.limits, retry)
+	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed, w.limits, retry)
 	res := w.base.Describer.ProjectMap(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeProjectMap, res.Call)
 	if errors.Is(err, errStop) {

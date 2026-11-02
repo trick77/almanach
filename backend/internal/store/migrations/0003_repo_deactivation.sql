@@ -8,6 +8,11 @@
 -- the listing drops it).
 ALTER TABLE source_repos ADD COLUMN deactivated_at TEXT CHECK (deactivated_at GLOB '????-??-??T??:??:??.?????????Z');
 ALTER TABLE source_repos ADD COLUMN reactivated_at TEXT CHECK (reactivated_at GLOB '????-??-??T??:??:??.?????????Z');
+-- departure_due: the project page may still name the deactivated
+-- repository, until a call that had it in its prompt answered. Set by the
+-- deactivation of a project with a page, cleared by that call (the
+-- departure run's, or any project step's after a failed one).
+ALTER TABLE source_repos ADD COLUMN departure_due INTEGER NOT NULL DEFAULT 0 CHECK (departure_due IN (0, 1));
 
 -- A deactivation queues a run of trigger departure on the repository that
 -- left: no reading, only the project step, which takes the repository out

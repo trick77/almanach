@@ -218,9 +218,11 @@ func (f *fakeSources) ActivateSourceRepo(_ context.Context, key, slug string) er
 	return f.setActive(key, slug, true)
 }
 
-func (f *fakeSources) RepoRunStarted(_ context.Context, _, slug string) (bool, error) {
-	rr, ok := f.runs[slug]
-	return ok && rr.Last.Open() && rr.Last.State != store.RunQueued, nil
+func (f *fakeSources) DropQueuedRuns(_ context.Context, _, slug string) error {
+	if rr, ok := f.runs[slug]; ok && rr.Last.Open() && rr.Last.State != store.RunQueued {
+		return store.ErrRunOpen
+	}
+	return nil
 }
 
 func (f *fakeSources) setActive(key, slug string, on bool) error {

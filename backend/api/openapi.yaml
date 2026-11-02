@@ -733,9 +733,9 @@ paths:
         adds it back. At once: its clone is removed, its queued runs and
         manifests go, its notes are ignored, its page leaves the wiki. The
         project page is the worker's: a departure run, queued when the project
-        has a page, takes the repository off the system map, drops the
-        statements only it taught and has the model rewrite what still names
-        it. Deactivating a deactivated repository changes nothing.
+        has a page, takes the repository off the system map and has the model
+        rewrite what still names it. Deactivating a deactivated repository
+        changes nothing.
       operationId: deactivateSourceRepo
       parameters:
         - $ref: "#/components/parameters/projectKey"

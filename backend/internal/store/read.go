@@ -164,7 +164,7 @@ func (s *Store) SingleRepos(ctx context.Context) (map[string]RepoRow, error) {
 		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
 		       (SELECT COUNT(*) FROM notes n WHERE n.repo_id = r.id),
 		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.repo_id = r.id),
-		       (SELECT COUNT(*) FROM source_repos x WHERE x.project_id = s.project_id AND x.deactivated_at IS NULL)
+		       (SELECT COUNT(*) FROM source_repos sr WHERE sr.project_id = s.project_id AND `+activeRow+`)
 		  FROM sources s
 		  JOIN projects p ON p.id = s.project_id
 		  JOIN source_repos sr ON sr.project_id = s.project_id AND `+activeRow+`

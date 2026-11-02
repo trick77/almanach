@@ -1513,22 +1513,23 @@ baseline step's patch never is: its bad items are left out one by one (see
   seconds (its own repository syncing) defers the step to the next drain,
   never fails the run.
 - A departure run (trigger `departure`, queued by a deactivation) reads
-  nothing and is one step. The code first: the departed repositories off
-  the system map (as a carried map), every project statement whose sources
-  are all theirs dropped (a baseline commit by its repository, a PR by the
-  repository its note was for); a statement with no source, or one the code
-  cannot place, stays; a baseline source names the slug of its day, so
-  every name the repository ever had counts. Then one project call
-  (`ProjectDeparture`) rewrites what still names them, the patch rules of
-  the project step holding (a PR-taught statement is edited, never
-  dropped), the map always the code's. Taking a repository out teaches
+  nothing and is one step. The code takes the departed repositories off
+  the system map (as a carried map: a node is a slug, the code's to
+  decide). The statements and the summary are one project call's
+  (`ProjectDeparture`): a baseline source says which run wrote a project
+  statement, never what it is about, so no source decides a drop. The
+  patch rules of the project step hold (a PR-taught statement is edited,
+  never dropped), the map stays the code's. Taking a repository out teaches
   nothing: an edited statement keeps the sources it had, one the call adds
-  is left out. One revision; a failed call, no call left or a project left
-  with fewer than two repositories writes the code's part alone. It
-  documents nothing and counts in no streak: `DocumentedRun` and `LastRun`
-  never return it. A departure no done run took out (it failed) makes the
-  next project step fold the page whatever a reconcile would skip, its
-  prompt naming the departed.
+  is left out. One revision. It documents nothing and counts in no streak:
+  `DocumentedRun` and `LastRun` never return it.
+- `departure_due`, set by a deactivation of a project with a page, holds
+  until a call with the repository in its prompt answered: the departure
+  run's, or, when that failed or had no call left, the next project step
+  of any repository, which a quiet reconcile then no longer skips. One
+  answered call settles only the repositories it named; a departure run
+  that finds nothing due (an earlier call took it out) makes no call. A
+  project left with fewer than two repositories settles without one.
 
 ### Startup and operations
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/trick77/almanach/internal/manifest"
 )
@@ -142,17 +141,26 @@ func TestDeactivateSourceRepo_DepartureRun(t *testing.T) {
 	if err != nil || !ok || next.Trigger != TriggerDeparture || next.Slug != "svc" || next.Commit != "aaa" || string(next.Plan) != `{"departure":true}` {
 		t.Fatalf("the departure run: %+v ok=%v err=%v", next, ok, err)
 	}
-	if departed, _ := s.DepartedRepos(ctx, "tools"); !reflect.DeepEqual(departed, []DepartedRepo{{Slug: "svc", Names: []string{"svc"}}}) {
+	if departed, _ := s.DepartedRepos(ctx, "tools"); !reflect.DeepEqual(departed, []string{"svc"}) {
 		t.Errorf("DepartedRepos = %v", departed)
 	}
-	long := time.Now().Add(-time.Hour)
-	if due, err := s.DepartureDue(ctx, "tools", long); err != nil || !due {
-		t.Errorf("DepartureDue before the run: %v %v, want due", due, err)
+	// Due until a call that named it answered; a settle names only its own.
+	if due, err := s.DepartureDue(ctx, "tools"); err != nil || !due {
+		t.Errorf("DepartureDue before the call: %v %v, want due", due, err)
+	}
+	if err := s.SettleDepartures(ctx, "tools", []string{"web"}); err != nil {
+		t.Fatal(err)
+	}
+	if due, _ := s.DepartureDue(ctx, "tools"); !due {
+		t.Error("a settle of another repository settled svc")
+	}
+	if err := s.SettleDepartures(ctx, "tools", []string{"svc"}); err != nil {
+		t.Fatal(err)
+	}
+	if due, _ := s.DepartureDue(ctx, "tools"); due {
+		t.Error("DepartureDue after its settle")
 	}
 	finish(t, s, next, RunDone)
-	if due, _ := s.DepartureDue(ctx, "tools", long); due {
-		t.Error("DepartureDue after the done departure run")
-	}
 	if doc, ok, _ := s.DocumentedRun(ctx, "tools", "svc"); !ok || doc.ID != documented.ID {
 		t.Errorf("DocumentedRun = %+v, want the reading run %d, never the departure", doc, documented.ID)
 	}
@@ -236,19 +244,43 @@ func TestApplyListing_KeepsADeactivatedRepositoryOut(t *testing.T) {
 	}
 }
 
-// PRRepos places each pull request by the repository its note was for.
-func TestPRRepos(t *testing.T) {
+// A deactivation drops the queued runs before its clone goes; a started run
+// refuses it. A repository never cloned nor documented is due, with no
+// departure run to queue.
+func TestDropQueuedRuns_AndNoCommit(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	sourceRepo(t, s, "tools", "svc")
 	sourceRepo(t, s, "tools", "web")
-	ingest(t, s, noteFor("tools", "svc", 1))
-	ingest(t, s, noteFor("tools", "web", 2))
-	got, err := s.PRRepos(ctx, "tools", []string{"tools/svc#1", "tools/web#2", "tools/svc#9"})
-	if err != nil {
+	projectPage(t, s, "tools")
+	queued := enqueue(t, s, "tools", "svc")
+	if err := s.DropQueuedRuns(ctx, "tools", "svc"); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got, map[string]string{"tools/svc#1": "svc", "tools/web#2": "web"}) {
-		t.Fatalf("PRRepos = %v", got)
+	if _, ok, _ := s.RunByID(ctx, queued.ID); ok {
+		t.Error("the queued run is still there")
+	}
+	started := enqueue(t, s, "tools", "svc")
+	started.State = RunCataloguing
+	if ok, err := s.SaveRun(ctx, started); err != nil || !ok {
+		t.Fatal(err)
+	}
+	if err := s.DropQueuedRuns(ctx, "tools", "svc"); !errors.Is(err, ErrRunOpen) {
+		t.Errorf("under a started run: %v, want ErrRunOpen", err)
+	}
+	if err := s.DropQueuedRuns(ctx, "tools", "nope"); !errors.Is(err, ErrNoRepo) {
+		t.Errorf("unknown: %v, want ErrNoRepo", err)
+	}
+
+	queuedDeparture, err := s.DeactivateSourceRepo(ctx, "tools", "web")
+	if err != nil || queuedDeparture {
+		t.Fatalf("never cloned: queued=%v err=%v, want no run", queuedDeparture, err)
+	}
+	if due, _ := s.DepartureDue(ctx, "tools"); !due {
+		t.Error("a repository never cloned is not due")
+	}
+	rows, _ := s.Sources(ctx)
+	if rows[0].Inactive != 1 || rows[0].Missing != 0 {
+		t.Errorf("counts = %+v", rows[0])
 	}
 }

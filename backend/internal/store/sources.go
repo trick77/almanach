@@ -70,8 +70,8 @@ type SourceRow struct {
 	Active  int // pending or syncing
 	Failed  int
 	Missing int
-	// Inactive is the deactivated ones; Ready, Active and Failed count the
-	// others only, Missing all.
+	// Inactive is the deactivated ones, missing or not; Ready, Active,
+	// Failed and Missing count the others only.
 	Inactive int
 	// LastSyncedAt is the newest sync of any of its repositories, nil
 	// before the first: a static source is never listed, so this is its
@@ -139,7 +139,7 @@ func (s *Store) Sources(ctx context.Context) ([]SourceRow, error) {
 		       COUNT(sr.repo_id) FILTER (WHERE sr.state = 'ready' AND `+activeRow+`),
 		       COUNT(sr.repo_id) FILTER (WHERE sr.state IN ('pending', 'syncing') AND `+activeRow+`),
 		       COUNT(sr.repo_id) FILTER (WHERE sr.state = 'failed' AND `+activeRow+`),
-		       COUNT(sr.repo_id) FILTER (WHERE sr.state = 'missing'),
+		       COUNT(sr.repo_id) FILTER (WHERE sr.state = 'missing' AND `+activeRow+`),
 		       COUNT(sr.repo_id) FILTER (WHERE sr.deactivated_at IS NOT NULL),
 		       MAX(sr.last_synced_at)
 		  FROM `+sourcesFrom+` LEFT JOIN source_repos sr ON sr.project_id = s.project_id
@@ -702,8 +702,8 @@ func (s *Store) RequestSync(ctx context.Context, key, slug string) (int, error) 
 		return 0, err
 	}
 	n, err := affected(s.db.ExecContext(ctx, `
-		UPDATE source_repos SET state = 'pending'
-		 WHERE project_id = ?1 AND (?2 = 0 OR repo_id = ?2) AND state <> 'missing' AND deactivated_at IS NULL`, pid, rid))
+		UPDATE source_repos AS sr SET state = 'pending'
+		 WHERE sr.project_id = ?1 AND (?2 = 0 OR sr.repo_id = ?2) AND sr.state <> 'missing' AND `+activeRow, pid, rid))
 	return int(n), err
 }
 
@@ -743,7 +743,7 @@ func (s *Store) SyncJobs(ctx context.Context) ([]SyncJob, error) {
 
 // MarkRepoSyncing is the cycle taking a repo on.
 func (s *Store) MarkRepoSyncing(ctx context.Context, key, slug string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE source_repos SET state = 'syncing' WHERE deactivated_at IS NULL AND repo_id = `+repoByName, key, slug)
+	_, err := s.db.ExecContext(ctx, `UPDATE source_repos AS sr SET state = 'syncing' WHERE `+activeRow+` AND sr.repo_id = `+repoByName, key, slug)
 	return err
 }
 
@@ -751,16 +751,16 @@ func (s *Store) MarkRepoSyncing(ctx context.Context, key, slug string) error {
 // configured), the head and the time; a left-over error goes.
 func (s *Store) MarkRepoReady(ctx context.Context, key, slug, branch, head string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE source_repos SET state = 'ready', branch = NULLIF(?, ''), head_commit = ?,
+		UPDATE source_repos AS sr SET state = 'ready', branch = NULLIF(?, ''), head_commit = ?,
 		       last_synced_at = ?, last_error = ''
-		 WHERE deactivated_at IS NULL AND repo_id = `+repoByName, branch, head, nowStamp(), key, slug)
+		 WHERE `+activeRow+` AND sr.repo_id = `+repoByName, branch, head, nowStamp(), key, slug)
 	return err
 }
 
 // MarkRepoFailed records why a sync failed; the head stays what it was.
 func (s *Store) MarkRepoFailed(ctx context.Context, key, slug, errText string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE source_repos SET state = 'failed', last_error = ? WHERE deactivated_at IS NULL AND repo_id = `+repoByName, errText, key, slug)
+		UPDATE source_repos AS sr SET state = 'failed', last_error = ? WHERE `+activeRow+` AND sr.repo_id = `+repoByName, errText, key, slug)
 	return err
 }
 

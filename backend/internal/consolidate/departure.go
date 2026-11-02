@@ -16,14 +16,17 @@ import (
 
 // A departure run is what a deactivation queues: the repository that left
 // is taken out of the project page, through the queue like every other
-// write of it. The code does what it can decide alone first (the map's
-// node, the statements only the departed repositories taught), then one
-// call rewrites what still names them. The code's part is written even
-// when the call is not to be had.
+// write of it. The code takes it off the system map (a node is a slug, the
+// code's to decide); the statements and the summary are the call's: a
+// baseline source says which run wrote a project statement, never what it
+// is about, so no source decides one. The map is written even when the
+// call is not to be had; the departure then stays due, and the next project
+// step of any repository takes it out (DepartureDue).
 
 // departureStep is a departure run's one step. No page: nothing to take
-// out. A project left with fewer than two repositories (no project page
-// shown) or a run without a call left gets the code's part alone.
+// out. Nothing due (an earlier call took every departed repository out):
+// the map alone, no call. A project left with fewer than two repositories
+// shows no page: the map alone, the departure settled.
 func (w *Worker) departureStep(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	page, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
@@ -42,48 +45,58 @@ func (w *Worker) departureStep(ctx context.Context, r *store.BaselineRun, plan r
 		return err
 	}
 	active := slugs(repos)
-	purged, err := w.purgeDeparted(ctx, r.ProjectKey, page, departed, active)
+	due, err := w.base.Store.DepartureDue(ctx, r.ProjectKey)
 	if err != nil {
-		return err
+		w.log.WarnContext(ctx, "baseline: departure read failed, drain paused", logging.Err(err))
+		return errStop
 	}
-	// The code's part as a revision, nil when the page named none of them.
-	rev := carriedPage(r, page, purged.Statements, purged.Map)
+	withMap := page
+	withMap.Map = w.departedMap(ctx, page, active)
+	// The code's part as a revision, nil when the map named none of them.
+	rev := carriedPage(r, page, page.Statements, withMap.Map)
+	settle := false
 	switch {
 	case len(departed) == 0:
 		w.log.InfoContext(ctx, "baseline: departure: no repository is deactivated any more, no call")
+	case !due:
+		w.log.InfoContext(ctx, "baseline: departure: already taken out of the page, no call")
 	case len(active) < 2:
 		w.log.InfoContext(ctx, "baseline: departure: a project of one or none, no call")
+		settle = true
 	case r.Calls >= w.base.Limits.MaxCalls:
-		w.log.WarnContext(ctx, "baseline: departure: the run's calls are spent, the code's part alone")
+		w.log.WarnContext(ctx, "baseline: departure: the run's calls are spent, the map alone, still due")
 	default:
-		res := w.base.Describer.Describe(ctx, renderDeparture(*r, purged, otherRepos(repos, ""), active, departedSlugs(departed), w.limits))
+		res := w.base.Describer.Describe(ctx, renderDeparture(*r, withMap, otherRepos(repos, ""), active, departed, w.limits))
 		okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 		if errors.Is(err, errStop) {
 			return err
 		}
 		switch {
 		case err != nil:
-			// The gateway's attempts are spent: the code's part all the same.
-			w.log.WarnContext(ctx, "baseline: departure: "+err.Error()+", the code's part alone")
+			w.log.WarnContext(ctx, "baseline: departure: "+err.Error()+", the map alone, still due")
 		case !okCall:
-			w.log.WarnContext(ctx, "baseline: departure: the call failed: "+res.Outcome.String()+", the code's part alone")
+			w.log.WarnContext(ctx, "baseline: departure: the call failed: "+res.Outcome.String()+", the map alone, still due")
 		case res.Description == nil:
 			w.log.InfoContext(ctx, "baseline: departure: no rewrite asked")
+			settle = true
 		default:
-			// The map is the code's: whatever came back, the purged one.
+			// The map is the code's: whatever came back, the trimmed one.
 			d := *res.Description
-			d.Map = purged.Map
+			d.Map = withMap.Map
 			if diagram.IsSentinel(d.Map) {
 				d.Map = nil
 			}
-			next, _, refused, err := w.projectRevision(ctx, r, plan, purged, &d, active)
+			next, _, refused, err := w.projectRevision(ctx, r, plan, withMap, &d, active)
 			if err != nil {
 				return err
 			}
 			if refused != "" {
-				w.log.WarnContext(ctx, "baseline: departure: rewrite refused ("+refused+"), the code's part alone")
-			} else if next != nil {
-				rev = w.keepProvenance(ctx, purged, next)
+				w.log.WarnContext(ctx, "baseline: departure: rewrite refused ("+refused+"), the map alone, still due")
+				break
+			}
+			settle = true
+			if next != nil {
+				rev = w.keepProvenance(ctx, withMap, next)
 				if rev.Summary == page.Summary && sameStatements(page.Statements, rev.Statements) && diagram.Equal(rev.Map, page.Map) {
 					rev = nil
 				}
@@ -95,28 +108,61 @@ func (w *Worker) departureStep(ctx context.Context, r *store.BaselineRun, plan r
 		return err
 	}
 	if rev == nil {
-		w.log.InfoContext(ctx, "baseline: departure: the project page names no departed repository, no revision")
-		return w.save(ctx, *r)
+		w.log.InfoContext(ctx, "baseline: departure: the project page changes nothing, no revision")
+		if err := w.save(ctx, *r); err != nil {
+			return err
+		}
+	} else {
+		n, ok, err := w.base.Store.ApplyBaselineStep(ctx, *rev, *r)
+		if err != nil {
+			w.log.WarnContext(ctx, "baseline: departure revision write failed", logging.Err(err))
+			return w.stepBusy(ctx, r, prev, "departure", err)
+		}
+		w.stepWritten()
+		if ok {
+			w.log.InfoContext(ctx, fmt.Sprintf("baseline: departure: project description revision %d (%d statements)", n, len(rev.Statements)))
+		}
 	}
-	n, ok, err := w.base.Store.ApplyBaselineStep(ctx, *rev, *r)
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: departure revision write failed", logging.Err(err))
-		return w.stepBusy(ctx, r, prev, "departure", err)
-	}
-	w.stepWritten()
-	if ok {
-		w.log.InfoContext(ctx, fmt.Sprintf("baseline: departure: project description revision %d (%d statements)", n, len(rev.Statements)))
+	if settle {
+		w.settle(ctx, r.ProjectKey, departed)
 	}
 	return nil
+}
+
+// settle records that a call with the departed repositories in its prompt
+// answered. A failed write costs one more call by a later project step,
+// never the step: logged.
+func (w *Worker) settle(ctx context.Context, key string, departed []string) {
+	if len(departed) == 0 {
+		return
+	}
+	if err := w.base.Store.SettleDepartures(ctx, key, departed); err != nil {
+		w.log.WarnContext(ctx, "baseline: departure not settled, a later project step takes it out again", logging.Err(err))
+	}
+}
+
+// departedMap is the page's map with only the active repositories on it
+// (carriedMap: the departed nodes out, a box only they talked to with
+// them); as it is when there is none to take anything off, none for a
+// project too large for one.
+func (w *Worker) departedMap(ctx context.Context, page store.Page, active []string) *diagram.Diagram {
+	switch {
+	case page.Map == nil || diagram.IsSentinel(page.Map):
+		return page.Map
+	case diagram.MapFits(len(active)):
+		return w.carriedMap(ctx, page, active)
+	default:
+		return nil
+	}
 }
 
 // keepProvenance holds a departure rewrite to what it is: taking a
 // repository out teaches nothing, so an edited statement keeps the sources
 // it had (projectRevision credited the run, the departed repository's own
 // commit), and a statement the call added is left out, logged.
-func (w *Worker) keepProvenance(ctx context.Context, purged store.Page, rev *store.NewRevision) *store.NewRevision {
+func (w *Worker) keepProvenance(ctx context.Context, before store.Page, rev *store.NewRevision) *store.NewRevision {
 	had := map[string]store.Statement{}
-	for _, s := range purged.Statements {
+	for _, s := range before.Statements {
 		had[s.ID] = s
 	}
 	out := *rev
@@ -138,8 +184,8 @@ func (w *Worker) keepProvenance(ctx context.Context, purged store.Page, rev *sto
 	return &out
 }
 
-// departed is the project's deactivated repositories.
-func (w *Worker) departed(ctx context.Context, key string) ([]store.DepartedRepo, error) {
+// departed is the project's deactivated repositories, by current slug.
+func (w *Worker) departed(ctx context.Context, key string) ([]string, error) {
 	departed, err := w.base.Store.DepartedRepos(ctx, key)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: deactivated repositories read failed, drain paused", logging.Err(err))
@@ -148,91 +194,8 @@ func (w *Worker) departed(ctx context.Context, key string) ([]store.DepartedRepo
 	return departed, nil
 }
 
-// departedSlugs is the deactivated repositories by current slug, as the
-// prompts name them.
-func departedSlugs(departed []store.DepartedRepo) []string {
-	out := make([]string, 0, len(departed))
-	for _, d := range departed {
-		out = append(out, d.Slug)
-	}
-	return out
-}
-
-// purgeDeparted is the project page with what the code can take out alone:
-// every statement whose sources are all the departed repositories' (a
-// baseline commit of one, by any name it ever had, or a pull request noted
-// for one), and the map carried on with only the active repositories
-// (carriedMap: their nodes out, a box only they talked to with them). A
-// statement with no source, or one source the code cannot place, stays:
-// the call decides it.
-func (w *Worker) purgeDeparted(ctx context.Context, key string, page store.Page, departed []store.DepartedRepo, active []string) (store.Page, error) {
-	out := page
-	switch {
-	case page.Map == nil || diagram.IsSentinel(page.Map):
-		// No map to take anything off: as it is.
-	case diagram.MapFits(len(active)):
-		out.Map = w.carriedMap(ctx, page, active)
-	default:
-		out.Map = nil
-	}
-	if len(departed) == 0 {
-		return out, nil
-	}
-	gone := map[string]bool{}
-	for _, d := range departed {
-		gone[d.Slug] = true
-		for _, n := range d.Names {
-			gone[n] = true
-		}
-	}
-	var prs []string
-	for _, s := range page.Statements {
-		for _, src := range s.Sources {
-			if !src.IsBaseline() && src.PRKey != "" {
-				prs = append(prs, src.PRKey)
-			}
-		}
-	}
-	byPR, err := w.base.Store.PRRepos(ctx, key, prs)
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: pull request repositories read failed, drain paused", logging.Err(err))
-		return store.Page{}, errStop
-	}
-	out.Statements = make([]store.Statement, 0, len(page.Statements))
-	var dropped []string
-	for _, s := range page.Statements {
-		if onlyDeparted(s, gone, byPR) {
-			dropped = append(dropped, s.ID)
-			continue
-		}
-		out.Statements = append(out.Statements, s)
-	}
-	if len(dropped) > 0 {
-		w.log.InfoContext(ctx, "baseline: departure: statements only departed repositories taught, dropped", slog.Any("ids", dropped))
-	}
-	return out, nil
-}
-
-// onlyDeparted reports whether every source of the statement is a
-// departed repository's; a statement without any is not.
-func onlyDeparted(s store.Statement, gone map[string]bool, byPR map[string]string) bool {
-	if len(s.Sources) == 0 {
-		return false
-	}
-	for _, src := range s.Sources {
-		repo := src.Repo
-		if !src.IsBaseline() {
-			repo = byPR[src.PRKey]
-		}
-		if repo == "" || !gone[repo] {
-			return false
-		}
-	}
-	return true
-}
-
-// renderDeparture is the departure call's prompt: the project page after
-// the code's part, the remaining repositories and the departed ones.
+// renderDeparture is the departure call's prompt: the project page with
+// the code's map, the remaining repositories and the departed ones.
 func renderDeparture(r store.BaselineRun, page store.Page, others string, active, departed []string, l config.Limits) string {
 	return strings.NewReplacer(
 		"{project}", r.ProjectKey, "{departed}", backticked(departed), "{repo_slugs}", backticked(active),
@@ -242,7 +205,9 @@ func renderDeparture(r store.BaselineRun, page store.Page, others string, active
 }
 
 // departedRule is the project prompt's rule for the deactivated
-// repositories, "" when there are none.
+// repositories, "" when there are none. Every one, not only those still
+// due: a repository's summary may still name one, and the rule keeps it
+// from coming back onto the page.
 func departedRule(departed []string) string {
 	if len(departed) == 0 {
 		return ""
