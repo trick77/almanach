@@ -27,7 +27,7 @@ type ProjectRow struct {
 	Repos    int
 	Notes    int
 	Revision int
-	// Summary is the current project page's, "" before the first.
+	// Summary is the current project page's, whole; "" before the first.
 	Summary   string
 	LastMerge *time.Time
 }

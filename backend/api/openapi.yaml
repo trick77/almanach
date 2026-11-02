@@ -1811,8 +1811,8 @@ components:
         summary:
           type: string
           description: >-
-            The project description's current summary, "" when none. A
-            project of one reads as its repo's.
+            The first sentence of the project description's current
+            summary, "" when none. A project of one: its repo's summary.
         last_merge:
           type: [string, "null"]
           format: date-time

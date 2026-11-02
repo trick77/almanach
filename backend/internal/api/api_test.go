@@ -370,7 +370,7 @@ func TestProjects(t *testing.T) {
 		t.Errorf("empty: %d %s", code, body["projects"])
 	}
 	last := mergedAt
-	st.projects = []store.ProjectRow{{Key: "PLAT", Team: "platform", Repos: 2, Notes: 5, Revision: 3, Summary: "Die Plattform.", LastMerge: &last},
+	st.projects = []store.ProjectRow{{Key: "PLAT", Team: "platform", Repos: 2, Notes: 5, Revision: 3, Summary: "#### Zweck\n\nDie Plattform. Sie trägt alles.\n\n- Punkt", LastMerge: &last},
 		{Key: "ZED", Team: "billing"}}
 	code, body = do(t, h, "GET", "/api/projects", "", "", nil)
 	var rows []map[string]any

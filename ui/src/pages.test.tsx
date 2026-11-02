@@ -269,7 +269,7 @@ describe("ProjectsPage", () => {
             repos: 1,
             notes: 0,
             revision: 0,
-            summary: "",
+            summary: "#### Zweck\n\nEin Recherche-Agent, `loom`.",
             last_merge: null,
             repo: {
               slug: "loom",
