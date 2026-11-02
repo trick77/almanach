@@ -74,6 +74,14 @@ const Layout = "Layout, for a human reader as much as for an agent: a text (a st
 // Abgrenzung" over text that drew no boundary (2026-11-01).
 const SummaryLayout = "The summary takes the same blocks. It opens with a paragraph, never a heading: what this is. Each later part of its order that has something to say gets a `heading` naming what that part says here (\"Drei Dienste, eine Datenbank\", \"Vom Upload zum PDF\"), never the order's name for it (never \"Zweck und Abgrenzung\", \"Struktur\", \"Abläufe\", \"Arbeiten daran\"), and paragraphs or a list under it; a part with nothing to say is left out, never a heading over filler. A true enumeration (the repositories and their roles, a repository's main parts) is a `list`, each item its name first in backticks; `**bold**` for the one term of a part a reader must not miss. A long summary is never one paragraph."
 
+// Areas is the rule for a statement's area, word for word in every prompt
+// that writes statements: the page's sub-chunks inside each kind, one order
+// of them for the whole page, building and delivering last. Without it each
+// kind read in the order the steps wrote, the build in four kinds at four
+// places (user, 2026-11-02: "a human would not structure a documentation
+// like that"). Its last area is baseline.LastArea, held to it by a test.
+const Areas = "Areas: every statement has an `area`, the part of the system it is about, named in German as a reader would title a chapter of the page (\"Abfrage\", \"Export\", \"Zugriffsschutz\", \"Persistenz\"). The page shows each kind's statements under their areas, in one order of areas for the whole page: the system as a whole first, then its parts as a reader meets them, and always last `Entwicklung und Auslieferung`: the build, the tests and the gate, CI/CD and releases, dependency updates, local development tools and the conventions of working on the code, whichever kind a statement about them is. Use an area the description already has wherever one fits, its name exactly as shown; a new one only for a part none covers. A few areas, each holding several statements, never one per statement."
+
 // Block is a laid-out text's block as every prompt's output format shows
 // it, word for word: the schema's (inference blocks).
 const Block = "`<block>` is `{\"kind\": \"paragraph\" | \"heading\", \"text\": \"<text>\"}` or `{\"kind\": \"list\" | \"numbered\", \"text\": \"<lead-in sentence or empty>\", \"items\": [\"<item>\", ...]}`"

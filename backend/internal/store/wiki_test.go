@@ -209,6 +209,42 @@ func TestInsertRevision_Diagrams(t *testing.T) {
 	}
 }
 
+// The map step's layout: the current repository revision's statements set
+// in place, their areas read back; a revision no longer current takes
+// nothing.
+func TestArrangePage_InPlace(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "PRJ", "svc")
+	st := []Statement{{ID: "s1", Kind: "rule", Name: "A", Text: "a"}, {ID: "s2", Kind: "rule", Name: "B", Text: "b"}}
+	rev := NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "r", Statements: st, SourcePR: "PRJ/svc#1"}
+	if _, err := s.InsertRevision(ctx, rev); err != nil {
+		t.Fatal(err)
+	}
+	p, _, err := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	laid := []Statement{st[1], st[0]}
+	laid[0].Area, laid[1].Area = "Abfrage", "Export"
+	if ok, err := s.ArrangePage(ctx, p.RevisionID, laid); err != nil || !ok {
+		t.Fatalf("ArrangePage: ok=%v err=%v", ok, err)
+	}
+	got, _, _ := s.CurrentPage(ctx, ScopeRepository, "PRJ", "svc")
+	if got.Revision != 1 || len(got.Statements) != 2 || got.Statements[0].ID != "s2" || got.Statements[0].Area != "Abfrage" || got.Statements[1].Area != "Export" {
+		t.Errorf("after ArrangePage: revision %d, statements %+v", got.Revision, got.Statements)
+	}
+	if got.MapBasis() != p.MapBasis() {
+		t.Error("laid out anew, the page's map basis changed: its map would be drawn again")
+	}
+	if _, err := s.InsertRevision(ctx, rev); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.ArrangePage(ctx, p.RevisionID, st); err != nil || ok {
+		t.Errorf("ArrangePage of an old revision: ok=%v err=%v", ok, err)
+	}
+}
+
 // The repository map: set by the map step on the current revision in
 // place (no revision of its own), with its basis and the run's end; carried
 // with its basis by every repository revision after it (a describe step, a

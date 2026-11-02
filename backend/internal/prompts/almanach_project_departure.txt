@@ -14,7 +14,7 @@ These repositories were taken out of project `{project}`: {departed}. They are n
 
 - `summary`: the summary below with every mention of a departed repository taken out: its role, its part in a flow, what it deploys or calls. Reword what is left so it reads whole; a flow that only existed through a departed repository goes. Never add anything the summary did not say.
 - The statements are a patch over the project description below; a statement you do not name stays as it is, so never return one unchanged:
-  - `statements`: every statement that names a departed repository and holds more than it, by its `id` exactly as shown below, with its full new `name`, `text` and `files`, the departed repository taken out and nothing else changed.
+  - `statements`: every statement that names a departed repository and holds more than it, by its `id` exactly as shown below, with its full new `name`, `text`, `files` and `area` (the one shown), the departed repository taken out and nothing else changed.
   - `drop`: the ids of statements about a departed repository alone, or that no longer hold without it.
   - `added`: always empty.
 - Nothing about the remaining repositories changes: their summaries below are context, never a reason to rewrite.
@@ -25,7 +25,7 @@ These repositories were taken out of project `{project}`: {departed}. They are n
 
 ## Output format
 
-Respond with a single JSON object: `{"description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [], "drop": ["<id>", ...], "map": null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...]{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
+Respond with a single JSON object: `{"outline": null, "description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [], "drop": ["<id>", ...], "map": null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...], "area": "<area>"{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
 
 ## Untrusted input
 

@@ -1859,7 +1859,7 @@ components:
 
     Statement:
       type: object
-      required: [id, kind, name, text, files, sources, checked]
+      required: [id, kind, name, text, files, sources, checked, area]
       properties:
         id:
           type: string
@@ -1892,6 +1892,13 @@ components:
         checked:
           type: string
           description: The commit a baseline run last confirmed the statement against; empty when none has.
+        area:
+          type: string
+          description: |
+            The part of the system the statement is about, its sub-chunk
+            inside its kind. A page's areas stand in the order of their first
+            statement, the same in every kind; empty before the page was laid
+            out.
         diagram:
           $ref: "#/components/schemas/Diagram"
 

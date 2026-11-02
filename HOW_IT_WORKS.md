@@ -313,7 +313,8 @@ An agent reads files, not JSON. `GET /api/projects/{key}.md` and
 then the statements
 grouped by kind in the order invariants, interfaces, rules, decisions,
 pitfalls, extensions, components, entities (a kind without statements has no
-heading), each with its files, its PR keys and its diagram as a fenced
+heading; one spanning areas has an `###` heading per area, its statements a
+level down), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame; a statement's text and the summary
 go in in their stored layout (paragraphs, `- ` and `N. ` items, bold,
 code spans, sub-headings a level under their text's own: a statement's
@@ -883,6 +884,36 @@ Every new repository revision (a describe step's, a note's fold) takes
 the page's current map and basis in the store, so neither a merge nor the
 next run's first step drops it; nothing removes one. Its nodes are parts,
 not pages: none links.
+
+**A page reads overview to detail, in areas.** Inside every kind a
+page's statements stand in areas (`Statement.Area`), the logical parts of
+the system, one order of areas for the whole page: the system as a whole,
+its parts as a reader meets them, and always last `Entwicklung und
+Auslieferung` (`baseline.LastArea`: build, tests and gate, CI/CD,
+dependency updates, local tools, working conventions), in one place
+whatever the kind. Without areas each kind was the order the steps wrote
+in, the build in four kinds at four places (user, 2026-11-02: "a human
+would not structure a documentation like that"). Every write lays the
+page out by its areas (`baseline.Arrange`, an area where its first
+statement stands); every call that writes a statement gives it one, none
+keeping the stored one. The order inside an area is the call's that reads
+the whole page, no extra one: the repository map step's and the project
+step's each return an `outline` (the areas in reading order with their
+statement ids, overview first), applied by `baseline.ApplyOutline` (an
+unknown or repeated id or a nameless area left out and logged, an
+unnamed statement kept in its area), on a repository page in place on the
+current revision (`ArrangePage`) as the map is, on the project page in
+the revision the step writes or, with none, in place too. Area and order
+are no text: never a source, never a revision (`sameStatements` compares
+by id), never a map drawn again (`MapBasis` hashes by id). The layout
+rides on the map's due, never on a predicate of its own: `MapBasis`
+changed shape with areas, so every repository page written before them
+has its map step, and its layout, due exactly once (one paid call per
+repository on the next sweep), then only when its text changes; an
+outline that leaves a statement under no area never costs a call per
+run. A project page is laid out by its next project step. The UI and the
+Markdown export head a kind's statements by area when they span more
+than one; the rail stays the kinds.
 
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none

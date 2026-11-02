@@ -59,9 +59,9 @@ function plainOf(s: Statement): string {
 }
 
 /** statementMatches is the search's test on a statement: its name, its
- *  text and its files. */
+ *  text, its files and its area. */
 export function statementMatches(s: Statement, query: string): boolean {
-  return matchesQuery(query, s.name, plainOf(s), ...s.files);
+  return matchesQuery(query, s.name, plainOf(s), s.area ?? "", ...s.files);
 }
 
 /** descriptionRail is the rail's part of a description: the summary and
@@ -176,19 +176,56 @@ export function DescriptionView({
                 </span>
               )}
             </div>
-            {list.map((s) => (
-              <StatementBlock
-                key={s.id}
-                statement={s}
-                pageRepo={pageRepo}
-                query={query}
-              />
+            {areaGroups(all, list).map((g, i) => (
+              <div key={i}>
+                {g.area !== null && (
+                  <h3 className={(i === 0 ? "mt-1 " : "mt-6 ") + areaHeading}>
+                    <Inline text={g.area || S.areas.otherArea} query={query} />
+                  </h3>
+                )}
+                {g.statements.map((s) => (
+                  <StatementBlock
+                    key={s.id}
+                    statement={s}
+                    pageRepo={pageRepo}
+                    query={query}
+                  />
+                ))}
+              </div>
             ))}
           </section>
         );
       })}
     </>
   );
+}
+
+/** areaHeading sets an area off inside its kind: under the kind's
+ *  eyebrow, over its statements' h4 names. Its top margin is the caller's
+ *  by the group's place: each heading leads a wrapper of its own, so
+ *  `first:` would match every one. */
+const areaHeading = "mb-1 font-serif text-[17px] font-medium text-ink";
+
+/** areaGroups is a kind's shown statements in their areas, in the page's
+ *  order (the backend lays a page out, an area where its first statement
+ *  stands). area is null for one group without a heading: a kind whose
+ *  statements, all of them and not only the search's hits, stand in one
+ *  area or none. An area the search leaves without a hit is not shown. */
+export function areaGroups(
+  all: Statement[],
+  shown: Statement[],
+): { area: string | null; statements: Statement[] }[] {
+  const areaOf = (s: Statement) => s.area ?? "";
+  if (new Set(all.map(areaOf)).size < 2) {
+    return shown.length === 0 ? [] : [{ area: null, statements: shown }];
+  }
+  const groups: { area: string; statements: Statement[] }[] = [];
+  for (const s of shown) {
+    const last = groups[groups.length - 1];
+    if (last && last.area === areaOf(s)) last.statements.push(s);
+    else groups.push({ area: areaOf(s), statements: [s] });
+  }
+  return groups;
 }
 
 /** sourceKey names a source once, as the backend does: a PR by its key, a

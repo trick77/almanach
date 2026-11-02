@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -527,6 +528,44 @@ func TestValidFor_StoredStatementsNeverHeld(t *testing.T) {
 	if _, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Geändert."}},
 		store.Source{PRKey: "x"}, 2, limitsOf(limits)); reason == "" {
 		t.Error("a merge took a changed statement of a kind its page cannot hold")
+	}
+}
+
+// An area is no text: none returned keeps the stored one, a new one
+// credits nothing, and the page comes back laid out by its areas. An answer
+// that only lays the page out anew is the page as it stands.
+func TestAttach_AreaIsNoText(t *testing.T) {
+	src := []store.Source{{PRKey: "PRJ/svc#1"}}
+	current := []store.Statement{
+		{ID: "s1", Kind: "rule", Name: "Build", Text: "Gradle.", Sources: src, Area: "Entwicklung und Auslieferung"},
+		{ID: "s2", Kind: "rule", Name: "Liste", Text: "Paginiert.", Sources: src, Area: "Abfrage"},
+		{ID: "s3", Kind: "rule", Name: "Datei", Text: "XLSX.", Sources: src},
+	}
+	out, _, reason := attach(store.ScopeRepository, current, []inference.Statement{
+		{ID: str("s1"), Kind: "rule", Name: "Build", Text: "Gradle.", Area: ""},
+		{ID: str("s2"), Kind: "rule", Name: "Liste", Text: "Paginiert.", Area: "Abfrage"},
+		{ID: str("s3"), Kind: "rule", Name: "Datei", Text: "XLSX.", Area: "Export"},
+		{Kind: "rule", Name: "Filter", Text: "Nach Status.", Area: "abfrage"},
+	}, store.Source{PRKey: "PRJ/svc#2"}, 4, limitsOf(limits))
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	var got []string
+	for _, s := range out {
+		got = append(got, s.ID+":"+s.Area)
+		if s.ID != "s4" && !reflect.DeepEqual(s.Sources, src) {
+			t.Errorf("%s: sources %+v, want the stored ones: an area is no text", s.ID, s.Sources)
+		}
+	}
+	// "abfrage" is an area of its own name: only LastArea is matched by case.
+	want := []string{"s2:Abfrage", "s3:Export", "s4:abfrage", "s1:Entwicklung und Auslieferung"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("layout = %v, want %v", got, want)
+	}
+	reordered := []store.Statement{current[2], current[0], current[1]}
+	reordered[0].Area = "Export"
+	if !sameStatements(current, reordered) {
+		t.Error("a page only laid out anew is not the page as it stands")
 	}
 }
 

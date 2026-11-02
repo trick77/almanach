@@ -52,6 +52,8 @@ type runStore struct {
 	// mapErr fails the map step's write; mapWrites counts the writes tried.
 	mapErr    error
 	mapWrites int
+	// arranges counts the map step's layouts written in place.
+	arranges int
 	// libs is what Libraries answers, by slug ("" the project's); libsErr
 	// fails it.
 	libs     map[string][]store.SharedRepo
@@ -152,6 +154,20 @@ func (s *runStore) SetRepoMap(ctx context.Context, project, repo string, m *diag
 	s.pages[key] = p
 	s.mapWrites++
 	return true, nil
+}
+
+// ArrangePage sets the statements of the page whose current revision is
+// revisionID in place, as the store does; arranges counts the writes.
+func (s *runStore) ArrangePage(_ context.Context, revisionID int64, statements []store.Statement) (bool, error) {
+	for key, p := range s.pages {
+		if p.RevisionID == revisionID {
+			p.Statements = statements
+			s.pages[key] = p
+			s.arranges++
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *runStore) DocumentedRun(context.Context, string, string) (store.BaselineRun, bool, error) {
@@ -1377,7 +1393,7 @@ func TestRun_RepoMapStep(t *testing.T) {
 		key := pageKey(store.ScopeRepository, "tools", "svc")
 		if c.page {
 			p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.",
-				Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T"}}, RepoMap: c.stored}
+				Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Area: "Abrechnung"}}, RepoMap: c.stored}
 			if c.stored != nil || c.current {
 				p.RepoMapBasis = "drawn from an older text"
 				if c.current {
@@ -1438,6 +1454,70 @@ func TestRun_RepoMapStep(t *testing.T) {
 		if c.written && !diagram.IsSentinel(p.RepoMap) && diagram.Untagged(p.RepoMap) {
 			t.Errorf("%s: written without its tags: %+v", name, p.RepoMap)
 		}
+	}
+}
+
+// A page written before areas has a basis of the old shape, so its map
+// step is due: the outline sets each statement's area and place in place,
+// its leftovers kept and Entwicklung und Auslieferung last; no revision, no
+// source, the basis then standing, so the next run asks nothing though a
+// statement still has no area.
+func TestRun_RepoMapStepLaysThePageOut(t *testing.T) {
+	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	src := []store.Source{{PRKey: "PR-1"}}
+	p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.", RepoMap: drawnRepoMap(), Statements: []store.Statement{
+		{ID: "s1", Kind: "component", Name: "Gradle-Build", Text: "T", Sources: src},
+		{ID: "s2", Kind: "component", Name: "Dienst", Text: "T", Sources: src},
+		{ID: "s3", Kind: "component", Name: "Export", Text: "T", Sources: src},
+		{ID: "s4", Kind: "rule", Name: "Pruefgate", Text: "T", Sources: src},
+		{ID: "s5", Kind: "rule", Name: "Zugriff", Text: "T", Sources: src, Area: "Abfrage"},
+	}}
+	p.RepoMapBasis = "hashed in the old shape"
+	x.st.pages[key] = p
+	plan, _ := json.Marshal(runPlan{ProjectDone: true})
+	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
+		Commit: head, State: store.RunProject, Plan: plan, Calls: 3})
+	// s3 left under no area: the outline named it only under a nameless
+	// area and twice; it is not asked for again.
+	x.models.repoMap = inference.RepoMapResult{Call: called, Outline: []inference.OutlineArea{
+		{Area: "entwicklung und auslieferung", IDs: []string{"s1", "s4"}},
+		{Area: "Gesamtsystem", IDs: []string{"s2", "s9"}},
+		{Area: " ", IDs: []string{"s3"}},
+		{Area: "Export", IDs: []string{"s2"}},
+	}}
+	x.w.drain(context.Background())
+	if len(x.st.calls) != 1 || len(x.st.revisions) != 0 || x.st.arranges != 1 {
+		t.Fatalf("calls %d, revisions %d, layouts %d; want one call laying the page out in place", len(x.st.calls), len(x.st.revisions), x.st.arranges)
+	}
+	got := x.st.pages[key]
+	var order []string
+	for _, s := range got.Statements {
+		order = append(order, s.ID+":"+s.Area)
+		if !reflect.DeepEqual(s.Sources, src) {
+			t.Errorf("%s: sources %+v, want them untouched", s.ID, s.Sources)
+		}
+	}
+	want := []string{"s2:Gesamtsystem", "s5:Abfrage", "s3:", "s1:Entwicklung und Auslieferung", "s4:Entwicklung und Auslieferung"}
+	if !reflect.DeepEqual(order, want) {
+		t.Errorf("order = %v, want %v", order, want)
+	}
+	if got.RepoMapBasis != got.MapBasis() {
+		t.Error("laid out, the map's basis no longer stands")
+	}
+	for _, item := range []string{"s9 (unknown id)", "an area without a name (s3)", "s2 (named twice)"} {
+		if !strings.Contains(logs.String(), item) {
+			t.Errorf("log lacks %q:\n%s", item, logs.String())
+		}
+	}
+	// Laid out and its map standing, the next run asks nothing.
+	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 2, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
+		Commit: head, State: store.RunProject, Plan: plan, Calls: 3})
+	x.w.drain(context.Background())
+	if len(x.st.calls) != 1 {
+		t.Errorf("calls = %d after a second run, want none more", len(x.st.calls))
 	}
 }
 
@@ -1900,6 +1980,46 @@ func TestRun_ProjectItemCostsOnlyItself(t *testing.T) {
 // so no file shows it gone), an unknown drop is left out, a new one is
 // numbered. An answer naming no statement empties nothing. No count or
 // size holds a page.
+// The project page is laid out by the project step's outline: in the
+// revision it writes, a new statement keeping the area it was given; with
+// no change asked, in place on the page, no revision.
+func TestRun_ProjectStepLaysThePageOut(t *testing.T) {
+	run := func(d *inference.Description) (store.Page, world) {
+		x := newWorld(t, 4)
+		x.queue(store.RunFull, "")
+		// The sentinel: no map to carry, so no change asked writes nothing.
+		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 77, Revision: 1, Summary: "Das Projekt.", Map: diagram.Sentinel(),
+			Statements: []store.Statement{
+				{ID: "s1", Kind: "component", Name: "Pipeline", Text: "Baut."},
+				{ID: "s2", Kind: "component", Name: "Dienst", Text: "Dient."},
+			}}
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.project = inference.DescriptionResult{Call: called, Description: d, Outline: []inference.OutlineArea{
+			{Area: "Entwicklung und Auslieferung", IDs: []string{"s1"}}, {Area: "Gesamtsystem", IDs: []string{"s2"}},
+		}}
+		x.w.drain(context.Background())
+		return x.st.pages[pageKey(store.ScopeProject, "tools", "")], x
+	}
+	layout := func(p store.Page) []string {
+		var out []string
+		for _, s := range p.Statements {
+			out = append(out, s.ID+":"+s.Area)
+		}
+		return out
+	}
+	added := stmt(nil, "rule", "Quer", "Gilt.", "x.go")
+	added.Area = "Abfrage"
+	p, _ := run(&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}, Added: []inference.Statement{added}})
+	if want := []string{"s2:Gesamtsystem", "s3:Abfrage", "s1:Entwicklung und Auslieferung"}; !slices.Equal(layout(p), want) || p.Revision == 1 {
+		t.Errorf("rewritten: revision %d, layout %v, want a new revision laid out %v", p.Revision, layout(p), want)
+	}
+	p, x := run(nil)
+	if want := []string{"s2:Gesamtsystem", "s1:Entwicklung und Auslieferung"}; !slices.Equal(layout(p), want) || p.Revision != 1 || x.st.arranges != 1 {
+		t.Errorf("no change: revision %d, layout %v, layouts %d; want revision 1 laid out %v in place", p.Revision, layout(p), x.st.arranges, want)
+	}
+}
+
 func TestRun_ProjectAnswersAPatch(t *testing.T) {
 	project := func(d *inference.Description) store.Page {
 		x := newWorld(t, 4)

@@ -90,6 +90,16 @@ func TestDescribe(t *testing.T) {
 	if d.Map == nil || d.Map.Nodes[0].Zone != "repositories" || d.Statements[0].Diagram == nil || d.Statements[0].Diagram.Rows[0].Head != "filled" {
 		t.Errorf("map %+v, diagram %+v", d.Map, d.Statements[0].Diagram)
 	}
+	// The outline beside a description, or beside none: no change asked
+	// still lays the page out.
+	srv.SetReply(`{"description": null, "outline": [{"area": "Gesamtsystem", "ids": ["s1"]}]}`)
+	if res := testClient(srv.Client()).Describe(context.Background(), "p"); res.Outcome != OutcomeOK || res.Description != nil ||
+		len(res.Outline) != 1 || res.Outline[0].IDs[0] != "s1" {
+		t.Errorf("outline without a change = %+v", res)
+	}
+	if props := descriptionFormat(true).Schema["properties"].(map[string]any); props["outline"] == nil {
+		t.Error("the project schema asks for no outline")
+	}
 	if name := schemaName(t, srv); name != DescriptionSchemaName {
 		t.Errorf("schema = %q", name)
 	}
@@ -150,6 +160,22 @@ func TestRepoMap(t *testing.T) {
 		if res := testClient(srv.Client()).RepoMap(context.Background(), "p"); res.Outcome != OutcomeUnparseable {
 			t.Errorf("reply %q: Outcome = %s, want unparseable", reply, res.Outcome)
 		}
+	}
+	// The outline beside the map: read, null kept, one off its shape costs
+	// only itself.
+	srv.SetReply(`{"map": null, "outline": [{"area": "Abfrage", "ids": ["s2", "s1"]}]}`)
+	res = testClient(srv.Client()).RepoMap(context.Background(), "p")
+	if res.Outcome != OutcomeOK || len(res.Outline) != 1 || res.Outline[0].Area != "Abfrage" || res.Outline[0].IDs[1] != "s1" {
+		t.Errorf("outline = %+v", res)
+	}
+	for _, reply := range []string{`{"map": null, "outline": null}`, `{"map": null, "outline": 3}`} {
+		srv.SetReply(reply)
+		if res := testClient(srv.Client()).RepoMap(context.Background(), "p"); res.Outcome != OutcomeOK || res.Outline != nil {
+			t.Errorf("reply %q: %+v, want ok and no outline", reply, res)
+		}
+	}
+	if props := repoMapFormat().Schema["properties"].(map[string]any); props["outline"] == nil {
+		t.Error("the repository map schema asks for no outline")
 	}
 }
 

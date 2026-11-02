@@ -64,6 +64,10 @@ export interface Statement {
   sources: Source[];
   /** The commit a baseline run last confirmed it against, "" when none. */
   checked?: string;
+  /** The part of the system it is about, its sub-chunk inside its kind;
+   *  areas stand in the order of their first statement, "" (or absent)
+   *  before the page was laid out. */
+  area?: string;
   /** A picture beside the paragraphs, rongo's IR as the backend validated
    *  it; absent when the statement has none. */
   diagram?: DiagramIR;

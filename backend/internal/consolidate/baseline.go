@@ -36,6 +36,7 @@ type RunStore interface {
 	SaveRun(ctx context.Context, r store.BaselineRun) (bool, error)
 	ApplyBaselineStep(ctx context.Context, rev store.NewRevision, r store.BaselineRun) (int, bool, error)
 	SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r store.BaselineRun) (bool, error)
+	ArrangePage(ctx context.Context, revisionID int64, statements []store.Statement) (bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
@@ -1266,6 +1267,15 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 			return w.skipProject(ctx, r, plan, baseline.SkipRefused, "rewrite refused: "+refused)
 		}
 	}
+	// The project page is laid out by the project step's outline, as a
+	// repository's by its map step: in the revision the step writes, or in
+	// place on the page as it stands.
+	at := "baseline: " + projectLabel
+	if rev != nil {
+		rev.Statements = w.applyOutline(ctx, at, rev.Statements, res.Outline)
+	} else if projectPage.RevisionID != 0 {
+		w.arrangePage(ctx, at, &projectPage, res.Outline)
+	}
 	// A refused map leaves the plan its retry: the description written
 	// first, the map asked again by the steps after.
 	if rev == nil {
@@ -1846,6 +1856,10 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		w.log.InfoContext(ctx, at+" skipped: no repository description to draw it from")
 		return w.finish(ctx, r, plan)
 	}
+	// The layout rides on the map's due: a page written before areas has a
+	// basis of the old shape (MapBasis), so its map, and with it the
+	// layout, is due once; after that only when the text changes, so an
+	// outline that leaves a statement out never costs a call per run.
 	if retry == nil && page.MapStands() {
 		w.log.InfoContext(ctx, at+" skipped: drawn from the description as it stands, the stored one kept")
 		return w.finish(ctx, r, plan)
@@ -1871,6 +1885,7 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		w.log.WarnContext(ctx, at+" skipped: the call failed: "+res.Outcome.String()+", the stored one kept")
 		return w.finish(ctx, r, plan)
 	}
+	w.arrangePage(ctx, at, &page, res.Outline)
 	tries := 1
 	if retry != nil {
 		tries = retry.Tries + 1
@@ -1953,6 +1968,61 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 	return nil
 }
 
+// applyOutline is statements laid out as an outline says
+// (baseline.ApplyOutline), what it left out logged; nil keeps them as they
+// are.
+func (w *Worker) applyOutline(ctx context.Context, at string, statements []store.Statement, outline []inference.OutlineArea) []store.Statement {
+	if outline == nil {
+		if !baseline.Arranged(statements) {
+			w.log.InfoContext(ctx, at+": no outline returned, statements without an area stay under none")
+		}
+		return statements
+	}
+	arranged, bad := baseline.ApplyOutline(statements, outline)
+	if len(bad) > 0 {
+		w.log.WarnContext(ctx, at+": outline items left out", slog.Any("items", bad))
+	}
+	return arranged
+}
+
+// arrangePage lays a page out as its step's outline says (applyOutline),
+// in place on its current revision: the same statements, no source, no
+// revision. None returned, or one that changes no order and no area,
+// writes nothing. The layout is optional, as the map is: a failed write is
+// logged and the page stays as it was, laid out by the next step that
+// reads it whole.
+func (w *Worker) arrangePage(ctx context.Context, at string, page *store.Page, outline []inference.OutlineArea) {
+	if outline == nil {
+		w.applyOutline(ctx, at, page.Statements, nil)
+		return
+	}
+	arranged := w.applyOutline(ctx, at, page.Statements, outline)
+	if slices.EqualFunc(arranged, page.Statements, func(a, b store.Statement) bool { return a.ID == b.ID && a.Area == b.Area }) {
+		w.log.InfoContext(ctx, at+": page laid out as it stands")
+		return
+	}
+	ok, err := w.base.Store.ArrangePage(ctx, page.RevisionID, arranged)
+	if err != nil {
+		w.log.WarnContext(ctx, at+": layout write failed, the page kept as it was", logging.Err(err))
+		return
+	}
+	if !ok {
+		w.log.InfoContext(ctx, at+": layout not written: the page has a newer revision, laid out by its next run")
+		return
+	}
+	page.Statements = arranged
+	w.log.InfoContext(ctx, fmt.Sprintf("%s: page laid out in %s", at, plural(areaCount(arranged), "area")))
+}
+
+// areaCount is how many areas a page's statements stand in.
+func areaCount(statements []store.Statement) int {
+	seen := map[string]bool{}
+	for _, s := range statements {
+		seen[s.Area] = true
+	}
+	return len(seen)
+}
+
 // runSource is the source a run attaches: its commit, the commit's time and
 // the repository, which on the project page names whose commit it is.
 func runSource(r store.BaselineRun, plan runPlan) store.Source {
@@ -1981,9 +2051,15 @@ func (w *Worker) finish(ctx context.Context, r *store.BaselineRun, plan runPlan)
 	return w.save(ctx, *r)
 }
 
+// sameChecks reports whether a's statements carry b's last checks, by id:
+// the two may stand in another order.
 func sameChecks(a, b []store.Statement) bool {
-	for i := range a {
-		if a[i].Checked != b[i].Checked {
+	checked := make(map[string]string, len(b))
+	for _, s := range b {
+		checked[s.ID] = s.Checked
+	}
+	for _, s := range a {
+		if c, ok := checked[s.ID]; !ok || c != s.Checked {
 			return false
 		}
 	}

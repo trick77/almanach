@@ -186,6 +186,11 @@ export const S = {
     extension: "Erweiterungen",
     pitfall: "Fallstricke",
   },
+  // A kind's statements in no area, under the areas (the Markdown export
+  // heads them alike, held to it by a test).
+  areas: {
+    otherArea: "Weiteres",
+  },
   // The project page's names where they differ: its entities are the ones
   // that cross repositories, who owns them and how their ids travel.
   projectKinds: {
