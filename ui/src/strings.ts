@@ -294,6 +294,7 @@ export const S = {
       active: (n: number) => `${n} läuft`,
       failed: (n: number) => `${n} fehlgeschlagen`,
       missing: (n: number) => `${n} verschwunden`,
+      inactive: (n: number) => `${n} deaktiviert`,
       none: "Keine Repositories",
     },
     newSource: "Neue Quelle",
@@ -393,6 +394,11 @@ export const S = {
     confirmRemoveRepo: (slug: string, dir: string) =>
       `Repository ${slug} entfernen? Löscht den Eintrag und den Clone unter ${dir}. Der Eintrag kann jederzeit neu angelegt werden; der Clone wird dann neu geholt.`,
     yesRemove: "Ja, entfernen",
+    // Instant: clone gone, notes ignored, page out of the wiki. The project
+    // page is the queue's: the departure run (one model call).
+    confirmDeactivateRepo: (slug: string) =>
+      `Repository ${slug} deaktivieren? Der Clone wird gelöscht, neue Notizen werden ignoriert und die Seite verschwindet aus dem Wiki; das Listing nimmt es nicht wieder auf. Ein Run in der Warteschlange nimmt es aus der Projektseite und der Systemkarte (ein Modellaufruf). Die Seite selbst bleibt erhalten und ist mit «Aktivieren» wieder da.`,
+    yesDeactivate: "Ja, deaktivieren",
     repos: "Repositories",
     reposNote: {
       bitbucket: "Reihenfolge der API, archivierte übersprungen",
@@ -414,7 +420,7 @@ export const S = {
       static: "Noch kein Repository. Trag eines ein.",
     } as Record<string, string>,
     listedOnly:
-      "Bei einer Bitbucket-Quelle werden Repositories nicht von Hand hinzugefügt: die Liste ist die der API. Ein Repository, das die API nicht mehr liefert, wird als «verschwunden» markiert und sein Clone bleibt, bis du ihn entfernst.",
+      "Bei einer Bitbucket-Quelle werden Repositories nicht von Hand hinzugefügt: die Liste ist die der API. Ein Repository, das die API nicht mehr liefert, wird als «verschwunden» markiert und sein Clone bleibt, bis du ihn entfernst. Ein Repository, das nicht dazugehören soll, deaktivierst du: es bleibt draussen, auch wenn die API es weiter liefert.",
     state: {
       pending: "Ausstehend",
       syncing: "Läuft",
@@ -422,12 +428,15 @@ export const S = {
       failed: "Fehlgeschlagen",
       missing: "Verschwunden",
     } as Record<string, string>,
+    deactivated: "Deaktiviert",
     repoActions: {
       sync: "Synchronisieren",
       retry: "Erneut",
       remove: "Entfernen",
       removeClone: "Clone entfernen",
       rename: "Umbenennen",
+      deactivate: "Deaktivieren",
+      activate: "Aktivieren",
     },
     addForm: {
       title: "Repository hinzufügen",
@@ -554,6 +563,7 @@ export const S = {
       first_ready: "Erster Clone",
       monthly: "Monatlich",
       retry: "Erneut",
+      departure: "Deaktiviert",
     } satisfies Record<QueueRun["trigger"], string>,
     step: {
       catalogue: "Katalog",

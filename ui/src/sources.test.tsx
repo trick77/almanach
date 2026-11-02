@@ -80,6 +80,7 @@ const sources: Sources = {
       active: 0,
       failed: 0,
       missing: 0,
+      inactive: 0,
       last_listed_at: when,
       last_synced_at: when,
       last_error: "",
@@ -98,6 +99,7 @@ const sources: Sources = {
       active: 1,
       failed: 1,
       missing: 0,
+      inactive: 1,
       last_listed_at: null,
       last_synced_at: synced,
       last_error: "",
@@ -131,6 +133,7 @@ const detail: SourceDetail = {
       last_synced_at: when,
       last_error: "",
       created_at: when,
+      deactivated_at: null,
       dir: "/app/repos/p3/r11",
       baseline: {
         run_id: 7,
@@ -164,6 +167,7 @@ const detail: SourceDetail = {
       last_synced_at: null,
       last_error: 'branch "develop": configured branch not found on the remote',
       created_at: when,
+      deactivated_at: null,
       dir: "/app/repos/p3/r12",
       baseline: null,
     },
@@ -181,6 +185,7 @@ describe("SourcesPage", () => {
     expect(screen.getByText("7 bereit")).toBeInTheDocument();
     expect(screen.getByText("1 läuft")).toBeInTheDocument();
     expect(screen.getByText("1 fehlgeschlagen")).toBeInTheDocument();
+    expect(screen.getByText("1 deaktiviert")).toBeInTheDocument();
     // Last run: SHOP's listing, the static source's newest repo sync.
     expect(screen.getByText(dayTime(when))).toBeInTheDocument();
     expect(screen.getByText(dayTime(synced))).toBeInTheDocument();
@@ -813,6 +818,72 @@ describe("SourcePage", () => {
     await waitFor(() =>
       expect(writes).toEqual([
         { method: "DELETE", path: "sources/werkzeuge", body: undefined },
+      ]),
+    );
+  });
+
+  it("confirms before deactivating a repository", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    const ask = /Repository acme-cli deaktivieren\?/;
+    // Cancelled, the panel goes; asking to remove another closes it too.
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.deactivate)[0]);
+    fireEvent.click(screen.getByText(S.sources.form.cancel));
+    expect(screen.queryByText(ask)).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.deactivate)[0]);
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.remove)[0]);
+    expect(screen.queryByText(ask)).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.deactivate)[0]);
+    expect(screen.getByText(ask)).toBeInTheDocument();
+    expect(writes).toHaveLength(0);
+    fireEvent.click(screen.getByText(S.sources.yesDeactivate));
+    await waitFor(() =>
+      expect(writes).toEqual([
+        {
+          method: "POST",
+          path: "sources/werkzeuge/repos/acme-cli/deactivate",
+          body: undefined,
+        },
+      ]),
+    );
+  });
+
+  it("shows a deactivated repository with only its comeback", async () => {
+    const off: SourceDetail = {
+      ...detail,
+      repos: [
+        { ...detail.repos[0], deactivated_at: when, state: "pending" },
+        detail.repos[1],
+      ],
+    };
+    const writes = serve({ "sources/werkzeuge": off });
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    expect(screen.getByText(S.sources.deactivated)).toBeInTheDocument();
+    // The tile counts it apart; pending as it waits for a comeback, it is
+    // no running sync.
+    expect(screen.getByText(/1 deaktiviert/)).toBeInTheDocument();
+    expect(screen.queryByText(S.sources.tiles.running)).not.toBeInTheDocument();
+    // Only the failed one offers a sync or a describe; the deactivated one
+    // offers its activation, the other its deactivation.
+    expect(screen.getAllByText(S.sources.repoActions.retry)).toHaveLength(1);
+    // The page's own sync button shares the label: the row is what counts.
+    const row = screen.getByText("acme-cli").closest("tr");
+    expect(row).not.toBeNull();
+    expect(row).not.toHaveTextContent(S.sources.repoActions.sync);
+    expect(row).not.toHaveTextContent(S.baseline.actions.full);
+    expect(screen.getAllByText(S.sources.repoActions.deactivate)).toHaveLength(
+      1,
+    );
+    fireEvent.click(screen.getByText(S.sources.repoActions.activate));
+    await waitFor(() =>
+      expect(writes).toEqual([
+        {
+          method: "POST",
+          path: "sources/werkzeuge/repos/acme-cli/activate",
+          body: undefined,
+        },
       ]),
     );
   });

@@ -46,7 +46,7 @@ func projectsFrom(sourced bool) string {
 
 func reposFrom(sourced bool) string {
 	if sourced {
-		return `(SELECT r.id, r.project_id, r.slug FROM source_repos sr JOIN repos r ON r.id = sr.repo_id)`
+		return `(SELECT r.id, r.project_id, r.slug FROM source_repos sr JOIN repos r ON r.id = sr.repo_id WHERE ` + activeRow + `)`
 	}
 	return `(SELECT id, project_id, slug FROM repos WHERE first_seen IS NOT NULL)`
 }
@@ -106,7 +106,7 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 		  FROM source_repos sr JOIN repos r ON r.id = sr.repo_id
 		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
-		 WHERE sr.project_id = ? ORDER BY r.slug`, pid)
+		 WHERE sr.project_id = ? AND `+activeRow+` ORDER BY r.slug`, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -164,10 +164,10 @@ func (s *Store) SingleRepos(ctx context.Context) (map[string]RepoRow, error) {
 		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
 		       (SELECT COUNT(*) FROM notes n WHERE n.repo_id = r.id),
 		       (SELECT MAX(n.merged_at) FROM notes n WHERE n.repo_id = r.id),
-		       (SELECT COUNT(*) FROM source_repos x WHERE x.project_id = s.project_id)
+		       (SELECT COUNT(*) FROM source_repos x WHERE x.project_id = s.project_id AND x.deactivated_at IS NULL)
 		  FROM sources s
 		  JOIN projects p ON p.id = s.project_id
-		  JOIN source_repos sr ON sr.project_id = s.project_id
+		  JOIN source_repos sr ON sr.project_id = s.project_id AND `+activeRow+`
 		  JOIN repos r ON r.id = sr.repo_id
 		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id`)

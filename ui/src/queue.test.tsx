@@ -207,6 +207,31 @@ describe("QueuePage", () => {
     expect(screen.getByText("$1.28")).toBeInTheDocument();
   });
 
+  it("names a departure run by its trigger alone, no mode", async () => {
+    serve({
+      queue: queue({
+        next: [
+          runItem(
+            run({
+              id: 43,
+              state: "queued",
+              trigger: "departure",
+              started_at: null,
+              cost_usd: undefined,
+              steps: [],
+            }),
+          ),
+        ],
+      }),
+    });
+    render(<QueuePage />);
+    const [item] = await screen.findAllByTestId("queue-item");
+    expect(
+      within(item).getByText(S.queue.trigger.departure),
+    ).toBeInTheDocument();
+    expect(within(item).queryByText(S.queue.mode.full)).not.toBeInTheDocument();
+  });
+
   it("puts a hold on the next item, its cause and its end", async () => {
     serve({
       queue: queue({

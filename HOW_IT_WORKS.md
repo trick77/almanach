@@ -517,6 +517,21 @@ stops a cycle. Cycle start and finish log their counts; an unchanged
 repository is a debug line. A shutdown cuts the clone in flight; the next
 cycle finds the half directory and redoes it.
 
+A repository that should not be part of its project is deactivated, not
+removed: removing a listed repository only lasts until the next listing,
+which adds it back. A deactivated row stays on the source, whatever the
+listing says (it still goes `missing` and comes back pending with it), but
+is no source anywhere. That part is instant: its clone is deleted, its
+queued runs and manifests go, its notes are ignored (202 `ignored`), its
+page leaves the wiki and the project's repositories, and it counts for
+nothing in a project of one. The project page is the queue's, as every
+write of it: the deactivation queues a departure run (4b) when the project
+has a page. Activating it again makes it a source once more: the next
+cycle clones it, and its first run reconciles from the commit last
+documented, its kept page back in the wiki and folded into the project's
+again. A run already reading the clone refuses a deactivation (409), and
+a departure run already working refuses an activation.
+
 The token at rest is sealed with AES-256-GCM under `BACKEND_SOURCE_TOKEN_KEY`,
 a fresh nonce per seal, stdlib only. Without the key a public source still
 works and saving a token is a 422 naming the variable; a stored token the
@@ -697,7 +712,8 @@ resumes after a restart. The run pins the clone's head when it starts.
    and logged. Every new statement is kept: the page has no ceiling. Its
    revision and the step's
    end (`project_done` in the run's plan) land in one transaction, so a
-   restart never pays the project call twice.
+   restart never pays the project call twice. The prompt names the
+   project's deactivated repositories: nothing is written about them.
 5. *Repository map.* Last, after the project step, so a tight budget
    drops the map before the project page: one call reads the repository's
    finished description (summary and statements, no code) and its current
@@ -1019,16 +1035,18 @@ a folder on disk. `sources` is one row per project key with its kind
 error. `source_repos` is one row per clone: the clone URL, who put it here
 (`listed` by the API or `manual`), the branch (NULL until resolved from
 the remote), the head commit the checkout holds, the poller's `state`
-(`pending`, `syncing`, `ready`, `failed`, `missing`) and the last sync's
-time and error. The two groups meet on
+(`pending`, `syncing`, `ready`, `failed`, `missing`), the last sync's
+time and error, and beside the state when it was deactivated
+(`deactivated_at`, NULL while it is a source) and last activated again
+(`reactivated_at`). The two groups meet on
 `(project_key, slug)`: with the sources on, a note is taken only for a
 source repository, and the wiki lists the sources (4b).
 
 **The baseline.** `baseline_runs` is one row per run: the repository, the
 mode (`full` or `reconcile` from `base_commit`), the trigger (`manual`,
-`first_ready`, `monthly`, or `retry`: a failed run queued again in its own
+`first_ready`, `monthly`, `retry`: a failed run queued again in its own
 mode, up to three times in a row, a day apart or after the reconcile
-interval when that is shorter), the commit (the head when queued, pinned when
+interval when that is shorter, or `departure`: a deactivation's), the commit (the head when queued, pinned when
 the run starts), the state (`queued`, `cataloguing`, `describing`,
 `project`, `done`, `failed`), the step and the steps, the plan (the
 catalogue as JSON: subjects with their files and sizes, what this run
@@ -1441,6 +1459,10 @@ baseline step's patch never is: its bad items are left out one by one (see
 - A listed repository the API no longer names is `missing`: not synced, its
   clone kept, removable by hand; named again, it is pending once more. A
   hand-entered row is never touched by a listing.
+- A deactivated row (`deactivated_at` set) is no source for any reader but
+  the source's own page: one predicate (`activeRow`) for the notes, the
+  wiki, the project step, the sync, a run and the dependencies. The listing
+  never clears the mark; the row keeps its clone URL against another source.
 - `RequestSync` moves every row but a missing one to pending and nudges the
   poller; the cycle in flight finishes first, the next one serves it.
 - One clone URL, one source row, across sources (`CloneKey`), checked in
@@ -1487,6 +1509,17 @@ baseline step's patch never is: its bad items are left out one by one (see
 - Reads take the clone's lock for the read only; a lock held past two
   seconds (its own repository syncing) defers the step to the next drain,
   never fails the run.
+- A departure run (trigger `departure`, queued by a deactivation) reads
+  nothing and is one step. The code first: the departed repositories off
+  the system map (as a carried map), every project statement whose sources
+  are all theirs dropped (a baseline commit by its repository, a PR by the
+  repository its note was for); a statement with no source, or one the code
+  cannot place, stays. Then one project call (`ProjectDeparture`) rewrites
+  what still names them, the patch rules of the project step holding (a
+  PR-taught statement is edited, never dropped), the map always the
+  code's. One revision; a failed call, no call left or a project left with
+  fewer than two repositories writes the code's part alone. It documents
+  nothing: `DocumentedRun` never returns it.
 
 ### Startup and operations
 

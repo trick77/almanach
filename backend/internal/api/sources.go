@@ -45,6 +45,8 @@ type SourceStore interface {
 	SourceRepoByName(ctx context.Context, key, slug string) (store.SourceRepo, bool, error)
 	RenameProject(ctx context.Context, key, to string) (int64, error)
 	RenameRepo(ctx context.Context, key, slug, to, cloneURL string) error
+	DeactivateSourceRepo(ctx context.Context, key, slug string) (bool, error)
+	ActivateSourceRepo(ctx context.Context, key, slug string) error
 }
 
 // Nudger starts the next sync cycle now.
@@ -119,6 +121,8 @@ func (d Deps) registerSources(s *httpapi.Server) {
 	s.HandleFunc("DELETE /api/sources/{key}/repos/{slug}", d.deleteRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/sync", d.syncRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/describe", d.describeRepo)
+	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/deactivate", d.deactivateRepo)
+	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/activate", d.activateRepo)
 }
 
 // enabled answers the 404 of a switched-off feature itself.
@@ -152,6 +156,7 @@ type sourceSummaryBody struct {
 	Active       int        `json:"active"`
 	Failed       int        `json:"failed"`
 	Missing      int        `json:"missing"`
+	Inactive     int        `json:"inactive"`
 	LastListedAt *time.Time `json:"last_listed_at"`
 	LastSyncedAt *time.Time `json:"last_synced_at"`
 	LastError    string     `json:"last_error"`
@@ -181,7 +186,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 	for _, s := range rows {
 		out.Sources = append(out.Sources, sourceSummaryBody{ProjectKey: s.ProjectKey, Kind: s.Kind, Host: s.Host, HasToken: s.HasToken(),
 			TokenAuth: s.TokenAuth, TokenUser: s.TokenUser, Repos: s.Repos, Ready: s.Ready, Active: s.Active, Failed: s.Failed, Missing: s.Missing,
-			LastListedAt: s.LastListedAt, LastSyncedAt: s.LastSyncedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
+			Inactive: s.Inactive, LastListedAt: s.LastListedAt, LastSyncedAt: s.LastSyncedAt, LastError: s.LastError, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -196,6 +201,9 @@ type sourceRepoBody struct {
 	LastSyncedAt *time.Time `json:"last_synced_at"`
 	LastError    string     `json:"last_error"`
 	CreatedAt    time.Time  `json:"created_at"`
+	// DeactivatedAt is when the repository was deactivated, null while it
+	// is a source.
+	DeactivatedAt *time.Time `json:"deactivated_at"`
 	// Dir is the clone's folder, named by ids.
 	Dir string `json:"dir"`
 	// Baseline is the newest run and the commit last documented, null
@@ -291,7 +299,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 	}
 	for _, rp := range repos {
 		body := sourceRepoBody{Slug: rp.Slug, CloneURL: rp.CloneURL, Origin: rp.Origin, Branch: rp.Branch, HeadCommit: rp.HeadCommit,
-			State: rp.State, LastSyncedAt: rp.LastSyncedAt, LastError: rp.LastError, CreatedAt: rp.CreatedAt}
+			State: rp.State, LastSyncedAt: rp.LastSyncedAt, LastError: rp.LastError, CreatedAt: rp.CreatedAt, DeactivatedAt: rp.DeactivatedAt}
 		if dir, err := d.Sources.Git.Dir(rp.ProjectID, rp.RepoID); err == nil {
 			body.Dir = dir
 		}
@@ -911,6 +919,95 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Log.InfoContext(ctx, "source_repo_deleted", "project", src.ProjectKey, "repo", rp.Slug, "user", d.user(r))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deactivateRepo takes a repository out without removing its row, so a
+// listing never adds it back: instant for the store (no source any more,
+// its notes ignored, its page out of the wiki) and the clone, which goes;
+// the project page is the worker's, by the departure run the store queued.
+// The row first, then the clone: a run past queued refuses the whole of it
+// (409) before the clone is touched. A clone that would not go is a 500
+// with the row deactivated; deactivating again removes it then.
+func (d Deps) deactivateRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	d.reader(r)
+	if !d.enabled(w) {
+		return
+	}
+	src, ok := d.lookupSource(w, r)
+	if !ok {
+		return
+	}
+	rp, ok := d.lookupRepo(w, r, src)
+	if !ok {
+		return
+	}
+	queued, err := d.Sources.Store.DeactivateSourceRepo(ctx, src.ProjectKey, rp.Slug)
+	switch {
+	case errors.Is(err, store.ErrRunOpen):
+		httpx.WriteError(w, http.StatusConflict, "a run of this repository is running, deactivate it once it ends")
+		return
+	case errors.Is(err, store.ErrNoRepo):
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	case err != nil:
+		httpx.ServerError(w, r, err, "deactivate repo")
+		return
+	}
+	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
+		httpx.ServerError(w, r, err, "remove clone")
+		return
+	}
+	d.Log.InfoContext(ctx, "source_repo_deactivated", "project", src.ProjectKey, "repo", rp.Slug, "departure_queued", queued, "user", d.user(r))
+	if queued && d.Worker != nil {
+		d.Worker.Wake()
+	}
+	d.writeDetail(w, r, src)
+}
+
+// activateRepo brings a deactivated repository back: a source again, cloned
+// by the next cycle (nudged), its kept page back in the wiki, its first run
+// reconciling from the commit last documented. 409 while its departure run
+// is running.
+func (d Deps) activateRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	d.reader(r)
+	if !d.enabled(w) {
+		return
+	}
+	src, ok := d.lookupSource(w, r)
+	if !ok {
+		return
+	}
+	rp, ok := d.lookupRepo(w, r, src)
+	if !ok {
+		return
+	}
+	err := d.Sources.Store.ActivateSourceRepo(ctx, src.ProjectKey, rp.Slug)
+	switch {
+	case errors.Is(err, store.ErrRunOpen):
+		httpx.WriteError(w, http.StatusConflict, "the repository is being taken out of the project page, activate it once that ends")
+		return
+	case errors.Is(err, store.ErrNoRepo):
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	case err != nil:
+		httpx.ServerError(w, r, err, "activate repo")
+		return
+	}
+	d.Log.InfoContext(ctx, "source_repo_activated", "project", src.ProjectKey, "repo", rp.Slug, "user", d.user(r))
+	d.Sources.Poller.Nudge()
+	d.writeDetail(w, r, src)
+}
+
+// writeDetail answers a repository change with the source as it stands.
+func (d Deps) writeDetail(w http.ResponseWriter, r *http.Request, src store.ProjectSource) {
+	out, err := d.sourceDetail(r.Context(), src)
+	if err != nil {
+		httpx.ServerError(w, r, err, "source repos")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type renameRepoBody struct {

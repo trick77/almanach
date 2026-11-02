@@ -42,6 +42,8 @@ type RunStore interface {
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
+	DepartedRepos(ctx context.Context, key string) ([]string, error)
+	PRRepos(ctx context.Context, key string, prKeys []string) (map[string]string, error)
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -116,6 +118,10 @@ type runPlan struct {
 	// restart resumes the asking, never pays for what came before.
 	ProjectMap *mapRetry `json:"project_map,omitempty"`
 	RepoMap    *mapRetry `json:"repo_map,omitempty"`
+	// Departure: the run a deactivation queued (store.TriggerDeparture),
+	// set by the store with the run. It reads nothing: its one step takes
+	// the repository out of the project page (departureStep).
+	Departure bool `json:"departure,omitempty"`
 }
 
 // steps is the reading steps of the plan: the overview, then the subjects.
@@ -259,7 +265,19 @@ func (w *Worker) failRun(ctx context.Context, r store.BaselineRun, reason string
 }
 
 // startRun pins the clone's head and decides what the run reads. No call.
+// A departure run has no clone to read: it goes to its project step at the
+// commit the store queued it with.
 func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
+	plan, err := decodePlan(r.Plan)
+	if err != nil {
+		return fmt.Errorf("the run's plan: %w", err)
+	}
+	if plan.Departure {
+		now := w.now().UTC()
+		r.StartedAt, r.State, r.Error = &now, store.RunProject, ""
+		w.log.InfoContext(ctx, "baseline: departure run started: the repository leaves the project page")
+		return w.save(ctx, *r)
+	}
 	repos, err := w.base.Store.SourceRepos(ctx, r.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: source repos read failed, drain paused", logging.Err(err))
@@ -1168,6 +1186,9 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return fmt.Errorf("the run's plan: %w", err)
 	}
+	if plan.Departure {
+		return w.departureStep(ctx, r, plan)
+	}
 	if plan.ProjectDone {
 		return w.repoMapStep(ctx, r, plan)
 	}
@@ -1207,7 +1228,12 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: shared repositories read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), w.limits, nil))
+	departed, err := w.departed(ctx, r.ProjectKey)
+	if err != nil {
+		return err
+	}
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed,
+		w.limits, nil))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -1287,16 +1313,20 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 	if page.RevisionID == 0 || r.Mode != store.RunReconcile || plan.SummaryChanged {
 		return false, nil, nil
 	}
-	// A repository added after the page was written: the page has never
-	// seen it (a project that grows past one, or grows back to more after
-	// standing as one with its old page kept), whatever a reconcile reads.
+	// A repository added, or activated again, after the page was written:
+	// the page has never seen it, or took it out (a project that grows past
+	// one, or grows back to more after standing as one with its old page
+	// kept), whatever a reconcile reads. A deactivated one is no part of it.
 	rows, err := w.base.Store.SourceRepos(ctx, r.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
 		return false, nil, errStop
 	}
 	for _, row := range rows {
-		if row.CreatedAt.After(page.UpdatedAt) {
+		if !row.Active() {
+			continue
+		}
+		if row.CreatedAt.After(page.UpdatedAt) || row.ReactivatedAt != nil && row.ReactivatedAt.After(page.UpdatedAt) {
 			return false, nil, nil
 		}
 	}
@@ -1595,7 +1625,11 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 		w.log.WarnContext(ctx, "baseline: shared repositories read failed, drain paused", logging.Err(err))
 		return errStop
 	}
-	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), w.limits, retry)
+	departed, err := w.departed(ctx, r.ProjectKey)
+	if err != nil {
+		return err
+	}
+	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed, w.limits, retry)
 	res := w.base.Describer.ProjectMap(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeProjectMap, res.Call)
 	if errors.Is(err, errStop) {
@@ -2059,10 +2093,11 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 
 // renderProject is the project step's prompt; retry is the refused map,
 // asking for the map alone again (nil the first time).
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, libs []store.SharedRepo, repoSlugs []string,
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, libs []store.SharedRepo, repoSlugs, departed []string,
 	l config.Limits, retry *mapRetry) string {
 	nodes, edges := mapRoom(libs, len(repoSlugs))
 	return strings.NewReplacer(
+		"{departed}", departedRule(departed),
 		"{shared}", sharedRepos(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
 		"{project_map}", projectMap(projectPage)+refusedDraft(retry), "{repo_slugs}", strings.Join(repoSlugs, ", "),

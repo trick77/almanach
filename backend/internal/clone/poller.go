@@ -492,6 +492,20 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	}
 	key, slug := j.Source.ProjectKey, j.Repo.Slug
 	mode, trigger, base := store.RunFull, store.TriggerFirstReady, ""
+	if j.Repo.HeadCommit == "" && j.Repo.ReactivatedAt != nil {
+		// Back from a deactivation (which forgot the head with the clone):
+		// its page stands at the documented commit, so the first ready
+		// reconciles from there; the run reads afresh when that commit is
+		// not in the history any more.
+		doc, documented, err := p.Store.DocumentedRun(ctx, key, slug)
+		if err != nil {
+			p.logRunCheck(err, key, slug)
+			return
+		}
+		if documented && doc.Commit != "" {
+			mode, base = store.RunReconcile, doc.Commit
+		}
+	}
 	if j.Repo.HeadCommit != "" {
 		last, streak, ok, err := p.Store.LastRun(ctx, key, slug)
 		if err != nil || (ok && last.FinishedAt == nil) {

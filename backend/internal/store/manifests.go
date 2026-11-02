@@ -90,7 +90,7 @@ type Graph struct {
 
 // Dependencies joins what every source repository requires against what
 // the others provide, at read time: nothing of it is stored. A repository
-// gone missing from its listing counts for nothing; a repository's use of
+// gone missing from its listing, or deactivated, counts for nothing; a repository's use of
 // itself (a monorepo's modules) is no edge; a coordinate two repositories
 // provide gives no edge, and is listed as ambiguous when something
 // requires it.
@@ -101,7 +101,7 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 		  JOIN source_repos sr ON sr.repo_id = m.repo_id
 		  JOIN repos r ON r.id = m.repo_id
 		  JOIN projects p ON p.id = r.project_id
-		 WHERE sr.state <> 'missing'
+		 WHERE sr.state <> 'missing' AND `+activeRow+`
 		 ORDER BY p.key, r.slug`)
 	if err != nil {
 		return Graph{}, err

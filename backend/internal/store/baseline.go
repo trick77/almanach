@@ -23,6 +23,10 @@ const (
 	TriggerFirstReady = "first_ready"
 	TriggerMonthly    = "monthly"
 	TriggerRetry      = "retry"
+	// TriggerDeparture is the run a deactivation queues: no reading, only
+	// the project step taking the repository out of the project page. It
+	// documents nothing: DocumentedRun never finds it.
+	TriggerDeparture = "departure"
 )
 
 // Run states: queued until the worker takes it, then one state per kind of
@@ -121,7 +125,7 @@ func (s *Store) oneRun(ctx context.Context, query string, args ...any) (Baseline
 
 // EnqueueRun queues a run of one repository at a pinned commit and returns
 // its id. ErrExists when the repository has an open run, ErrNoRepo when it
-// is no source repository.
+// is no source repository (a deactivated one included).
 func (s *Store) EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error) {
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil {
@@ -133,9 +137,10 @@ func (s *Store) EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCo
 	var id int64
 	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO baseline_runs (repo_id, mode, trigger, base_commit, "commit", state, queued_at)
-		VALUES (?, ?, ?, ?, ?, 'queued', ?) RETURNING id`,
-		rid, mode, trigger, baseCommit, commit, nowStamp()).Scan(&id)
-	if isForeignKey(err) {
+		SELECT sr.repo_id, ?, ?, ?, ?, 'queued', ? FROM source_repos sr WHERE sr.repo_id = ? AND `+activeRow+`
+		RETURNING id`,
+		mode, trigger, baseCommit, commit, nowStamp(), rid).Scan(&id)
+	if isForeignKey(err) || errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoRepo
 	}
 	return id, uniqueAsExists(err)
@@ -203,15 +208,15 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, Run
 	return r, st, true, nil
 }
 
-// DocumentedRun is a repository's newest done run: its commit is the one
-// the page was last read against.
+// DocumentedRun is a repository's newest done run that read it (never a
+// departure): its commit is the one the page was last read against.
 func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRun, bool, error) {
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil || !ok {
 		return BaselineRun{}, false, err
 	}
 	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+`
-		WHERE b.repo_id = ? AND b.state = 'done' ORDER BY b.id DESC LIMIT 1`, rid)
+		WHERE b.repo_id = ? AND b.state = 'done' AND b.trigger <> 'departure' ORDER BY b.id DESC LIMIT 1`, rid)
 }
 
 // SaveRun writes a run's progress: the commit it pinned, its mode (a reconcile
@@ -329,7 +334,7 @@ func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns
 		  LEFT JOIN (SELECT b.repo_id, b."commit", b.finished_at,
 		                    ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
 		               FROM baseline_runs b JOIN repos r ON r.id = b.repo_id
-		              WHERE r.project_id = ?1 AND b.state = 'done') d
+		              WHERE r.project_id = ?1 AND b.state = 'done' AND b.trigger <> 'departure') d
 		    ON d.repo_id = l.repo_id AND d.rn = 1
 		 WHERE l.rn = 1`, pid)
 	if err != nil {

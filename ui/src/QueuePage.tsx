@@ -417,8 +417,15 @@ function RunMeta({
   const { maxAttempts } = useWorker();
   return (
     <>
-      <b className="font-medium text-muted">{S.queue.mode[run.mode]}</b>,{" "}
-      {S.queue.trigger[run.trigger]}
+      {/* A departure reads nothing: its mode says nothing either. */}
+      {run.trigger === "departure" ? (
+        <b className="font-medium text-muted">{S.queue.trigger.departure}</b>
+      ) : (
+        <>
+          <b className="font-medium text-muted">{S.queue.mode[run.mode]}</b>,{" "}
+          {S.queue.trigger[run.trigger]}
+        </>
+      )}
       {run.commit && (
         <>
           <Sep />
