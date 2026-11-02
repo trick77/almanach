@@ -375,7 +375,9 @@ paths:
       description: >-
         The dependency graph over the source repositories, joined at read
         time from the build manifests the poller read after each sync
-        (go.mod, pom.xml, package.json, at the root or one level down):
+        (go.mod, pom.xml, package.json, a Gradle build's build and
+        settings files, gradle.properties and gradle/libs.versions.toml,
+        at the root or one level down):
         what one requires against what another provides. Never stored,
         never a model's. A coordinate two repositories provide gives no
         edge and is listed under `ambiguous`. Empty with the sources off.

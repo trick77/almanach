@@ -1,7 +1,7 @@
 // Package manifest reads what a repository's build manifests say it is and
 // what it pulls in: a go.mod's module and requires, a pom.xml's
-// coordinates and dependencies, a package.json's name and dependencies.
-// Pure: bytes in, coordinates out, so every rule is a table test. Code
+// coordinates and dependencies, a package.json's name and dependencies, a
+// Gradle build's projects and dependencies (gradle.go). Pure: bytes in, coordinates out, so every rule is a table test. Code
 // derives the dependency graph from these, never a model.
 package manifest
 
@@ -19,7 +19,7 @@ import (
 // Version is this package's reading of the manifests: raise it with any
 // change to what Parse makes of one, and every repository's manifests are
 // read again at the next sync, not only those whose head moved.
-const Version = 2
+const Version = 3
 
 // Ecosystems: the prefix of a coordinate.
 const (
@@ -47,19 +47,31 @@ type Read struct {
 // root or one level down: deeper ones are copies (a checked-out corpus, a
 // fixture) and would make the repository provide what it only carries.
 func Is(p string) bool {
+	// A build's catalog sits in its gradle/ folder: the root's, or a build's
+	// one down (read only for a folder that is a build, see gradle).
+	if p == gradleCatalog || strings.Count(p, "/") == 2 && strings.HasSuffix(p, "/"+gradleCatalog) {
+		return true
+	}
 	if strings.Count(p, "/") > 1 {
 		return false
 	}
-	switch path.Base(p) {
-	case "go.mod", "pom.xml", "package.json":
+	switch b := path.Base(p); b {
+	case "go.mod", "pom.xml", "package.json", "gradle.properties":
 		return true
+	default:
+		return gradleBuild(b) || gradleSettings(b)
 	}
-	return false
 }
 
 // Parse reads the manifests given (path to body). A manifest that does not
 // parse is left out; the rest still count.
-func Parse(files map[string][]byte) Read {
+func Parse(in map[string][]byte) Read {
+	// A UTF-8 byte order mark (an editor's on Windows) would fail JSON and
+	// TOML at the first byte; the tools themselves skip it.
+	files := make(map[string][]byte, len(in))
+	for p, body := range in {
+		files[p] = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
+	}
 	provides := map[string]bool{}
 	requires := map[string]string{}
 	add := func(coord, version string) {
@@ -74,6 +86,12 @@ func Parse(files map[string][]byte) Read {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
+	// A Gradle build's files are read together: its requires come per
+	// build file, in path order like the rest.
+	gradleProv, gradleReqs := gradle(files)
+	for _, c := range gradleProv {
+		provides[c] = true
+	}
 	for _, p := range paths {
 		body := files[p]
 		var prov []string
@@ -85,6 +103,8 @@ func Parse(files map[string][]byte) Read {
 			prov, reqs = pom(body)
 		case "package.json":
 			prov, reqs = packageJSON(body)
+		default:
+			reqs = gradleReqs[p]
 		}
 		for _, c := range prov {
 			provides[c] = true

@@ -567,14 +567,39 @@ repository moved from a Bitbucket project to a folder is taken there.
 
 Who uses whom is code's, never a model's. After a sync, still under the
 clone's lock, the poller reads the build manifests at the head when they
-were last read at another commit: `go.mod`, `pom.xml`, `package.json`, at
+were last read at another commit: `go.mod`, `pom.xml`, `package.json`,
+`build.gradle(.kts)`, `settings.gradle(.kts)`, `gradle.properties`, at
 the root or one level down (deeper ones are copies, a checked-out corpus
-or a fixture). `internal/manifest` turns them into coordinates: what the
-repository provides (`go:<module>`, `maven:<group>:<artifact>`,
-`npm:<name>`) and what it requires, with the version as written; a POM's
-parent counts as required, and an ISO-8859-1 POM is read. A `${...}`
-coordinate is left out, a `${...}` version is empty. Every body
-passes `redact.File` first, since a version is shown. One row per source
+or a fixture), and `gradle/libs.versions.toml`. `internal/manifest` turns
+them into coordinates: what the repository provides (`go:<module>`,
+`maven:<group>:<artifact>`, `npm:<name>`) and what it requires, with the
+version as written; a POM's parent counts as required, and an ISO-8859-1
+POM is read. A `${...}` coordinate is left out, a `${...}` version is
+empty.
+
+A Gradle build is a script, so it is read, not run, and its files
+together: settings names the root project and includes the others, the
+group is taken as Gradle evaluates it (own `group = "..."`, then the
+root's `allprojects { }`/`subprojects { }`, the later one winning, then
+`gradle.properties`), and a project provides `maven:<group>:<name>`, so a
+Gradle build and a Maven one meet. No settings file or no group: nothing
+provided (the name would be the clone's folder). Required is what a
+dependency configuration names as a literal `"group:artifact:version"`,
+in map notation, or as a catalog accessor (`libs.x.y`, `libs.bundles.z`,
+exactly, only the libraries used); `$x` resolves from `gradle.properties`
+and plain assignments in the build file. A coordinate built of anything
+else, a convention plugin's dependencies, a publication renaming its
+artifact: not seen, never guessed. A folder one down with its own
+settings file is its own build, with its own `gradle/libs.versions.toml`.
+Build logic is no use of the repository's and left out: `buildSrc`, a
+build `pluginManagement` includes, `buildscript { }`; so is
+`constraints { }`, which only pins a version. Every body passes
+`redact.Text` first, since a version is shown: the credential shapes, not
+`redact.File`'s key rules, which read a catalog alias or a property name
+(`jjwt-api`, `tokenLibVersion`) as a secret and would blank the
+coordinate. Only coordinates and versions leave the parser, never a body,
+and no `$x` resolves from a key those rules call secret
+(`redact.SecretKey`; a version-named key is none). One row per source
 repository in `repo_manifests`, replaced on a new head, gone with the row.
 
 The edges are never stored. `store.Dependencies` joins requires against
@@ -956,7 +981,7 @@ one.
 | `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | nothing |
 | `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only. | gitrepo (Access), store (types only) |
 | `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | gitrepo, manifest, secret, store |
-| `internal/manifest` | `Parse`: a repository's go.mod, pom.xml and package.json as the coordinates it provides and requires. Pure, no I/O. | nothing |
+| `internal/manifest` | `Parse`: a repository's go.mod, pom.xml, package.json and Gradle build as the coordinates it provides and requires. Pure, no I/O. | nothing |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
 | `internal/diagram` | A diagram's shape (rongo's intermediate form), data only; `baseline/diagram.go` validates it. | nothing |
