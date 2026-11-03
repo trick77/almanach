@@ -1,4 +1,6 @@
 import {
+  memo,
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -37,85 +39,121 @@ export function CompactMap({
   links: (id: string) => string | null;
   teasers: Map<string, string[]>;
 }): ReactNode {
-  // Pointer and focus each hold their own: leaving one never puts out what
-  // the other lit.
+  // Pointer, focus and click each hold their own: leaving one never puts
+  // out what another lit. A click pins, as not every browser focuses what
+  // it clicks (Safari); a click elsewhere or Escape lets go.
   const [hovered, setHovered] = useState<string | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
-  const hot = hovered ?? focused;
-  // The drawing the full view shows, null while closed.
-  const [full, setFull] = useState<ReturnType<typeof drawMap> | null>(null);
-  const [broken, setBroken] = useState(false);
+  const [pinned, setPinned] = useState<string | null>(null);
+  const hot = hovered ?? focused ?? pinned;
+  const hotNow = useRef(hot);
+  useEffect(() => {
+    hotNow.current = hot;
+  });
+  // The full view is open; its drawing follows the map. failedFor is the
+  // map whose drawing threw: said until the map changes.
+  const [open, setOpen] = useState(false);
+  const [failedFor, setFailedFor] = useState<FlowIR | null>(null);
   const card = useRef<HTMLElement>(null);
-  const drawnFor = useRef<{
-    ir: FlowIR;
-    drawn: ReturnType<typeof drawMap>;
-  } | null>(null);
   // A tap on a link lights it first and opens it only once lit: a touch
-  // screen has no pointing.
+  // screen has no pointing. A touch that turns into a scroll is forgotten.
   const touch = useRef<{ id: string; lit: boolean } | null>(null);
-  const ok = fits(ir, true);
+  const ok = useMemo(() => fits(ir, true), [ir]);
   const bands = useMemo(() => bandsOf(ir), [ir]);
   const names = useMemo(
     () => new Map(ir.nodes.map((n) => [n.id, n.label])),
     [ir],
   );
   const lit = useMemo(() => (hot === null ? null : ways(ir, hot)), [ir, hot]);
+  const full = useMemo(() => (open ? tryDraw(ir) : null), [open, ir]);
+  const broken = failedFor === ir || (open && full === null);
+  // One set of handlers per map, so a light changing re-renders only the
+  // nodes whose look changes.
+  const points = useMemo(
+    () =>
+      new Map(
+        ir.nodes.map((n): [string, Point] => {
+          const id = n.id;
+          return [
+            id,
+            {
+              onMouseEnter: () => setHovered(id),
+              onMouseLeave: () => setHovered((h) => (h === id ? null : h)),
+              onFocus: () => setFocused(id),
+              onBlur: () => setFocused((f) => (f === id ? null : f)),
+              onTouchStart: () => {
+                touch.current = { id, lit: hotNow.current === id };
+              },
+              onTouchMove: () => {
+                touch.current = null;
+              },
+              onTouchCancel: () => {
+                touch.current = null;
+              },
+              onClickCapture: (e) => {
+                const t = touch.current;
+                touch.current = null;
+                if (t?.id !== id || t.lit) return;
+                e.preventDefault();
+                e.stopPropagation();
+                setPinned(id);
+              },
+              onClick: () => setPinned((p) => (p === id ? null : id)),
+            },
+          ];
+        }),
+      ),
+    [ir],
+  );
+
+  useEffect(() => {
+    if (pinned === null) return;
+    const away = (e: Event) => {
+      if (
+        e instanceof KeyboardEvent
+          ? e.key === "Escape"
+          : !card.current?.contains(e.target as Node)
+      )
+        setPinned(null);
+    };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", away);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", away);
+    };
+  }, [pinned]);
 
   // Every map the backend stores fits; one that does not is a defect, said
   // rather than drawn crowded, as for the drawing.
   if (!ok)
     return <p className="my-2 text-[13.5px] text-faint">{S.diagram.failed}</p>;
 
-  // The drawing, laid out by code on the first ask, once per map. A layout
-  // that throws costs the full view and the file, never the page.
-  function drawing() {
-    if (drawnFor.current?.ir === ir) return drawnFor.current.drawn;
-    try {
-      const drawn = drawMap(ir, "almanach-system-map");
-      drawnFor.current = { ir, drawn };
-      return drawn;
-    } catch {
-      setBroken(true);
-      return null;
-    }
-  }
   function save() {
-    const d = drawing();
+    const d = full ?? tryDraw(ir);
     if (d) download(fileName("flow"), toSvgFile(d, card.current));
+    else setFailedFor(ir);
   }
-  function open() {
-    setFull(drawing());
+  function openFull() {
+    if (tryDraw(ir)) setOpen(true);
+    else setFailedFor(ir);
   }
 
-  const point = (id: string): Point => ({
-    onMouseEnter: () => setHovered(id),
-    onMouseLeave: () => setHovered((h) => (h === id ? null : h)),
-    onFocus: () => setFocused(id),
-    onBlur: () => setFocused((f) => (f === id ? null : f)),
-    onTouchStart: () => {
-      touch.current = { id, lit: hot === id };
-    },
-    onClickCapture: (e) => {
-      const t = touch.current;
-      touch.current = null;
-      if (t?.id !== id || t.lit) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setFocused(id);
-    },
-    onClick: () => setFocused(id),
-  });
   const said =
     hot === null || lit === null
       ? ""
       : S.diagram.connections(
           names.get(hot) ?? hot,
-          [...lit].map(([k, w]) => `${names.get(k) ?? k} (${w.text})`),
+          [...lit].map(([k, w]) =>
+            w.text === ""
+              ? (names.get(k) ?? k)
+              : `${names.get(k) ?? k} (${w.text})`,
+          ),
         );
 
   return (
     <figure className="my-3" aria-label={title} ref={card}>
-      <DiagramTools title={title} onFull={open} onSave={save} />
+      <DiagramTools title={title} onFull={openFull} onSave={save} />
       {broken && (
         <p className="mb-2 text-[13.5px] text-faint">{S.diagram.failed}</p>
       )}
@@ -162,7 +200,7 @@ export function CompactMap({
                             : "off"
                       }
                       way={lit?.get(id)}
-                      point={point(id)}
+                      point={points.get(id)!}
                     />
                   </li>
                 ))}
@@ -184,7 +222,7 @@ export function CompactMap({
           drawn={full}
           links={links}
           names={names}
-          onClose={() => setFull(null)}
+          onClose={() => setOpen(false)}
         />
       )}
     </figure>
@@ -199,6 +237,8 @@ type Point = {
   onFocus: () => void;
   onBlur: () => void;
   onTouchStart: () => void;
+  onTouchMove: () => void;
+  onTouchCancel: () => void;
   onClickCapture: (e: MouseEvent) => void;
   onClick: () => void;
 };
@@ -240,7 +280,7 @@ const tone = {
 /** Node is one name on the map: a repository's box with its teaser, or
  *  another band's chip. A node with a page is its link; one without is a
  *  button, so a keyboard reaches its connections too. */
-function Node({
+const Node = memo(function Node({
   box,
   label,
   teaser,
@@ -265,7 +305,7 @@ function Node({
       : "inline-flex items-baseline gap-1.5 rounded-full px-2.5 py-[3px] text-[12.5px] text-ink-dim " +
         (to === null ? "" : "font-mono ")) +
     tone[state];
-  const wayMark = way && (
+  const wayMark = way && way.text !== "" && (
     <span className="shrink-0 font-sans text-[11.5px] text-ochre">
       {way.text}
     </span>
@@ -314,4 +354,14 @@ function Node({
       {body}
     </Link>
   );
+});
+
+/** tryDraw is the map's drawing, or null where its layout throws: the
+ *  full view and the file are lost then, never the page. */
+function tryDraw(ir: FlowIR): ReturnType<typeof drawMap> | null {
+  try {
+    return drawMap(ir, "almanach-system-map");
+  } catch {
+    return null;
+  }
 }

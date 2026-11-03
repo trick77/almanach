@@ -822,6 +822,45 @@ describe("ProjectPage", () => {
     expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api");
   });
 
+  it("pins a clicked node until a click elsewhere or Escape", async () => {
+    serve({
+      "projects/PAY": {
+        ...project,
+        map: {
+          ...map,
+          // An edge without a head or a label says nothing, not "()".
+          edges: [
+            ...map.edges,
+            {
+              from: "browser",
+              to: "pg",
+              label: "",
+              dashed: false,
+              head: "none",
+            },
+          ],
+        },
+      },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    const figure = await screen.findByRole("figure", {
+      name: "Systemübersicht",
+    });
+    const pg = within(figure).getByRole("button", { name: "PostgreSQL" });
+    const live = () => figure.querySelector("[aria-live]")!.textContent;
+    fireEvent.mouseEnter(pg);
+    fireEvent.click(pg);
+    fireEvent.mouseLeave(pg);
+    expect(live()).toBe("PostgreSQL: verbunden mit pay-api (← DB), Browser");
+    fireEvent.pointerDown(pg);
+    expect(live()).not.toBe("");
+    fireEvent.pointerDown(document.body);
+    expect(live()).toBe("");
+    fireEvent.click(pg);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(live()).toBe("");
+  });
+
   it("keeps the page when the drawing cannot be laid out", async () => {
     serve({ "projects/PAY": { ...project, map } });
     render(<ProjectPage projectKey="PAY" />);

@@ -233,6 +233,11 @@ function Overview({
   showMap: boolean;
 }) {
   const [hRepo, hDesc, hNotes, hMerge] = S.project.repoHeaders;
+  // Once for the map's boxes and the list both.
+  const teasers = useMemo(
+    () => new Map(data.repos.map((r) => [r.slug, teaserLines(r.summary)])),
+    [data.repos],
+  );
   return (
     <>
       {showMap && (
@@ -244,7 +249,8 @@ function Overview({
             <SystemMap
               map={data.map}
               projectKey={data.key}
-              repos={data.repos}
+              slugs={data.repos.map((r) => r.slug)}
+              teasers={teasers}
               shared={data.shared}
             />
           )}
@@ -269,7 +275,7 @@ function Overview({
               <tbody>
                 {data.repos.map((r) => {
                   const to = repoPath(data.key, r.slug);
-                  const teaser = teaserLines(r.summary);
+                  const teaser = teasers.get(r.slug) ?? [];
                   return (
                     <tr key={r.slug} {...rowOpens(to)}>
                       <td className={tdMono}>
@@ -325,23 +331,20 @@ function Overview({
 function SystemMap({
   map,
   projectKey,
-  repos,
+  slugs,
+  teasers,
   shared,
 }: {
   map: FlowIR;
   projectKey: string;
-  repos: ProjectDetail["repos"];
+  slugs: string[];
+  teasers: Map<string, string[]>;
   shared: SharedRepo[];
 }) {
   const ir = useMemo(
     () => titledZones(withShared(map, shared), S.diagram.zones),
     [map, shared],
   );
-  const teasers = useMemo(
-    () => new Map(repos.map((r) => [r.slug, teaserLines(r.summary)])),
-    [repos],
-  );
-  const slugs = repos.map((r) => r.slug);
   const repoZone = new Map(map.nodes.map((n) => [n.id, n.zone]));
   const byId = new Map(shared.map((r) => [sharedId(r), r]));
   return (
