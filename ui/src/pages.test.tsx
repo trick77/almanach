@@ -13,6 +13,7 @@ import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
 import {
   DescriptionView,
+  areaGroups,
   descriptionRail,
   statementMatches,
 } from "./Description";
@@ -1193,7 +1194,7 @@ describe("RepoPage", () => {
         {
           slug: "pay-clearing",
           revision: 2,
-          summary: "Gleicht Zahlungen ab.",
+          summary: "Gleicht **Zahlungen** ab.",
           notes: 4,
           last_merge: null,
         },
@@ -1263,7 +1264,7 @@ describe("RepoPage", () => {
       expect(within(list).getAllByRole("link")).toHaveLength(2);
     });
 
-    it("closes on its own repository, on focus leaving it, on a scroll outside", async () => {
+    it("closes on its own repository, on focus leaving it; follows a scroll", async () => {
       serve({ "projects/PAY/repos/pay-clearing": repo, "projects/PAY": three });
       render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
       const rail = await screen.findByRole("navigation", { name: "Inhalt" });
@@ -1274,10 +1275,12 @@ describe("RepoPage", () => {
         fireEvent.click(button!);
         return screen.getByRole("dialog", { name: "Repository wechseln" });
       };
+      // Its own repository: closed, the focus back on the switch.
       fireEvent.click(
         within(open()).getByRole("link", { name: /pay-clearing/ }),
       );
       expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(button);
       const filter = within(open()).getByRole("searchbox");
       fireEvent.change(filter, { target: { value: "clearing" } });
       fireEvent.keyDown(filter, { key: "Enter" });
@@ -1288,12 +1291,26 @@ describe("RepoPage", () => {
         relatedTarget: rail.querySelector("input"),
       });
       expect(screen.queryByRole("dialog")).toBeNull();
-      // A scroll inside it keeps it; the page's closes it.
+      // A scroll outside it, a phone's keyboard opening say, moves it with
+      // the switch; inside it, nothing.
+      const shown = vi
+        .spyOn(HTMLElement.prototype, "getClientRects")
+        .mockReturnValue([{}] as unknown as DOMRectList);
+      const at = vi
+        .spyOn(button!, "getBoundingClientRect")
+        .mockReturnValue({ left: 20, bottom: 100 } as DOMRect);
       const again = open();
+      expect(again.style.top).toBe("106px");
       fireEvent.scroll(again.querySelector("ul")!);
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      at.mockReturnValue({ left: 20, bottom: 40 } as DOMRect);
       fireEvent.scroll(rail);
+      expect(screen.getByRole("dialog").style.top).toBe("46px");
+      // Once the switch is hidden (the other width's), it closes.
+      shown.mockReturnValue([] as unknown as DOMRectList);
+      fireEvent(window, new Event("resize"));
       expect(screen.queryByRole("dialog")).toBeNull();
+      shown.mockRestore();
+      at.mockRestore();
       // A press on the switch toggles, it does not close and reopen.
       open();
       fireEvent.pointerDown(button!);
@@ -1336,6 +1353,11 @@ describe("RepoPage", () => {
       expect(within(list).getByText("Kein Repository")).toBeInTheDocument();
       fireEvent.change(filter, { target: { value: "lib" } });
       expect(within(list).getAllByRole("link")).toHaveLength(1);
+      // The summary as the teaser reads, not its markup.
+      fireEvent.change(filter, { target: { value: "gleicht zahlungen" } });
+      expect(within(list).getAllByRole("link")).toHaveLength(1);
+      fireEvent.change(filter, { target: { value: "**" } });
+      expect(within(list).getByText("Kein Repository")).toBeInTheDocument();
       // Escape closes it and gives the focus back to the switch.
       fireEvent.keyDown(filter, { key: "Escape" });
       expect(screen.queryByRole("dialog")).toBeNull();
@@ -1805,6 +1827,23 @@ describe("DescriptionView areas", () => {
     expect(document.getElementById("kind-component-area-2")?.textContent).toBe(
       "Entwicklung und Auslieferung",
     );
+  });
+
+  it("heads an area once, where it first stands, on a page not laid out yet", () => {
+    const twice = [
+      st("a1", "rule", "Eins", "A"),
+      st("b1", "rule", "Zwei", "B"),
+      st("a2", "rule", "Drei", "A"),
+    ];
+    expect(
+      areaGroups(twice, twice).map((g) => [
+        g.area,
+        g.statements.map((s) => s.id),
+      ]),
+    ).toEqual([
+      ["A", ["a1", "a2"]],
+      ["B", ["b1"]],
+    ]);
   });
 
   it("gives the rail a kind's areas, the ones a search hits only", () => {

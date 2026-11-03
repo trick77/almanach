@@ -14,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import type { Repo } from "./api";
 import { useEscape } from "./dialog";
+import { plain } from "./format";
 import { shortcutFree } from "./Rail";
 import { navigateTo, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
@@ -62,14 +63,17 @@ export function RepoSwitcher({
   repos: Repo[];
   slug: string;
 }) {
-  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
-  // The button that opened the list: Escape gives it the focus back. Not
-  // every close does: focus tabbed out of the list stays where it went.
-  const opener = useRef<HTMLButtonElement | null>(null);
-  const close = useCallback((back: boolean) => {
-    setAt(null);
-    if (back) opener.current?.focus();
-  }, []);
+  // The button that opened the list: the list stands under it, and
+  // Escape or picking the page's own repository gives it the focus back.
+  // Not every close does: focus tabbed out of the list stays where it went.
+  const [opener, setOpener] = useState<HTMLButtonElement | null>(null);
+  const close = useCallback(
+    (back: boolean) => {
+      setOpener(null);
+      if (back) opener?.focus();
+    },
+    [opener],
+  );
   const i = repos.findIndex((r) => r.slug === slug);
   const list = repos.some((r) => r.slug !== slug);
   const steps = i >= 0 && repos.length > 1;
@@ -90,17 +94,7 @@ export function RepoSwitcher({
   }, [steps, projectKey, prev, next]);
 
   function toggle(e: MouseEvent<HTMLButtonElement>) {
-    if (at !== null) {
-      setAt(null);
-      return;
-    }
-    opener.current = e.currentTarget;
-    const r = e.currentTarget.getBoundingClientRect();
-    const width = Math.min(listWidth, window.innerWidth - 16);
-    setAt({
-      left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
-      top: r.bottom + 6,
-    });
+    setOpener(opener === null ? e.currentTarget : null);
   }
 
   const project = (
@@ -108,7 +102,7 @@ export function RepoSwitcher({
       to={projectPath(projectKey)}
       className="min-w-0 truncate text-muted hover:text-ink"
     >
-      <span aria-hidden>↑ </span>
+      <span aria-hidden>{S.rail.up} </span>
       {S.rail.project(projectKey)}
     </Link>
   );
@@ -116,7 +110,7 @@ export function RepoSwitcher({
     type: "button" as const,
     [switchAttr]: "",
     "aria-haspopup": "dialog" as const,
-    "aria-expanded": at !== null,
+    "aria-expanded": opener !== null,
     title: slug,
     onClick: toggle,
   };
@@ -134,7 +128,7 @@ export function RepoSwitcher({
                 title={prev}
                 className={step}
               >
-                ‹
+                {S.rail.prevStep}
               </Link>
               {S.rail.position(i + 1, repos.length)}
               <Link
@@ -143,7 +137,7 @@ export function RepoSwitcher({
                 title={next}
                 className={step}
               >
-                ›
+                {S.rail.nextStep}
               </Link>
             </span>
           )}
@@ -160,7 +154,7 @@ export function RepoSwitcher({
               aria-hidden
               className="absolute top-[7px] right-2.5 text-[10px] text-faint"
             >
-              ▾
+              {S.rail.opens}
             </span>
           </button>
         )}
@@ -179,7 +173,7 @@ export function RepoSwitcher({
               {slug}
             </span>
             <span aria-hidden className="text-[10px] text-faint">
-              ▾
+              {S.rail.opens}
             </span>
           </button>
         ) : (
@@ -188,14 +182,13 @@ export function RepoSwitcher({
           </div>
         )}
       </div>
-      {at !== null &&
+      {opener !== null &&
         createPortal(
           <RepoList
             projectKey={projectKey}
             repos={repos}
             slug={slug}
-            left={at.left}
-            top={at.top}
+            anchor={opener}
             onClose={close}
           />,
           document.body,
@@ -204,35 +197,47 @@ export function RepoSwitcher({
   );
 }
 
-const listWidth = 360;
+/** placeUnder is the list's place under its switch, kept on the screen,
+ *  its width computed once for both. */
+function placeUnder(anchor: HTMLElement) {
+  const r = anchor.getBoundingClientRect();
+  const width = Math.min(360, window.innerWidth - 16);
+  return {
+    left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
+    top: r.bottom + 6,
+    width,
+  };
+}
 
 /** RepoList is the project's repositories under the switch, fixed to the
  *  page (the rail scrolls and would clip it), each with its teaser. Enter
- *  in the filter opens the first match. It closes on Escape, on a press
- *  outside, when the focus leaves it (Tab past its end: it is no modal,
- *  and while it stands the page's shortcuts hold off), on a scroll outside
- *  it or a resize (its place would no longer be the switch's), and on
- *  picking the page's own repository. */
+ *  in the filter opens the first match. A scroll outside it or a resize
+ *  moves it with its switch (a phone's keyboard, opening for the filter,
+ *  scrolls or resizes the page); it closes once the switch is hidden (the
+ *  other width's), on Escape, on a press outside, when the focus leaves it
+ *  (Tab past its end: it is no modal, and while it stands the page's
+ *  shortcuts hold off), and on picking the page's own repository. */
 function RepoList({
   projectKey,
   repos,
   slug,
-  left,
-  top,
+  anchor,
   onClose,
 }: {
   projectKey: string;
   repos: Repo[];
   slug: string;
-  left: number;
-  top: number;
-  /** back: give the focus back to the switch (Escape only). */
+  anchor: HTMLElement;
+  /** back: give the focus back to the switch. */
   onClose: (back: boolean) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [place, setPlace] = useState(() => placeUnder(anchor));
   const box = useRef<HTMLDivElement>(null);
   useEscape(useCallback(() => onClose(true), [onClose]));
-  const shown = repos.filter((r) => matchesQuery(query, r.slug, r.summary));
+  const shown = repos.filter((r) =>
+    matchesQuery(query, r.slug, plain(r.summary)),
+  );
 
   useEffect(() => {
     // A long list opens on the repository the page shows: its own scroll
@@ -249,23 +254,27 @@ function RepoList({
         return;
       onClose(false);
     };
-    const onScroll = (e: Event) => {
-      if (outside(e.target)) onClose(false);
+    const follow = () => {
+      if (anchor.getClientRects().length === 0) onClose(false);
+      else setPlace(placeUnder(anchor));
     };
-    const onResize = () => onClose(false);
+    const onScroll = (e: Event) => {
+      if (outside(e.target)) follow();
+    };
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("scroll", onScroll, true);
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", follow);
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", onResize);
+      window.removeEventListener("resize", follow);
     };
-  }, [onClose]);
+  }, [anchor, onClose]);
 
-  // The page's own repository is where the reader is: picking it closes.
+  // The page's own repository is where the reader is: picking it closes,
+  // the focus back on the switch rather than lost to the page's top.
   function go(to: string) {
-    if (to === slug) onClose(false);
+    if (to === slug) onClose(true);
     else navigateTo(repoPath(projectKey, to));
   }
 
@@ -280,7 +289,7 @@ function RepoList({
         const to = e.relatedTarget;
         if (to instanceof Node && !box.current?.contains(to)) onClose(false);
       }}
-      style={{ left, top, width: Math.min(listWidth, window.innerWidth - 16) }}
+      style={place}
       className="fixed z-50 rounded-ui border border-elevated-border bg-elevated p-1.5 shadow-panel"
     >
       <input
@@ -306,7 +315,7 @@ function RepoList({
           return (
             // The link navigates itself; on the page's own repository it
             // would not, and the list closes instead.
-            <li key={r.slug} onClick={cur ? () => onClose(false) : undefined}>
+            <li key={r.slug} onClick={cur ? () => onClose(true) : undefined}>
               <Link
                 to={repoPath(projectKey, r.slug)}
                 aria-current={cur ? "page" : undefined}

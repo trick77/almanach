@@ -180,6 +180,10 @@ export const S = {
     position: (at: number, of: number) => `${at} / ${of}`,
     // The narrow chip: the project before the slug.
     chip: (key: string) => `${key} / `,
+    up: "↑",
+    prevStep: "‹",
+    nextStep: "›",
+    opens: "▾",
     prev: (slug: string) => `Vorheriges Repository: ${slug}`,
     next: (slug: string) => `Nächstes Repository: ${slug}`,
     switchRepo: "Repository wechseln",

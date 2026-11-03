@@ -188,7 +188,8 @@ export function Rail({
       >
         {hitLine}
       </p>
-      <div className="flex gap-0.5 whitespace-nowrap min-[1180px]:mt-2.5 min-[1180px]:block">
+      {/* Chips narrow keep one line; wide, a long area name wraps. */}
+      <div className="flex gap-0.5 whitespace-nowrap min-[1180px]:mt-2.5 min-[1180px]:block min-[1180px]:whitespace-normal">
         {groups.map((g, gi) => (
           <div
             key={gi}

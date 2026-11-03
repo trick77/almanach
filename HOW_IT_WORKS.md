@@ -920,8 +920,9 @@ repository on the next sweep), then only when its text changes; an
 outline that leaves a statement under no area never costs a call per
 run. A project page is laid out by its next project step. The UI and the
 Markdown export head a kind's statements by area when they span more
-than one; the rail stays the kinds, the kind being read unfolding its
-areas.
+than one, each area once where its first statement stands (a page not
+laid out yet reads as one that is); the rail stays the kinds, the kind
+being read unfolding its areas.
 
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none

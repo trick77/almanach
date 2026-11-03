@@ -344,62 +344,78 @@ function Dependencies({ data }: { data: RepoDetail }) {
   const name = (d: DependencyEnd) =>
     d.project === data.project_key ? d.slug : refName(d.project, d.slug);
   const usedByOdd = oddVersions(data.used_by.map((u) => u.version));
-  const rows: {
-    end: DependencyEnd;
-    odd: boolean;
-    also?: string;
-  }[][] = [
-    data.uses.map((u) => ({
-      end: u,
-      odd: oddVersions([u.version, ...u.also.map((o) => o.version)])[0]!,
-      also:
-        u.also.length > 0
-          ? S.deps.also(u.also.map(name).join(", "))
-          : undefined,
-    })),
-    data.used_by.map((u, i) => ({ end: u, odd: usedByOdd[i]! })),
-  ];
   return (
     <div className="grid gap-y-4">
-      {[S.deps.uses, S.deps.usedBy].map((title, t) =>
-        rows[t]!.length === 0 ? null : (
-          <div key={title} className={tableBox}>
-            <table className={table}>
-              <thead>
-                <tr>
-                  <th className={th}>{title}</th>
-                  <th className={th + " w-[140px]"}>{S.deps.version}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows[t]!.map(({ end, odd, also }) => (
-                  <tr key={`${end.project}/${end.slug}`}>
-                    <td className={td}>
-                      <Link
-                        to={repoPath(end.project, end.slug)}
-                        className={mono + " text-ink-dim hover:text-ink"}
-                      >
-                        {name(end)}
-                      </Link>
-                      {also !== undefined && (
-                        <span className="ml-2 text-[12.5px] text-faint">
-                          {also}
-                        </span>
-                      )}
-                    </td>
-                    <td
-                      className={tdMono + (odd ? " text-ochre" : " text-muted")}
-                      title={odd ? S.deps.otherVersion : undefined}
-                    >
-                      {end.version || S.deps.noVersion}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ),
-      )}
+      <DepTable
+        title={S.deps.uses}
+        name={name}
+        rows={data.uses.map((u) => ({
+          end: u,
+          odd:
+            oddVersions([u.version, ...u.also.map((o) => o.version)])[0] ??
+            false,
+          also:
+            u.also.length > 0
+              ? S.deps.also(u.also.map(name).join(", "))
+              : undefined,
+        }))}
+      />
+      <DepTable
+        title={S.deps.usedBy}
+        name={name}
+        rows={data.used_by.map((u, i) => ({
+          end: u,
+          odd: usedByOdd[i] ?? false,
+        }))}
+      />
+    </div>
+  );
+}
+
+/** DepTable is one of Dependencies' lists, none when empty. */
+function DepTable({
+  title,
+  name,
+  rows,
+}: {
+  title: string;
+  name: (d: DependencyEnd) => string;
+  rows: { end: DependencyEnd; odd: boolean; also?: string }[];
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className={tableBox}>
+      <table className={table}>
+        <thead>
+          <tr>
+            <th className={th}>{title}</th>
+            <th className={th + " w-[140px]"}>{S.deps.version}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ end, odd, also }) => (
+            <tr key={`${end.project}/${end.slug}`}>
+              <td className={td}>
+                <Link
+                  to={repoPath(end.project, end.slug)}
+                  className={mono + " text-ink-dim hover:text-ink"}
+                >
+                  {name(end)}
+                </Link>
+                {also !== undefined && (
+                  <span className="ml-2 text-[12.5px] text-faint">{also}</span>
+                )}
+              </td>
+              <td
+                className={tdMono + (odd ? " text-ochre" : " text-muted")}
+                title={odd ? S.deps.otherVersion : undefined}
+              >
+                {end.version || S.deps.noVersion}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

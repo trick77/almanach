@@ -208,17 +208,12 @@ export function DescriptionView({
                 </span>
               )}
             </div>
-            {areaGroups(all, list).map((g, i, groups) => (
+            {areaGroups(all, list).map((g, i) => (
               <div key={i}>
                 {g.area !== null && (
                   <h3
-                    // The rail's anchor: an area's first group only (a page
-                    // not laid out yet may hold an area twice).
-                    id={
-                      groups.findIndex((o) => o.area === g.area) === i
-                        ? areaId(kind, names.indexOf(g.area))
-                        : undefined
-                    }
+                    // The rail's anchor.
+                    id={areaId(kind, names.indexOf(g.area))}
                     className={
                       (i === 0 ? "mt-1 " : "mt-6 ") +
                       "scroll-mt-16 " +
@@ -251,11 +246,13 @@ export function DescriptionView({
  *  `first:` would match every one. */
 const areaHeading = "mb-1 font-serif text-[17px] font-medium text-ink";
 
-/** areaGroups is a kind's shown statements in their areas, in the page's
- *  order (the backend lays a page out, an area where its first statement
- *  stands). area is null for one group without a heading: a kind whose
- *  statements, all of them and not only the search's hits, stand in one
- *  area or none. An area the search leaves without a hit is not shown. */
+/** areaGroups is a kind's shown statements in their areas, each area
+ *  once, where its first statement stands: as the backend lays a page out,
+ *  so a page not laid out yet (an area, another, the first again) reads
+ *  as one that is, and an area has one heading for the rail to point at.
+ *  area is null for one group without a heading: a kind whose statements,
+ *  all of them and not only the search's hits, stand in one area or none.
+ *  An area the search leaves without a hit is not shown. */
 export function areaGroups(
   all: Statement[],
   shown: Statement[],
@@ -263,13 +260,13 @@ export function areaGroups(
   if (areaNames(all).length === 0) {
     return shown.length === 0 ? [] : [{ area: null, statements: shown }];
   }
-  const groups: { area: string; statements: Statement[] }[] = [];
+  const groups = new Map<string, Statement[]>();
   for (const s of shown) {
-    const last = groups[groups.length - 1];
-    if (last && last.area === areaOf(s)) last.statements.push(s);
-    else groups.push({ area: areaOf(s), statements: [s] });
+    const group = groups.get(areaOf(s));
+    if (group) group.push(s);
+    else groups.set(areaOf(s), [s]);
   }
-  return groups;
+  return [...groups].map(([area, statements]) => ({ area, statements }));
 }
 
 /** sourceKey names a source once, as the backend does: a PR by its key, a

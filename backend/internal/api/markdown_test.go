@@ -279,6 +279,16 @@ func TestMarkdownAreas(t *testing.T) {
 			t.Errorf("export lacks %q:\n%s", want, md)
 		}
 	}
+	// A page not laid out yet holds an area twice: one heading, the area
+	// where it first stands, as the UI has it.
+	md = renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Statements: []store.Statement{
+		{Kind: "rule", Name: "Eins", Text: "Eins.", Area: "A"},
+		{Kind: "rule", Name: "Zwei", Text: "Zwei.", Area: "B"},
+		{Kind: "rule", Name: "Drei", Text: "Drei.", Area: "A"},
+	}}, true)
+	if want := "### A\n\n#### Eins\n\nEins.\n\n#### Drei\n\nDrei.\n\n### B\n\n#### Zwei\n"; !strings.Contains(md, want) {
+		t.Errorf("export lacks %q:\n%s", want, md)
+	}
 	copyTS, err := os.ReadFile(filepath.Join("..", "..", "..", "ui", "src", "strings.ts"))
 	if err != nil {
 		t.Fatal(err)
