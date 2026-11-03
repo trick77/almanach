@@ -74,9 +74,12 @@ export interface RailGroup {
 
 /** shortcutFree says a page's key shortcut may act: not while typing,
  *  and not while a dialog (a diagram's full view) holds the page, whose
- *  focus would leave it for the page behind. */
+ *  focus would leave it for the page behind. Option and AltGr pass: e.key
+ *  is the character typed, and the Swiss layouts type "[" and "]" with
+ *  them (Option+5/6 on a Mac, AltGr, ctrl and alt at once, on Windows);
+ *  Cmd and Ctrl alone are the browser's. */
 export function shortcutFree(e: KeyboardEvent): boolean {
-  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.metaKey || (e.ctrlKey && !e.altKey)) return false;
   const t = e.target as HTMLElement | null;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))
     return false;

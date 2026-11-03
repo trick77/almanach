@@ -17,6 +17,7 @@ import {
   statementMatches,
 } from "./Description";
 import { Rail, type RailItem } from "./Rail";
+import { breakable } from "./RepoSwitcher";
 import { useRef } from "react";
 import { S } from "./strings";
 import { armSignIn } from "./signin";
@@ -1228,6 +1229,84 @@ describe("RepoPage", () => {
       expect(window.location.pathname).toBe("/projects/PAY/repos/pay-clearing");
       fireEvent.keyDown(document.body, { key: "]" });
       expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api");
+    });
+
+    it("steps on a Swiss layout's Option key, once per press, never on Cmd", async () => {
+      serve({ "projects/PAY/repos/pay-clearing": repo, "projects/PAY": three });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const rail = await screen.findByRole("navigation", { name: "Inhalt" });
+      await within(rail).findByText("3 / 3");
+      fireEvent.keyDown(document.body, { key: "[", metaKey: true });
+      fireEvent.keyDown(document.body, { key: "[", repeat: true });
+      expect(window.location.pathname).toBe("/projects/PAY/repos/pay-clearing");
+      // Option+5 types "[" on a Swiss Mac.
+      fireEvent.keyDown(document.body, { key: "[", altKey: true });
+      expect(window.location.pathname).toBe("/projects/PAY/repos/pay-lib");
+    });
+
+    it("opens the list without steps for a repository the project does not list", async () => {
+      serve({
+        "projects/PAY/repos/pay-clearing": repo,
+        "projects/PAY": project,
+      });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const rail = await screen.findByRole("navigation", { name: "Inhalt" });
+      const [button] = await within(rail).findAllByRole("button", {
+        name: "pay-clearing",
+      });
+      expect(within(rail).queryByText(/ \/ 2/)).toBeNull();
+      expect(
+        within(rail).queryByRole("link", { name: /Repository:/ }),
+      ).toBeNull();
+      fireEvent.click(button!);
+      const list = screen.getByRole("dialog", { name: "Repository wechseln" });
+      expect(within(list).getAllByRole("link")).toHaveLength(2);
+    });
+
+    it("closes on its own repository, on focus leaving it, on a scroll outside", async () => {
+      serve({ "projects/PAY/repos/pay-clearing": repo, "projects/PAY": three });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const rail = await screen.findByRole("navigation", { name: "Inhalt" });
+      const [button] = await within(rail).findAllByRole("button", {
+        name: "pay-clearing",
+      });
+      const open = () => {
+        fireEvent.click(button!);
+        return screen.getByRole("dialog", { name: "Repository wechseln" });
+      };
+      fireEvent.click(
+        within(open()).getByRole("link", { name: /pay-clearing/ }),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const filter = within(open()).getByRole("searchbox");
+      fireEvent.change(filter, { target: { value: "clearing" } });
+      fireEvent.keyDown(filter, { key: "Enter" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // Tab past its end: the focus is in the page, the list goes.
+      const list = open();
+      fireEvent.blur(within(list).getByRole("searchbox"), {
+        relatedTarget: rail.querySelector("input"),
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // A scroll inside it keeps it; the page's closes it.
+      const again = open();
+      fireEvent.scroll(again.querySelector("ul")!);
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      fireEvent.scroll(rail);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // A press on the switch toggles, it does not close and reopen.
+      open();
+      fireEvent.pointerDown(button!);
+      fireEvent.click(button!);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("breaks a slug only after its separators", () => {
+      const { container } = render(<p>{breakable("a-b.c_d/e")}</p>);
+      expect(container.querySelectorAll("wbr")).toHaveLength(4);
+      expect(container.textContent).toBe("a-b.c_d/e");
+      const { container: one } = render(<p>{breakable("plain")}</p>);
+      expect(one.querySelectorAll("wbr")).toHaveLength(0);
     });
 
     it("opens the project's repositories with their teasers, filterable", async () => {

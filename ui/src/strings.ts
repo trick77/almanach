@@ -178,6 +178,8 @@ export const S = {
     // project's other repositories.
     project: (key: string) => `Projekt ${key}`,
     position: (at: number, of: number) => `${at} / ${of}`,
+    // The narrow chip: the project before the slug.
+    chip: (key: string) => `${key} / `,
     prev: (slug: string) => `Vorheriges Repository: ${slug}`,
     next: (slug: string) => `Nächstes Repository: ${slug}`,
     switchRepo: "Repository wechseln",

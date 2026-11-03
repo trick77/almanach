@@ -4,23 +4,33 @@
 // sections the rail ran to some thirty-five rows.
 import {
   Fragment,
+  useCallback,
   useEffect,
   useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
-  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import type { Repo } from "./api";
+import { useEscape } from "./dialog";
 import { shortcutFree } from "./Rail";
 import { navigateTo, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { Link, Teaser, matchesQuery, teaserLines } from "./ui";
 
 /** breakable is a slug that breaks after a "-", ".", "_" or "/" only,
- *  never inside a word unless a word is wider than the line. */
+ *  never inside a word unless a word is wider than the line. No regex
+ *  lookbehind: Safari before 16.4 cannot parse one, and the bundle with it
+ *  would not load at all. */
 export function breakable(slug: string): ReactNode {
-  return slug.split(/(?<=[-._/])/).map((part, i) => (
+  const parts: string[] = [];
+  for (const piece of slug.split(/([-._/])/)) {
+    if (/^[-._/]$/.test(piece) && parts.length > 0)
+      parts[parts.length - 1] += piece;
+    else if (piece !== "") parts.push(piece);
+  }
+  return parts.map((part, i) => (
     <Fragment key={i}>
       {i > 0 && <wbr />}
       {part}
@@ -31,13 +41,18 @@ export function breakable(slug: string): ReactNode {
 const step =
   "flex h-5 w-5 items-center justify-center rounded border border-border font-mono text-[12px] leading-none text-muted hover:bg-active hover:text-ink";
 
+/** The switch's buttons, wide and narrow, by this attribute: a press on
+ *  one toggles the list, so the list's press-outside leaves it alone. */
+const switchAttr = "data-repo-switch";
+
 /** RepoSwitcher heads the rail: wide, the project's line with ‹ › and the
  *  position, the name under it on up to three lines; narrow, one chip
  *  pinned left in the rail's row while the sections scroll under it. The
  *  name opens the project's repositories with their teasers, filterable;
- *  "[" and "]" step as ‹ › do, round the end. A project's only listed
- *  repository has no switch, only the project's line. Keyed by slug: a
- *  switch remounts it, closed. */
+ *  "[" and "]" step as ‹ › do, round the end. A repository the project
+ *  does not list (no longer a source) still opens the list, without
+ *  steps; a project's only repository has no switch, only the project's
+ *  line. Keyed by slug: a switch remounts it, closed. */
 export function RepoSwitcher({
   projectKey,
   repos,
@@ -47,41 +62,44 @@ export function RepoSwitcher({
   repos: Repo[];
   slug: string;
 }) {
-  const [at, setAt] = useState<{
-    left: number;
-    top: number;
-    from: RefObject<HTMLButtonElement | null>;
-  } | null>(null);
-  const wide = useRef<HTMLButtonElement>(null);
-  const narrow = useRef<HTMLButtonElement>(null);
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  // The button that opened the list: Escape gives it the focus back. Not
+  // every close does: focus tabbed out of the list stays where it went.
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const close = useCallback((back: boolean) => {
+    setAt(null);
+    if (back) opener.current?.focus();
+  }, []);
   const i = repos.findIndex((r) => r.slug === slug);
-  const many = repos.length > 1 && i >= 0;
-  const prev = many ? repos[(i - 1 + repos.length) % repos.length]!.slug : "";
-  const next = many ? repos[(i + 1) % repos.length]!.slug : "";
+  const list = repos.some((r) => r.slug !== slug);
+  const steps = i >= 0 && repos.length > 1;
+  const prev = steps ? repos[(i - 1 + repos.length) % repos.length]!.slug : "";
+  const next = steps ? repos[(i + 1) % repos.length]!.slug : "";
 
   useEffect(() => {
-    if (!many) return;
+    if (!steps) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key !== "[" && e.key !== "]") || !shortcutFree(e)) return;
+      // A held key steps once: each repeat would push a page and fetch it.
+      if ((e.key !== "[" && e.key !== "]") || e.repeat || !shortcutFree(e))
+        return;
       e.preventDefault();
       navigateTo(repoPath(projectKey, e.key === "[" ? prev : next));
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [many, projectKey, prev, next]);
+  }, [steps, projectKey, prev, next]);
 
-  function toggle(from: RefObject<HTMLButtonElement | null>) {
-    const b = from.current;
-    if (at !== null || !b) {
+  function toggle(e: MouseEvent<HTMLButtonElement>) {
+    if (at !== null) {
       setAt(null);
       return;
     }
-    const r = b.getBoundingClientRect();
+    opener.current = e.currentTarget;
+    const r = e.currentTarget.getBoundingClientRect();
     const width = Math.min(listWidth, window.innerWidth - 16);
     setAt({
       left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
       top: r.bottom + 6,
-      from,
     });
   }
 
@@ -94,13 +112,21 @@ export function RepoSwitcher({
       {S.rail.project(projectKey)}
     </Link>
   );
+  const switchProps = {
+    type: "button" as const,
+    [switchAttr]: "",
+    "aria-haspopup": "dialog" as const,
+    "aria-expanded": at !== null,
+    title: slug,
+    onClick: toggle,
+  };
 
   return (
     <>
       <div className="mb-3 hidden min-[1180px]:block">
         <div className="mb-1.5 flex items-center gap-2 px-0.5 text-[13px] whitespace-nowrap">
           {project}
-          {many && (
+          {steps && (
             <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[12px] text-faint tabular-nums">
               <Link
                 to={repoPath(projectKey, prev)}
@@ -122,14 +148,9 @@ export function RepoSwitcher({
             </span>
           )}
         </div>
-        {many && (
+        {list && (
           <button
-            ref={wide}
-            type="button"
-            aria-haspopup="dialog"
-            aria-expanded={at !== null && at.from === wide}
-            title={slug}
-            onClick={() => toggle(wide)}
+            {...switchProps}
             className="relative block w-full rounded-ui-sm border border-border bg-panel py-1.5 pr-6 pl-2.5 text-left font-mono text-[12px] leading-[1.4] text-ink hover:border-elevated-border"
           >
             {/* Three lines hold a slug of some 60 characters, broken at its
@@ -145,20 +166,16 @@ export function RepoSwitcher({
         )}
       </div>
       {/* Narrow: pinned left, its own background reaching over the row's
-          padding, so the chips scrolled under it do not show beside it. */}
+          padding and height, so the chips scrolled under it do not show
+          beside it. */}
       <div className="sticky -left-4 z-10 -ml-4 flex shrink-0 items-center self-stretch bg-bg pr-1 pl-4 sm:-left-6 sm:-ml-6 sm:pl-6 lg:-left-10 lg:-ml-10 lg:pl-10 min-[1180px]:hidden">
-        {many ? (
+        {list ? (
           <button
-            ref={narrow}
-            type="button"
-            aria-haspopup="dialog"
-            aria-expanded={at !== null && at.from === narrow}
-            title={slug}
-            onClick={() => toggle(narrow)}
+            {...switchProps}
             className="flex max-w-[55vw] items-baseline gap-1.5 rounded-full border border-border bg-panel px-2.5 py-[3px] font-mono text-[12.5px] text-ink"
           >
             <span className="truncate">
-              <span className="text-muted">{projectKey} / </span>
+              <span className="text-muted">{S.rail.chip(projectKey)}</span>
               {slug}
             </span>
             <span aria-hidden className="text-[10px] text-faint">
@@ -179,11 +196,7 @@ export function RepoSwitcher({
             slug={slug}
             left={at.left}
             top={at.top}
-            onClose={(focus) => {
-              setAt(null);
-              if (focus) at.from.current?.focus();
-            }}
-            buttons={[wide, narrow]}
+            onClose={close}
           />,
           document.body,
         )}
@@ -195,8 +208,11 @@ const listWidth = 360;
 
 /** RepoList is the project's repositories under the switch, fixed to the
  *  page (the rail scrolls and would clip it), each with its teaser. Enter
- *  in the filter opens the first match; Escape, a press outside or a
- *  resized window closes it. */
+ *  in the filter opens the first match. It closes on Escape, on a press
+ *  outside, when the focus leaves it (Tab past its end: it is no modal,
+ *  and while it stands the page's shortcuts hold off), on a scroll outside
+ *  it or a resize (its place would no longer be the switch's), and on
+ *  picking the page's own repository. */
 function RepoList({
   projectKey,
   repos,
@@ -204,59 +220,65 @@ function RepoList({
   left,
   top,
   onClose,
-  buttons,
 }: {
   projectKey: string;
   repos: Repo[];
   slug: string;
   left: number;
   top: number;
-  onClose: (focus: boolean) => void;
-  buttons: RefObject<HTMLButtonElement | null>[];
+  /** back: give the focus back to the switch (Escape only). */
+  onClose: (back: boolean) => void;
 }) {
   const [query, setQuery] = useState("");
   const box = useRef<HTMLDivElement>(null);
-  // The listeners read the latest props instead of being bound again on
-  // every render.
-  const latest = useRef({ onClose, buttons });
-  useEffect(() => {
-    latest.current = { onClose, buttons };
-  });
-  const close = (focus: boolean) => latest.current.onClose(focus);
+  useEscape(useCallback(() => onClose(true), [onClose]));
   const shown = repos.filter((r) => matchesQuery(query, r.slug, r.summary));
 
   useEffect(() => {
-    // A long list opens on the repository the page shows. jsdom has no
-    // scrollIntoView.
-    box.current
-      ?.querySelector<HTMLElement>('[aria-current="page"]')
-      ?.scrollIntoView?.({ block: "nearest" });
+    // A long list opens on the repository the page shows: its own scroll
+    // only, as scrollIntoView could scroll the page too, which closes it.
+    const ul = box.current?.querySelector("ul");
+    const cur = ul?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (ul && cur)
+      ul.scrollTop = cur.offsetTop - ul.offsetTop - ul.clientHeight / 2;
+    const outside = (t: EventTarget | null) =>
+      !(t instanceof Node && box.current?.contains(t));
     const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (box.current?.contains(t)) return;
-      // The switch's own press toggles; closing here would reopen it.
-      if (latest.current.buttons.some((b) => b.current?.contains(t))) return;
-      latest.current.onClose(false);
+      if (!outside(e.target)) return;
+      if (e.target instanceof Element && e.target.closest(`[${switchAttr}]`))
+        return;
+      onClose(false);
     };
-    const onResize = () => latest.current.onClose(false);
+    const onScroll = (e: Event) => {
+      if (outside(e.target)) onClose(false);
+    };
+    const onResize = () => onClose(false);
     document.addEventListener("pointerdown", onDown);
+    document.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
     };
-  }, []);
+  }, [onClose]);
+
+  // The page's own repository is where the reader is: picking it closes.
+  function go(to: string) {
+    if (to === slug) onClose(false);
+    else navigateTo(repoPath(projectKey, to));
+  }
 
   return (
     <div
       ref={box}
       role="dialog"
       aria-label={S.rail.switchRepo}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          close(true);
-        }
+      onBlur={(e) => {
+        // Focus gone elsewhere by keyboard; a press outside is onDown's,
+        // and a press on a button no browser focuses has no target here.
+        const to = e.relatedTarget;
+        if (to instanceof Node && !box.current?.contains(to)) onClose(false);
       }}
       style={{ left, top, width: Math.min(listWidth, window.innerWidth - 16) }}
       className="fixed z-50 rounded-ui border border-elevated-border bg-elevated p-1.5 shadow-panel"
@@ -270,7 +292,7 @@ function RepoList({
           const first = shown[0];
           if (e.key === "Enter" && first) {
             e.preventDefault();
-            navigateTo(repoPath(projectKey, first.slug));
+            go(first.slug);
           }
         }}
         placeholder={S.rail.findRepo}
@@ -282,7 +304,9 @@ function RepoList({
           const teaser = teaserLines(r.summary);
           const cur = r.slug === slug;
           return (
-            <li key={r.slug}>
+            // The link navigates itself; on the page's own repository it
+            // would not, and the list closes instead.
+            <li key={r.slug} onClick={cur ? () => onClose(false) : undefined}>
               <Link
                 to={repoPath(projectKey, r.slug)}
                 aria-current={cur ? "page" : undefined}
