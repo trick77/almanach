@@ -20,8 +20,10 @@ import (
 
 // markdownKinds is the export's order: what must not break and why first
 // (a public interface is what others rely on not breaking), where to
-// change and the parts after. Order and headings are the UI's
-// (Description.tsx KINDS, strings.ts S.kinds), held to them by a test.
+// change and the parts after. The export is the agent's view, by kind;
+// the page is the reader's, by area, KINDS ordering only what no area
+// holds. Order and headings are held to the UI's (Description.tsx KINDS,
+// strings.ts S.kinds) by a test.
 var markdownKinds = []struct{ kind, heading string }{
 	{"invariant", "Invarianten"},
 	{"interface", "Schnittstellen"},
