@@ -123,3 +123,82 @@ func TestParse_PackageJSONAndMonorepo(t *testing.T) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
 	}
 }
+
+// A build's declared folders, at any depth: a Gradle include from the root
+// build and from one a folder down, a Maven module and one of its own.
+// Build logic's projects, a folder outside the repository and a module
+// naming a file are none.
+func TestModules(t *testing.T) {
+	got := Modules(map[string][]byte{
+		"settings.gradle":          []byte("rootProject.name = 'svc'\ninclude 'lib:core', ':service:api'\n// include 'old:gone'\n"),
+		"jvm/settings.gradle.kts":  []byte("include(\"tools:cli\")\n"),
+		"buildSrc/settings.gradle": []byte("include 'conventions'\n"),
+		"pom.xml":                  []byte(`<project><modules><module>parent/mod</module><module>../sibling</module><module>alt/pom-x.xml</module></modules></project>`),
+		"parent/mod/pom.xml":       []byte(`<project><modules><module>sub</module></modules></project>`),
+	})
+	want := []string{"jvm/tools/cli", "lib/core", "parent/mod", "parent/mod/sub", "service/api"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Modules = %v, want %v", got, want)
+	}
+}
+
+func TestModuleFile(t *testing.T) {
+	for b, want := range map[string]bool{
+		"build.gradle": true, "build.gradle.kts": true, "gradle.properties": true, "pom.xml": true,
+		"settings.gradle": false, "libs.versions.toml": false, "package.json": false, "go.mod": false,
+	} {
+		if got := ModuleFile(b); got != want {
+			t.Errorf("ModuleFile(%q) = %v, want %v", b, got, want)
+		}
+	}
+}
+
+// A multi-project build whose projects sit two folders down and whose root
+// build file names no dependency: what it requires comes from the
+// projects' build files, the group from the root's gradle.properties; a
+// project dependency on a sibling is none.
+func TestParse_GradleProjectsTwoDown(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle":                     []byte("rootProject.name = 'claims-service'\ninclude 'lib:claims-persistence'\ninclude 'service:claims-intranet-service'\n"),
+		"gradle.properties":                   []byte("group=example.claims\nversion=5.0.15-SNAPSHOT\n"),
+		"build.gradle":                        []byte("plugins {\n  id 'example-root-conventions'\n}\n"),
+		"lib/claims-persistence/build.gradle": []byte("dependencies {\n  implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n}\n"),
+		"service/claims-intranet-service/build.gradle": []byte(`dependencies {
+    implementation project(':lib:claims-persistence')
+    implementation('example.claims.intranet:claims-workflow:1.0.7:api') {
+        transitive = false
+    }
+    implementation 'example.claims:claims-core-lib:14.2.6'
+}
+`),
+	})
+	want := Read{
+		Provides: []string{"maven:example.claims:claims-intranet-service", "maven:example.claims:claims-persistence", "maven:example.claims:claims-service"},
+		Requires: []Dep{
+			{Coord: "maven:example.claims.intranet:claims-workflow", Version: "1.0.7"},
+			{Coord: "maven:example.claims:claims-core-lib", Version: "14.2.6"},
+			{Coord: "maven:org.springframework.boot:spring-boot-starter-data-jpa", Version: ""},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// A build a folder down owns the projects it includes: their group and
+// properties come from its folder, not the root's.
+func TestParse_GradleNestedBuildOwnsItsProjects(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"gradle.properties":          []byte("group=example.root\n"),
+		"jvm/settings.gradle":        []byte("rootProject.name = 'jvm'\ninclude 'tools:cli'\n"),
+		"jvm/gradle.properties":      []byte("group=example.jvm\nwireVersion=2.1\n"),
+		"jvm/tools/cli/build.gradle": []byte("dependencies {\n  implementation \"example.wire:wire-core:$wireVersion\"\n}\n"),
+	})
+	want := Read{
+		Provides: []string{"maven:example.jvm:cli", "maven:example.jvm:jvm"},
+		Requires: []Dep{{Coord: "maven:example.wire:wire-core", Version: "2.1"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}

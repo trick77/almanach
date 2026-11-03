@@ -43,8 +43,8 @@ func (f *fakeManifests) SaveManifests(_ context.Context, rid int64, commit strin
 }
 
 // After a sync the clone's manifests are read at its head, the root's and
-// one level down, never deeper; once per head, not every cycle; and not
-// after a failed sync.
+// one level down, deeper only in a folder a build declares; once per head,
+// not every cycle; and not after a failed sync.
 func TestCycle_ReadsTheManifests(t *testing.T) {
 	gitBin, err := gitrepo.Resolve()
 	if err != nil {
@@ -61,9 +61,13 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		// rule takes a catalog alias or a property name for a secret.
 		"build.gradle":              "dependencies {\n implementation libs.wire.api\n implementation libs.jjwt.api\n}\n",
 		"gradle/libs.versions.toml": "[libraries]\nwire-api = \"example.wire:wire-api:2.0\"\njjwt-api = { module = \"io.jsonwebtoken:jjwt-api\", version = \"0.12.5\" }\n",
-		"jvm/settings.gradle.kts":   "rootProject.name = \"loom-jvm\"\n",
-		"jvm/gradle.properties":     "group=example.loom\ntokenLibVersion=1.2.3\n",
-		"jvm/build.gradle.kts":      "dependencies {\n implementation(\"example.wire:wire-core:1.0\")\n implementation(\"example.wire:token-lib:$tokenLibVersion\")\n}\n",
+		"jvm/settings.gradle.kts":   "rootProject.name = \"loom-jvm\"\ninclude(\"tools:cli\")\n",
+		// Two down, read because the build declares the folder; the
+		// corpus's copy above is declared by none.
+		"jvm/tools/cli/build.gradle.kts": "dependencies {\n implementation(\"example.wire:wire-cli:1.1\")\n}\n",
+		"corpus/checkout/a/build.gradle": "dependencies {\n implementation 'example.copied:copied-lib:9.9'\n}\n",
+		"jvm/gradle.properties":          "group=example.loom\ntokenLibVersion=1.2.3\n",
+		"jvm/build.gradle.kts":           "dependencies {\n implementation(\"example.wire:wire-core:1.0\")\n implementation(\"example.wire:token-lib:$tokenLibVersion\")\n}\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(work, p)), 0o750); err != nil {
 			t.Fatal(err)
@@ -94,11 +98,12 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := manifest.Read{
-		Provides: []string{"go:example.invalid/loom", "maven:example.loom:loom-jvm", "npm:loom-ui"},
+		Provides: []string{"go:example.invalid/loom", "maven:example.loom:cli", "maven:example.loom:loom-jvm", "npm:loom-ui"},
 		Requires: []manifest.Dep{
 			{Coord: "go:example.invalid/wire", Version: "v0.1.8"},
 			{Coord: "maven:example.wire:token-lib", Version: "1.2.3"},
 			{Coord: "maven:example.wire:wire-api", Version: "2.0"},
+			{Coord: "maven:example.wire:wire-cli", Version: "1.1"},
 			{Coord: "maven:example.wire:wire-core", Version: "1.0"},
 			{Coord: "maven:io.jsonwebtoken:jjwt-api", Version: "0.12.5"},
 			{Coord: "npm:left-pad", Version: "^1.3.0"},

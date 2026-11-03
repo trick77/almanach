@@ -19,7 +19,7 @@ import (
 // Version is this package's reading of the manifests: raise it with any
 // change to what Parse makes of one, and every repository's manifests are
 // read again at the next sync, not only those whose head moved.
-const Version = 3
+const Version = 4
 
 // Ecosystems: the prefix of a coordinate.
 const (
@@ -43,9 +43,10 @@ type Read struct {
 	Requires []Dep    `json:"requires"`
 }
 
-// Is reports whether a path names a manifest this package reads, at the
-// root or one level down: deeper ones are copies (a checked-out corpus, a
-// fixture) and would make the repository provide what it only carries.
+// Is reports whether a path names a manifest this package reads without
+// being told, at the root or one level down: a deeper one is a copy (a
+// checked-out corpus, a fixture) and would make the repository provide
+// what it only carries, unless a build declares its folder (Modules).
 func Is(p string) bool {
 	// A build's catalog sits in its gradle/ folder: the root's, or a build's
 	// one down (read only for a folder that is a build, see gradle).
@@ -61,6 +62,57 @@ func Is(p string) bool {
 	default:
 		return gradleBuild(b) || gradleSettings(b)
 	}
+}
+
+// Modules is the folders the builds among files declare as theirs: a
+// Gradle settings file's includes, a pom.xml's modules. A declared folder
+// is part of the build at any depth, no copy: its ModuleFile manifests are
+// read too (a multi-project build keeps its projects in lib/<x>,
+// service/<x>, and only there what it requires). Build logic's projects
+// and a folder outside the repository are none.
+func Modules(files map[string][]byte) []string {
+	logic := buildLogic(files)
+	seen := map[string]bool{}
+	add := func(d, rel string) {
+		rel = strings.ReplaceAll(strings.TrimSpace(rel), `\`, "/")
+		if rel == "" || strings.HasPrefix(rel, "/") {
+			return
+		}
+		p := path.Clean(path.Join(d, rel))
+		if p == "." || p == ".." || strings.HasPrefix(p, "../") || underLogic(logic, p) {
+			return
+		}
+		seen[p] = true
+	}
+	for p, body := range files {
+		d := dirOf(p)
+		switch b := path.Base(p); {
+		case gradleSettings(b):
+			if _, groovy := files[path.Join(d, "settings.gradle")]; underLogic(logic, d) || b == "settings.gradle.kts" && groovy {
+				continue
+			}
+			for _, inc := range includes(stripComments(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf")))) {
+				add(d, includeDir(inc))
+			}
+		case b == "pom.xml":
+			for _, m := range pomModules(body) {
+				add(d, m)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ModuleFile reports whether a declared folder's file of this name is
+// read: its build file, its gradle.properties, its pom.xml. A settings file
+// or a catalog there makes no build of its own.
+func ModuleFile(base string) bool {
+	return base == "pom.xml" || base == "gradle.properties" || gradleBuild(base)
 }
 
 // Parse reads the manifests given (path to body). A manifest that does not
@@ -171,6 +223,25 @@ type pomXML struct {
 	Parent       pomDep   `xml:"parent"`
 	Dependencies []pomDep `xml:"dependencies>dependency"`
 	Managed      []pomDep `xml:"dependencyManagement>dependencies>dependency"`
+	Modules      []string `xml:"modules>module"`
+}
+
+// pomModules is the folders a pom.xml lists as its modules, as written. A
+// module naming a file (another pom) is left out.
+func pomModules(body []byte) []string {
+	var p pomXML
+	dec := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))))
+	dec.CharsetReader = charsetReader
+	if err := dec.Decode(&p); err != nil {
+		return nil
+	}
+	var out []string
+	for _, m := range p.Modules {
+		if m = strings.TrimSpace(m); m != "" && !strings.HasSuffix(m, ".xml") {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 type pomDep struct {

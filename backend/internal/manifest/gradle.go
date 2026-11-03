@@ -154,7 +154,7 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	builds := map[string]string{}
 	for p, body := range files {
 		d := dirOf(p)
-		if logic[d] {
+		if underLogic(logic, d) {
 			continue
 		}
 		switch b := path.Base(p); {
@@ -191,13 +191,28 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		}
 		return c
 	}
-	// A folder one down is its own build when it has a settings file;
-	// otherwise it is (at most) a project of the root build.
+	// A folder one down is its own build when it has a settings file; a
+	// folder its settings file includes is a project of it; any other is
+	// (at most) a project of the root build.
+	member := map[string]string{}
+	for d, g := range dirs {
+		if !g.hasSet {
+			continue
+		}
+		for _, inc := range includes(g.settings) {
+			if rel := includeDir(inc); rel != "" {
+				pd := path.Join(d, rel)
+				if r, ok := member[pd]; !ok || len(d) > len(r) {
+					member[pd] = d
+				}
+			}
+		}
+	}
 	rootOf := func(d string) string {
 		if g := dirs[d]; d != "" && g != nil && g.hasSet {
 			return d
 		}
-		return ""
+		return member[d]
 	}
 	// What `$x` resolves to in folder d: gradle.properties of the build
 	// root, then the folder's, then the build root's assignments, then the
@@ -274,12 +289,12 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 			prov = append(prov, c)
 		}
 		for _, inc := range includes(g.settings) {
-			segs := strings.FieldsFunc(inc, func(r rune) bool { return r == ':' })
-			if len(segs) == 0 {
+			rel := includeDir(inc)
+			if rel == "" {
 				continue
 			}
-			pd := path.Join(d, strings.Join(segs, "/"))
-			if c, ok := gradleCoord(groupOf(d, pd), segs[len(segs)-1]); ok {
+			pd := path.Join(d, rel)
+			if c, ok := gradleCoord(groupOf(d, pd), path.Base(rel)); ok {
 				prov = append(prov, c)
 			}
 		}
@@ -291,6 +306,24 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	}
 	sort.Strings(prov)
 	return prov, reqs
+}
+
+// includeDir is the folder, relative to its build, of the project a
+// settings file includes: `lib:core` and `:lib:core` are lib/core, as
+// Gradle places it by default. "" for none.
+func includeDir(inc string) string {
+	return strings.Join(strings.FieldsFunc(inc, func(r rune) bool { return r == ':' }), "/")
+}
+
+// underLogic reports whether folder d is a build logic folder or inside
+// one: a project of buildSrc is build logic too.
+func underLogic(logic map[string]bool, d string) bool {
+	for ; d != "" && d != "."; d = dirOf(d) {
+		if logic[d] {
+			return true
+		}
+	}
+	return false
 }
 
 // buildLogic is the folders one down that hold build logic: buildSrc, and

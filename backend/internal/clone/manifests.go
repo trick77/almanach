@@ -3,6 +3,7 @@ package clone
 import (
 	"context"
 	"errors"
+	"path"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
@@ -67,32 +68,62 @@ func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.
 		return manifest.Read{}, err
 	}
 	files := map[string][]byte{}
+	tried := map[string]bool{}
 	var r *gitrepo.Reader
 	defer func() {
 		if r != nil {
 			_ = r.Close()
 		}
 	}()
-	for _, e := range entries {
-		if !baseline.Readable(e) || !manifest.Is(e.Path) {
-			continue
-		}
+	read := func(e gitrepo.Entry) error {
+		tried[e.Path] = true
 		if r == nil {
-			if r, err = p.Manifests.Reads.NewReader(ctx, dir); err != nil {
-				return manifest.Read{}, err
+			nr, err := p.Manifests.Reads.NewReader(ctx, dir)
+			if err != nil {
+				return err
 			}
+			r = nr
 		}
 		body, err := r.ReadFile(head, e.Path, baseline.FileMaxBytes)
 		if ctx.Err() != nil {
-			return manifest.Read{}, ctx.Err()
+			return ctx.Err()
 		}
 		if errors.Is(err, gitrepo.ErrReaderBroken) || errors.Is(err, gitrepo.ErrBadSHA) {
-			return manifest.Read{}, err
+			return err
 		}
-		if err != nil || baseline.Binary(body) {
-			continue
+		if err == nil && !baseline.Binary(body) {
+			files[e.Path] = []byte(redact.Text(string(body)))
 		}
-		files[e.Path] = []byte(redact.Text(string(body)))
+		return nil
+	}
+	for _, e := range entries {
+		if baseline.Readable(e) && manifest.Is(e.Path) {
+			if err := read(e); err != nil {
+				return manifest.Read{}, err
+			}
+		}
+	}
+	// Then the folders the builds declare (manifest.Modules), at any depth,
+	// until a pass finds none new: a Maven module may list modules of its
+	// own. Each path is tried once, so the passes end.
+	for {
+		declared := map[string]bool{}
+		for _, d := range manifest.Modules(files) {
+			declared[d] = true
+		}
+		added := false
+		for _, e := range entries {
+			if tried[e.Path] || !baseline.Readable(e) || !declared[path.Dir(e.Path)] || !manifest.ModuleFile(path.Base(e.Path)) {
+				continue
+			}
+			if err := read(e); err != nil {
+				return manifest.Read{}, err
+			}
+			added = true
+		}
+		if !added {
+			break
+		}
 	}
 	return manifest.Parse(files), nil
 }
