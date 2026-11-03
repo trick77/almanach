@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// A change of case on a project's own key is a rename like any other:
-// afterwards a note delivered under the new spelling lands on the source
-// repository and its pages, and the old key still finds the project.
+// A change of case on a project's own key is a rename like any other: the
+// pages follow the new spelling, and the old key still finds the project.
+// Notes land in either spelling, before the rename and after.
 func TestRenameProject_CaseOnly(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -16,8 +16,10 @@ func TestRenameProject_CaseOnly(t *testing.T) {
 	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "ACME", RepoSlug: "svc", Summary: "kept", SourcePR: "ACME/svc#1"}); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := s.IsSourceRepo(ctx, "acme", "svc"); ok {
-		t.Fatal("acme is a source repository before the rename")
+	// The gate matches in any case: the rename is not needed for a note to
+	// land, only for the key to read as noergler spells it.
+	if ok, err := s.IsSourceRepo(ctx, "acme", "svc"); err != nil || !ok {
+		t.Fatalf("acme/svc before the rename: %v %v", ok, err)
 	}
 	if _, err := s.RenameProject(ctx, "ACME", "acme"); err != nil {
 		t.Fatalf("rename: %v", err)
@@ -44,6 +46,25 @@ func TestRenameProject_CaseOnly(t *testing.T) {
 	// And back: its own names, in any case.
 	if _, err := s.RenameProject(ctx, "acme", "ACME"); err != nil {
 		t.Errorf("rename back: %v", err)
+	}
+}
+
+// A source typed in lower case takes noergler's upper-cased note: the gate
+// passes and the note lands on the source's project, not a second one.
+func TestNoteInAnotherCaseLandsOnTheSource(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "tools", "svc")
+	if ok, err := s.IsSourceRepo(ctx, "TOOLS", "svc"); err != nil || !ok {
+		t.Fatalf("TOOLS/svc: %v %v", ok, err)
+	}
+	ingest(t, s, noteFor("TOOLS", "svc", 1))
+	notes, err := s.Notes(ctx, "tools", "svc", 10)
+	if err != nil || len(notes) != 1 || notes[0].PRKey != "TOOLS/svc#1" {
+		t.Errorf("notes under the source's key: %+v %v", notes, err)
+	}
+	if n := count(t, s, "projects", "1"); n != 1 {
+		t.Errorf("projects = %d, want 1: the note's spelling is a name of the source's project", n)
 	}
 }
 
