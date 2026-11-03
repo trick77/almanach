@@ -111,9 +111,16 @@ export const S = {
     },
     // The project page's map, compact: its bands without arrows.
     compactHint:
-      "Zeigen auf eine Box: ihre Verbindungen leuchten auf, mit Richtung und Art. Die Pfeile zeigt die Vollansicht.",
-    // An arrow seen from the box pointed at: out, in, both ways.
+      "Zeigen, fokussieren oder antippen: die Verbindungen einer Box leuchten auf, mit Richtung und Art (gestrichelt ⇢: asynchron oder optional). Die Pfeile zeigt die Vollansicht.",
+    // An arrow seen from the box pointed at: out, in, both ways; dashed in
+    // the drawing, a boundary (async or optional), dashed here too.
     way: { out: "→", in: "←", both: "↔" },
+    dashedWay: { out: "⇢", in: "⇠", both: "⇠⇢" },
+    // Said to a screen reader when a box lights its connections.
+    connections: (name: string, to: string[]) =>
+      to.length === 0
+        ? `${name}: keine Verbindungen`
+        : `${name}: verbunden mit ${to.join(", ")}`,
     // The map's zones by id: the backend allows these five and no other.
     zones: {
       clients: "Clients",

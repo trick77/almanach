@@ -42,6 +42,16 @@ function engine(): Promise<Elk> {
   return elk;
 }
 
+/** drawMap lays a map out in bands and writes it as SVG: synchronous, no
+ * engine. It may throw on a map that breaks the layout's assumptions. */
+export function drawMap(
+  ir: FlowIR,
+  ids: string,
+): { svg: string; layout: FlowLayout } {
+  const layout = layoutMap(ir);
+  return { svg: drawFlow(layout, palette(), ids), layout };
+}
+
 /** drawIR lays a diagram out and writes it as SVG. ids prefixes the marker
  * ids: two drawings on one page must not share one. A map is laid out in
  * bands by code (mapLayout.ts), without the engine. */
@@ -55,10 +65,7 @@ export async function drawIR(
       svg: drawSequence(layoutSequence(ir), palette(), ids),
       layout: null,
     };
-  if (ir.kind === "flow" && map) {
-    const layout = layoutMap(ir);
-    return { svg: drawFlow(layout, palette(), ids), layout };
-  }
+  if (ir.kind === "flow" && map) return drawMap(ir, ids);
   const e = await engine();
   if (ir.kind === "er")
     return { svg: drawER(await layoutER(ir, e), palette()), layout: null };
@@ -137,26 +144,11 @@ export function Diagram({
   return (
     <figure className="my-3">
       <div ref={card} className="w-max max-w-full">
-        <div className="mb-1 flex items-center justify-end gap-0.5">
-          <button
-            type="button"
-            onClick={() => setFull(true)}
-            title={S.diagram.full}
-            aria-label={S.diagram.fullOf(title)}
-            className="grid h-7 w-7 place-items-center rounded-ui-sm text-faint hover:bg-active hover:text-ink-dim"
-          >
-            <ExpandIcon />
-          </button>
-          <button
-            type="button"
-            onClick={save}
-            title={S.diagram.download}
-            aria-label={S.diagram.downloadOf(title)}
-            className="grid h-7 w-7 place-items-center rounded-ui-sm text-faint hover:bg-active hover:text-ink-dim"
-          >
-            <DownloadIcon />
-          </button>
-        </div>
+        <DiagramTools
+          title={title}
+          onFull={() => setFull(true)}
+          onSave={save}
+        />
         <div className="relative">
           <DiagramSvg svg={svg} title={title} />
           {layout !== null && links && (
@@ -164,21 +156,13 @@ export function Diagram({
           )}
         </div>
         {full && (
-          <DiagramView
+          <FullDiagram
             title={title}
             kind={ir.kind}
-            svg={svg}
+            drawn={state.drawn}
+            links={links}
+            names={names}
             onClose={() => setFull(false)}
-            overlay={
-              layout !== null && links ? (
-                <NodeLinks
-                  layout={layout}
-                  links={links}
-                  names={names}
-                  onFollow={() => setFull(false)}
-                />
-              ) : undefined
-            }
           />
         )}
       </div>
@@ -186,10 +170,82 @@ export function Diagram({
   );
 }
 
+/** DiagramTools are a diagram's two ways out, over its top right corner:
+ *  the full view and the file. */
+export function DiagramTools({
+  title,
+  onFull,
+  onSave,
+}: {
+  title: string;
+  onFull: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="mb-1 flex items-center justify-end gap-0.5">
+      <button
+        type="button"
+        onClick={onFull}
+        title={S.diagram.full}
+        aria-label={S.diagram.fullOf(title)}
+        className="grid h-7 w-7 place-items-center rounded-ui-sm text-faint hover:bg-active hover:text-ink-dim"
+      >
+        <ExpandIcon />
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        title={S.diagram.download}
+        aria-label={S.diagram.downloadOf(title)}
+        className="grid h-7 w-7 place-items-center rounded-ui-sm text-faint hover:bg-active hover:text-ink-dim"
+      >
+        <DownloadIcon />
+      </button>
+    </div>
+  );
+}
+
+/** FullDiagram is a drawing seen whole, its linked nodes linked there too;
+ *  a followed link closes it. */
+export function FullDiagram({
+  title,
+  kind,
+  drawn,
+  links,
+  names,
+  onClose,
+}: {
+  title: string;
+  kind: DiagramIR["kind"];
+  drawn: Drawn;
+  links?: (id: string) => string | null;
+  names: Map<string, string>;
+  onClose: () => void;
+}) {
+  return (
+    <DiagramView
+      title={title}
+      kind={kind}
+      svg={drawn.svg}
+      onClose={onClose}
+      overlay={
+        drawn.layout !== null && links ? (
+          <NodeLinks
+            layout={drawn.layout}
+            links={links}
+            names={names}
+            onFollow={onClose}
+          />
+        ) : undefined
+      }
+    />
+  );
+}
+
 /** NodeLinks lays an anchor over every node links names a page for, placed
  * by the layout's own box so it scales with the drawing. onFollow closes
  * the full view a link is followed from. */
-export function NodeLinks({
+function NodeLinks({
   layout,
   links,
   names,

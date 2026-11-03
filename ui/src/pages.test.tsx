@@ -25,6 +25,20 @@ import type {
   Statement,
 } from "./api";
 import type { FlowIR } from "./diagramIR";
+import * as diagram from "./Diagram";
+
+// The map's drawing, made to throw where a test asks: no stored map does.
+const drawing = vi.hoisted(() => ({ throws: false }));
+vi.mock("./Diagram", async (actual) => {
+  const real = await actual<typeof diagram>();
+  return {
+    ...real,
+    drawMap: (...a: Parameters<typeof real.drawMap>) => {
+      if (drawing.throws) throw new Error("layout");
+      return real.drawMap(...a);
+    },
+  };
+});
 
 /** serve answers each API path from a table, so a page under test fetches
  *  exactly what it would in the browser. */
@@ -764,19 +778,69 @@ describe("ProjectPage", () => {
     const api = await screen.findByRole("link", {
       name: "Repository pay-api öffnen",
     });
-    const chip = (name: string) =>
-      within(screen.getByRole("figure", { name: "Systemübersicht" }))
-        .getByText(name)
-        .closest("span")!;
+    const figure = screen.getByRole("figure", { name: "Systemübersicht" });
+    const node = (name: string) =>
+      within(figure).getByText(name).closest("button, a")!;
     fireEvent.mouseEnter(api);
-    expect(chip("PostgreSQL").textContent).toBe("PostgreSQL→ DB");
-    expect(chip("Browser").textContent).toBe("Browser← HTTP");
-    expect(chip("pay-gone").closest("[class*=border]")!.className).toContain(
-      "border-accent-strong",
+    expect(node("PostgreSQL").textContent).toBe("PostgreSQL→ DB");
+    expect(node("Browser").textContent).toBe("Browser← HTTP");
+    // A dashed arrow, a boundary, stays dashed.
+    expect(node("pay-gone").textContent).toContain("⇠ event");
+    expect(node("pay-gone").className).toContain("border-accent-strong");
+    // A screen reader hears it.
+    expect(figure.querySelector("[aria-live]")!.textContent).toBe(
+      "pay-api: verbunden mit Browser (← HTTP), PostgreSQL (→ DB), pay-gone (⇠ event)",
     );
     fireEvent.mouseLeave(api);
-    expect(chip("PostgreSQL").textContent).toBe("PostgreSQL");
-    expect(chip("PostgreSQL").className).not.toContain("opacity-40");
+    expect(node("PostgreSQL").textContent).toBe("PostgreSQL");
+    expect(node("PostgreSQL").className).not.toContain("opacity-40");
+    expect(figure.querySelector("[aria-live]")!.textContent).toBe("");
+
+    // A node without a page is a button: the keyboard reaches it, and a
+    // pointer leaving another node does not put out what focus lit.
+    fireEvent.focus(node("PostgreSQL"));
+    fireEvent.mouseEnter(node("Browser"));
+    fireEvent.mouseLeave(node("Browser"));
+    expect(node("pay-api").textContent).toContain("← DB");
+    fireEvent.blur(node("PostgreSQL"));
+    expect(node("pay-api").textContent).not.toContain("← DB");
+  });
+
+  it("lights a tapped link first and opens it on the second tap", async () => {
+    serve({ "projects/PAY": { ...project, map } });
+    render(<ProjectPage projectKey="PAY" />);
+    const api = await screen.findByRole("link", {
+      name: "Repository pay-api öffnen",
+    });
+    const before = window.location.pathname;
+    fireEvent.touchStart(api);
+    fireEvent.click(api);
+    expect(window.location.pathname).toBe(before);
+    expect(screen.getByText("PostgreSQL").textContent).toBe("PostgreSQL→ DB");
+    fireEvent.touchStart(api);
+    fireEvent.click(api);
+    expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api");
+  });
+
+  it("keeps the page when the drawing cannot be laid out", async () => {
+    serve({ "projects/PAY": { ...project, map } });
+    render(<ProjectPage projectKey="PAY" />);
+    const open = await screen.findByRole("button", {
+      name: "Systemübersicht: Vollansicht",
+    });
+    drawing.throws = true;
+    try {
+      fireEvent.click(open);
+    } finally {
+      drawing.throws = false;
+    }
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByText("Das Diagramm konnte nicht gezeichnet werden."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Repository pay-api öffnen" }),
+    ).toBeInTheDocument();
   });
 
   it("opens the map whole, its repository nodes linked there too", async () => {
