@@ -674,7 +674,7 @@ describe("ProjectPage", () => {
     search.blur();
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "Architekturübersicht: Vollansicht",
+        name: "Systemübersicht: Vollansicht",
       }),
     );
     fireEvent.keyDown(document.body, { key: "/" });
@@ -719,21 +719,30 @@ describe("ProjectPage", () => {
     ],
   };
 
-  it("draws the system map above the repositories, repository nodes linked", async () => {
+  it("shows the system map compact above the repositories, repository boxes linked", async () => {
     serve({ "projects/PAY": { ...project, map } });
     render(<ProjectPage projectKey="PAY" />);
-    const drawing = await screen.findByRole("img", {
-      name: "Architekturübersicht",
+    const drawing = await screen.findByRole("figure", {
+      name: "Systemübersicht",
     });
-    expect(drawing.querySelector("svg")).toBeTruthy();
-    // The zones are titled from strings.ts, not by the model.
-    expect(drawing.textContent).toContain("Datenspeicher");
+    // Compact: names in bands, no drawing on the page.
+    expect(within(drawing).queryByRole("img")).toBeNull();
+    // The zones are titled from strings.ts, not by the model, in the
+    // drawing's band order.
+    expect(
+      within(drawing)
+        .getAllByRole("group")
+        .map((g) => g.getAttribute("aria-label")),
+    ).toEqual(["Clients", "Repositories", "Datenspeicher"]);
     expect(drawing.textContent).not.toContain("Stores");
     const link = screen.getByRole("link", {
       name: "Repository pay-api öffnen",
     });
     expect(link.getAttribute("href")).toBe("/projects/PAY/repos/pay-api");
-    expect(link.style.left).toMatch(/%$/);
+    // A repository box carries its summary's teaser.
+    expect(link.textContent).toContain(
+      project.repos.find((r) => r.slug === "pay-api")!.summary.split("\n")[0],
+    );
     // A node outside the repositories zone, or a slug the project no longer
     // lists, links nowhere.
     expect(
@@ -749,16 +758,37 @@ describe("ProjectPage", () => {
     ).toBeTruthy();
   });
 
+  it("lights what a box is connected to, seen from it, and puts it out", async () => {
+    serve({ "projects/PAY": { ...project, map } });
+    render(<ProjectPage projectKey="PAY" />);
+    const api = await screen.findByRole("link", {
+      name: "Repository pay-api öffnen",
+    });
+    const chip = (name: string) =>
+      within(screen.getByRole("figure", { name: "Systemübersicht" }))
+        .getByText(name)
+        .closest("span")!;
+    fireEvent.mouseEnter(api);
+    expect(chip("PostgreSQL").textContent).toBe("PostgreSQL→ DB");
+    expect(chip("Browser").textContent).toBe("Browser← HTTP");
+    expect(chip("pay-gone").closest("[class*=border]")!.className).toContain(
+      "border-accent-strong",
+    );
+    fireEvent.mouseLeave(api);
+    expect(chip("PostgreSQL").textContent).toBe("PostgreSQL");
+    expect(chip("PostgreSQL").className).not.toContain("opacity-40");
+  });
+
   it("opens the map whole, its repository nodes linked there too", async () => {
     serve({ "projects/PAY": { ...project, map } });
     render(<ProjectPage projectKey="PAY" />);
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "Architekturübersicht: Vollansicht",
+        name: "Systemübersicht: Vollansicht",
       }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(dialog.getAttribute("aria-label")).toBe("Architekturübersicht");
+    expect(dialog.getAttribute("aria-label")).toBe("Systemübersicht");
     const link = within(dialog).getByRole("link", {
       name: "Repository pay-api öffnen",
     });
@@ -814,7 +844,7 @@ describe("ProjectPage", () => {
     serve({ "projects/PAY": { ...project, map_expected: true } });
     render(<ProjectPage projectKey="PAY" />);
     expect(
-      await screen.findByText(/Noch keine Architekturübersicht/),
+      await screen.findByText(/Noch keine Systemübersicht/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.queryByText(/wird gezeichnet/)).toBeNull();
@@ -826,16 +856,16 @@ describe("ProjectPage", () => {
     });
     render(<ProjectPage projectKey="PAY" />);
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
-    expect(screen.queryByText(/Noch keine Architekturübersicht/)).toBeNull();
-    expect(screen.queryByText("Architekturübersicht")).toBeNull();
+    expect(screen.queryByText(/Noch keine Systemübersicht/)).toBeNull();
+    expect(screen.queryByText("Systemübersicht")).toBeNull();
   });
 
   it("promises no map where no run will draw one", async () => {
     serve({ "projects/PAY": { ...project, map_expected: false } });
     render(<ProjectPage projectKey="PAY" />);
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
-    expect(screen.queryByText(/Noch keine Architekturübersicht/)).toBeNull();
-    expect(screen.queryByText("Architekturübersicht")).toBeNull();
+    expect(screen.queryByText(/Noch keine Systemübersicht/)).toBeNull();
+    expect(screen.queryByText("Systemübersicht")).toBeNull();
     // The page asks for nothing beyond its project.
     expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
       expect.stringContaining("sources"),

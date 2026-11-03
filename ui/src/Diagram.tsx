@@ -189,7 +189,7 @@ export function Diagram({
 /** NodeLinks lays an anchor over every node links names a page for, placed
  * by the layout's own box so it scales with the drawing. onFollow closes
  * the full view a link is followed from. */
-function NodeLinks({
+export function NodeLinks({
   layout,
   links,
   names,

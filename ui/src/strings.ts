@@ -97,18 +97,23 @@ export const S = {
     rootArea: "(Wurzel)",
     recentNotes: "Letzte Notizen",
     noNotes: "Noch keine Notiz.",
-    map: "Architekturübersicht",
+    map: "Systemübersicht",
     noMap:
-      "Noch keine Architekturübersicht: sie entsteht beim nächsten Run, der dieses Projekt aus dem Code beschreibt.",
+      "Noch keine Systemübersicht: sie entsteht beim nächsten Run, der dieses Projekt aus dem Code beschreibt.",
   },
   diagram: {
     titles: {
       flow: "Ablaufdiagramm",
       sequence: "Sequenzdiagramm",
       er: "Datenmodell",
-      map: "Architekturübersicht",
+      map: "Systemübersicht",
       repoMap: "Aufbau",
     },
+    // The project page's map, compact: its bands without arrows.
+    compactHint:
+      "Zeigen auf eine Box: ihre Verbindungen leuchten auf, mit Richtung und Art. Die Pfeile zeigt die Vollansicht.",
+    // An arrow seen from the box pointed at: out, in, both ways.
+    way: { out: "→", in: "←", both: "↔" },
     // The map's zones by id: the backend allows these five and no other.
     zones: {
       clients: "Clients",

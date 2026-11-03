@@ -880,6 +880,13 @@ its node labels by zone; declined with none stored, the API says
 Both maps are laid out by code, not ELK (`ui/src/mapLayout.ts`): the
 zones stacked as bands top to bottom, each band's boxes in rows no wider
 than the page column, so a map grows downwards and is never shrunk.
+The project page shows its map compact, as the Systemübersicht
+(`ui/src/CompactMap.tsx`): the same bands in the same order, each a line
+of names and the repositories a band of boxes with their teaser, no
+arrows; a box pointed at lights what it is connected to, with the arrow's
+way and label. The drawing is the full view and the SVG file. At the cap
+(22 boxes) the drawing stood 1458px tall and the repositories came after
+it (user, 2026-11-03).
 Every new repository revision (a describe step's, a note's fold) takes
 the page's current map and basis in the store, so neither a merge nor the
 next run's first step drops it; nothing removes one. Its nodes are parts,

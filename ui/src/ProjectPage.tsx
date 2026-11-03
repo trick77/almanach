@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectDetail, SharedRepo } from "./api";
 import { DescriptionView, descriptionRail } from "./Description";
-import { Diagram, titledZones } from "./Diagram";
+import { CompactMap } from "./CompactMap";
+import { titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
@@ -243,7 +244,7 @@ function Overview({
             <SystemMap
               map={data.map}
               projectKey={data.key}
-              slugs={data.repos.map((r) => r.slug)}
+              repos={data.repos}
               shared={data.shared}
             />
           )}
@@ -318,31 +319,36 @@ function Overview({
   );
 }
 
-/** SystemMap is the project's overview: its zones titled from strings.ts by
- *  id, and every repository node a link to its page, when the project lists
- *  that repository. */
+/** SystemMap is the project's overview, compact (CompactMap): its zones
+ *  titled from strings.ts by id, every repository node a link to its page
+ *  when the project lists that repository, with its summary's teaser. */
 function SystemMap({
   map,
   projectKey,
-  slugs,
+  repos,
   shared,
 }: {
   map: FlowIR;
   projectKey: string;
-  slugs: string[];
+  repos: ProjectDetail["repos"];
   shared: SharedRepo[];
 }) {
   const ir = useMemo(
     () => titledZones(withShared(map, shared), S.diagram.zones),
     [map, shared],
   );
+  const teasers = useMemo(
+    () => new Map(repos.map((r) => [r.slug, teaserLines(r.summary)])),
+    [repos],
+  );
+  const slugs = repos.map((r) => r.slug);
   const repoZone = new Map(map.nodes.map((n) => [n.id, n.zone]));
   const byId = new Map(shared.map((r) => [sharedId(r), r]));
   return (
-    <Diagram
+    <CompactMap
       ir={ir}
       title={S.diagram.titles.map}
-      map
+      teasers={teasers}
       links={(id) => {
         const r = byId.get(id);
         if (r) return repoPath(r.project, r.slug);

@@ -75,7 +75,7 @@ const labelClear = 6;
  * box under it. */
 const portSkew = 6;
 
-type Band = { zone: string | null; title: string; ids: string[] };
+export type Band = { zone: string | null; title: string; ids: string[] };
 type Row = { band: number; ids: string[]; top: number; h: number };
 type Side = "top" | "bottom";
 type Seg = {
@@ -128,8 +128,10 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /** bandsOf is the map's zones in band order, each with its nodes as
- * written; nodes in no declared zone make a last band without a frame. */
-function bandsOf(ir: FlowIR): Band[] {
+ * written; nodes in no declared zone make a last band without a frame.
+ * The project page's compact map (CompactMap.tsx) stands in the same
+ * order, so it and its full view read alike. */
+export function bandsOf(ir: FlowIR): Band[] {
   const rank = (id: string) => {
     const i = bandOrder.indexOf(id);
     return i < 0 ? bandOrder.length : i;
