@@ -209,6 +209,7 @@ export const S = {
   kinds: {
     component: "Komponenten",
     interface: "Schnittstellen",
+    flow: "Abläufe",
     rule: "Regeln",
     invariant: "Invarianten",
     entity: "Entitäten",
@@ -220,6 +221,7 @@ export const S = {
   statementKind: {
     component: "Komponente",
     interface: "Schnittstelle",
+    flow: "Ablauf",
     rule: "Regel",
     invariant: "Invariante",
     entity: "Entität",

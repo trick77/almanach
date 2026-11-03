@@ -25,32 +25,42 @@ import (
 // probably last, and not in multiple places").
 const LastArea = "Entwicklung und Auslieferung"
 
+// OpsArea is the area just before LastArea: what belongs to the running
+// system as a whole and to no one part, its settings read at startup,
+// health, logging, a dependency down. Narrow by its prompt's rule, a part's
+// own setting or failure staying in the part's area: a wide one would
+// hollow out the parts' chapters. Without it such statements stood
+// wherever the model put them.
+const OpsArea = "Betrieb"
+
 // CleanArea is an area name as stored: Swiss prose, inner runs of space
-// one, LastArea in its own spelling whatever case or umlauts the model
-// used.
+// one, OpsArea and LastArea in their own spelling whatever case or umlauts
+// the model used.
 func CleanArea(a string) string {
 	a = strings.Join(strings.Fields(lang.Prose(a)), " ")
-	if lang.SameButSpelling(strings.ToLower(a), strings.ToLower(LastArea)) {
-		return LastArea
+	for _, fixed := range []string{OpsArea, LastArea} {
+		if lang.SameButSpelling(strings.ToLower(a), strings.ToLower(fixed)) {
+			return fixed
+		}
 	}
 	return a
 }
 
 // Arrange is the page's statements in its areas' order: each area's
 // statements together where its first one stands, in their order; those
-// without an area after them, LastArea's last. Stable: an arranged page
-// comes back as it was.
+// without an area after them, then OpsArea's, LastArea's last. Stable: an
+// arranged page comes back as it was.
 func Arrange(statements []store.Statement) []store.Statement {
 	var order []string
 	groups := map[string][]store.Statement{}
 	for _, s := range statements {
-		if _, ok := groups[s.Area]; !ok && s.Area != "" && s.Area != LastArea {
+		if _, ok := groups[s.Area]; !ok && s.Area != "" && s.Area != OpsArea && s.Area != LastArea {
 			order = append(order, s.Area)
 		}
 		groups[s.Area] = append(groups[s.Area], s)
 	}
 	out := make([]store.Statement, 0, len(statements))
-	for _, a := range append(order, "", LastArea) {
+	for _, a := range append(order, "", OpsArea, LastArea) {
 		out = append(out, groups[a]...)
 	}
 	return out
