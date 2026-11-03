@@ -134,8 +134,10 @@ func TestModules(t *testing.T) {
 		"settings.gradle":          []byte("rootProject.name = 'svc'\ninclude 'lib:core', ':service:api'\n// include 'old:gone'\n"),
 		"jvm/settings.gradle.kts":  []byte("include(\"tools:cli\")\n"),
 		"buildSrc/settings.gradle": []byte("include 'conventions'\n"),
-		"pom.xml":                  []byte(`<project><modules><module>parent/mod</module><module>../sibling</module><module>alt/pom-x.xml</module><module>lib/core</module></modules></project>`),
+		"pom.xml":                  []byte(`<project><modules><module>parent/mod</module><module>../sibling</module><module>alt/pom-x.xml</module><module>lib/core</module><module>web/app/pom.xml</module></modules></project>`),
 		"parent/mod/pom.xml":       []byte(`<project><modules><module>sub</module></modules><profiles><profile><modules><module>it</module></modules></profile></profiles></project>`),
+		// A Gradle project's leftover pom declares no build's modules.
+		"service/pom.xml": []byte(`<project><modules><module>old/stale</module></modules></project>`),
 	})
 	want := []Module{
 		{Dir: "jvm/tools", Gradle: true},
@@ -147,6 +149,7 @@ func TestModules(t *testing.T) {
 		{Dir: "parent/mod/sub", Maven: true},
 		{Dir: "service", Gradle: true},
 		{Dir: "service/api", Gradle: true},
+		{Dir: "web/app", Maven: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Modules = %+v\nwant  %+v", got, want)
@@ -197,6 +200,23 @@ func TestParse_GradleProjectsTwoDown(t *testing.T) {
 			{Coord: "maven:example.wire:wire-core", Version: "2.0"},
 			{Coord: "maven:org.example:store", Version: "3.1"},
 		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// A folder on an include's path is a project too: provided when it has a
+// build file of its own, not when it only holds others.
+func TestParse_GradleIntermediateProject(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle":       []byte("rootProject.name = 'svc'\ninclude 'platform:bom', 'lib:core'\n"),
+		"gradle.properties":     []byte("group=example.svc\n"),
+		"platform/build.gradle": []byte("dependencies {\n  api platform('org.example:base-bom:2.0')\n}\n"),
+	})
+	want := Read{
+		Provides: []string{"maven:example.svc:bom", "maven:example.svc:core", "maven:example.svc:platform", "maven:example.svc:svc"},
+		Requires: []Dep{{Coord: "maven:org.example:base-bom", Version: "2.0"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)

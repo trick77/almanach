@@ -94,11 +94,14 @@ func Modules(files map[string][]byte) []Module {
 		}
 		return byDir[d]
 	}
-	for d := range gradleProjects(files, logic) {
+	projects := gradleProjects(files, logic)
+	for d := range projects {
 		at(d).Gradle = true
 	}
 	for p, body := range files {
-		if path.Base(p) != "pom.xml" {
+		// A pom.xml in a Gradle project's folder is stale or generated: its
+		// modules are no build's.
+		if _, gradle := projects[dirOf(p)]; path.Base(p) != "pom.xml" || gradle {
 			continue
 		}
 		x, ok := decodePom(body)
@@ -106,8 +109,13 @@ func Modules(files map[string][]byte) []Module {
 			continue
 		}
 		for _, m := range append(x.Modules, x.ProfileModules...) {
-			if m = strings.TrimSpace(m); strings.HasSuffix(m, ".xml") {
-				continue // a module naming a file, another pom
+			// A module may name its pom.xml instead of its folder; one naming
+			// another file is left out, only pom.xml is read.
+			m = strings.ReplaceAll(strings.TrimSpace(m), `\`, "/")
+			if path.Base(m) == "pom.xml" {
+				m = path.Dir(m)
+			} else if strings.HasSuffix(m, ".xml") {
+				continue
 			}
 			if d, ok := inRepo(dirOf(p), m); ok {
 				at(d).Maven = true

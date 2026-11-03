@@ -199,7 +199,7 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		if g := dirs[d]; d != "" && g != nil && g.hasSet {
 			return d
 		}
-		return member[d]
+		return member[d].build
 	}
 	// What `$x` resolves to in folder d: gradle.properties of the build
 	// root, then the folder's, then the build root's assignments, then the
@@ -275,19 +275,15 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		if c, ok := gradleCoord(groupOf(d, d), firstStr(reRootName, g.settings)); ok {
 			prov = append(prov, c)
 		}
-		for _, inc := range includes(g.settings) {
-			rel := includeDir(inc)
-			if rel == "" {
-				continue
-			}
-			// A project two builds include is the nearer one's, once.
-			pd := path.Join(d, rel)
-			if r, ok := member[pd]; !ok || r != d {
-				continue
-			}
-			if c, ok := gradleCoord(groupOf(d, pd), path.Base(rel)); ok {
-				prov = append(prov, c)
-			}
+	}
+	// Each included project once, as its owning build's: one an include
+	// ends at, or one on an include's path with a build file of its own.
+	for pd, m := range member {
+		if !m.leaf && (dirs[pd] == nil || dirs[pd].build == "") {
+			continue
+		}
+		if c, ok := gradleCoord(groupOf(m.build, pd), path.Base(pd)); ok {
+			prov = append(prov, c)
 		}
 	}
 	reqs := map[string][]Dep{}
@@ -306,15 +302,22 @@ func includeDir(inc string) string {
 	return strings.Join(strings.FieldsFunc(inc, func(r rune) bool { return r == ':' }), "/")
 }
 
-// gradleProjects is the folder of every project the Gradle builds among
-// files include, each with the build (its settings file's folder) it
-// belongs to: `a:b:c` is a/b/c and, as Gradle makes each a project too, a
-// and a/b. A folder two builds include is the nearer (deeper) one's. A
-// settings file in build logic, and a folder outside the repository or in
-// build logic, count for none. The one reading of includes: what the
-// reader fetches (Modules) and which build owns it (gradle) agree.
-func gradleProjects(files map[string][]byte, logic map[string]bool) map[string]string {
-	out := map[string]string{}
+// gradleProject is an included project: the build (its settings file's
+// folder) it belongs to, and whether an include ends at it.
+type gradleProject struct {
+	build string
+	leaf  bool
+}
+
+// gradleProjects is every project the Gradle builds among files include,
+// by folder: `a:b:c` is a/b/c and, as Gradle makes each a project too, a
+// and a/b. A folder two builds include is the nearer (deeper) one's, ties
+// by name, so a read is the same each time. A settings file in build
+// logic, and a folder outside the repository or in build logic, count for
+// none. The one reading of includes: what the reader fetches (Modules),
+// which build owns it and what it provides (gradle) agree.
+func gradleProjects(files map[string][]byte, logic map[string]bool) map[string]gradleProject {
+	out := map[string]gradleProject{}
 	for p, body := range files {
 		d, b := dirOf(p), path.Base(p)
 		if !gradleSettings(b) || underLogic(logic, d) {
@@ -330,8 +333,12 @@ func gradleProjects(files map[string][]byte, logic map[string]bool) map[string]s
 				if !ok || underLogic(logic, pd) {
 					continue
 				}
-				if r, seen := out[pd]; !seen || len(d) > len(r) {
-					out[pd] = d
+				leaf := i == len(segs)-1
+				switch r, seen := out[pd]; {
+				case !seen || len(d) > len(r.build) || len(d) == len(r.build) && d < r.build:
+					out[pd] = gradleProject{build: d, leaf: leaf}
+				case r.build == d && leaf:
+					out[pd] = gradleProject{build: d, leaf: true}
 				}
 			}
 		}
