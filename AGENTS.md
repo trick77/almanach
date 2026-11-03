@@ -63,7 +63,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
   Left part/no map at head: ≤3 auto retries, rule `LeftParts`. 1 source repo = project of one,
   derived: no project call/page (`projectStands`).
-- Deps code's: manifests depth ≤1; edges joined at read, never stored; ambiguous = no edge; 1
-  clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
+- Deps code's: manifests ≤1 deep or declared; edges joined at read, never stored; ambiguous = no
+  edge; 1 clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
 - Flow: self/repeated edges dropped first. Both maps runtime+prod only, no build/CI/CD (user,
   2026-11-02, twice): model's tags, `RuntimeOnly`.

@@ -154,7 +154,7 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	builds := map[string]string{}
 	for p, body := range files {
 		d := dirOf(p)
-		if logic[d] {
+		if underLogic(logic, d) {
 			continue
 		}
 		switch b := path.Base(p); {
@@ -191,13 +191,15 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		}
 		return c
 	}
-	// A folder one down is its own build when it has a settings file;
-	// otherwise it is (at most) a project of the root build.
+	// A folder one down is its own build when it has a settings file; a
+	// folder its settings file includes is a project of it; any other is
+	// (at most) a project of the root build.
+	member := gradleProjects(files, logic)
 	rootOf := func(d string) string {
 		if g := dirs[d]; d != "" && g != nil && g.hasSet {
 			return d
 		}
-		return ""
+		return member[d].build
 	}
 	// What `$x` resolves to in folder d: gradle.properties of the build
 	// root, then the folder's, then the build root's assignments, then the
@@ -273,15 +275,15 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		if c, ok := gradleCoord(groupOf(d, d), firstStr(reRootName, g.settings)); ok {
 			prov = append(prov, c)
 		}
-		for _, inc := range includes(g.settings) {
-			segs := strings.FieldsFunc(inc, func(r rune) bool { return r == ':' })
-			if len(segs) == 0 {
-				continue
-			}
-			pd := path.Join(d, strings.Join(segs, "/"))
-			if c, ok := gradleCoord(groupOf(d, pd), segs[len(segs)-1]); ok {
-				prov = append(prov, c)
-			}
+	}
+	// Each included project once, as its owning build's: one an include
+	// ends at, or one on an include's path with a build file of its own.
+	for pd, m := range member {
+		if !m.leaf && (dirs[pd] == nil || dirs[pd].build == "") {
+			continue
+		}
+		if c, ok := gradleCoord(groupOf(m.build, pd), path.Base(pd)); ok {
+			prov = append(prov, c)
 		}
 	}
 	reqs := map[string][]Dep{}
@@ -291,6 +293,82 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 	}
 	sort.Strings(prov)
 	return prov, reqs
+}
+
+// includeDir is the folder, relative to its build, of the project a
+// settings file includes: `lib:core` and `:lib:core` are lib/core, as
+// Gradle places it by default. "" for none.
+func includeDir(inc string) string {
+	return strings.Join(strings.FieldsFunc(inc, func(r rune) bool { return r == ':' }), "/")
+}
+
+// gradleProject is an included project: the build (its settings file's
+// folder) it belongs to, and whether an include ends at it.
+type gradleProject struct {
+	build string
+	leaf  bool
+}
+
+// gradleProjects is every project the Gradle builds among files include,
+// by folder: `a:b:c` is a/b/c and, as Gradle makes each a project too, a
+// and a/b. A folder two builds include is the nearer (deeper) one's, ties
+// by name, so a read is the same each time. A settings file in build
+// logic, and a folder outside the repository or in build logic, count for
+// none. The one reading of includes: what the reader fetches (Modules),
+// which build owns it and what it provides (gradle) agree.
+func gradleProjects(files map[string][]byte, logic map[string]bool) map[string]gradleProject {
+	out := map[string]gradleProject{}
+	for p, body := range files {
+		d, b := dirOf(p), path.Base(p)
+		if !gradleSettings(b) || underLogic(logic, d) {
+			continue
+		}
+		if _, groovy := files[path.Join(d, "settings.gradle")]; b == "settings.gradle.kts" && groovy {
+			continue
+		}
+		for _, inc := range includes(stripComments(trimBOM(body))) {
+			segs := strings.Split(includeDir(inc), "/")
+			for i := range segs {
+				pd, ok := inRepo(d, strings.Join(segs[:i+1], "/"))
+				if !ok || underLogic(logic, pd) {
+					continue
+				}
+				leaf := i == len(segs)-1
+				switch r, seen := out[pd]; {
+				case !seen || len(d) > len(r.build) || len(d) == len(r.build) && d < r.build:
+					out[pd] = gradleProject{build: d, leaf: leaf}
+				case r.build == d && leaf:
+					out[pd] = gradleProject{build: d, leaf: true}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// inRepo is folder rel of folder d, cleaned; false for none or one outside
+// the repository.
+func inRepo(d, rel string) (string, bool) {
+	rel = strings.ReplaceAll(strings.TrimSpace(rel), `\`, "/")
+	if rel == "" || strings.HasPrefix(rel, "/") {
+		return "", false
+	}
+	p := path.Clean(path.Join(d, rel))
+	if p == "." || p == ".." || strings.HasPrefix(p, "../") {
+		return "", false
+	}
+	return p, true
+}
+
+// underLogic reports whether folder d is a build logic folder or inside
+// one: a project of buildSrc is build logic too.
+func underLogic(logic map[string]bool, d string) bool {
+	for ; d != "" && d != "."; d = dirOf(d) {
+		if logic[d] {
+			return true
+		}
+	}
+	return false
 }
 
 // buildLogic is the folders one down that hold build logic: buildSrc, and

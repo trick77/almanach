@@ -123,3 +123,122 @@ func TestParse_PackageJSONAndMonorepo(t *testing.T) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
 	}
 }
+
+// A build's declared folders, at any depth, and by which tool: a Gradle
+// include from the root build (each folder on its path a project too) and
+// from one a folder down, a Maven module, one of its own, one in a profile.
+// Build logic's projects, a folder outside the repository and a module
+// naming a file are none.
+func TestModules(t *testing.T) {
+	got := Modules(map[string][]byte{
+		"settings.gradle":          []byte("rootProject.name = 'svc'\ninclude 'lib:core', ':service:api'\n// include 'old:gone'\n"),
+		"jvm/settings.gradle.kts":  []byte("include(\"tools:cli\")\n"),
+		"buildSrc/settings.gradle": []byte("include 'conventions'\n"),
+		"pom.xml":                  []byte(`<project><modules><module>parent/mod</module><module>../sibling</module><module>alt/pom-x.xml</module><module>lib/core</module><module>web/app/pom.xml</module></modules></project>`),
+		"parent/mod/pom.xml":       []byte(`<project><modules><module>sub</module></modules><profiles><profile><modules><module>it</module></modules></profile></profiles></project>`),
+		// A Gradle project's leftover pom declares no build's modules.
+		"service/pom.xml": []byte(`<project><modules><module>old/stale</module></modules></project>`),
+	})
+	want := []Module{
+		{Dir: "jvm/tools", Gradle: true},
+		{Dir: "jvm/tools/cli", Gradle: true},
+		{Dir: "lib", Gradle: true},
+		{Dir: "lib/core", Gradle: true, Maven: true},
+		{Dir: "parent/mod", Maven: true},
+		{Dir: "parent/mod/it", Maven: true},
+		{Dir: "parent/mod/sub", Maven: true},
+		{Dir: "service", Gradle: true},
+		{Dir: "service/api", Gradle: true},
+		{Dir: "web/app", Maven: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Modules = %+v\nwant  %+v", got, want)
+	}
+}
+
+// A module's files are its declaring tool's, never the other's.
+func TestModuleReads(t *testing.T) {
+	gradle, maven := Module{Gradle: true}, Module{Maven: true}
+	for _, c := range []struct {
+		m    Module
+		base string
+		want bool
+	}{
+		{gradle, "build.gradle", true}, {gradle, "build.gradle.kts", true}, {gradle, "gradle.properties", true},
+		{gradle, "pom.xml", false}, {gradle, "settings.gradle", false}, {gradle, "package.json", false},
+		{maven, "pom.xml", true}, {maven, "build.gradle", false}, {maven, "gradle.properties", false},
+	} {
+		if got := c.m.Reads(c.base); got != c.want {
+			t.Errorf("%+v.Reads(%q) = %v, want %v", c.m, c.base, got, c.want)
+		}
+	}
+}
+
+// A multi-project build whose projects sit two folders down and whose root
+// build file names no dependency: what it requires comes from the
+// projects' build files, the group from the root's gradle.properties; a
+// project dependency on a sibling is none.
+func TestParse_GradleProjectsTwoDown(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle":       []byte("rootProject.name = 'svc'\ninclude 'lib:core'\ninclude 'service:api'\n"),
+		"gradle.properties":     []byte("group=example.svc\nversion=1.0.0-SNAPSHOT\n"),
+		"build.gradle":          []byte("plugins {\n  id 'example-conventions'\n}\n"),
+		"lib/core/build.gradle": []byte("dependencies {\n  implementation 'org.example:store:3.1'\n}\n"),
+		"service/api/build.gradle": []byte(`dependencies {
+    implementation project(':lib:core')
+    implementation('example.flow:flow-engine:1.2:api') {
+        transitive = false
+    }
+    implementation 'example.wire:wire-core:2.0'
+}
+`),
+	})
+	want := Read{
+		Provides: []string{"maven:example.svc:api", "maven:example.svc:core", "maven:example.svc:svc"},
+		Requires: []Dep{
+			{Coord: "maven:example.flow:flow-engine", Version: "1.2"},
+			{Coord: "maven:example.wire:wire-core", Version: "2.0"},
+			{Coord: "maven:org.example:store", Version: "3.1"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// A folder on an include's path is a project too: provided when it has a
+// build file of its own, not when it only holds others.
+func TestParse_GradleIntermediateProject(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle":       []byte("rootProject.name = 'svc'\ninclude 'platform:bom', 'lib:core'\n"),
+		"gradle.properties":     []byte("group=example.svc\n"),
+		"platform/build.gradle": []byte("dependencies {\n  api platform('org.example:base-bom:2.0')\n}\n"),
+	})
+	want := Read{
+		Provides: []string{"maven:example.svc:bom", "maven:example.svc:core", "maven:example.svc:platform", "maven:example.svc:svc"},
+		Requires: []Dep{{Coord: "maven:org.example:base-bom", Version: "2.0"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}
+
+// A build a folder down owns the projects it includes: their group and
+// properties come from its folder, not the root's, and the root including
+// the same folder provides it no second time.
+func TestParse_GradleNestedBuildOwnsItsProjects(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"settings.gradle":            []byte("include 'jvm:tools:cli'\n"),
+		"gradle.properties":          []byte("group=example.root\n"),
+		"jvm/settings.gradle":        []byte("rootProject.name = 'jvm'\ninclude 'tools:cli'\n"),
+		"jvm/gradle.properties":      []byte("group=example.jvm\nwireVersion=2.1\n"),
+		"jvm/tools/cli/build.gradle": []byte("dependencies {\n  implementation \"example.wire:wire-core:$wireVersion\"\n}\n"),
+	})
+	want := Read{
+		Provides: []string{"maven:example.jvm:cli", "maven:example.jvm:jvm"},
+		Requires: []Dep{{Coord: "maven:example.wire:wire-core", Version: "2.1"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
+	}
+}

@@ -19,7 +19,7 @@ import (
 // Version is this package's reading of the manifests: raise it with any
 // change to what Parse makes of one, and every repository's manifests are
 // read again at the next sync, not only those whose head moved.
-const Version = 3
+const Version = 4
 
 // Ecosystems: the prefix of a coordinate.
 const (
@@ -43,9 +43,10 @@ type Read struct {
 	Requires []Dep    `json:"requires"`
 }
 
-// Is reports whether a path names a manifest this package reads, at the
-// root or one level down: deeper ones are copies (a checked-out corpus, a
-// fixture) and would make the repository provide what it only carries.
+// Is reports whether a path names a manifest this package reads without
+// being told, at the root or one level down: a deeper one is a copy (a
+// checked-out corpus, a fixture) and would make the repository provide
+// what it only carries, unless a build declares its folder (Modules).
 func Is(p string) bool {
 	// A build's catalog sits in its gradle/ folder: the root's, or a build's
 	// one down (read only for a folder that is a build, see gradle).
@@ -63,14 +64,82 @@ func Is(p string) bool {
 	}
 }
 
+// Module is a folder a build among the manifests declares as its own, and
+// which tool declares it.
+type Module struct {
+	Dir           string
+	Gradle, Maven bool
+}
+
+// Reads reports whether the module's file of this name is read: the
+// declaring tool's build file (a Gradle project's gradle.properties too),
+// never the other tool's (a stale or generated pom.xml in a Gradle
+// project would provide what the build does not publish). A settings file
+// or a catalog there makes no build of its own.
+func (m Module) Reads(base string) bool {
+	return m.Maven && base == "pom.xml" || m.Gradle && (base == "gradle.properties" || gradleBuild(base))
+}
+
+// Modules is the folders the builds among files declare as theirs, by
+// Dir: a Gradle settings file's includes (gradleProjects), a pom.xml's
+// modules, its profiles' too. A declared folder is part of the build at any
+// depth, no copy: its manifests are read too (a multi-project build keeps
+// its projects in lib/<x>, service/<x>, and only there what it requires).
+func Modules(files map[string][]byte) []Module {
+	logic := buildLogic(files)
+	byDir := map[string]*Module{}
+	at := func(d string) *Module {
+		if byDir[d] == nil {
+			byDir[d] = &Module{Dir: d}
+		}
+		return byDir[d]
+	}
+	projects := gradleProjects(files, logic)
+	for d := range projects {
+		at(d).Gradle = true
+	}
+	for p, body := range files {
+		// A pom.xml in a Gradle project's folder is stale or generated: its
+		// modules are no build's.
+		if _, gradle := projects[dirOf(p)]; path.Base(p) != "pom.xml" || gradle {
+			continue
+		}
+		x, ok := decodePom(body)
+		if !ok {
+			continue
+		}
+		for _, m := range append(x.Modules, x.ProfileModules...) {
+			// A module may name its pom.xml instead of its folder; one naming
+			// another file is left out, only pom.xml is read.
+			m = strings.ReplaceAll(strings.TrimSpace(m), `\`, "/")
+			if path.Base(m) == "pom.xml" {
+				m = path.Dir(m)
+			} else if strings.HasSuffix(m, ".xml") {
+				continue
+			}
+			if d, ok := inRepo(dirOf(p), m); ok {
+				at(d).Maven = true
+			}
+		}
+	}
+	out := make([]Module, 0, len(byDir))
+	for _, m := range byDir {
+		out = append(out, *m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Dir < out[j].Dir })
+	return out
+}
+
+// trimBOM drops a UTF-8 byte order mark (an editor's on Windows): it would
+// fail JSON, TOML and XML at the first byte; the tools themselves skip it.
+func trimBOM(body []byte) []byte { return bytes.TrimPrefix(body, []byte("\xef\xbb\xbf")) }
+
 // Parse reads the manifests given (path to body). A manifest that does not
 // parse is left out; the rest still count.
 func Parse(in map[string][]byte) Read {
-	// A UTF-8 byte order mark (an editor's on Windows) would fail JSON and
-	// TOML at the first byte; the tools themselves skip it.
 	files := make(map[string][]byte, len(in))
 	for p, body := range in {
-		files[p] = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
+		files[p] = trimBOM(body)
 	}
 	provides := map[string]bool{}
 	requires := map[string]string{}
@@ -166,11 +235,21 @@ func unquote(s string) string { return strings.Trim(s, "\"`") }
 
 // pomXML is the part of a pom.xml read here.
 type pomXML struct {
-	GroupID      string   `xml:"groupId"`
-	ArtifactID   string   `xml:"artifactId"`
-	Parent       pomDep   `xml:"parent"`
-	Dependencies []pomDep `xml:"dependencies>dependency"`
-	Managed      []pomDep `xml:"dependencyManagement>dependencies>dependency"`
+	GroupID        string   `xml:"groupId"`
+	ArtifactID     string   `xml:"artifactId"`
+	Parent         pomDep   `xml:"parent"`
+	Dependencies   []pomDep `xml:"dependencies>dependency"`
+	Managed        []pomDep `xml:"dependencyManagement>dependencies>dependency"`
+	Modules        []string `xml:"modules>module"`
+	ProfileModules []string `xml:"profiles>profile>modules>module"`
+}
+
+// decodePom is a pom.xml read; false when it does not parse.
+func decodePom(body []byte) (pomXML, bool) {
+	var p pomXML
+	dec := xml.NewDecoder(bytes.NewReader(trimBOM(body)))
+	dec.CharsetReader = charsetReader
+	return p, dec.Decode(&p) == nil
 }
 
 type pomDep struct {
@@ -185,10 +264,8 @@ type pomDep struct {
 // built of a property (`${...}`) is left out: unresolved, it would match
 // nothing or the wrong thing.
 func pom(body []byte) ([]string, []Dep) {
-	var p pomXML
-	dec := xml.NewDecoder(bytes.NewReader(body))
-	dec.CharsetReader = charsetReader
-	if err := dec.Decode(&p); err != nil {
+	p, ok := decodePom(body)
+	if !ok {
 		return nil, nil
 	}
 	var prov []string

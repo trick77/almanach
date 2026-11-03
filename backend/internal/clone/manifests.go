@@ -3,6 +3,7 @@ package clone
 import (
 	"context"
 	"errors"
+	"path"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
@@ -67,32 +68,75 @@ func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.
 		return manifest.Read{}, err
 	}
 	files := map[string][]byte{}
+	tried := map[string]bool{}
 	var r *gitrepo.Reader
 	defer func() {
 		if r != nil {
 			_ = r.Close()
 		}
 	}()
-	for _, e := range entries {
-		if !baseline.Readable(e) || !manifest.Is(e.Path) {
-			continue
-		}
+	read := func(e gitrepo.Entry) error {
+		tried[e.Path] = true
 		if r == nil {
-			if r, err = p.Manifests.Reads.NewReader(ctx, dir); err != nil {
-				return manifest.Read{}, err
+			nr, err := p.Manifests.Reads.NewReader(ctx, dir)
+			if err != nil {
+				return err
 			}
+			r = nr
 		}
 		body, err := r.ReadFile(head, e.Path, baseline.FileMaxBytes)
 		if ctx.Err() != nil {
-			return manifest.Read{}, ctx.Err()
+			return ctx.Err()
 		}
 		if errors.Is(err, gitrepo.ErrReaderBroken) || errors.Is(err, gitrepo.ErrBadSHA) {
-			return manifest.Read{}, err
+			return err
 		}
-		if err != nil || baseline.Binary(body) {
-			continue
+		if err == nil && !baseline.Binary(body) {
+			files[e.Path] = []byte(redact.Text(string(body)))
 		}
-		files[e.Path] = []byte(redact.Text(string(body)))
+		return nil
+	}
+	for _, e := range entries {
+		if baseline.Readable(e) && manifest.Is(e.Path) {
+			if err := read(e); err != nil {
+				return manifest.Read{}, err
+			}
+		}
+	}
+	// Then the folders the builds declare (manifest.Modules), at any depth,
+	// until a pass declares none new: a Maven module may list modules of
+	// its own. Each module is visited once, so the passes end.
+	var byDir map[string][]gitrepo.Entry
+	visited := map[manifest.Module]bool{}
+	for {
+		var next []gitrepo.Entry
+		for _, m := range manifest.Modules(files) {
+			if visited[m] {
+				continue
+			}
+			visited[m] = true
+			if byDir == nil {
+				byDir = map[string][]gitrepo.Entry{}
+				for _, e := range entries {
+					if baseline.Readable(e) {
+						byDir[path.Dir(e.Path)] = append(byDir[path.Dir(e.Path)], e)
+					}
+				}
+			}
+			for _, e := range byDir[m.Dir] {
+				if !tried[e.Path] && m.Reads(path.Base(e.Path)) {
+					next = append(next, e)
+				}
+			}
+		}
+		if len(next) == 0 {
+			break
+		}
+		for _, e := range next {
+			if err := read(e); err != nil {
+				return manifest.Read{}, err
+			}
+		}
 	}
 	return manifest.Parse(files), nil
 }
