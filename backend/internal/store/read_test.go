@@ -106,11 +106,14 @@ func TestSourcedLists(t *testing.T) {
 	if err != nil || len(rs) != 2 || rs[0].Slug != "svc" || rs[0].Notes != 1 || rs[1].Slug != "web" {
 		t.Fatalf("Repos = %+v %v", rs, err)
 	}
-	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "web", Summary: "Absatz eins.\n\nAbsatz zwei.", SourcePR: "PRJ/web#1"}); err != nil {
+	api := Statement{ID: "s1", Kind: "interface", Name: "Web-API", Text: "Routen.", Files: []string{"api.go"}, Sources: []Source{}}
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "web", Summary: "Absatz eins.\n\nAbsatz zwei.", SourcePR: "PRJ/web#1",
+		Statements: []Statement{{ID: "s2", Kind: "rule", Name: "Regel", Text: "R.", Files: []string{}, Sources: []Source{}}, api}}); err != nil {
 		t.Fatal(err)
 	}
 	sums, err := s.RepoSummaries(ctx, "PRJ")
-	if want := []RepoSummary{{"svc", ""}, {"web", "Absatz eins.\n\nAbsatz zwei."}}; err != nil || !reflect.DeepEqual(sums, want) {
+	// A repository's contracts are its interfaces and entities, nothing else.
+	if want := []RepoSummary{{Slug: "svc"}, {Slug: "web", Summary: "Absatz eins.\n\nAbsatz zwei.", Contracts: []Statement{api}}}; err != nil || !reflect.DeepEqual(sums, want) {
 		t.Errorf("RepoSummaries = %+v %v, want %+v", sums, err, want)
 	}
 	if team, ok, err := s.ProjectExists(ctx, "tools", true); err != nil || !ok || team != "" {

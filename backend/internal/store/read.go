@@ -91,22 +91,31 @@ type RepoRow struct {
 	LastMerge *time.Time
 }
 
-// RepoSummary is a source repository and its current summary, whole.
+// RepoSummary is a source repository and its current summary, whole, with
+// Contracts, its statements other repositories rely on: its interfaces
+// and entities, in the page's order.
 type RepoSummary struct {
-	Slug    string
-	Summary string
+	Slug      string
+	Summary   string
+	Contracts []Statement
 }
 
+// contractKinds are the kinds another repository relies on: a project
+// step reading only the others' summaries wrote "who uses it" from one
+// side alone.
+var contractKinds = []string{"interface", "entity"}
+
 // RepoSummaries lists a project's source repositories by slug with the
-// summary of their current description, "" before the first: what the
-// project step reads of the others, without the note counts of Repos.
+// summary of their current description, "" before the first, and its
+// contracts: what the project step reads of the others, without the note
+// counts of Repos.
 func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummary, error) {
 	pid, ok, err := projectID(ctx, s.db, project)
 	if err != nil || !ok {
 		return []RepoSummary{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.slug, COALESCE(rv.summary, '')
+		SELECT r.slug, COALESCE(rv.summary, ''), COALESCE(rv.statements, '[]')
 		  FROM source_repos sr JOIN repos r ON r.id = sr.repo_id
 		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
@@ -118,8 +127,18 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 	out := []RepoSummary{}
 	for rows.Next() {
 		var r RepoSummary
-		if err := rows.Scan(&r.Slug, &r.Summary); err != nil {
+		var raw []byte
+		if err := rows.Scan(&r.Slug, &r.Summary, &raw); err != nil {
 			return nil, err
+		}
+		var all []Statement
+		if err := json.Unmarshal(raw, &all); err != nil {
+			return nil, err
+		}
+		for _, st := range all {
+			if slices.Contains(contractKinds, st.Kind) {
+				r.Contracts = append(r.Contracts, st)
+			}
 		}
 		out = append(out, r)
 	}

@@ -673,7 +673,11 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 			w.log.WarnContext(ctx, "baseline: shared repositories read failed, drain paused", logging.Err(err))
 			return errStop
 		}
-		w.libsRun, w.libs = r.ID, sharedRepos(libs, false)
+		repos, err := w.repoSummaries(ctx, r)
+		if err != nil {
+			return err
+		}
+		w.libsRun, w.libs, w.siblings = r.ID, sharedRepos(libs, false), siblingInterfaces(repos, r.Slug)
 	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
@@ -701,7 +705,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		problems = problemsFor(w.problems, read)
 	}
 	focus := w.focus(plan, page, newer)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, newer)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, w.siblings, newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -2205,10 +2209,10 @@ func renderProblems(problems []store.RepoProblem) string {
 	return b.String()
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs string,
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs, siblings string,
 	newer map[string]string) string {
 	return strings.NewReplacer(
-		"{problem_areas}", problems, "{shared}", libs,
+		"{problem_areas}", problems, "{shared}", libs, "{sibling_interfaces}", siblings,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps),
 		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
@@ -2301,7 +2305,52 @@ func projectMap(p store.Page) string {
 // with a share too small to hold one (hundreds of repositories), are
 // named. A prompt's input, never stored text.
 func otherRepos(repos []store.RepoSummary, self string) string {
-	return fitSummaries(repos, self, baseline.ProjectReposMaxBytes, "Also in the project, without a summary here")
+	with := make([]store.RepoSummary, 0, len(repos))
+	for _, r := range repos {
+		if r.Summary != "" && len(r.Contracts) > 0 {
+			r.Summary += "\n\n" + contracts(r.Contracts)
+		}
+		with = append(with, r)
+	}
+	return fitSummaries(with, self, baseline.ProjectReposMaxBytes, "Also in the project, without a summary here")
+}
+
+// contracts is a repository's interfaces and entities as the project step
+// reads them after its summary: kind, name, the first paragraph and the
+// files, so who offers what and who uses it is read from both sides, not
+// guessed from a summary.
+func contracts(list []store.Statement) string {
+	var b strings.Builder
+	b.WriteString("Its interfaces and entities:")
+	for _, s := range list {
+		lead, _, _ := strings.Cut(s.Text, "\n\n")
+		fmt.Fprintf(&b, "\n- %s `%s`: %s", s.Kind, s.Name, lead)
+		if len(s.Files) > 0 {
+			fmt.Fprintf(&b, " (%s)", strings.Join(s.Files, ", "))
+		}
+	}
+	return b.String()
+}
+
+// siblingInterfaces names the interfaces the project's other repositories
+// offer, for a describe step: a call this part's code makes to one is named
+// by its repository and name, not guessed. "_None._" without any.
+func siblingInterfaces(repos []store.RepoSummary, self string) string {
+	var b strings.Builder
+	for _, r := range repos {
+		if r.Slug == self {
+			continue
+		}
+		for _, s := range r.Contracts {
+			if s.Kind == "interface" {
+				fmt.Fprintf(&b, "- `%s`: %s\n", r.Slug, s.Name)
+			}
+		}
+	}
+	if b.Len() == 0 {
+		return "_None._"
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // sharedRepos is the summaries of the source repositories a repository, or

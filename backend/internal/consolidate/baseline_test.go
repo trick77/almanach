@@ -522,6 +522,27 @@ func TestOtherRepos(t *testing.T) {
 	}
 }
 
+// The project step reads the others' interfaces and entities after their
+// summaries, the first paragraph and the files each; a describe step the
+// interfaces the others offer, by repository, never its own.
+func TestContractsReadFromBothSides(t *testing.T) {
+	api := store.Statement{Kind: "interface", Name: "Web-API", Text: "Die Routen.\n\nDetails.", Files: []string{"api.go", "openapi.yaml"}}
+	order := store.Statement{Kind: "entity", Name: "Bestellung", Text: "Ein Auftrag."}
+	repos := []store.RepoSummary{{Slug: "web", Summary: "Das Portal.", Contracts: []store.Statement{api, order}},
+		{Slug: "svc", Summary: "Selbst.", Contracts: []store.Statement{{Kind: "interface", Name: "Eigene"}}}, {Slug: "cli", Contracts: []store.Statement{api}}}
+	got := otherRepos(repos, "svc")
+	want := "### web\n\nDas Portal.\n\nIts interfaces and entities:\n- interface `Web-API`: Die Routen. (api.go, openapi.yaml)\n- entity `Bestellung`: Ein Auftrag."
+	if !strings.Contains(got, want) || strings.Contains(got, "Details.") || strings.Contains(got, "Eigene") {
+		t.Errorf("otherRepos = %q\nwant it holding %q", got, want)
+	}
+	if got := siblingInterfaces(repos, "svc"); got != "- `web`: Web-API\n- `cli`: Web-API" {
+		t.Errorf("siblingInterfaces = %q", got)
+	}
+	if got := siblingInterfaces(repos[1:2], "svc"); got != "_None._" {
+		t.Errorf("siblingInterfaces of itself alone = %q", got)
+	}
+}
+
 // In the overview a statement resting on code alone is read-only and says
 // so; one naming a doc beside code ("./", "/" and a docs directory
 // forgiven), one without files, or one already held for a newer PR is not
@@ -978,20 +999,16 @@ func TestRun_Failures(t *testing.T) {
 		t.Fatalf("unreadable clone: %+v", r)
 	}
 
-	// The other repositories unreadable: the project step waits, the run
-	// stays at it.
+	// The other repositories unreadable: the first describe step, which
+	// reads their interfaces, waits without a call; the run stays at it.
 	u := newWorld(t, 16)
 	u.queue(store.RunFull, "")
 	u.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
-	u.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
-		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
-	}
 	u.st.othersErr = errors.New("db down")
 	u.w.drain(context.Background())
-	if r := u.run(); r.State != store.RunProject || r.Calls != 3 {
-		t.Fatalf("repositories unreadable: %+v, want the run held at its project step", r)
+	if r := u.run(); r.State != store.RunDescribing || r.Step != 0 || r.Calls != 1 {
+		t.Fatalf("repositories unreadable: %+v, want the run held at its first describe step", r)
 	}
 
 	v := newWorld(t, 16)
