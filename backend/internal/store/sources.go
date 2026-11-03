@@ -237,9 +237,9 @@ func createSource(ctx context.Context, tx *sql.Tx, src ProjectSource) (int64, er
 }
 
 // ProjectSpelledOtherwise is the spelling noergler delivers a project key
-// in when it differs from key only by case, ok false when it does not: a
-// source must match noergler's key exactly, or every note of the project
-// is ignored. Only keys noergler delivered for count (first_seen set).
+// in when it differs from key only by case, ok false when it does not, so
+// a new source reads as noergler spells it (the gate itself matches in any
+// case). Only keys noergler delivered for count (first_seen set).
 //
 // The case is folded in Go: SQLite's lower() folds ASCII only, and a key
 // "ÄRZTE" must find "ärzte".

@@ -429,7 +429,7 @@ func TestIsSourceRepo(t *testing.T) {
 	for _, c := range []struct {
 		key, slug string
 		want      bool
-	}{{"tools", "svc", true}, {"TOOLS", "svc", true}, {"Tools", "SVC", true},
+	}{{"tools", "svc", true}, {"TOOLS", "svc", true}, {"Tools", "SVC", true}, {"tools", "SVC", true},
 		{"tools", "other", false}, {"TOOLS", "other", false}, {"PRJ", "svc", false}, {"tools", "", false}} {
 		if got, err := s.IsSourceRepo(ctx, c.key, c.slug); err != nil || got != c.want {
 			t.Errorf("IsSourceRepo(%s, %s) = %v %v, want %v", c.key, c.slug, got, err, c.want)

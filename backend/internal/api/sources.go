@@ -495,10 +495,11 @@ func (d Deps) createSource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, problem)
 		return
 	}
-	// The key is how noergler's notes find the source, exactly: a key that
-	// differs from one noergler delivers only by case would have every note
-	// of the project ignored. A Bitbucket source takes noergler's spelling:
-	// it is the same Bitbucket project, and the form cannot type another.
+	// One spelling per project: noergler's notes find the source in any
+	// case, but a key that differs from one noergler delivers only by case
+	// would show the project under two. A Bitbucket source takes noergler's
+	// spelling: it is the same Bitbucket project, and the form cannot type
+	// another.
 	known, clash, err := d.Sources.Store.ProjectSpelledOtherwise(ctx, in.ProjectKey)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project key")

@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// A change of case on a project's own key is a rename like any other:
-// afterwards a note delivered under the new spelling lands on the source
-// repository and its pages, and the old key still finds the project.
+// A change of case on a project's own key is a rename like any other: the
+// pages follow the new spelling, and the old key still finds the project.
+// Notes land in either spelling, before the rename and after.
 func TestRenameProject_CaseOnly(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

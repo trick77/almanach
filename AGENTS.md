@@ -58,8 +58,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   UI copy: capital only if first char letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
   source key: from project URL, case-only rename.
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
-  stored (user, 2026-10-30). Gate matches key, slug in any case: exact ignored every note of a
-  lower-cased source, noergler marked them sent (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
+  stored (user, 2026-10-30). Gate: key, slug any case (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
   Left part/no map at head: ≤3 auto retries, rule `LeftParts`. 1 source repo = project of one,

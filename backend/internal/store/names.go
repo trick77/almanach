@@ -54,26 +54,56 @@ func repoID(ctx context.Context, q rowQuerier, key, slug string) (int64, bool, e
 	return rid, ok, err
 }
 
-// repoIDAnyCase resolves a key and a slug as repoID does, then in any case,
-// folded in Go as ensureProject and ensureRepo fold: a name in any case
-// belongs to one project or repository, so the fold finds at most one.
-func repoIDAnyCase(ctx context.Context, q querier, key, slug string) (int64, bool, error) {
-	if rid, ok, err := repoID(ctx, q, key, slug); err != nil || ok || slug == "" {
-		return rid, ok, err
+// projectIDAnyCase resolves a key exactly, then in any case, folded in Go:
+// a name in any case belongs to one project, so the fold finds at most one.
+// The exact name first: it is one indexed read and never ambiguous.
+func projectIDAnyCase(ctx context.Context, q querier, key string) (int64, bool, error) {
+	if id, ok, err := projectID(ctx, q, key); err != nil || ok {
+		return id, ok, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT key, project_id FROM project_names`)
+	return projectIDFolded(ctx, q, key)
+}
+
+// projectIDFolded is the project owning key in another case.
+func projectIDFolded(ctx context.Context, q querier, key string) (int64, bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT key, project_id FROM project_names ORDER BY project_id`)
 	if err != nil {
 		return 0, false, err
 	}
-	pid, ok, err := ownerInAnyCase(rows, key)
-	if err != nil || !ok {
-		return 0, false, err
+	return ownerInAnyCase(rows, key)
+}
+
+// repoIDInProjectAnyCase resolves a slug of the project exactly, then in
+// any case, as projectIDAnyCase does for keys.
+func repoIDInProjectAnyCase(ctx context.Context, q querier, projectID int64, slug string) (int64, bool, error) {
+	var id int64
+	err := q.QueryRowContext(ctx, `SELECT repo_id FROM repo_names WHERE project_id = ? AND slug = ?`, projectID, slug).Scan(&id)
+	if err == nil || !errors.Is(err, sql.ErrNoRows) {
+		return id, err == nil, err
 	}
-	rows, err = q.QueryContext(ctx, `SELECT slug, repo_id FROM repo_names WHERE project_id = ?`, pid)
+	return repoIDFolded(ctx, q, projectID, slug)
+}
+
+// repoIDFolded is the project's repository owning slug in another case.
+func repoIDFolded(ctx context.Context, q querier, projectID int64, slug string) (int64, bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT slug, repo_id FROM repo_names WHERE project_id = ? ORDER BY repo_id`, projectID)
 	if err != nil {
 		return 0, false, err
 	}
 	return ownerInAnyCase(rows, slug)
+}
+
+// repoIDAnyCase resolves a key and a slug, each in any case; an empty slug
+// names no repository.
+func repoIDAnyCase(ctx context.Context, q querier, key, slug string) (int64, bool, error) {
+	if slug == "" {
+		return 0, false, nil
+	}
+	pid, ok, err := projectIDAnyCase(ctx, q, key)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	return repoIDInProjectAnyCase(ctx, q, pid, slug)
 }
 
 // ensureProject is the project a key names, registered when no project
@@ -81,15 +111,11 @@ func repoIDAnyCase(ctx context.Context, q querier, key, slug string) (int64, boo
 // a name in any case belongs to one project, so the new spelling becomes a
 // name of it instead of a second project.
 func ensureProject(ctx context.Context, q querier, key string) (int64, error) {
-	id, ok, err := projectID(ctx, q, key)
-	if err != nil || ok {
+	if id, ok, err := projectID(ctx, q, key); err != nil || ok {
 		return id, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT key, project_id FROM project_names`)
+	id, ok, err := projectIDFolded(ctx, q, key)
 	if err != nil {
-		return 0, err
-	}
-	if id, ok, err = ownerInAnyCase(rows, key); err != nil {
 		return 0, err
 	}
 	if !ok {
@@ -110,11 +136,7 @@ func ensureRepo(ctx context.Context, q querier, projectID int64, slug string) (i
 	if err == nil || !errors.Is(err, sql.ErrNoRows) {
 		return id, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT slug, repo_id FROM repo_names WHERE project_id = ?`, projectID)
-	if err != nil {
-		return 0, err
-	}
-	id, ok, err := ownerInAnyCase(rows, slug)
+	id, ok, err := repoIDFolded(ctx, q, projectID, slug)
 	if err != nil {
 		return 0, err
 	}
