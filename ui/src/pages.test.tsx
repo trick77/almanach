@@ -1841,11 +1841,30 @@ describe("DescriptionView areas", () => {
       st("a2", "rule", "Drei", "A"),
     ];
     expect(
-      areaGroups(twice).map((g) => [g.area, g.statements.map((s) => s.id)]),
+      areaGroups(twice, twice).map((g) => [
+        g.area,
+        g.statements.map((s) => s.id),
+      ]),
     ).toEqual([
       ["A", ["a1", "a2"]],
       ["B", ["b1"]],
     ]);
+    // A search's hits keep the page's order of areas, the rail's.
+    expect(areaGroups(twice, twice.slice(1)).map((g) => g.area)).toEqual([
+      "A",
+      "B",
+    ]);
+  });
+
+  it("says so on a page without statements", () => {
+    render(
+      <DescriptionView
+        description={{ ...description, statements: [] }}
+        emptyHint=""
+        pageRepo="svc"
+      />,
+    );
+    expect(screen.getByText(S.areas.none)).toBeInTheDocument();
   });
 
   it("titles every chapter: an area, the rest, or a page without areas", () => {

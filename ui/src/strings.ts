@@ -3,6 +3,7 @@
 // readers are German speaking, and the wiki itself is German.
 
 import type {
+  Kind,
   QueueRun,
   SkippedPart,
   SkipReason,
@@ -225,18 +226,21 @@ export const S = {
     decision: "Entscheidung",
     extension: "Erweiterung",
     pitfall: "Fallstrick",
-  } as Partial<Record<string, string>>,
+  } satisfies Record<Kind, string> as Partial<Record<string, string>>,
   // The project page's labels where they differ: its entities are the ones
-  // that cross repositories, who owns them and how their ids travel.
+  // that cross repositories, who owns them and how their ids travel (the
+  // export's heading their plural, held to it by a test).
   projectStatementKind: {
     entity: "Geteilte Entität",
-  } as Partial<Record<string, string>>,
-  // The chapter of statements in no area: beside named areas where its
-  // first statement stands (the Markdown export heads them alike, held to
-  // it by a test), and the one chapter of a page not laid out yet.
+  } satisfies Partial<Record<Kind, string>> as Partial<Record<string, string>>,
+  // otherArea is the chapter of statements in no area, beside named areas
+  // where its first statement stands (the Markdown export's word for them
+  // under a kind, held to it by a test); all the one chapter of a page not
+  // laid out yet; none a page without statements.
   areas: {
     otherArea: "Weiteres",
     all: "Aussagen",
+    none: "Noch keine Aussagen.",
   },
   noteHeaders: ["PR", "Titel", "Art", "Einträge", "Issues / Hinweise", "Merge"],
   changeKind: {

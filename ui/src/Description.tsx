@@ -169,10 +169,13 @@ export function DescriptionView({
         <Summary text={description.summary} query={query} layout />
       </section>
       {afterSummary}
-      {query.trim() !== "" && shown.length === 0 && (
-        <Empty>{S.rail.noHits}</Empty>
+      {all.length === 0 ? (
+        <Empty>{S.areas.none}</Empty>
+      ) : (
+        query.trim() !== "" &&
+        shown.length === 0 && <Empty>{S.rail.noHits}</Empty>
       )}
-      {areaGroups(shown).map((g) => (
+      {areaGroups(all, shown).map((g) => (
         <section
           key={g.area}
           // The rail's anchor.
@@ -209,15 +212,15 @@ const areaHeading =
  *  overview before detail, whatever the kind. An area the search leaves
  *  without a hit is not shown. */
 export function areaGroups(
+  all: Statement[],
   shown: Statement[],
 ): { area: string; statements: Statement[] }[] {
-  const groups = new Map<string, Statement[]>();
-  for (const s of shown) {
-    const group = groups.get(areaOf(s));
-    if (group) group.push(s);
-    else groups.set(areaOf(s), [s]);
-  }
-  return [...groups].map(([area, statements]) => ({ area, statements }));
+  // In the order of all the page's areas, as the rail lists them, never
+  // the order the search's hits happen to give.
+  return areaNames(all).flatMap((area) => {
+    const statements = shown.filter((s) => areaOf(s) === area);
+    return statements.length === 0 ? [] : [{ area, statements }];
+  });
 }
 
 /** sourceKey names a source once, as the backend does: a PR by its key, a

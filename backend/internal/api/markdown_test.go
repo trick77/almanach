@@ -131,7 +131,7 @@ func TestProjectMarkdown(t *testing.T) {
 		t.Errorf("project statements:\n%s", md)
 	}
 	// A project's entities are the data its repositories share.
-	if !strings.Contains(md, "## Geteilte Daten\n\n### Zahlung") || strings.Contains(md, "## Entitäten") || strings.Contains(md, "## Aufbau") {
+	if !strings.Contains(md, "## Geteilte Entitäten\n\n### Zahlung") || strings.Contains(md, "## Entitäten") || strings.Contains(md, "## Aufbau") {
 		t.Errorf("project entities or a repository map:\n%s", md)
 	}
 	if rec := getMD(h, "/api/projects/NOPE.md", ""); rec.Code != http.StatusNotFound {
@@ -219,8 +219,9 @@ func TestMarkdownKeepsWideCodeSpan(t *testing.T) {
 	}
 }
 
-// The export's kinds are the schema's, each heading the name strings.ts
-// gives the kind (S.kinds).
+// The export's kinds are the schema's, each heading the plural name
+// strings.ts gives the kind (S.kinds), a project's entities the plural of
+// the page's label for one.
 func TestMarkdownKindsMatchTheUI(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "ui", "src", "strings.ts"))
 	if err != nil {
@@ -233,6 +234,9 @@ func TestMarkdownKindsMatchTheUI(t *testing.T) {
 		if !strings.Contains(copyTS, fmt.Sprintf("    %s: %q,\n", k.kind, k.heading)) {
 			t.Errorf("strings.ts labels %s otherwise than %q", k.kind, k.heading)
 		}
+	}
+	if !strings.Contains(copyTS, fmt.Sprintf("    entity: %q,\n", strings.TrimSuffix(projectEntityHeading, "en"))) {
+		t.Errorf("strings.ts lacks the project's entity label, the singular of %q", projectEntityHeading)
 	}
 	// The summary's label over it.
 	if !strings.Contains(copyTS, fmt.Sprintf("    summary: %q,\n", summaryHeading)) {
