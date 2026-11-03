@@ -91,9 +91,11 @@ type Worker struct {
 	// show them, read at the first step this process runs: a saving of
 	// reads, not a pin. A restart mid-run reads them again, and the project
 	// step reads its own; a summary that changed between is context, not
-	// code, so the steps may see two versions of it.
-	libsRun int64
-	libs    string
+	// code, so the steps may see two versions of it. siblings is, read with
+	// them, the interfaces the project's other repositories offer.
+	libsRun  int64
+	libs     string
+	siblings string
 	// busyRun and busyWrites count the step writes of one run a busy
 	// database refused in a row; a written step resets them. In memory:
 	// the row's attempts are the gateway's, reset by every answered call,

@@ -33,6 +33,14 @@ const (
 	// repositories its repository, or its project, depends on: beside every step,
 	// so less than the project's own repositories get.
 	SharedMaxBytes = 24_000
+	// ContractsMaxBytes is what the project step reads of the other
+	// repositories' interfaces and entities, a budget of its own beside
+	// their summaries': in a large project the lists would be cut first.
+	ContractsMaxBytes = 40_000
+	// SiblingsMaxBytes is what a describe step reads of the names of the
+	// interfaces and entities the project's other repositories offer:
+	// beside every step, names only.
+	SiblingsMaxBytes = 8_000
 	// CatalogueDocsBytes is what the catalogue step reads of the docs.
 	CatalogueDocsBytes = 60_000
 	// ListMaxEntries: over it the catalogue sees directories, not files.

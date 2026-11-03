@@ -65,6 +65,18 @@ func TestPromptsStateTheLayout(t *testing.T) {
 	}
 }
 
+// A describe step names another repository's interface only where its
+// code shows the call, never from the list alone; the project's summary
+// groups the repositories' roles, never one flat list of them.
+func TestPromptsReadTheOtherRepositories(t *testing.T) {
+	if !strings.Contains(Describe, "{sibling_interfaces}") || !strings.Contains(Describe, "never from the list alone") {
+		t.Error("describe prompt lacks the other repositories' interfaces or the rule that guards them")
+	}
+	if !strings.Contains(Project, "never one flat list of repositories") || !strings.Contains(Merge, "the repositories' roles, grouped by") {
+		t.Error("project or merge prompt still lists the repositories' roles flat")
+	}
+}
+
 // A flow is told in full once, in its `flow` statement: every prompt that
 // writes statements defines the kind, and the summary only names the
 // flows, never retells them end to end. That each output format offers it
