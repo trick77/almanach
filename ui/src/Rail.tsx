@@ -3,6 +3,7 @@
 // leaves, so the column never moves sideways on a tab switch, and rail and
 // column start on one top edge.
 import {
+  Fragment,
   useCallback,
   useEffect,
   useRef,
@@ -11,7 +12,7 @@ import {
   type RefObject,
 } from "react";
 import { S } from "./strings";
-import { Link, page } from "./ui";
+import { page } from "./ui";
 
 /** railTop is the one top edge: the grid's padding, the rail's and the
  *  breadcrumb's sticky offset. Change it in one place. */
@@ -61,32 +62,36 @@ export interface RailItem {
   dim?: boolean;
   /** hit: the count is a search's. */
   hit?: boolean;
+  /** children are the section's own parts, a kind's areas: listed while
+   *  the section is the one being read, and never as chips (narrow). */
+  children?: RailItem[];
 }
 
 export interface RailGroup {
   title: ReactNode;
-  items?: RailItem[];
-  /** links are pages, not sections: the project's other repositories, the
-   *  ones this repository uses or is used by. */
-  links?: RailLink[];
+  items: RailItem[];
 }
 
-export interface RailLink {
-  label: string;
-  to: string;
-  current: boolean;
-  /** note sits on the right, like a count: a version. odd marks it. */
-  note?: string;
-  odd?: boolean;
-  noteTitle?: string;
-  /** sub is a line under the label: the library's other users. */
-  sub?: string;
+/** shortcutFree says a page's key shortcut may act: not while typing,
+ *  and not while a dialog (a diagram's full view) holds the page, whose
+ *  focus would leave it for the page behind. Option and AltGr pass: e.key
+ *  is the character typed, and the Swiss layouts type "[" and "]" with
+ *  them (Option+5/6 on a Mac, AltGr, ctrl and alt at once, on Windows);
+ *  Cmd and Ctrl alone are the browser's. */
+export function shortcutFree(e: KeyboardEvent): boolean {
+  if (e.metaKey || (e.ctrlKey && !e.altKey)) return false;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))
+    return false;
+  return document.querySelector('[role="dialog"]') === null;
 }
 
-/** Rail is the search and the sections. A section in the other tab
- *  switches the tab, then scrolls to it; a section link never writes the
- *  address, which holds the tab. */
+/** Rail is the search and the sections, under head when given (the
+ *  repository page's project and its sibling switch, one control, never a
+ *  list). A section in the other tab switches the tab, then scrolls to it;
+ *  a section link never writes the address, which holds the tab. */
 export function Rail({
+  head,
   groups,
   tab,
   onTab,
@@ -95,6 +100,7 @@ export function Rail({
   hitLine,
   scroller,
 }: {
+  head?: ReactNode;
   groups: RailGroup[];
   tab: string;
   onTab: (tab: string) => void;
@@ -105,7 +111,9 @@ export function Rail({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<string | null>(null);
-  const items = groups.flatMap((g) => g.items ?? []);
+  const items = groups
+    .flatMap((g) => g.items)
+    .flatMap((i) => [i, ...(i.children ?? [])]);
   const active = useActiveSection(
     items.filter((i) => i.tab === tab).map((i) => i.id),
     scroller,
@@ -120,19 +128,10 @@ export function Rail({
     document.getElementById(id)?.scrollIntoView();
   }, [tab]);
 
-  // "/" finds, as on most sites with a search; not while typing elsewhere,
-  // and not while a dialog (a diagram's full view) holds the page: focus
-  // would leave it for the page behind.
+  // "/" finds, as on most sites with a search.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
-      )
-        return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (e.key !== "/" || !shortcutFree(e)) return;
       e.preventDefault();
       input.current?.focus();
     };
@@ -158,6 +157,7 @@ export function Rail({
         stickyTop
       }
     >
+      {head}
       <label className="relative block w-[240px] shrink-0 min-[1180px]:w-auto">
         <SearchIcon />
         <input
@@ -188,7 +188,8 @@ export function Rail({
       >
         {hitLine}
       </p>
-      <div className="flex gap-0.5 whitespace-nowrap min-[1180px]:mt-2.5 min-[1180px]:block">
+      {/* Chips narrow keep one line; wide, a long area name wraps. */}
+      <div className="flex gap-0.5 whitespace-nowrap min-[1180px]:mt-2.5 min-[1180px]:block min-[1180px]:whitespace-normal">
         {groups.map((g, gi) => (
           <div
             key={gi}
@@ -197,81 +198,94 @@ export function Rail({
             <div className="mb-1 ml-2.5 hidden text-[10.5px] font-medium tracking-[.12em] text-faint uppercase min-[1180px]:block">
               {g.title}
             </div>
-            {g.items?.map((it) => (
-              <a
-                key={it.id}
-                href={"#" + it.id}
-                onClick={(e) => {
-                  e.preventDefault();
-                  go(it);
-                }}
-                aria-current={it.id === active ? "location" : undefined}
-                className={
-                  "flex items-baseline gap-2 rounded-full px-2.5 py-[3px] text-[13.5px] min-[1180px]:rounded-none min-[1180px]:border-l-2 " +
-                  (it.id === active
-                    ? "bg-active text-ink min-[1180px]:border-accent min-[1180px]:bg-transparent"
-                    : "min-[1180px]:border-transparent " +
-                      (it.dim
-                        ? "text-faint hover:text-ink"
-                        : it.tab === tab
-                          ? "text-muted hover:text-ink"
-                          : "text-[#85837b] hover:text-ink"))
-                }
-              >
-                {it.label}
-                {it.count !== undefined && (
-                  <span
-                    className={
-                      "ml-auto text-[12px] tabular-nums " +
-                      (it.hit && !it.dim ? "text-ochre" : "text-faint")
+            {g.items.map((it) => {
+              // A section unfolds its parts while it, or one of them, is
+              // the one being read; narrow, its chip stands for them.
+              const inside = it.children?.some((c) => c.id === active);
+              return (
+                <Fragment key={it.id}>
+                  <RailEntry
+                    item={it}
+                    tab={tab}
+                    state={
+                      it.id === active ? "active" : inside ? "inside" : "none"
                     }
-                  >
-                    {it.count}
-                  </span>
-                )}
-              </a>
-            ))}
-            {g.links?.map((l) => (
-              <Link
-                key={l.to}
-                to={l.to}
-                className={
-                  "block rounded-full px-2.5 py-[3px] font-mono text-[12.5px] min-[1180px]:rounded-none min-[1180px]:border-l-2 " +
-                  (l.current
-                    ? "border-elevated-border text-ink"
-                    : "border-transparent text-muted hover:text-ink")
-                }
-              >
-                <span className="flex items-baseline gap-2">
-                  <span
-                    className="min-w-0 truncate"
-                    aria-current={l.current ? "page" : undefined}
-                  >
-                    {l.label}
-                  </span>
-                  {l.note !== undefined && (
-                    <span
-                      className={
-                        "ml-auto shrink-0 text-[11.5px] tabular-nums " +
-                        (l.odd ? "text-ochre" : "text-faint")
-                      }
-                      title={l.noteTitle}
-                    >
-                      {l.note}
-                    </span>
-                  )}
-                </span>
-                {l.sub !== undefined && (
-                  <span className="block truncate font-sans text-[12px] text-faint">
-                    {l.sub}
-                  </span>
-                )}
-              </Link>
-            ))}
+                    onGo={go}
+                  />
+                  {(it.id === active || inside) &&
+                    it.children?.map((c) => (
+                      <RailEntry
+                        key={c.id}
+                        item={c}
+                        tab={tab}
+                        state={c.id === active ? "active" : "none"}
+                        onGo={go}
+                        sub
+                      />
+                    ))}
+                </Fragment>
+              );
+            })}
           </div>
         ))}
       </div>
     </nav>
+  );
+}
+
+/** RailEntry is one section's link: a chip narrow, a row with a left
+ *  border wide. sub is a section's part, indented and wide only. */
+function RailEntry({
+  item: it,
+  tab,
+  state,
+  onGo,
+  sub = false,
+}: {
+  item: RailItem;
+  tab: string;
+  /** inside: one of its parts is the one being read. */
+  state: "active" | "inside" | "none";
+  onGo: (item: RailItem) => void;
+  sub?: boolean;
+}) {
+  return (
+    <a
+      href={"#" + it.id}
+      onClick={(e) => {
+        e.preventDefault();
+        onGo(it);
+      }}
+      aria-current={state === "active" ? "location" : undefined}
+      className={
+        (sub
+          ? "hidden py-[2px] pr-2.5 pl-5 text-[12.5px] min-[1180px]:flex "
+          : "flex rounded-full px-2.5 py-[3px] text-[13.5px] ") +
+        "items-baseline gap-2 min-[1180px]:rounded-none min-[1180px]:border-l-2 " +
+        (state === "active"
+          ? "bg-active text-ink min-[1180px]:border-accent min-[1180px]:bg-transparent"
+          : state === "inside"
+            ? "bg-active text-ink min-[1180px]:border-transparent min-[1180px]:bg-transparent"
+            : "min-[1180px]:border-transparent " +
+              (it.dim
+                ? "text-faint hover:text-ink"
+                : it.tab === tab
+                  ? "text-muted hover:text-ink"
+                  : "text-[#85837b] hover:text-ink"))
+      }
+    >
+      <span className="min-w-0 min-[1180px]:break-words">{it.label}</span>
+      {it.count !== undefined && (
+        <span
+          className={
+            "ml-auto shrink-0 text-[12px] tabular-nums " +
+            (it.hit && !it.dim ? "text-ochre" : "text-faint")
+          }
+        >
+          {it.count}
+        </span>
+      )}
+    </a>
   );
 }
 

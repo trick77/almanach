@@ -9,7 +9,7 @@ import {
   repoNamer,
   shortVersion,
 } from "./DepsPage";
-import { RepoPage, depGroups } from "./RepoPage";
+import { RepoPage } from "./RepoPage";
 
 function serve(table: Record<string, unknown>) {
   vi.stubGlobal(
@@ -192,20 +192,34 @@ describe("DepsPage", () => {
 });
 
 describe("RepoPage dependencies", () => {
-  it("lists what it uses, who else does, and who uses it", async () => {
+  it("lists what it uses, who else does, and who uses it, in the column", async () => {
     serve({ "projects/tools/repos/rongo": repo });
     render(<RepoPage projectKey="tools" slug="rongo" />);
-    const link = await screen.findByRole("link", { name: /llmwire/ });
+    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    const link = within(desc).getByRole("link", { name: "llmwire" });
     expect(link.getAttribute("href")).toBe("/projects/tools/repos/llmwire");
-    expect(within(link).getByText("auch loom")).toBeInTheDocument();
-    const version = within(link).getByText("v0.1.6");
+    const row = link.closest("tr")!;
+    expect(within(row).getByText("auch loom")).toBeInTheDocument();
+    const version = within(row).getByText("v0.1.6");
     expect(version.className).toMatch(/text-ochre/);
-    expect(
-      screen.getByRole("link", { name: "apps/chat" }).getAttribute("href"),
-    ).toBe("/projects/apps/repos/chat");
+    expect(version.getAttribute("title")).toMatch(/Andere Version/);
+    const chat = within(desc).getByRole("link", { name: "apps/chat" });
+    expect(chat.getAttribute("href")).toBe("/projects/apps/repos/chat");
+    expect(within(chat.closest("tr")!).getByText("–")).toBeInTheDocument();
+    // The rail points at the section, uses · used by; it lists none.
+    const rail = screen.getByRole("navigation", { name: "Inhalt" });
+    const entry = within(rail).getByText("Abhängigkeiten").closest("a")!;
+    expect(entry.getAttribute("href")).toBe("#dependencies");
+    expect(entry.textContent).toContain("1 · 1");
+    expect(within(rail).queryByText("llmwire")).toBeNull();
   });
 
-  it("has no lists for a repository without edges", () => {
-    expect(depGroups({ ...repo, uses: [], used_by: [] })).toEqual([]);
+  it("has no section for a repository without edges", async () => {
+    serve({
+      "projects/tools/repos/rongo": { ...repo, uses: [], used_by: [] },
+    });
+    render(<RepoPage projectKey="tools" slug="rongo" />);
+    await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    expect(screen.queryByText("Abhängigkeiten")).toBeNull();
   });
 });

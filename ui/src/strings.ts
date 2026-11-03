@@ -40,6 +40,9 @@ export const S = {
     uses: "Verwendet",
     usedBy: "Verwendet von",
     also: (names: string) => `auch ${names}`,
+    // The repository page's rail: what it uses · what uses it.
+    count: (uses: number, usedBy: number) => `${uses} · ${usedBy}`,
+    version: "Version",
     otherVersion: "Andere Version als bei den übrigen Nutzern",
     noVersion: "–",
   },
@@ -171,7 +174,21 @@ export const S = {
       `${n} von ${of} ${of === 1 ? "Eintrag" : "Einträgen"} ${S.common.sep} ${kinds} ${kinds === 1 ? "Art" : "Arten"}`,
     noHits: "keine Treffer",
     summary: "Überblick",
-    project: "Projekt",
+    // The repository page's head: its project, and a switch to the
+    // project's other repositories.
+    project: (key: string) => `Projekt ${key}`,
+    position: (at: number, of: number) => `${at} / ${of}`,
+    // The narrow chip: the project before the slug.
+    chip: (key: string) => `${key} / `,
+    up: "↑",
+    prevStep: "‹",
+    nextStep: "›",
+    opens: "▾",
+    prev: (slug: string) => `Vorheriges Repository: ${slug}`,
+    next: (slug: string) => `Nächstes Repository: ${slug}`,
+    switchRepo: "Repository wechseln",
+    findRepo: "Repository suchen",
+    noRepo: "Kein Repository",
   },
   repo: {
     what: "das Repository",

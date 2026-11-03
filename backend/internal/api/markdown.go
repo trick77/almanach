@@ -178,13 +178,21 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 			}
 			continue
 		}
-		area := "\x00"
+		// Each area once, where its first statement stands, as the UI's
+		// areaGroups: a page not laid out yet reads as one that is.
+		var order []string
+		byArea := map[string][]store.Statement{}
 		for _, s := range list {
-			if s.Area != area {
-				area = s.Area
-				fmt.Fprintf(&b, "### %s\n\n", areaHeading(area))
+			if _, seen := byArea[s.Area]; !seen {
+				order = append(order, s.Area)
 			}
-			writeStatement(&b, s, "#### ", "##### ")
+			byArea[s.Area] = append(byArea[s.Area], s)
+		}
+		for _, area := range order {
+			fmt.Fprintf(&b, "### %s\n\n", areaHeading(area))
+			for _, s := range byArea[area] {
+				writeStatement(&b, s, "#### ", "##### ")
+			}
 		}
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
