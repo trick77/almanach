@@ -17,26 +17,15 @@ import {
   mono,
 } from "./ui";
 
-/** The kinds in the order the Markdown export has them: what must not
- *  break and why first (a public interface is what others rely on not
- *  breaking), the parts after. On the page it orders only the statements
- *  no area holds: an area's own are in the order its outline gave them,
- *  overview before detail, whatever their kind. */
-const KINDS: Kind[] = [
-  "invariant",
-  "interface",
-  "rule",
-  "decision",
-  "pitfall",
-  "extension",
-  "component",
-  "entity",
-];
-
 /** kindLabel names one statement's kind, as a label over its name: the
- *  project page's entities are the shared ones and say so. */
+ *  project page's entities are the shared ones and say so. A kind the UI
+ *  does not know shows as stored. */
 export function kindLabel(kind: Kind, project: boolean): string {
-  return (project ? S.projectKind[kind] : undefined) ?? S.kind[kind];
+  return (
+    (project ? S.projectStatementKind[kind] : undefined) ??
+    S.statementKind[kind] ??
+    kind
+  );
 }
 
 /** The ids of a description's sections, the rail's anchors. */
@@ -47,11 +36,19 @@ export const areaId = (i: number) => `area-${i}`;
 
 const areaOf = (s: Statement) => s.area ?? "";
 
-/** areaNames is a page's areas, each once, in the page's order: none when
- *  its statements stand in one area or none, which have no heading. */
+/** areaNames is a page's areas, each once, in the page's order, the one
+ *  of statements in no area ("") among them: every statement stands in a
+ *  chapter. */
 export function areaNames(all: Statement[]): string[] {
-  const names = [...new Set(all.map(areaOf))];
-  return names.length < 2 ? [] : names;
+  return [...new Set(all.map(areaOf))];
+}
+
+/** areaTitle is an area's chapter title: the statements in no area are
+ *  "Weiteres" beside named areas and plainly the statements on a page
+ *  that has none, one not laid out yet. */
+export function areaTitle(area: string, names: string[]): string {
+  if (area !== "") return area;
+  return names.length === 1 ? S.areas.all : S.areas.otherArea;
 }
 
 /** plainOf is a statement's text as the search reads it (plain), parsed
@@ -88,18 +85,19 @@ export function descriptionRail(
   const statements = description?.statements ?? [];
   const searching = query.trim() !== "";
   const hits = statements.filter((s) => statementMatches(s, query));
+  const names = areaNames(statements);
   const items: RailItem[] = [
     ...lead,
     { id: summaryId, label: S.rail.summary, tab },
     ...extra,
-    ...areaNames(statements).flatMap((area, i): RailItem[] => {
+    ...names.flatMap((area, i): RailItem[] => {
       const n = hits.filter((s) => areaOf(s) === area).length;
       return n === 0
         ? []
         : [
             {
               id: areaId(i),
-              label: area === "" ? S.areas.otherArea : plain(area),
+              label: plain(areaTitle(area, names)),
               tab,
               count: n,
               hit: searching,
@@ -146,7 +144,6 @@ export function DescriptionView({
   lead?: ReactNode;
   afterSummary?: ReactNode;
 }) {
-  const project = pageRepo === undefined;
   if (description === null) {
     return (
       <>
@@ -175,24 +172,21 @@ export function DescriptionView({
       {query.trim() !== "" && shown.length === 0 && (
         <Empty>{S.rail.noHits}</Empty>
       )}
-      {areaGroups(all, shown).map((g) => (
+      {areaGroups(shown).map((g) => (
         <section
-          key={g.area ?? ""}
+          key={g.area}
           // The rail's anchor.
-          id={g.area === null ? undefined : areaId(names.indexOf(g.area))}
+          id={areaId(names.indexOf(g.area))}
           className="scroll-mt-16"
         >
-          {g.area !== null && (
-            <h3 className={areaHeading}>
-              <Inline text={g.area || S.areas.otherArea} query={query} />
-            </h3>
-          )}
+          <h3 className={areaHeading}>
+            <Inline text={areaTitle(g.area, names)} query={query} />
+          </h3>
           {g.statements.map((s) => (
             <StatementBlock
               key={s.id}
               statement={s}
               pageRepo={pageRepo}
-              project={project}
               query={query}
             />
           ))}
@@ -207,43 +201,23 @@ export function DescriptionView({
 const areaHeading =
   "mt-9 mb-1 font-serif text-[21px] font-medium leading-tight tracking-tight text-ink";
 
-/** byKind is statements in KINDS' order, stable: the order of statements
- *  no area holds, a page not laid out yet, which has no outline's order. */
-const byKind = (list: Statement[]) =>
-  [...list].sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind));
-
-/** areaGroups is a page's shown statements in their areas, each area
- *  once, where its first statement stands: as the backend lays a page out,
- *  so a page not laid out yet (an area, another, the first again) reads
- *  as one that is, and an area has one chapter for the rail to point at.
- *  An area's statements keep their order, the outline's: overview before
- *  detail. Those in no area go by kind. area is null for one group without
- *  a heading: a page whose statements, all of them and not only the
- *  search's hits, stand in one area or none. An area the search leaves
+/** areaGroups is the shown statements in their areas, each area once,
+ *  where its first statement stands: as the backend lays a page out
+ *  (baseline.Arrange), so a page not laid out yet (an area, another, the
+ *  first again) reads as one that is, and an area has one chapter for the
+ *  rail to point at. Inside an area the stored order, the outline's:
+ *  overview before detail, whatever the kind. An area the search leaves
  *  without a hit is not shown. */
 export function areaGroups(
-  all: Statement[],
   shown: Statement[],
-): { area: string | null; statements: Statement[] }[] {
-  if (areaNames(all).length === 0) {
-    if (shown.length === 0) return [];
-    return [
-      {
-        area: null,
-        statements: all.every((s) => areaOf(s) === "") ? byKind(shown) : shown,
-      },
-    ];
-  }
+): { area: string; statements: Statement[] }[] {
   const groups = new Map<string, Statement[]>();
   for (const s of shown) {
     const group = groups.get(areaOf(s));
     if (group) group.push(s);
     else groups.set(areaOf(s), [s]);
   }
-  return [...groups].map(([area, statements]) => ({
-    area,
-    statements: area === "" ? byKind(statements) : statements,
-  }));
+  return [...groups].map(([area, statements]) => ({ area, statements }));
 }
 
 /** sourceKey names a source once, as the backend does: a PR by its key, a
@@ -306,18 +280,16 @@ function checkedNews(s: Statement): boolean {
 export function StatementBlock({
   statement: s,
   pageRepo,
-  project = false,
   query = "",
 }: {
   statement: Statement;
   pageRepo?: string;
-  project?: boolean;
   query?: string;
 }) {
   return (
     <article className="border-t border-border-soft py-3 first-of-type:border-t-0">
       <div className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
-        {kindLabel(s.kind, project)}
+        {kindLabel(s.kind, pageRepo === undefined)}
       </div>
       <h4 className="font-semibold text-ink">
         <Inline text={s.name} query={query} />

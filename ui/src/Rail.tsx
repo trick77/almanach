@@ -3,7 +3,6 @@
 // leaves, so the column never moves sideways on a tab switch, and rail and
 // column start on one top edge.
 import {
-  Fragment,
   useCallback,
   useEffect,
   useRef,
@@ -58,13 +57,8 @@ export interface RailItem {
   label: string;
   tab: string;
   count?: number | string;
-  /** dim: an empty kind, or one the search leaves without a hit. */
-  dim?: boolean;
   /** hit: the count is a search's. */
   hit?: boolean;
-  /** children are the section's own parts, a kind's areas: listed while
-   *  the section is the one being read, and never as chips (narrow). */
-  children?: RailItem[];
 }
 
 export interface RailGroup {
@@ -111,9 +105,7 @@ export function Rail({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<string | null>(null);
-  const items = groups
-    .flatMap((g) => g.items)
-    .flatMap((i) => [i, ...(i.children ?? [])]);
+  const items = groups.flatMap((g) => g.items);
   const active = useActiveSection(
     items.filter((i) => i.tab === tab).map((i) => i.id),
     scroller,
@@ -198,34 +190,15 @@ export function Rail({
             <div className="mb-1 ml-2.5 hidden text-[10.5px] font-medium tracking-[.12em] text-faint uppercase min-[1180px]:block">
               {g.title}
             </div>
-            {g.items.map((it) => {
-              // A section unfolds its parts while it, or one of them, is
-              // the one being read; narrow, its chip stands for them.
-              const inside = it.children?.some((c) => c.id === active);
-              return (
-                <Fragment key={it.id}>
-                  <RailEntry
-                    item={it}
-                    tab={tab}
-                    state={
-                      it.id === active ? "active" : inside ? "inside" : "none"
-                    }
-                    onGo={go}
-                  />
-                  {(it.id === active || inside) &&
-                    it.children?.map((c) => (
-                      <RailEntry
-                        key={c.id}
-                        item={c}
-                        tab={tab}
-                        state={c.id === active ? "active" : "none"}
-                        onGo={go}
-                        sub
-                      />
-                    ))}
-                </Fragment>
-              );
-            })}
+            {g.items.map((it) => (
+              <RailEntry
+                key={it.id}
+                item={it}
+                tab={tab}
+                active={it.id === active}
+                onGo={go}
+              />
+            ))}
           </div>
         ))}
       </div>
@@ -234,20 +207,17 @@ export function Rail({
 }
 
 /** RailEntry is one section's link: a chip narrow, a row with a left
- *  border wide. sub is a section's part, indented and wide only. */
+ *  border wide. */
 function RailEntry({
   item: it,
   tab,
-  state,
+  active,
   onGo,
-  sub = false,
 }: {
   item: RailItem;
   tab: string;
-  /** inside: one of its parts is the one being read. */
-  state: "active" | "inside" | "none";
+  active: boolean;
   onGo: (item: RailItem) => void;
-  sub?: boolean;
 }) {
   return (
     <a
@@ -256,22 +226,15 @@ function RailEntry({
         e.preventDefault();
         onGo(it);
       }}
-      aria-current={state === "active" ? "location" : undefined}
+      aria-current={active ? "location" : undefined}
       className={
-        (sub
-          ? "hidden py-[2px] pr-2.5 pl-5 text-[12.5px] min-[1180px]:flex "
-          : "flex rounded-full px-2.5 py-[3px] text-[13.5px] ") +
-        "items-baseline gap-2 min-[1180px]:rounded-none min-[1180px]:border-l-2 " +
-        (state === "active"
+        "flex items-baseline gap-2 rounded-full px-2.5 py-[3px] text-[13.5px] min-[1180px]:rounded-none min-[1180px]:border-l-2 " +
+        (active
           ? "bg-active text-ink min-[1180px]:border-accent min-[1180px]:bg-transparent"
-          : state === "inside"
-            ? "bg-active text-ink min-[1180px]:border-transparent min-[1180px]:bg-transparent"
-            : "min-[1180px]:border-transparent " +
-              (it.dim
-                ? "text-faint hover:text-ink"
-                : it.tab === tab
-                  ? "text-muted hover:text-ink"
-                  : "text-[#85837b] hover:text-ink"))
+          : "min-[1180px]:border-transparent " +
+            (it.tab === tab
+              ? "text-muted hover:text-ink"
+              : "text-[#85837b] hover:text-ink"))
       }
     >
       <span className="min-w-0 min-[1180px]:break-words">{it.label}</span>
@@ -279,7 +242,7 @@ function RailEntry({
         <span
           className={
             "ml-auto shrink-0 text-[12px] tabular-nums " +
-            (it.hit && !it.dim ? "text-ochre" : "text-faint")
+            (it.hit ? "text-ochre" : "text-faint")
           }
         >
           {it.count}

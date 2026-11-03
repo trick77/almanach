@@ -219,38 +219,20 @@ func TestMarkdownKeepsWideCodeSpan(t *testing.T) {
 	}
 }
 
-// The export's kinds are the UI's: the same order as Description.tsx's
-// KINDS, each heading the label strings.ts gives the kind.
+// The export's kinds are the schema's, each heading the name strings.ts
+// gives the kind (S.kinds).
 func TestMarkdownKindsMatchTheUI(t *testing.T) {
-	read := func(p string) string {
-		b, err := os.ReadFile(filepath.Join("..", "..", "..", "ui", "src", p))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(b)
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "ui", "src", "strings.ts"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	desc, copyTS := read("Description.tsx"), read("strings.ts")
-	_, list, _ := strings.Cut(desc, "const KINDS: Kind[] = [")
-	list, _, _ = strings.Cut(list, "]")
-	var ui []string
-	for _, f := range strings.Split(list, ",") {
-		if f = strings.Trim(strings.TrimSpace(f), `"`); f != "" {
-			ui = append(ui, f)
-		}
-	}
+	copyTS := string(b)
 	var got []string
 	for _, k := range markdownKinds {
 		got = append(got, k.kind)
 		if !strings.Contains(copyTS, fmt.Sprintf("    %s: %q,\n", k.kind, k.heading)) {
 			t.Errorf("strings.ts labels %s otherwise than %q", k.kind, k.heading)
 		}
-	}
-	if !slices.Equal(got, ui) {
-		t.Errorf("export order %v, UI order %v", got, ui)
-	}
-	// The project page's own label for the entity kind.
-	if !strings.Contains(copyTS, fmt.Sprintf("    entity: %q,\n", projectEntityHeading)) {
-		t.Errorf("strings.ts lacks the project's entity label %q", projectEntityHeading)
 	}
 	// The summary's label over it.
 	if !strings.Contains(copyTS, fmt.Sprintf("    summary: %q,\n", summaryHeading)) {

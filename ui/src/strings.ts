@@ -170,8 +170,8 @@ export const S = {
     label: "Inhalt",
     search: "Durchsuchen",
     searchLabel: "Beschreibung durchsuchen",
-    hits: (n: number, of: number, areas: number) =>
-      `${n} von ${of} ${of === 1 ? "Eintrag" : "Einträgen"} ${S.common.sep} ${areas} ${areas === 1 ? "Bereich" : "Bereichen"}`,
+    hits: (n: number, of: number, chapters: number) =>
+      `${n} von ${of} ${of === 1 ? "Eintrag" : "Einträgen"} ${S.common.sep} ${chapters} Kapitel`,
     noHits: "keine Treffer",
     summary: "Überblick",
     // The repository page's head: its project, and a switch to the
@@ -216,7 +216,7 @@ export const S = {
     pitfall: "Fallstricke",
   },
   // One statement's kind, the label over its name in an area's chapter.
-  kind: {
+  statementKind: {
     component: "Komponente",
     interface: "Schnittstelle",
     rule: "Regel",
@@ -225,17 +225,19 @@ export const S = {
     decision: "Entscheidung",
     extension: "Erweiterung",
     pitfall: "Fallstrick",
-  },
-  // The statements in no area, after the areas (the Markdown export heads
-  // them alike, held to it by a test).
+  } as Partial<Record<string, string>>,
+  // The project page's labels where they differ: its entities are the ones
+  // that cross repositories, who owns them and how their ids travel.
+  projectStatementKind: {
+    entity: "Geteilte Entität",
+  } as Partial<Record<string, string>>,
+  // The chapter of statements in no area: beside named areas where its
+  // first statement stands (the Markdown export heads them alike, held to
+  // it by a test), and the one chapter of a page not laid out yet.
   areas: {
     otherArea: "Weiteres",
+    all: "Aussagen",
   },
-  // The project page's names where they differ: its entities are the ones
-  // that cross repositories, who owns them and how their ids travel.
-  projectKind: {
-    entity: "Geteilte Daten",
-  } as Partial<Record<string, string>>,
   noteHeaders: ["PR", "Titel", "Art", "Einträge", "Issues / Hinweise", "Merge"],
   changeKind: {
     bugfix: "Bugfix",

@@ -20,10 +20,10 @@ import (
 
 // markdownKinds is the export's order: what must not break and why first
 // (a public interface is what others rely on not breaking), where to
-// change and the parts after. The export is the agent's view, by kind;
-// the page is the reader's, by area, KINDS ordering only what no area
-// holds. Order and headings are held to the UI's (Description.tsx KINDS,
-// strings.ts S.kinds) by a test.
+// change and the parts after. The export is the agent's view, by kind,
+// an agent reading every invariant at once; the page is the reader's, in
+// chapters by area. Headings are the UI's names of the kinds (strings.ts
+// S.kinds), held to them by a test.
 var markdownKinds = []struct{ kind, heading string }{
 	{"invariant", "Invarianten"},
 	{"interface", "Schnittstellen"},
@@ -37,8 +37,8 @@ var markdownKinds = []struct{ kind, heading string }{
 
 // projectEntityHeading is the entity kind's heading on a project's export:
 // there the kind holds the entities that cross repositories, their system
-// of record and how their ids travel. The UI's label (strings.ts
-// S.projectKinds), held to it by a test.
+// of record and how their ids travel; the UI labels one such statement
+// "Geteilte Entität" (strings.ts S.projectStatementKind).
 const projectEntityHeading = "Geteilte Daten"
 
 // summaryHeading heads the summary on the export, as the UI's label

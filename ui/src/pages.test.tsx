@@ -15,6 +15,8 @@ import {
   DescriptionView,
   StatementBlock,
   areaGroups,
+  areaTitle,
+  kindLabel,
   descriptionRail,
   statementMatches,
 } from "./Description";
@@ -600,7 +602,7 @@ describe("ProjectPage", () => {
     expect(within(desc).getByText("Mandant").tagName).toBe("MARK");
     expect(within(desc).queryByText("max_size")).toBeNull();
     expect(
-      screen.getByText("1 von 2 Einträgen · 1 Bereich"),
+      screen.getByText("1 von 2 Einträgen · 1 Kapitel"),
     ).toBeInTheDocument();
     fireEvent.change(search, { target: { value: "nirgends" } });
     expect(within(desc).getByText("keine Treffer")).toBeInTheDocument();
@@ -1007,7 +1009,7 @@ describe("RepoPage", () => {
     ).toBe("/projects/PAY/repos/pay-clearing/notes/51");
   });
 
-  it("names the kinds for agents in German, in the export's order", async () => {
+  it("labels each statement with its kind, a page in no area one chapter", async () => {
     const st = (
       id: string,
       kind: "interface" | "decision" | "extension" | "pitfall",
@@ -1035,21 +1037,27 @@ describe("RepoPage", () => {
     });
     render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
     const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
-    // A page in no area reads by kind, a public interface first: what
-    // others rely on; each statement labelled with its kind.
+    // A page not laid out yet is one chapter, in the stored order; an
+    // unknown kind shows as stored.
+    expect(
+      within(desc)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toContain(S.areas.all);
     expect(
       within(desc)
         .getAllByRole("heading", { level: 4 })
         .map((h) => [h.previousElementSibling?.textContent, h.textContent]),
     ).toEqual([
-      ["Schnittstelle", "Aussage s4"],
-      ["Entscheidung", "Aussage s3"],
-      ["Fallstrick", "Aussage s2"],
       ["Erweiterung", "Aussage s1"],
+      ["Fallstrick", "Aussage s2"],
+      ["Entscheidung", "Aussage s3"],
+      ["Schnittstelle", "Aussage s4"],
     ]);
+    expect(kindLabel("future" as Statement["kind"], false)).toBe("future");
   });
 
-  it("labels a repository's entity as one, a project's as shared data", () => {
+  it("labels a repository's entity as one, a project's as a shared one", () => {
     const entity: Statement = {
       id: "e1",
       kind: "entity",
@@ -1058,11 +1066,13 @@ describe("RepoPage", () => {
       files: [],
       sources: [],
     };
-    const { unmount } = render(<StatementBlock statement={entity} />);
+    const { unmount } = render(
+      <StatementBlock statement={entity} pageRepo="svc" />,
+    );
     expect(screen.getByText("Entität")).toBeInTheDocument();
     unmount();
-    render(<StatementBlock statement={entity} project />);
-    expect(screen.getByText("Geteilte Daten")).toBeInTheDocument();
+    render(<StatementBlock statement={entity} />);
+    expect(screen.getByText("Geteilte Entität")).toBeInTheDocument();
   });
 
   it("shows a baseline as a commit, a quiet chip that links nowhere", async () => {
@@ -1831,35 +1841,25 @@ describe("DescriptionView areas", () => {
       st("a2", "rule", "Drei", "A"),
     ];
     expect(
-      areaGroups(twice, twice).map((g) => [
-        g.area,
-        g.statements.map((s) => s.id),
-      ]),
+      areaGroups(twice).map((g) => [g.area, g.statements.map((s) => s.id)]),
     ).toEqual([
       ["A", ["a1", "a2"]],
       ["B", ["b1"]],
     ]);
   });
 
-  it("keeps an area's order, the outline's, and puts what no area holds by kind", () => {
-    const page = [
-      st("c1", "component", "Teil", "A"),
-      st("i1", "invariant", "Immer", "A"),
-      st("x1", "component", "Ohne"),
-      st("x2", "invariant", "Auch ohne"),
-    ];
+  it("titles every chapter: an area, the rest, or a page without areas", () => {
+    expect(areaTitle("Abfrage", ["Abfrage", ""])).toBe("Abfrage");
+    expect(areaTitle("", ["Abfrage", ""])).toBe(S.areas.otherArea);
+    expect(areaTitle("", [""])).toBe(S.areas.all);
+    // A page in one area keeps its heading and its rail entry.
+    const one = { ...description, statements: [st("c1", "rule", "Teil", "A")] };
     expect(
-      areaGroups(page, page).map((g) => [
-        g.area,
-        g.statements.map((s) => s.id),
-      ]),
-    ).toEqual([
-      ["A", ["c1", "i1"]],
-      ["", ["x2", "x1"]],
-    ]);
-    // A page in one area has no heading, and keeps the outline's order.
-    const one = page.slice(0, 2);
-    expect(areaGroups(one, one)).toEqual([{ area: null, statements: one }]);
+      descriptionRail(one, "", "description").items.map((i) => i.label),
+    ).toEqual([S.rail.summary, "A"]);
+    expect(descriptionRail(one, "Teil", "description").hitLine).toBe(
+      "1 von 1 Eintrag · 1 Kapitel",
+    );
   });
 
   it("gives the rail the page's areas, the ones a search hits only", () => {
@@ -1905,15 +1905,7 @@ describe("Rail", () => {
     const scroller = useRef<HTMLDivElement>(null);
     const items: RailItem[] = [
       { id: "a", label: "Erstes", tab: "t" },
-      {
-        id: "k",
-        label: "Komponenten",
-        tab: "t",
-        children: [
-          { id: "k-0", label: "Abfrage", tab: "t" },
-          { id: "k-1", label: "Build", tab: "t" },
-        ],
-      },
+      { id: "k", label: "Abfrage", tab: "t" },
       { id: "z", label: "Letztes", tab: "t" },
     ];
     return (
@@ -1927,7 +1919,7 @@ describe("Rail", () => {
           hitLine=""
           scroller={scroller}
         />
-        {["a", "k", "k-0", "k-1", "z"].map((id) => (
+        {["a", "k", "z"].map((id) => (
           <section key={id} id={id} />
         ))}
       </div>
@@ -1936,28 +1928,20 @@ describe("Rail", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  it("unfolds a section's parts while it or one of them is read", () => {
+  it("marks the section being read", () => {
+    const current = (label: string) =>
+      within(screen.getByRole("navigation", { name: "Inhalt" }))
+        .getByText(label)
+        .closest("a")
+        ?.getAttribute("aria-current");
     readAt("a");
     render(<Page />);
-    const rail = screen.getByRole("navigation", { name: "Inhalt" });
-    expect(within(rail).queryByText("Abfrage")).toBeNull();
-    readAt("k-1");
-    fireEvent.scroll(rail.parentElement!);
-    expect(within(rail).getByText("Abfrage")).toBeInTheDocument();
-    expect(
-      within(rail)
-        .getByText("Build")
-        .closest("a")
-        ?.getAttribute("aria-current"),
-    ).toBe("location");
-    expect(
-      within(rail)
-        .getByText("Komponenten")
-        .closest("a")
-        ?.hasAttribute("aria-current"),
-    ).toBe(false);
-    readAt("z");
-    fireEvent.scroll(rail.parentElement!);
-    expect(within(rail).queryByText("Abfrage")).toBeNull();
+    expect(current("Erstes")).toBe("location");
+    readAt("k");
+    fireEvent.scroll(
+      screen.getByRole("navigation", { name: "Inhalt" }).parentElement!,
+    );
+    expect(current("Abfrage")).toBe("location");
+    expect(current("Erstes")).toBeNull();
   });
 });
