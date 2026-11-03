@@ -54,6 +54,28 @@ func repoID(ctx context.Context, q rowQuerier, key, slug string) (int64, bool, e
 	return rid, ok, err
 }
 
+// repoIDAnyCase resolves a key and a slug as repoID does, then in any case,
+// folded in Go as ensureProject and ensureRepo fold: a name in any case
+// belongs to one project or repository, so the fold finds at most one.
+func repoIDAnyCase(ctx context.Context, q querier, key, slug string) (int64, bool, error) {
+	if rid, ok, err := repoID(ctx, q, key, slug); err != nil || ok || slug == "" {
+		return rid, ok, err
+	}
+	rows, err := q.QueryContext(ctx, `SELECT key, project_id FROM project_names`)
+	if err != nil {
+		return 0, false, err
+	}
+	pid, ok, err := ownerInAnyCase(rows, key)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	rows, err = q.QueryContext(ctx, `SELECT slug, repo_id FROM repo_names WHERE project_id = ?`, pid)
+	if err != nil {
+		return 0, false, err
+	}
+	return ownerInAnyCase(rows, slug)
+}
+
 // ensureProject is the project a key names, registered when no project
 // ever had it. A key another project had in another case is that project:
 // a name in any case belongs to one project, so the new spelling becomes a

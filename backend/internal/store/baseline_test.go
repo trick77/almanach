@@ -420,7 +420,8 @@ func TestInsertLLMCall_KindsAndPurposes(t *testing.T) {
 	}
 }
 
-// A source repository is known as one.
+// A source repository is known as one, its key and slug in any case:
+// noergler files a Bitbucket key as Bitbucket keeps it, upper-cased.
 func TestIsSourceRepo(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -428,7 +429,8 @@ func TestIsSourceRepo(t *testing.T) {
 	for _, c := range []struct {
 		key, slug string
 		want      bool
-	}{{"tools", "svc", true}, {"tools", "other", false}, {"PRJ", "svc", false}} {
+	}{{"tools", "svc", true}, {"TOOLS", "svc", true}, {"Tools", "SVC", true},
+		{"tools", "other", false}, {"TOOLS", "other", false}, {"PRJ", "svc", false}, {"tools", "", false}} {
 		if got, err := s.IsSourceRepo(ctx, c.key, c.slug); err != nil || got != c.want {
 			t.Errorf("IsSourceRepo(%s, %s) = %v %v, want %v", c.key, c.slug, got, err, c.want)
 		}

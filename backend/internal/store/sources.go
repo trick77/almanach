@@ -289,12 +289,17 @@ func (s *Store) SourceRepoCount(ctx context.Context, key string) (int, error) {
 
 // IsSourceRepo reports whether (key, slug) is a source repository: the
 // starting point of a page, before which noergler's notes are ignored. Any
-// name the project and the repository ever had counts. A deactivated one
-// is none.
+// name the project and the repository ever had counts, in any case: a
+// source typed "prj" is the Bitbucket project noergler files as "PRJ", and
+// an exact match ignored every note of it (user, 2026-11-03). A deactivated
+// one is none.
 func (s *Store) IsSourceRepo(ctx context.Context, key, slug string) (bool, error) {
+	rid, found, err := repoIDAnyCase(ctx, s.db, key, slug)
+	if err != nil || !found {
+		return false, err
+	}
 	var ok bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_repos sr WHERE `+activeRow+` AND sr.repo_id = `+repoByName+`)`,
-		key, slug).Scan(&ok)
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_repos sr WHERE `+activeRow+` AND sr.repo_id = ?)`, rid).Scan(&ok)
 	return ok, err
 }
 

@@ -644,14 +644,18 @@ before the first note. From then on the notes are the deltas, and a
 monthly reconcile reads what changed in the code since, PRs or not.
 
 **The source is the starting point.** With the sources on, a repository
-exists for Almanach once it is a source repository. A note for any other
-is answered 202 `ignored`, logged with its key and slug, and never stored:
-noergler marks it sent and does not resend. A note still queued for one
-(from before the sources, or for a repository removed since) is taken off
-the queue unfolded. The wiki lists the sources then, with noergler's team
-where it has delivered for the key; a source key that differs from a key
-noergler delivers only by case is refused at creation, since every note
-of the project would be ignored. With the sources off, nothing changes:
+exists for Almanach once it is a source repository, its key and slug
+matched in any case: noergler files a Bitbucket key upper-cased, as
+Bitbucket keeps it, and a source typed in lower case must still take its
+notes, which land on the source's project as another name of it. A note
+for any other repository is answered 202 `ignored`, logged with its key
+and slug, and never stored: noergler marks it sent and does not resend. A
+note still queued for one (from before the sources, or for a repository
+removed since) is taken off the queue unfolded. The wiki lists the sources
+then, with noergler's team where it has delivered for the key; a new
+source whose key noergler already delivers in another case takes that
+spelling (Bitbucket) or is refused (a static folder), so the wiki shows
+one spelling. With the sources off, nothing changes:
 every note is taken and the wiki lists noergler's projects.
 
 **Triggers.** Read from the rows after every sync, never from an event:
