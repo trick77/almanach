@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1240,8 +1241,8 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
-	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed,
-		w.limits, nil))
+	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), otherContracts(repos, r.Slug),
+		libs, slugs(repos), departed, w.limits, nil))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -1662,7 +1663,8 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if err != nil {
 		return err
 	}
-	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), libs, slugs(repos), departed, w.limits, retry)
+	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), otherContracts(repos, r.Slug), libs, slugs(repos), departed,
+		w.limits, retry)
 	res := w.base.Describer.ProjectMap(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeProjectMap, res.Call)
 	if errors.Is(err, errStop) {
@@ -2222,14 +2224,14 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 
 // renderProject is the project step's prompt; retry is the refused map,
 // asking for the map alone again (nil the first time).
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others string, libs []store.SharedRepo, repoSlugs, departed []string,
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others, contracts string, libs []store.SharedRepo, repoSlugs, departed []string,
 	l config.Limits, retry *mapRetry) string {
 	nodes, edges := mapRoom(libs, len(repoSlugs))
 	return strings.NewReplacer(
 		"{departed}", departedRule(departed),
 		"{shared}", sharedRepos(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
-		"{project_map}", projectMap(projectPage)+refusedDraft(retry), "{repo_slugs}", strings.Join(repoSlugs, ", "),
+		"{other_contracts}", contracts, "{project_map}", projectMap(projectPage)+refusedDraft(retry), "{repo_slugs}", strings.Join(repoSlugs, ", "),
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(nodes), "{map_max_edges}", fmt.Sprint(edges),
 		"{map_refused}", refusedMap(retry, true),
@@ -2305,52 +2307,81 @@ func projectMap(p store.Page) string {
 // with a share too small to hold one (hundreds of repositories), are
 // named. A prompt's input, never stored text.
 func otherRepos(repos []store.RepoSummary, self string) string {
-	with := make([]store.RepoSummary, 0, len(repos))
+	return fitSummaries(repos, self, baseline.ProjectReposMaxBytes, "Also in the project, without a summary here")
+}
+
+// otherContracts is the project's other repositories' interfaces and
+// entities, by slug, for the project step: kind, name, the lead and the
+// files each, so who offers what and who uses it is read from both sides,
+// not guessed from a summary. A budget of its own (ContractsMaxBytes),
+// fitted as otherRepos is; a repository without a summary still shows its
+// own. A prompt's input, never stored text.
+func otherContracts(repos []store.RepoSummary, self string) string {
+	lists := make([]store.RepoSummary, 0, len(repos))
 	for _, r := range repos {
-		if r.Summary != "" && len(r.Contracts) > 0 {
-			r.Summary += "\n\n" + contracts(r.Contracts)
+		var lines []string
+		for _, s := range r.Contracts {
+			line := fmt.Sprintf("- %s `%s`", s.Kind, s.Name)
+			if l := lead(s.Text); l != "" {
+				line += ": " + l
+			}
+			if len(s.Files) > 0 {
+				line += " (" + strings.Join(s.Files, ", ") + ")"
+			}
+			lines = append(lines, line)
 		}
-		with = append(with, r)
+		lists = append(lists, store.RepoSummary{Slug: r.Slug, Summary: strings.Join(lines, "\n")})
 	}
-	return fitSummaries(with, self, baseline.ProjectReposMaxBytes, "Also in the project, without a summary here")
+	return fitSummaries(lists, self, baseline.ContractsMaxBytes, "Also in the project, with none here")
 }
 
-// contracts is a repository's interfaces and entities as the project step
-// reads them after its summary: kind, name, the first paragraph and the
-// files, so who offers what and who uses it is read from both sides, not
-// guessed from a summary.
-func contracts(list []store.Statement) string {
-	var b strings.Builder
-	b.WriteString("Its interfaces and entities:")
-	for _, s := range list {
-		lead, _, _ := strings.Cut(s.Text, "\n\n")
-		fmt.Fprintf(&b, "\n- %s `%s`: %s", s.Kind, s.Name, lead)
-		if len(s.Files) > 0 {
-			fmt.Fprintf(&b, " (%s)", strings.Join(s.Files, ", "))
+// lead is a statement text's first paragraph of prose, on one line: a
+// laid-out text may open with a sub-heading or a list (markup.FromBlocks),
+// which says nothing on its own and would read as more list items. ""
+// without one.
+func lead(text string) string {
+	for _, p := range strings.Split(text, "\n\n") {
+		p = strings.TrimSpace(p)
+		if p == "" || strings.HasPrefix(p, "#") || strings.HasPrefix(p, "- ") || numbered.MatchString(p) {
+			continue
 		}
+		return strings.Join(strings.Fields(p), " ")
 	}
-	return b.String()
+	return ""
 }
 
-// siblingInterfaces names the interfaces the project's other repositories
-// offer, for a describe step: a call this part's code makes to one is named
-// by its repository and name, not guessed. "_None._" without any.
+// numbered is a numbered list item's start, as markup.FromBlocks writes it.
+var numbered = regexp.MustCompile(`^\d+\. `)
+
+// siblingInterfaces names the interfaces and entities the project's other
+// repositories offer, for a describe step: a call this part's code makes
+// to one, a type it shares, is named by its repository and name, not
+// guessed. Names only, beside every step: past SiblingsMaxBytes the rest
+// are counted, never read. "_None._" without any.
 func siblingInterfaces(repos []store.RepoSummary, self string) string {
 	var b strings.Builder
+	left := 0
 	for _, r := range repos {
 		if r.Slug == self {
 			continue
 		}
 		for _, s := range r.Contracts {
-			if s.Kind == "interface" {
-				fmt.Fprintf(&b, "- `%s`: %s\n", r.Slug, s.Name)
+			line := fmt.Sprintf("- `%s`: %s `%s`\n", r.Slug, s.Kind, s.Name)
+			if left > 0 || b.Len()+len(line) > baseline.SiblingsMaxBytes {
+				left++
+				continue
 			}
+			b.WriteString(line)
 		}
 	}
-	if b.Len() == 0 {
+	if b.Len() == 0 && left == 0 {
 		return "_None._"
 	}
-	return strings.TrimSuffix(b.String(), "\n")
+	out := strings.TrimSuffix(b.String(), "\n")
+	if left > 0 {
+		out += fmt.Sprintf("\n\n%d more, past what a step reads.", left)
+	}
+	return out
 }
 
 // sharedRepos is the summaries of the source repositories a repository, or

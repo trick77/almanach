@@ -37,9 +37,12 @@ type runStore struct {
 	repos      []store.SourceRepo
 	documented *store.BaselineRun
 	sources    map[string]bool
-	// others is the project's source repositories with their summaries.
-	others    []store.RepoSummary
-	othersErr error
+	// others is the project's source repositories with their summaries;
+	// othersErr fails every read of them after the first othersOK.
+	others     []store.RepoSummary
+	othersErr  error
+	othersOK   int
+	othersRead int
 	// saved is every state a run was saved in, in order.
 	saved []string
 	// problems is the repository's problem areas; problemsErr fails the read.
@@ -186,6 +189,10 @@ func (s *runStore) IsSourceRepo(_ context.Context, key, slug string) (bool, erro
 }
 
 func (s *runStore) RepoSummaries(context.Context, string) ([]store.RepoSummary, error) {
+	s.othersRead++
+	if s.othersRead <= s.othersOK {
+		return s.others, nil
+	}
 	return s.others, s.othersErr
 }
 
@@ -522,24 +529,38 @@ func TestOtherRepos(t *testing.T) {
 	}
 }
 
-// The project step reads the others' interfaces and entities after their
-// summaries, the first paragraph and the files each; a describe step the
-// interfaces the others offer, by repository, never its own.
+// The project step reads the others' interfaces and entities apart from
+// their summaries, a repository without a summary too: the lead (the first
+// prose paragraph, never a heading or a list) and the files each. A
+// describe step reads the names the others offer, never its own, capped.
 func TestContractsReadFromBothSides(t *testing.T) {
-	api := store.Statement{Kind: "interface", Name: "Web-API", Text: "Die Routen.\n\nDetails.", Files: []string{"api.go", "openapi.yaml"}}
-	order := store.Statement{Kind: "entity", Name: "Bestellung", Text: "Ein Auftrag."}
+	api := store.Statement{Kind: "interface", Name: "Web-API", Text: "#### Routen\n\n- GET /a\n- GET /b\n\nDie Routen\ndes Portals.\n\nDetails.",
+		Files: []string{"api.go", "openapi.yaml"}}
+	order := store.Statement{Kind: "entity", Name: "Bestellung", Text: "1. Erst\n2. Dann"}
 	repos := []store.RepoSummary{{Slug: "web", Summary: "Das Portal.", Contracts: []store.Statement{api, order}},
 		{Slug: "svc", Summary: "Selbst.", Contracts: []store.Statement{{Kind: "interface", Name: "Eigene"}}}, {Slug: "cli", Contracts: []store.Statement{api}}}
-	got := otherRepos(repos, "svc")
-	want := "### web\n\nDas Portal.\n\nIts interfaces and entities:\n- interface `Web-API`: Die Routen. (api.go, openapi.yaml)\n- entity `Bestellung`: Ein Auftrag."
-	if !strings.Contains(got, want) || strings.Contains(got, "Details.") || strings.Contains(got, "Eigene") {
-		t.Errorf("otherRepos = %q\nwant it holding %q", got, want)
+	if got := otherRepos(repos, "svc"); strings.Contains(got, "Web-API") {
+		t.Errorf("otherRepos holds the contracts: %q", got)
 	}
-	if got := siblingInterfaces(repos, "svc"); got != "- `web`: Web-API\n- `cli`: Web-API" {
+	got := otherContracts(repos, "svc")
+	want := "### web\n\n- interface `Web-API`: Die Routen des Portals. (api.go, openapi.yaml)\n- entity `Bestellung`\n\n" +
+		"### cli\n\n- interface `Web-API`: Die Routen des Portals. (api.go, openapi.yaml)\n\n"
+	if got != want {
+		t.Errorf("otherContracts = %q\nwant %q", got, want)
+	}
+	if got := siblingInterfaces(repos, "svc"); got != "- `web`: interface `Web-API`\n- `web`: entity `Bestellung`\n- `cli`: interface `Web-API`" {
 		t.Errorf("siblingInterfaces = %q", got)
 	}
 	if got := siblingInterfaces(repos[1:2], "svc"); got != "_None._" {
 		t.Errorf("siblingInterfaces of itself alone = %q", got)
+	}
+	many := make([]store.Statement, baseline.SiblingsMaxBytes/20)
+	for i := range many {
+		many[i] = store.Statement{Kind: "interface", Name: fmt.Sprintf("API %d", i)}
+	}
+	got = siblingInterfaces([]store.RepoSummary{{Slug: "web", Contracts: many}}, "svc")
+	if len(got) > baseline.SiblingsMaxBytes+50 || !strings.HasSuffix(got, "more, past what a step reads.") {
+		t.Errorf("siblingInterfaces over the cap: %d bytes, …%q", len(got), got[len(got)-60:])
 	}
 }
 
@@ -1009,6 +1030,21 @@ func TestRun_Failures(t *testing.T) {
 	u.w.drain(context.Background())
 	if r := u.run(); r.State != store.RunDescribing || r.Step != 0 || r.Calls != 1 {
 		t.Fatalf("repositories unreadable: %+v, want the run held at its first describe step", r)
+	}
+	// Read by the describe steps, unreadable at the project step: it waits,
+	// the run stays at it.
+	p := newWorld(t, 16)
+	p.queue(store.RunFull, "")
+	p.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	p.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
+	}
+	p.st.othersErr, p.st.othersOK = errors.New("db down"), 1
+	p.w.drain(context.Background())
+	if r := p.run(); r.State != store.RunProject || r.Calls != 3 {
+		t.Fatalf("repositories unreadable at the project step: %+v, want the run held at it", r)
 	}
 
 	v := newWorld(t, 16)

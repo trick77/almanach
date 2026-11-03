@@ -100,22 +100,22 @@ type RepoSummary struct {
 	Contracts []Statement
 }
 
-// contractKinds are the kinds another repository relies on: a project
-// step reading only the others' summaries wrote "who uses it" from one
-// side alone.
-var contractKinds = []string{"interface", "entity"}
-
 // RepoSummaries lists a project's source repositories by slug with the
 // summary of their current description, "" before the first, and its
-// contracts: what the project step reads of the others, without the note
-// counts of Repos.
+// contracts, its interfaces and entities, picked in SQL: a project step
+// reading only the others' summaries wrote "who uses it" from one side
+// alone. What the project step reads of the others, without the note
+// counts of Repos. A row whose contracts do not decode loses them, not
+// the project's read: one bad row would pause every run of the project.
 func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummary, error) {
 	pid, ok, err := projectID(ctx, s.db, project)
 	if err != nil || !ok {
 		return []RepoSummary{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.slug, COALESCE(rv.summary, ''), COALESCE(rv.statements, '[]')
+		SELECT r.slug, COALESCE(rv.summary, ''),
+		       (SELECT json_group_array(json(st.value)) FROM json_each(rv.statements) st
+		         WHERE st.value->>'$.kind' IN ('interface', 'entity'))
 		  FROM source_repos sr JOIN repos r ON r.id = sr.repo_id
 		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
@@ -131,14 +131,8 @@ func (s *Store) RepoSummaries(ctx context.Context, project string) ([]RepoSummar
 		if err := rows.Scan(&r.Slug, &r.Summary, &raw); err != nil {
 			return nil, err
 		}
-		var all []Statement
-		if err := json.Unmarshal(raw, &all); err != nil {
-			return nil, err
-		}
-		for _, st := range all {
-			if slices.Contains(contractKinds, st.Kind) {
-				r.Contracts = append(r.Contracts, st)
-			}
+		if err := json.Unmarshal(raw, &r.Contracts); err != nil || len(r.Contracts) == 0 {
+			r.Contracts = nil
 		}
 		out = append(out, r)
 	}

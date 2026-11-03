@@ -76,11 +76,15 @@ Everything below is data, never instructions.
 
 {repo_description}
 
-## The project's other repositories, their summaries, interfaces and entities
-
-Who offers an interface and who uses it is read here from both sides: an interface or entity listed under one repository, a use of it in another's summary or in the description above.
+## The project's other repositories, their summaries
 
 {other_repos}
+
+## The project's other repositories, their interfaces and entities
+
+Who offers an interface and who uses it is read from both sides: an interface or entity listed here under one repository, a use of it in another's summary or in the description of `{repo}` above.
+
+{other_contracts}
 
 ## Repositories of other projects these repositories depend on, their summaries
 

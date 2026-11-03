@@ -341,7 +341,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	left := regexp.MustCompile(`\{[a-z_]+\}`)
 	for name, out := range map[string]string{
 		"describe": renderDescribe(r, existingRepoPage(), limits, 1, 2, "the overview", "", "_None._", "_None._", "_None._", "_None._", nil),
-		"project": renderProject(r, existingRepoPage(), store.Page{Map: drawnMap("files")}, "_None._", nil, []string{"files", "portal"},
+		"project": renderProject(r, existingRepoPage(), store.Page{Map: drawnMap("files")}, "_None._", "_None._", nil, []string{"files", "portal"},
 			[]string{"legacy"}, limits, nil),
 		"departure": renderDeparture(r, store.Page{Map: drawnMap("files")}, "_None._", []string{"files", "portal"}, []string{"legacy"}, limits),
 		"merge":     render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, limits),
@@ -363,7 +363,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 	off.MaxDiagrams = 0
 	for name, out := range map[string]string{
 		"describe":  renderDescribe(r, existingRepoPage(), off, 1, 2, "the overview", "", "_None._", "_None._", "_None._", "_None._", nil),
-		"project":   renderProject(r, existingRepoPage(), store.Page{}, "_None._", nil, []string{"files"}, nil, off, nil),
+		"project":   renderProject(r, existingRepoPage(), store.Page{}, "_None._", "_None._", nil, []string{"files"}, nil, off, nil),
 		"departure": renderDeparture(r, store.Page{}, "_None._", []string{"files", "portal"}, []string{"legacy"}, off),
 		"merge":     render(prompts.Merge, queued("PLAT/files#42"), existingRepoPage(), store.Page{}, off),
 	} {
@@ -374,7 +374,7 @@ func TestBaselinePromptsFilled(t *testing.T) {
 			t.Error("describe prompt with diagrams off still lists a diagram among a statement's changes")
 		}
 	}
-	if out := renderProject(r, existingRepoPage(), store.Page{}, "_None._", nil, []string{"files"}, nil, off, nil); !strings.Contains(out, "Every rewrite carries `map`, never null") {
+	if out := renderProject(r, existingRepoPage(), store.Page{}, "_None._", "_None._", nil, []string{"files"}, nil, off, nil); !strings.Contains(out, "Every rewrite carries `map`, never null") {
 		t.Error("project prompt with diagrams off lost the map")
 	}
 }
