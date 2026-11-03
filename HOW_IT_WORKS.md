@@ -920,7 +920,8 @@ repository on the next sweep), then only when its text changes; an
 outline that leaves a statement under no area never costs a call per
 run. A project page is laid out by its next project step. The UI and the
 Markdown export head a kind's statements by area when they span more
-than one; the rail stays the kinds.
+than one; the rail stays the kinds, the kind being read unfolding its
+areas.
 
 **PR facts are checked, not erased.** A patch never drops an id it does
 not name. A statement a pull request taught may be dropped only when none
@@ -1475,12 +1476,17 @@ baseline step's patch never is: its bad items are left out one by one (see
   Beschreibung (its map, the summary, its own problem areas, the
   statements), its content, then Verlauf (notes, revisions). The hash
   holds the tab (`#description`, `#history`, none for the start tab),
-  replaced on a switch, never pushed. The rail lists both tabs' sections
-  and, on a repository page, the project's repositories; its search
-  filters this page's description (names, texts, files) in the browser.
-  A repository page's problem areas and repository list come from the
-  project endpoint, filtered by `repo_slug`; without it the page goes
-  without them. The project page names its entities „Geteilte Daten“:
+  replaced on a switch, never pushed. The rail lists both tabs'
+  sections, the kind being read with its areas; its search filters this
+  page's description (names, texts, files) in the browser. It never
+  lists the project's repositories or a repository's dependencies: with
+  both it ran to some thirty-five rows. A repository page's rail is
+  headed by its project and one switch to the project's other
+  repositories (‹ ›, `[` `]`, a filterable list); a project of one has
+  none. Its dependencies are a section of the column. A repository
+  page's problem areas and repository list come from the project
+  endpoint, filtered by `repo_slug`; without it the page goes without
+  them. The project page names its entities „Geteilte Daten“:
   they are the ones that cross repositories.
 - A repository's summary on the project page is its description's first
   sentence: cut at the first `.`, `!` or `?` followed by a space or the

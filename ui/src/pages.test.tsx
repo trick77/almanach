@@ -11,7 +11,13 @@ import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RepoPage } from "./RepoPage";
-import { DescriptionView, statementMatches } from "./Description";
+import {
+  DescriptionView,
+  descriptionRail,
+  statementMatches,
+} from "./Description";
+import { Rail, type RailItem } from "./Rail";
+import { useRef } from "react";
 import { S } from "./strings";
 import { armSignIn } from "./signin";
 import { Doc, Marked, matchesQuery } from "./ui";
@@ -634,6 +640,8 @@ describe("ProjectPage", () => {
       await screen.findByText(/Projekt aus einem Repository/),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("loom");
+    // No rail head: no other repository, no project page of its own.
+    expect(screen.queryByText("Projekt loom")).toBeNull();
     // Its own path, not the repository's.
     expect(window.location.pathname).toBe("/projects/loom");
   });
@@ -1169,15 +1177,111 @@ describe("RepoPage", () => {
       summary.compareDocumentPosition(area) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(within(desc).queryByText("Repository")).toBeNull();
-    // The rail names the project's repositories, this one marked.
+    // The rail lists none of the project's repositories: its head is the
+    // project and one switch.
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
-    expect(
-      within(rail).getByText("pay-api").closest("a")?.getAttribute("href"),
-    ).toBe("/projects/PAY/repos/pay-api");
-    expect(
-      within(rail).getByText("pay-clearing").getAttribute("aria-current"),
-    ).toBe("page");
+    expect(within(rail).queryByText("pay-api")).toBeNull();
     expect(within(rail).getByText("Aufbau")).toBeInTheDocument();
+  });
+
+  describe("rail head", () => {
+    const three: ProjectDetail = {
+      ...project,
+      repos: [
+        ...project.repos,
+        {
+          slug: "pay-clearing",
+          revision: 2,
+          summary: "Gleicht Zahlungen ab.",
+          notes: 4,
+          last_merge: null,
+        },
+      ],
+    };
+
+    it("names the project and steps through its repositories, round the end", async () => {
+      serve({ "projects/PAY/repos/pay-clearing": repo, "projects/PAY": three });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const rail = await screen.findByRole("navigation", { name: "Inhalt" });
+      const projectLink = await within(rail).findAllByRole("link", {
+        name: /Projekt PAY/,
+      });
+      expect(projectLink[0]!.getAttribute("href")).toBe("/projects/PAY");
+      expect(within(rail).getByText("3 / 3")).toBeInTheDocument();
+      expect(
+        within(rail)
+          .getByRole("link", { name: "Vorheriges Repository: pay-lib" })
+          .getAttribute("href"),
+      ).toBe("/projects/PAY/repos/pay-lib");
+      expect(
+        within(rail)
+          .getByRole("link", { name: "Nächstes Repository: pay-api" })
+          .getAttribute("href"),
+      ).toBe("/projects/PAY/repos/pay-api");
+      // "]" steps as › does; not while typing.
+      fireEvent.keyDown(
+        within(rail).getByRole("searchbox", {
+          name: "Beschreibung durchsuchen",
+        }),
+        { key: "]" },
+      );
+      expect(window.location.pathname).toBe("/projects/PAY/repos/pay-clearing");
+      fireEvent.keyDown(document.body, { key: "]" });
+      expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api");
+    });
+
+    it("opens the project's repositories with their teasers, filterable", async () => {
+      serve({ "projects/PAY/repos/pay-clearing": repo, "projects/PAY": three });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const rail = await screen.findByRole("navigation", { name: "Inhalt" });
+      const [button] = await within(rail).findAllByRole("button", {
+        name: "pay-clearing",
+      });
+      expect(button!.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(button!);
+      expect(button!.getAttribute("aria-expanded")).toBe("true");
+      const list = screen.getByRole("dialog", { name: "Repository wechseln" });
+      expect(within(list).getAllByRole("link")).toHaveLength(3);
+      expect(
+        within(list).getByText("Nimmt Zahlungsaufträge an."),
+      ).toBeInTheDocument();
+      expect(
+        within(list)
+          .getByRole("link", { name: /pay-clearing/ })
+          .getAttribute("aria-current"),
+      ).toBe("page");
+      const filter = within(list).getByRole("searchbox", {
+        name: "Repository suchen",
+      });
+      fireEvent.change(filter, { target: { value: "zzz" } });
+      expect(within(list).getByText("Kein Repository")).toBeInTheDocument();
+      fireEvent.change(filter, { target: { value: "lib" } });
+      expect(within(list).getAllByRole("link")).toHaveLength(1);
+      // Escape closes it and gives the focus back to the switch.
+      fireEvent.keyDown(filter, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(button);
+      // Enter in the filter opens the first match.
+      fireEvent.click(button!);
+      const again = screen.getByRole("searchbox", {
+        name: "Repository suchen",
+      });
+      fireEvent.change(again, { target: { value: "api" } });
+      fireEvent.keyDown(again, { key: "Enter" });
+      expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api");
+    });
+
+    it("has no switch where the project lists no other repository", async () => {
+      serve({
+        "projects/PAY/repos/pay-clearing": repo,
+        "projects/PAY": { ...three, repos: [three.repos[2]!] },
+      });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const rail = await screen.findByRole("navigation", { name: "Inhalt" });
+      await within(rail).findAllByRole("link", { name: /Projekt PAY/ });
+      expect(within(rail).queryByRole("button")).toBeNull();
+      expect(within(rail).queryByText("1 / 1")).toBeNull();
+    });
   });
 
   it("says why it has no map when every draft was refused", async () => {
@@ -1618,5 +1722,112 @@ describe("DescriptionView areas", () => {
     );
     expect(areasOf("component")).toEqual(["Entwicklung und Auslieferung"]);
     expect(statementMatches(description.statements[0], "abfrage")).toBe(true);
+    // The heading keeps its anchor, the area's place among all of them.
+    expect(document.getElementById("kind-component-area-2")?.textContent).toBe(
+      "Entwicklung und Auslieferung",
+    );
+  });
+
+  it("gives the rail a kind's areas, the ones a search hits only", () => {
+    const kind = (q: string, k: string) =>
+      descriptionRail(description, false, q, "description").items.find(
+        (i) => i.id === "kind-" + k,
+      )!;
+    expect(
+      kind("", "component").children?.map((c) => [c.id, c.label, c.count]),
+    ).toEqual([
+      ["kind-component-area-0", "Abfrage", 1],
+      ["kind-component-area-1", S.areas.otherArea, 1],
+      ["kind-component-area-2", "Entwicklung und Auslieferung", 1],
+    ]);
+    expect(kind("", "rule").children).toBeUndefined();
+    expect(
+      kind("Gradle", "component").children?.map((c) => [c.id, c.hit]),
+    ).toEqual([["kind-component-area-2", true]]);
+    render(
+      <DescriptionView description={description} emptyHint="" pageRepo="svc" />,
+    );
+    expect(document.getElementById("kind-component-area-1")?.textContent).toBe(
+      S.areas.otherArea,
+    );
+  });
+});
+
+describe("Rail", () => {
+  // jsdom lays nothing out: an element with an id at or before the one
+  // being read stands above the reading line, every other one under it.
+  function readAt(id: string) {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        const target = document.getElementById(id)!;
+        const above =
+          this.id !== "" &&
+          (this === target ||
+            (this.compareDocumentPosition(target) &
+              Node.DOCUMENT_POSITION_FOLLOWING) !==
+              0);
+        return { top: this.id === "" ? 0 : above ? -10 : 10 } as DOMRect;
+      },
+    );
+  }
+
+  function Page() {
+    const scroller = useRef<HTMLDivElement>(null);
+    const items: RailItem[] = [
+      { id: "a", label: "Erstes", tab: "t" },
+      {
+        id: "k",
+        label: "Komponenten",
+        tab: "t",
+        children: [
+          { id: "k-0", label: "Abfrage", tab: "t" },
+          { id: "k-1", label: "Build", tab: "t" },
+        ],
+      },
+      { id: "z", label: "Letztes", tab: "t" },
+    ];
+    return (
+      <div ref={scroller}>
+        <Rail
+          groups={[{ title: "T", items }]}
+          tab="t"
+          onTab={() => {}}
+          query=""
+          onQuery={() => {}}
+          hitLine=""
+          scroller={scroller}
+        />
+        {["a", "k", "k-0", "k-1", "z"].map((id) => (
+          <section key={id} id={id} />
+        ))}
+      </div>
+    );
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("unfolds a section's parts while it or one of them is read", () => {
+    readAt("a");
+    render(<Page />);
+    const rail = screen.getByRole("navigation", { name: "Inhalt" });
+    expect(within(rail).queryByText("Abfrage")).toBeNull();
+    readAt("k-1");
+    fireEvent.scroll(rail.parentElement!);
+    expect(within(rail).getByText("Abfrage")).toBeInTheDocument();
+    expect(
+      within(rail)
+        .getByText("Build")
+        .closest("a")
+        ?.getAttribute("aria-current"),
+    ).toBe("location");
+    expect(
+      within(rail)
+        .getByText("Komponenten")
+        .closest("a")
+        ?.hasAttribute("aria-current"),
+    ).toBe(false);
+    readAt("z");
+    fireEvent.scroll(rail.parentElement!);
+    expect(within(rail).queryByText("Abfrage")).toBeNull();
   });
 });

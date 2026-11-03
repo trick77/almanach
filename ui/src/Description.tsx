@@ -45,6 +45,18 @@ export function kindLabel(kind: Kind, project: boolean): string {
 /** The ids of a description's sections, the rail's anchors. */
 export const summaryId = "summary";
 export const kindId = (k: Kind) => `kind-${k}`;
+/** areaId is an area's heading inside its kind, by the area's place among
+ *  the kind's areas (areaNames), so a search leaves it where it was. */
+export const areaId = (k: Kind, i: number) => `${kindId(k)}-area-${i}`;
+
+const areaOf = (s: Statement) => s.area ?? "";
+
+/** areaNames is a kind's areas, each once, in the page's order: none when
+ *  its statements stand in one area or none, which have no heading. */
+export function areaNames(all: Statement[]): string[] {
+  const names = [...new Set(all.map(areaOf))];
+  return names.length < 2 ? [] : names;
+}
 
 /** plainOf is a statement's text as the search reads it (plain), parsed
  *  once per statement, not twice per keystroke (rail and list). */
@@ -65,9 +77,11 @@ export function statementMatches(s: Statement, query: string): boolean {
 }
 
 /** descriptionRail is the rail's part of a description: the summary and
- *  each kind with its count, the search's hit count while one runs, and
- *  the line under the search. lead is a section before the summary (a
- *  map), extra one after it (problem areas). */
+ *  each kind with its count, its areas under it when it heads them, the
+ *  search's hit count while one runs, and the line under the search.
+ *  lead is the sections before the summary (a map), extra the ones after
+ *  it (problem areas, dependencies). An area the search leaves without
+ *  a hit has no heading to point at and is left out. */
 export function descriptionRail(
   description: Description | null,
   project: boolean,
@@ -86,9 +100,25 @@ export function descriptionRail(
     ...lead,
     { id: summaryId, label: S.rail.summary, tab },
     ...extra,
-    ...kinds.map((kind) => {
-      const all = statements.filter((s) => s.kind === kind).length;
-      const hit = hits.filter((s) => s.kind === kind).length;
+    ...kinds.map((kind): RailItem => {
+      const ofKind = statements.filter((s) => s.kind === kind);
+      const all = ofKind.length;
+      const kindHits = hits.filter((s) => s.kind === kind);
+      const hit = kindHits.length;
+      const children = areaNames(ofKind).flatMap((area, i) => {
+        const n = kindHits.filter((s) => areaOf(s) === area).length;
+        return n === 0
+          ? []
+          : [
+              {
+                id: areaId(kind, i),
+                label: area === "" ? S.areas.otherArea : plain(area),
+                tab,
+                count: n,
+                hit: searching,
+              },
+            ];
+      });
       return {
         id: kindId(kind),
         label: kindLabel(kind, project),
@@ -96,6 +126,7 @@ export function descriptionRail(
         count: searching ? hit : all === 0 ? "–" : all,
         dim: all === 0 || (searching && hit === 0),
         hit: searching,
+        children: children.length > 0 ? children : undefined,
       };
     }),
   ];
@@ -162,6 +193,7 @@ export function DescriptionView({
       {kindsOf(project).map((kind) => {
         const all = description.statements.filter((s) => s.kind === kind);
         const list = all.filter((s) => statementMatches(s, query));
+        const names = areaNames(all);
         return (
           <section key={kind} id={kindId(kind)} className="scroll-mt-16">
             <div className={eyebrow}>
@@ -176,10 +208,23 @@ export function DescriptionView({
                 </span>
               )}
             </div>
-            {areaGroups(all, list).map((g, i) => (
+            {areaGroups(all, list).map((g, i, groups) => (
               <div key={i}>
                 {g.area !== null && (
-                  <h3 className={(i === 0 ? "mt-1 " : "mt-6 ") + areaHeading}>
+                  <h3
+                    // The rail's anchor: an area's first group only (a page
+                    // not laid out yet may hold an area twice).
+                    id={
+                      groups.findIndex((o) => o.area === g.area) === i
+                        ? areaId(kind, names.indexOf(g.area))
+                        : undefined
+                    }
+                    className={
+                      (i === 0 ? "mt-1 " : "mt-6 ") +
+                      "scroll-mt-16 " +
+                      areaHeading
+                    }
+                  >
                     <Inline text={g.area || S.areas.otherArea} query={query} />
                   </h3>
                 )}
@@ -215,8 +260,7 @@ export function areaGroups(
   all: Statement[],
   shown: Statement[],
 ): { area: string | null; statements: Statement[] }[] {
-  const areaOf = (s: Statement) => s.area ?? "";
-  if (new Set(all.map(areaOf)).size < 2) {
+  if (areaNames(all).length === 0) {
     return shown.length === 0 ? [] : [{ area: null, statements: shown }];
   }
   const groups: { area: string; statements: Statement[] }[] = [];

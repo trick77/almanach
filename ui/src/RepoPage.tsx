@@ -15,6 +15,7 @@ import {
   type RailGroup,
   type RailItem,
 } from "./Rail";
+import { RepoSwitcher } from "./RepoSwitcher";
 import { day, refName } from "./format";
 import { projectPath, repoPath } from "./routing";
 import { S } from "./strings";
@@ -31,7 +32,13 @@ import {
   eyebrow,
   h2,
   meta,
+  mono,
   page,
+  table,
+  tableBox,
+  td,
+  tdMono,
+  th,
 } from "./ui";
 
 /** The repository page's tabs by their hash: the page is a leaf, its
@@ -42,6 +49,7 @@ const TABS = [DESCRIPTION, HISTORY];
 
 const ids = {
   map: "structure",
+  deps: "dependencies",
   problems: "problems",
   notes: "notes",
   revisions: "revisions",
@@ -144,11 +152,14 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
 
   // A map refused on every try says so: never just a missing section.
   const showMap = data.map !== null || data.map_declined;
+  const showDeps = data.uses.length + data.used_by.length > 0;
   const lead: RailItem[] = showMap
     ? [{ id: ids.map, label: S.repo.map, tab: DESCRIPTION }]
     : [];
-  const extra: RailItem[] =
-    problems.length > 0
+  // Under the summary, overview before detail: where it broke, then what
+  // it is tied to.
+  const extra: RailItem[] = [
+    ...(problems.length > 0
       ? [
           {
             id: ids.problems,
@@ -157,7 +168,18 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             count: problems.length,
           },
         ]
-      : [];
+      : []),
+    ...(showDeps
+      ? [
+          {
+            id: ids.deps,
+            label: S.deps.title,
+            tab: DESCRIPTION,
+            count: S.deps.count(data.uses.length, data.used_by.length),
+          },
+        ]
+      : []),
+  ];
   const desc = descriptionRail(
     data.description,
     false,
@@ -186,32 +208,24 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
       ],
     },
   ];
-  if (project && project.repos.length > 1)
-    groups.push({
-      title: (
-        <>
-          {S.rail.project}{" "}
-          <Link
-            to={projectPath(data.project_key)}
-            className="tracking-normal normal-case text-muted hover:text-ink"
-          >
-            {data.project_key}
-          </Link>
-        </>
-      ),
-      links: project.repos.map((r) => ({
-        label: r.slug,
-        to: repoPath(data.project_key, r.slug),
-        current: r.slug === data.slug,
-      })),
-    });
-  groups.push(...depGroups(data));
 
   return (
     <RailPage
       scroller={scroller}
       rail={
         <Rail
+          head={
+            // A project of one has no other repository and no page of
+            // its own: no head.
+            project && !single ? (
+              <RepoSwitcher
+                key={data.slug}
+                projectKey={data.project_key}
+                repos={project.repos}
+                slug={data.slug}
+              />
+            ) : undefined
+          }
           groups={groups}
           tab={tab}
           onTab={setTab}
@@ -290,19 +304,27 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
               )
             }
             afterSummary={
-              problems.length > 0 && (
-                <section id={ids.problems} className="scroll-mt-16">
-                  <div className={eyebrow}>
-                    {S.project.problems}
-                    <span className="ml-2 font-normal tracking-normal normal-case text-faint">
-                      {S.project.problemsWindow(
-                        project?.problem_window_days ?? 0,
-                      )}
-                    </span>
-                  </div>
-                  <Problems problems={problems} repoColumn={false} />
-                </section>
-              )
+              <>
+                {problems.length > 0 && (
+                  <section id={ids.problems} className="scroll-mt-16">
+                    <div className={eyebrow}>
+                      {S.project.problems}
+                      <span className="ml-2 font-normal tracking-normal normal-case text-faint">
+                        {S.project.problemsWindow(
+                          project?.problem_window_days ?? 0,
+                        )}
+                      </span>
+                    </div>
+                    <Problems problems={problems} repoColumn={false} />
+                  </section>
+                )}
+                {showDeps && (
+                  <section id={ids.deps} className="scroll-mt-16">
+                    <div className={eyebrow}>{S.deps.title}</div>
+                    <Dependencies data={data} />
+                  </section>
+                )}
+              </>
             }
           />
         ) : (
@@ -313,50 +335,73 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   );
 }
 
-/** depGroups are the rail's dependency lists: what the repository uses,
- *  with the version it names and who else uses each, and what uses it. A
- *  version the other users do not name is marked. Another project's
- *  repository is named with its project. */
-export function depGroups(data: RepoDetail): RailGroup[] {
+/** Dependencies is what the repository uses, with the version it names
+ *  and who else uses each, and what uses it. A section of the column, not
+ *  rail lists: the rail is the page's sections. A version the other users
+ *  do not name is marked. Another project's repository is named with its
+ *  project. */
+function Dependencies({ data }: { data: RepoDetail }) {
   const name = (d: DependencyEnd) =>
     d.project === data.project_key ? d.slug : refName(d.project, d.slug);
-  const groups: RailGroup[] = [];
-  if (data.uses.length > 0)
-    groups.push({
-      title: S.deps.uses,
-      links: data.uses.map((u) => {
-        const odd = oddVersions([
-          u.version,
-          ...u.also.map((o) => o.version),
-        ])[0];
-        return {
-          label: name(u),
-          to: repoPath(u.project, u.slug),
-          current: false,
-          note: u.version || undefined,
-          odd,
-          noteTitle: odd ? S.deps.otherVersion : undefined,
-          sub:
-            u.also.length > 0
-              ? S.deps.also(u.also.map(name).join(", "))
-              : undefined,
-        };
-      }),
-    });
-  const odd = oddVersions(data.used_by.map((u) => u.version));
-  if (data.used_by.length > 0)
-    groups.push({
-      title: S.deps.usedBy,
-      links: data.used_by.map((u, i) => ({
-        label: name(u),
-        to: repoPath(u.project, u.slug),
-        current: false,
-        note: u.version || undefined,
-        odd: odd[i],
-        noteTitle: odd[i] ? S.deps.otherVersion : undefined,
-      })),
-    });
-  return groups;
+  const usedByOdd = oddVersions(data.used_by.map((u) => u.version));
+  const rows: {
+    end: DependencyEnd;
+    odd: boolean;
+    also?: string;
+  }[][] = [
+    data.uses.map((u) => ({
+      end: u,
+      odd: oddVersions([u.version, ...u.also.map((o) => o.version)])[0]!,
+      also:
+        u.also.length > 0
+          ? S.deps.also(u.also.map(name).join(", "))
+          : undefined,
+    })),
+    data.used_by.map((u, i) => ({ end: u, odd: usedByOdd[i]! })),
+  ];
+  return (
+    <div className="grid gap-y-4">
+      {[S.deps.uses, S.deps.usedBy].map((title, t) =>
+        rows[t]!.length === 0 ? null : (
+          <div key={title} className={tableBox}>
+            <table className={table}>
+              <thead>
+                <tr>
+                  <th className={th}>{title}</th>
+                  <th className={th + " w-[140px]"}>{S.deps.version}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows[t]!.map(({ end, odd, also }) => (
+                  <tr key={`${end.project}/${end.slug}`}>
+                    <td className={td}>
+                      <Link
+                        to={repoPath(end.project, end.slug)}
+                        className={mono + " text-ink-dim hover:text-ink"}
+                      >
+                        {name(end)}
+                      </Link>
+                      {also !== undefined && (
+                        <span className="ml-2 text-[12.5px] text-faint">
+                          {also}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      className={tdMono + (odd ? " text-ochre" : " text-muted")}
+                      title={odd ? S.deps.otherVersion : undefined}
+                    >
+                      {end.version || S.deps.noVersion}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ),
+      )}
+    </div>
+  );
 }
 
 /** RepoMap is the repository from inside, its zones titled from strings.ts
