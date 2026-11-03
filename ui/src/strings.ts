@@ -3,6 +3,7 @@
 // readers are German speaking, and the wiki itself is German.
 
 import type {
+  Kind,
   QueueRun,
   SkippedPart,
   SkipReason,
@@ -170,8 +171,8 @@ export const S = {
     label: "Inhalt",
     search: "Durchsuchen",
     searchLabel: "Beschreibung durchsuchen",
-    hits: (n: number, of: number, kinds: number) =>
-      `${n} von ${of} ${of === 1 ? "Eintrag" : "Einträgen"} ${S.common.sep} ${kinds} ${kinds === 1 ? "Art" : "Arten"}`,
+    hits: (n: number, of: number, chapters: number) =>
+      `${n} von ${of} ${of === 1 ? "Eintrag" : "Einträgen"} ${S.common.sep} ${chapters} Kapitel`,
     noHits: "keine Treffer",
     summary: "Überblick",
     // The repository page's head: its project, and a switch to the
@@ -215,16 +216,32 @@ export const S = {
     extension: "Erweiterungen",
     pitfall: "Fallstricke",
   },
-  // A kind's statements in no area, under the areas (the Markdown export
-  // heads them alike, held to it by a test).
+  // One statement's kind, the label over its name in an area's chapter.
+  statementKind: {
+    component: "Komponente",
+    interface: "Schnittstelle",
+    rule: "Regel",
+    invariant: "Invariante",
+    entity: "Entität",
+    decision: "Entscheidung",
+    extension: "Erweiterung",
+    pitfall: "Fallstrick",
+  } satisfies Record<Kind, string> as Partial<Record<string, string>>,
+  // The project page's labels where they differ: its entities are the ones
+  // that cross repositories, who owns them and how their ids travel (the
+  // export's heading their plural, held to it by a test).
+  projectStatementKind: {
+    entity: "Geteilte Entität",
+  } satisfies Partial<Record<Kind, string>> as Partial<Record<string, string>>,
+  // otherArea is the chapter of statements in no area, beside named areas
+  // where its first statement stands (the Markdown export's word for them
+  // under a kind, held to it by a test); all the one chapter of a page not
+  // laid out yet; none a page without statements.
   areas: {
     otherArea: "Weiteres",
+    all: "Aussagen",
+    none: "Noch keine Aussagen.",
   },
-  // The project page's names where they differ: its entities are the ones
-  // that cross repositories, who owns them and how their ids travel.
-  projectKinds: {
-    entity: "Geteilte Daten",
-  } as Partial<Record<string, string>>,
   noteHeaders: ["PR", "Titel", "Art", "Einträge", "Issues / Hinweise", "Merge"],
   changeKind: {
     bugfix: "Bugfix",

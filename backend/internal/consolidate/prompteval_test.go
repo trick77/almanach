@@ -205,7 +205,7 @@ func TestPromptEval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := evalStore{&runStore{fakeStore: newFakeStore(), sources: map[string]bool{}}}
+	st := evalStore{&runStore{fakeStore: newFakeStore(), sources: map[string]bool{}, libReads: map[string]int{}}}
 	for _, repo := range evalRepos(t, repos) {
 		slug, url := repo[0], repo[1]
 		dir := filepath.Join(root, evalProject, slug)

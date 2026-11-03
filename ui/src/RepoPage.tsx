@@ -182,7 +182,6 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   ];
   const desc = descriptionRail(
     data.description,
-    false,
     query,
     DESCRIPTION,
     lead,

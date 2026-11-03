@@ -126,7 +126,7 @@ function Body({ data }: { data: ProjectDetail }) {
     if (q.trim() !== "" && tab !== DESCRIPTION) openTab(DESCRIPTION);
   }
 
-  const desc = descriptionRail(data.description, true, query, DESCRIPTION);
+  const desc = descriptionRail(data.description, query, DESCRIPTION);
   const groups: RailGroup[] = [
     {
       title: S.tabs.overview,
