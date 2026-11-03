@@ -45,6 +45,7 @@ export interface Source {
 export type Kind =
   | "component"
   | "interface"
+  | "flow"
   | "rule"
   | "invariant"
   | "entity"

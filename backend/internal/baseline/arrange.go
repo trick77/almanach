@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/trick77/almanach/internal/inference"
@@ -8,11 +9,11 @@ import (
 	"github.com/trick77/almanach/internal/store"
 )
 
-// A page reads as a person would write it: inside every kind its
-// statements in areas, the logical parts of the system, one order of areas
-// for the whole page (the system as a whole, the parts as a reader meets
-// them, building and delivering it last), overview before detail inside
-// one. A page's areas and their order are its statements' order: an area
+// A page reads as a person would write it: chapters by area, the logical
+// parts of the system, each holding its statements whatever their kind, in
+// one order of areas (the system as a whole, the parts as a reader meets
+// them, running it, building and delivering it last), overview before
+// detail inside one. A page's areas and their order are its statements' order: an area
 // stands where its first statement does. Without them each kind was the
 // order the steps wrote in, build statements in four kinds at four places
 // (user, 2026-11-02: "a human would not structure a documentation like
@@ -25,32 +26,47 @@ import (
 // probably last, and not in multiple places").
 const LastArea = "Entwicklung und Auslieferung"
 
+// OpsArea is the area just before LastArea: what belongs to the running
+// system as a whole and to no one part, its settings read at startup,
+// health, logging, a dependency down. Narrow by its prompt's rule, a part's
+// own setting or failure staying in the part's area: a wide one would
+// hollow out the parts' chapters. Two words, not "Betrieb" alone: that is
+// a business part's name in some domains (a farm's, a company's), whose
+// chapter would be pinned to the end. Without it such statements stood
+// wherever the model put them.
+const OpsArea = "Betrieb und Überwachung"
+
+// tailAreas are the areas that end every page, in their order.
+var tailAreas = []string{OpsArea, LastArea}
+
 // CleanArea is an area name as stored: Swiss prose, inner runs of space
-// one, LastArea in its own spelling whatever case or umlauts the model
+// one, a tail area in its own spelling whatever case or umlauts the model
 // used.
 func CleanArea(a string) string {
 	a = strings.Join(strings.Fields(lang.Prose(a)), " ")
-	if lang.SameButSpelling(strings.ToLower(a), strings.ToLower(LastArea)) {
-		return LastArea
+	for _, fixed := range tailAreas {
+		if lang.SameButSpelling(strings.ToLower(a), strings.ToLower(fixed)) {
+			return fixed
+		}
 	}
 	return a
 }
 
 // Arrange is the page's statements in its areas' order: each area's
 // statements together where its first one stands, in their order; those
-// without an area after them, LastArea's last. Stable: an arranged page
-// comes back as it was.
+// without an area after them, then the tail areas'. Stable: an arranged
+// page comes back as it was.
 func Arrange(statements []store.Statement) []store.Statement {
 	var order []string
 	groups := map[string][]store.Statement{}
 	for _, s := range statements {
-		if _, ok := groups[s.Area]; !ok && s.Area != "" && s.Area != LastArea {
+		if _, ok := groups[s.Area]; !ok && s.Area != "" && !slices.Contains(tailAreas, s.Area) {
 			order = append(order, s.Area)
 		}
 		groups[s.Area] = append(groups[s.Area], s)
 	}
 	out := make([]store.Statement, 0, len(statements))
-	for _, a := range append(order, "", LastArea) {
+	for _, a := range append(append(order, ""), tailAreas...) {
 		out = append(out, groups[a]...)
 	}
 	return out

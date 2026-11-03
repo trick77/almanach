@@ -64,3 +64,18 @@ func TestPromptsStateTheLayout(t *testing.T) {
 		}
 	}
 }
+
+// A flow is told in full once, in its `flow` statement: every prompt that
+// writes statements defines the kind, and the summary only names the
+// flows, never retells them end to end. That each output format offers it
+// is inference's TestPromptKindsMatchTheSchema.
+func TestPromptsStateTheFlowKind(t *testing.T) {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project} {
+		if !strings.Contains(p, "- `flow`: a flow") {
+			t.Errorf("%s prompt does not define the flow kind", name)
+		}
+		if !strings.Contains(p, "told in full in its `flow` statement") || strings.Contains(p, "flows, end to end") {
+			t.Errorf("%s prompt's summary still tells the flows itself", name)
+		}
+	}
+}

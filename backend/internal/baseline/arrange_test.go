@@ -19,14 +19,15 @@ func layout(statements []store.Statement) []string {
 }
 
 // An area's statements stand together where its first one does, in their
-// order; those without one after the areas, Entwicklung und Auslieferung
-// last wherever it stood. An arranged page comes back as it was.
+// order; those without one after the areas, then Betrieb und Überwachung,
+// Entwicklung und Auslieferung last wherever they stood.
+// An arranged page comes back as it was.
 func TestArrange(t *testing.T) {
 	in := []store.Statement{
 		{ID: "s1", Area: LastArea}, {ID: "s2", Area: "Abfrage"}, {ID: "s3"}, {ID: "s4", Area: "Export"},
-		{ID: "s5", Area: "Abfrage"}, {ID: "s6", Area: LastArea}, {ID: "s7", Area: "Export"},
+		{ID: "s8", Area: OpsArea}, {ID: "s5", Area: "Abfrage"}, {ID: "s6", Area: LastArea}, {ID: "s7", Area: "Export"},
 	}
-	want := []string{"s2:Abfrage", "s5:Abfrage", "s4:Export", "s7:Export", "s3:", "s1:" + LastArea, "s6:" + LastArea}
+	want := []string{"s2:Abfrage", "s5:Abfrage", "s4:Export", "s7:Export", "s3:", "s8:" + OpsArea, "s1:" + LastArea, "s6:" + LastArea}
 	got := Arrange(in)
 	if !reflect.DeepEqual(layout(got), want) {
 		t.Fatalf("Arrange = %v, want %v", layout(got), want)
@@ -39,10 +40,17 @@ func TestArrange(t *testing.T) {
 	}
 }
 
-// The prompts name the last area as the code stores it.
+// The prompts name the last two areas as the code stores them, in the
+// code's order, and every prompt that lays a page out places them.
 func TestLastAreaInThePrompts(t *testing.T) {
-	if !strings.Contains(prompts.Areas, "always last `"+LastArea+"`") {
-		t.Errorf("prompts.Areas does not name %q last", LastArea)
+	ops, last := strings.Index(prompts.Areas, "then `"+OpsArea+"`"), strings.Index(prompts.Areas, "always last `"+LastArea+"`")
+	if ops < 0 || last < 0 || ops > last {
+		t.Errorf("prompts.Areas does not name %q, then %q last", OpsArea, LastArea)
+	}
+	for name, p := range map[string]string{"repo map": prompts.RepoMap, "project": prompts.Project} {
+		if !strings.Contains(p, "`"+OpsArea+"` second to last") {
+			t.Errorf("%s prompt's outline does not place %q", name, OpsArea)
+		}
 	}
 }
 
@@ -51,6 +59,8 @@ func TestCleanArea(t *testing.T) {
 		"  Abfrage   und  Suche ":        "Abfrage und Suche",
 		"entwicklung und auslieferung":   LastArea,
 		"ENTWICKLUNG UND AUSLIEFERUNG":   LastArea,
+		"betrieb und ueberwachung":       OpsArea,
+		"Betrieb":                        "Betrieb",
 		"Strassenverkehr":                "Strassenverkehr",
 		"Grösse":                         "Grösse",
 		"Maße":                           "Masse",

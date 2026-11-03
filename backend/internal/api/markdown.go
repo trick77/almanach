@@ -32,6 +32,7 @@ var markdownKinds = []struct{ kind, heading string }{
 	{"pitfall", "Fallstricke"},
 	{"extension", "Erweiterungen"},
 	{"component", "Komponenten"},
+	{"flow", "Abläufe"},
 	{"entity", "Entitäten"},
 }
 
