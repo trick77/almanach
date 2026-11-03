@@ -3,6 +3,7 @@
 // where there is behaviour or a shape worth a name.
 import {
   Fragment,
+  type ComponentPropsWithoutRef,
   type CSSProperties,
   type MouseEvent,
   type ReactNode,
@@ -58,15 +59,20 @@ export function Link({
   title,
   style,
   children,
+  ...rest
 }: {
   to: string;
   className?: string;
   title?: string;
   style?: CSSProperties;
   children: ReactNode;
-}) {
+} & Omit<
+  ComponentPropsWithoutRef<"a">,
+  "href" | "onClick" | "className" | "title" | "style" | "children"
+>) {
   return (
     <a
+      {...rest}
       href={to}
       onClick={onNav(to)}
       className={className}

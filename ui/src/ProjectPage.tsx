@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectDetail, SharedRepo } from "./api";
 import { DescriptionView, descriptionRail } from "./Description";
-import { Diagram, titledZones } from "./Diagram";
+import { CompactMap } from "./CompactMap";
+import { titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
@@ -232,6 +233,11 @@ function Overview({
   showMap: boolean;
 }) {
   const [hRepo, hDesc, hNotes, hMerge] = S.project.repoHeaders;
+  // Once for the map's boxes and the list both.
+  const teasers = useMemo(
+    () => new Map(data.repos.map((r) => [r.slug, teaserLines(r.summary)])),
+    [data.repos],
+  );
   return (
     <>
       {showMap && (
@@ -244,6 +250,7 @@ function Overview({
               map={data.map}
               projectKey={data.key}
               slugs={data.repos.map((r) => r.slug)}
+              teasers={teasers}
               shared={data.shared}
             />
           )}
@@ -268,7 +275,7 @@ function Overview({
               <tbody>
                 {data.repos.map((r) => {
                   const to = repoPath(data.key, r.slug);
-                  const teaser = teaserLines(r.summary);
+                  const teaser = teasers.get(r.slug) ?? [];
                   return (
                     <tr key={r.slug} {...rowOpens(to)}>
                       <td className={tdMono}>
@@ -318,18 +325,20 @@ function Overview({
   );
 }
 
-/** SystemMap is the project's overview: its zones titled from strings.ts by
- *  id, and every repository node a link to its page, when the project lists
- *  that repository. */
+/** SystemMap is the project's overview, compact (CompactMap): its zones
+ *  titled from strings.ts by id, every repository node a link to its page
+ *  when the project lists that repository, with its summary's teaser. */
 function SystemMap({
   map,
   projectKey,
   slugs,
+  teasers,
   shared,
 }: {
   map: FlowIR;
   projectKey: string;
   slugs: string[];
+  teasers: Map<string, string[]>;
   shared: SharedRepo[];
 }) {
   const ir = useMemo(
@@ -339,10 +348,10 @@ function SystemMap({
   const repoZone = new Map(map.nodes.map((n) => [n.id, n.zone]));
   const byId = new Map(shared.map((r) => [sharedId(r), r]));
   return (
-    <Diagram
+    <CompactMap
       ir={ir}
       title={S.diagram.titles.map}
-      map
+      teasers={teasers}
       links={(id) => {
         const r = byId.get(id);
         if (r) return repoPath(r.project, r.slug);
