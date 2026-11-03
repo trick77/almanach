@@ -104,25 +104,38 @@ func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.
 		}
 	}
 	// Then the folders the builds declare (manifest.Modules), at any depth,
-	// until a pass finds none new: a Maven module may list modules of its
-	// own. Each path is tried once, so the passes end.
+	// until a pass declares none new: a Maven module may list modules of
+	// its own. Each module is visited once, so the passes end.
+	var byDir map[string][]gitrepo.Entry
+	visited := map[manifest.Module]bool{}
 	for {
-		declared := map[string]bool{}
-		for _, d := range manifest.Modules(files) {
-			declared[d] = true
-		}
-		added := false
-		for _, e := range entries {
-			if tried[e.Path] || !baseline.Readable(e) || !declared[path.Dir(e.Path)] || !manifest.ModuleFile(path.Base(e.Path)) {
+		var next []gitrepo.Entry
+		for _, m := range manifest.Modules(files) {
+			if visited[m] {
 				continue
 			}
+			visited[m] = true
+			if byDir == nil {
+				byDir = map[string][]gitrepo.Entry{}
+				for _, e := range entries {
+					if baseline.Readable(e) {
+						byDir[path.Dir(e.Path)] = append(byDir[path.Dir(e.Path)], e)
+					}
+				}
+			}
+			for _, e := range byDir[m.Dir] {
+				if !tried[e.Path] && m.Reads(path.Base(e.Path)) {
+					next = append(next, e)
+				}
+			}
+		}
+		if len(next) == 0 {
+			break
+		}
+		for _, e := range next {
 			if err := read(e); err != nil {
 				return manifest.Read{}, err
 			}
-			added = true
-		}
-		if !added {
-			break
 		}
 	}
 	return manifest.Parse(files), nil

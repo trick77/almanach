@@ -124,8 +124,9 @@ func TestParse_PackageJSONAndMonorepo(t *testing.T) {
 	}
 }
 
-// A build's declared folders, at any depth: a Gradle include from the root
-// build and from one a folder down, a Maven module and one of its own.
+// A build's declared folders, at any depth, and by which tool: a Gradle
+// include from the root build (each folder on its path a project too) and
+// from one a folder down, a Maven module, one of its own, one in a profile.
 // Build logic's projects, a folder outside the repository and a module
 // naming a file are none.
 func TestModules(t *testing.T) {
@@ -133,22 +134,39 @@ func TestModules(t *testing.T) {
 		"settings.gradle":          []byte("rootProject.name = 'svc'\ninclude 'lib:core', ':service:api'\n// include 'old:gone'\n"),
 		"jvm/settings.gradle.kts":  []byte("include(\"tools:cli\")\n"),
 		"buildSrc/settings.gradle": []byte("include 'conventions'\n"),
-		"pom.xml":                  []byte(`<project><modules><module>parent/mod</module><module>../sibling</module><module>alt/pom-x.xml</module></modules></project>`),
-		"parent/mod/pom.xml":       []byte(`<project><modules><module>sub</module></modules></project>`),
+		"pom.xml":                  []byte(`<project><modules><module>parent/mod</module><module>../sibling</module><module>alt/pom-x.xml</module><module>lib/core</module></modules></project>`),
+		"parent/mod/pom.xml":       []byte(`<project><modules><module>sub</module></modules><profiles><profile><modules><module>it</module></modules></profile></profiles></project>`),
 	})
-	want := []string{"jvm/tools/cli", "lib/core", "parent/mod", "parent/mod/sub", "service/api"}
+	want := []Module{
+		{Dir: "jvm/tools", Gradle: true},
+		{Dir: "jvm/tools/cli", Gradle: true},
+		{Dir: "lib", Gradle: true},
+		{Dir: "lib/core", Gradle: true, Maven: true},
+		{Dir: "parent/mod", Maven: true},
+		{Dir: "parent/mod/it", Maven: true},
+		{Dir: "parent/mod/sub", Maven: true},
+		{Dir: "service", Gradle: true},
+		{Dir: "service/api", Gradle: true},
+	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Modules = %v, want %v", got, want)
+		t.Fatalf("Modules = %+v\nwant  %+v", got, want)
 	}
 }
 
-func TestModuleFile(t *testing.T) {
-	for b, want := range map[string]bool{
-		"build.gradle": true, "build.gradle.kts": true, "gradle.properties": true, "pom.xml": true,
-		"settings.gradle": false, "libs.versions.toml": false, "package.json": false, "go.mod": false,
+// A module's files are its declaring tool's, never the other's.
+func TestModuleReads(t *testing.T) {
+	gradle, maven := Module{Gradle: true}, Module{Maven: true}
+	for _, c := range []struct {
+		m    Module
+		base string
+		want bool
+	}{
+		{gradle, "build.gradle", true}, {gradle, "build.gradle.kts", true}, {gradle, "gradle.properties", true},
+		{gradle, "pom.xml", false}, {gradle, "settings.gradle", false}, {gradle, "package.json", false},
+		{maven, "pom.xml", true}, {maven, "build.gradle", false}, {maven, "gradle.properties", false},
 	} {
-		if got := ModuleFile(b); got != want {
-			t.Errorf("ModuleFile(%q) = %v, want %v", b, got, want)
+		if got := c.m.Reads(c.base); got != c.want {
+			t.Errorf("%+v.Reads(%q) = %v, want %v", c.m, c.base, got, c.want)
 		}
 	}
 }
@@ -159,25 +177,25 @@ func TestModuleFile(t *testing.T) {
 // project dependency on a sibling is none.
 func TestParse_GradleProjectsTwoDown(t *testing.T) {
 	got := Parse(map[string][]byte{
-		"settings.gradle":                     []byte("rootProject.name = 'claims-service'\ninclude 'lib:claims-persistence'\ninclude 'service:claims-intranet-service'\n"),
-		"gradle.properties":                   []byte("group=example.claims\nversion=5.0.15-SNAPSHOT\n"),
-		"build.gradle":                        []byte("plugins {\n  id 'example-root-conventions'\n}\n"),
-		"lib/claims-persistence/build.gradle": []byte("dependencies {\n  implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n}\n"),
-		"service/claims-intranet-service/build.gradle": []byte(`dependencies {
-    implementation project(':lib:claims-persistence')
-    implementation('example.claims.intranet:claims-workflow:1.0.7:api') {
+		"settings.gradle":       []byte("rootProject.name = 'svc'\ninclude 'lib:core'\ninclude 'service:api'\n"),
+		"gradle.properties":     []byte("group=example.svc\nversion=1.0.0-SNAPSHOT\n"),
+		"build.gradle":          []byte("plugins {\n  id 'example-conventions'\n}\n"),
+		"lib/core/build.gradle": []byte("dependencies {\n  implementation 'org.example:store:3.1'\n}\n"),
+		"service/api/build.gradle": []byte(`dependencies {
+    implementation project(':lib:core')
+    implementation('example.flow:flow-engine:1.2:api') {
         transitive = false
     }
-    implementation 'example.claims:claims-core-lib:14.2.6'
+    implementation 'example.wire:wire-core:2.0'
 }
 `),
 	})
 	want := Read{
-		Provides: []string{"maven:example.claims:claims-intranet-service", "maven:example.claims:claims-persistence", "maven:example.claims:claims-service"},
+		Provides: []string{"maven:example.svc:api", "maven:example.svc:core", "maven:example.svc:svc"},
 		Requires: []Dep{
-			{Coord: "maven:example.claims.intranet:claims-workflow", Version: "1.0.7"},
-			{Coord: "maven:example.claims:claims-core-lib", Version: "14.2.6"},
-			{Coord: "maven:org.springframework.boot:spring-boot-starter-data-jpa", Version: ""},
+			{Coord: "maven:example.flow:flow-engine", Version: "1.2"},
+			{Coord: "maven:example.wire:wire-core", Version: "2.0"},
+			{Coord: "maven:org.example:store", Version: "3.1"},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -186,9 +204,11 @@ func TestParse_GradleProjectsTwoDown(t *testing.T) {
 }
 
 // A build a folder down owns the projects it includes: their group and
-// properties come from its folder, not the root's.
+// properties come from its folder, not the root's, and the root including
+// the same folder provides it no second time.
 func TestParse_GradleNestedBuildOwnsItsProjects(t *testing.T) {
 	got := Parse(map[string][]byte{
+		"settings.gradle":            []byte("include 'jvm:tools:cli'\n"),
 		"gradle.properties":          []byte("group=example.root\n"),
 		"jvm/settings.gradle":        []byte("rootProject.name = 'jvm'\ninclude 'tools:cli'\n"),
 		"jvm/gradle.properties":      []byte("group=example.jvm\nwireVersion=2.1\n"),
