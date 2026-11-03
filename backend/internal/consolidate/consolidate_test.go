@@ -557,7 +557,8 @@ func TestAttach_AreaIsNoText(t *testing.T) {
 			t.Errorf("%s: sources %+v, want the stored ones: an area is no text", s.ID, s.Sources)
 		}
 	}
-	// "abfrage" is an area of its own name: only LastArea is matched by case.
+	// "abfrage" is an area of its own name: only the tail areas (OpsArea,
+	// LastArea) are matched by case.
 	want := []string{"s2:Abfrage", "s3:Export", "s4:abfrage", "s1:Entwicklung und Auslieferung"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("layout = %v, want %v", got, want)

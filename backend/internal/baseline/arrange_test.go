@@ -19,8 +19,8 @@ func layout(statements []store.Statement) []string {
 }
 
 // An area's statements stand together where its first one does, in their
-// order; those without one after the areas, then Betrieb, Entwicklung und
-// Auslieferung last wherever they stood.
+// order; those without one after the areas, then Betrieb und Überwachung,
+// Entwicklung und Auslieferung last wherever they stood.
 // An arranged page comes back as it was.
 func TestArrange(t *testing.T) {
 	in := []store.Statement{
@@ -59,7 +59,8 @@ func TestCleanArea(t *testing.T) {
 		"  Abfrage   und  Suche ":        "Abfrage und Suche",
 		"entwicklung und auslieferung":   LastArea,
 		"ENTWICKLUNG UND AUSLIEFERUNG":   LastArea,
-		"BETRIEB":                        OpsArea,
+		"betrieb und ueberwachung":       OpsArea,
+		"Betrieb":                        "Betrieb",
 		"Strassenverkehr":                "Strassenverkehr",
 		"Grösse":                         "Grösse",
 		"Maße":                           "Masse",
