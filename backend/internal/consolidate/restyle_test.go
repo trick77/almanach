@@ -125,8 +125,8 @@ func TestRestyle_SplitsAndCreditsNothing(t *testing.T) {
 	if page.Summary != "svc rechnet ab. Ablauf: Login, dann Abrechnung." || statementNamed(t, page, "Anmeldung").Text != "Nur angemeldet." {
 		t.Errorf("page = %+v", page)
 	}
-	if x.st.repoEpoch != prompts.Epoch || x.st.projectEpoch != prompts.Epoch {
-		t.Errorf("epochs = %d %d, want %d both", x.st.repoEpoch, x.st.projectEpoch, prompts.Epoch)
+	if x.st.repoEpoch != prompts.RepoEpoch || x.st.projectEpoch != prompts.ProjectEpoch {
+		t.Errorf("epochs = %d %d, want each page at its scope's", x.st.repoEpoch, x.st.projectEpoch)
 	}
 	project := x.projectPage()
 	if project.Summary != "Werkzeuge, nach Teilen gruppiert." || project.Map == nil || mapSlugs(project.Map)[0] != "svc" {
@@ -141,7 +141,7 @@ func TestRestyle_SplitsAndCreditsNothing(t *testing.T) {
 // neither page's.
 func TestRestyle_KeepsWhatItWouldLose(t *testing.T) {
 	x := restyleWorld(t)
-	x.st.projectEpoch = prompts.Epoch
+	x.st.projectEpoch = prompts.ProjectEpoch
 	key := pageKey(store.ScopeRepository, "tools", "svc")
 	page := x.st.pages[key]
 	page.Statements[1].Diagram = drawnMap("svc")
@@ -176,10 +176,10 @@ func TestRestyle_OnlyWhatIsDue(t *testing.T) {
 		want                           []bool
 	}{
 		"both due":       {0, 0, 2, []bool{false, true}},
-		"repository at":  {prompts.Epoch, 0, 2, []bool{true}},
-		"project at":     {0, prompts.Epoch, 2, []bool{false}},
+		"repository at":  {prompts.RepoEpoch, 0, 2, []bool{true}},
+		"project at":     {0, prompts.ProjectEpoch, 2, []bool{false}},
 		"project of one": {0, 0, 1, []bool{false}},
-		"none due":       {prompts.Epoch, prompts.Epoch, 2, nil},
+		"none due":       {prompts.RepoEpoch, prompts.ProjectEpoch, 2, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := restyleWorld(t)
@@ -203,7 +203,7 @@ func TestRestyle_OnlyWhatIsDue(t *testing.T) {
 // place on the current revision, the map standing, no map call.
 func TestRestyle_LayoutInPlace(t *testing.T) {
 	x := restyleWorld(t)
-	x.st.projectEpoch = prompts.Epoch
+	x.st.projectEpoch = prompts.ProjectEpoch
 	x.models.restyles = []inference.RestyleResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}},
 		Outline: []inference.OutlineArea{{Area: "Zugriff", IDs: []string{"s2"}}, {Area: "Kern", IDs: []string{"s1"}}}}}
 	x.w.drain(context.Background())
@@ -217,7 +217,7 @@ func TestRestyle_LayoutInPlace(t *testing.T) {
 	if got := ids(page.Statements); !slices.Equal(got, []string{"s2", "s1"}) || page.Statements[1].Area != "Kern" {
 		t.Errorf("statements = %v %+v", got, page.Statements)
 	}
-	if x.st.repoEpoch != prompts.Epoch {
+	if x.st.repoEpoch != prompts.RepoEpoch {
 		t.Errorf("repository epoch = %d", x.st.repoEpoch)
 	}
 }
@@ -241,10 +241,11 @@ func TestRestyle_FailedCallFailsTheRun(t *testing.T) {
 func TestRestyle_HoldsOnAStoreThatDoesNotAnswer(t *testing.T) {
 	down := errors.New("database down")
 	for name, fail := range map[string]func(x world){
-		"epochs":          func(x world) { x.st.epochErr = down },
-		"page":            func(x world) { x.st.pageErr = down },
-		"step write":      func(x world) { x.st.applyErr = down },
-		"repository rows": func(x world) { x.st.repoEpoch, x.st.reposErr = prompts.Epoch, down },
+		"epochs":               func(x world) { x.st.epochErr = down },
+		"page":                 func(x world) { x.st.pageErr = down },
+		"step write":           func(x world) { x.st.applyErr = down },
+		"repository summaries": func(x world) { x.st.repoEpoch, x.st.othersErr = prompts.Epoch, down },
+		"inner edges":          func(x world) { x.st.repoEpoch, x.st.innerErr = prompts.Epoch, down },
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := restyleWorld(t)
@@ -269,7 +270,7 @@ func TestRestyle_NoRepositoryPage(t *testing.T) {
 	if r := x.run(); r.State != store.RunDone || !slices.Equal(x.models.restyledProject, []bool{true}) {
 		t.Fatalf("run = %+v, calls for the project %v", r, x.models.restyledProject)
 	}
-	if x.st.repoEpoch != prompts.Epoch || x.st.projectEpoch != prompts.Epoch {
+	if x.st.repoEpoch != prompts.RepoEpoch || x.st.projectEpoch != prompts.ProjectEpoch {
 		t.Errorf("epochs = %d %d", x.st.repoEpoch, x.st.projectEpoch)
 	}
 }
@@ -285,7 +286,7 @@ func TestRestyle_ProjectLeftDue(t *testing.T) {
 		if r := x.run(); r.State != store.RunDone || r.Calls != 1 {
 			t.Fatalf("run = %+v, want done after one call", r)
 		}
-		if x.st.repoEpoch != prompts.Epoch || x.st.projectEpoch != 0 {
+		if x.st.repoEpoch != prompts.RepoEpoch || x.st.projectEpoch != 0 {
 			t.Errorf("epochs = %d %d, want the project still due", x.st.repoEpoch, x.st.projectEpoch)
 		}
 	})
@@ -297,7 +298,7 @@ func TestRestyle_ProjectLeftDue(t *testing.T) {
 		if r := x.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "project restyle call failed") {
 			t.Fatalf("run = %+v, want failed", r)
 		}
-		if x.st.repoEpoch != prompts.Epoch || x.st.projectEpoch != 0 {
+		if x.st.repoEpoch != prompts.RepoEpoch || x.st.projectEpoch != 0 {
 			t.Errorf("epochs = %d %d", x.st.repoEpoch, x.st.projectEpoch)
 		}
 	})
@@ -320,9 +321,9 @@ func TestStartRun_StampsAFullRunsEpoch(t *testing.T) {
 		contains            bool
 		epoch, want         int
 	}{
-		"full":             {store.RunFull, store.TriggerManual, "", true, 0, prompts.Epoch},
+		"full":             {store.RunFull, store.TriggerManual, "", true, 0, prompts.RepoEpoch},
 		"reconcile":        {store.RunReconcile, store.TriggerMonthly, "", true, 0, 0},
-		"reconcile afresh": {store.RunReconcile, store.TriggerMonthly, "", false, 0, prompts.Epoch},
+		"reconcile afresh": {store.RunReconcile, store.TriggerMonthly, "", false, 0, prompts.RepoEpoch},
 		"departure":        {store.RunFull, store.TriggerDeparture, `{"departure":true}`, true, 0, 0},
 		"stamped before":   {store.RunFull, store.TriggerManual, "", true, prompts.Epoch + 7, prompts.Epoch + 7},
 	} {
@@ -343,9 +344,9 @@ func TestStartRun_StampsAFullRunsEpoch(t *testing.T) {
 }
 
 // A project step that answered with the whole page under today's rules
-// puts the project page at the epoch: a full run's stamped with it, or the
-// step that wrote the page first; a reconcile's, or a full run's from
-// before a bump, does not.
+// puts the project page at the project's epoch: a full run's, whenever it
+// started reading (its project call is rendered when it runs), or the step
+// that wrote the page first; a reconcile's does not.
 func TestProjectRestyled(t *testing.T) {
 	for name, c := range map[string]struct {
 		mode  string
@@ -353,10 +354,10 @@ func TestProjectRestyled(t *testing.T) {
 		first bool
 		want  int
 	}{
-		"full":       {store.RunFull, prompts.Epoch, false, prompts.Epoch},
-		"full, old":  {store.RunFull, prompts.Epoch - 1, false, 0},
+		"full":       {store.RunFull, prompts.RepoEpoch, false, prompts.ProjectEpoch},
+		"full, old":  {store.RunFull, prompts.RepoEpoch - 1, false, prompts.ProjectEpoch},
 		"reconcile":  {store.RunReconcile, 0, false, 0},
-		"first page": {store.RunReconcile, 0, true, prompts.Epoch},
+		"first page": {store.RunReconcile, 0, true, prompts.ProjectEpoch},
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := newWorld(t, 16)

@@ -118,6 +118,8 @@ export interface Problem {
   last_fix_at: string;
 }
 
+export type ProjectShape = "system" | "collection";
+
 export interface ProjectDetail {
   key: string;
   team: string;
@@ -136,6 +138,11 @@ export interface ProjectDetail {
   /** A project step asked for the map and none was accepted: map is null,
    *  and no run is promised to draw one. */
   map_declined: boolean;
+  /** What the last project step judged the project to be: one system its
+   *  repositories make together, or a collection of repositories that
+   *  each stand on their own (a short summary, no statements, no map).
+   *  null before a step judged it, and for a project of one. */
+  shape: ProjectShape | null;
   repos: Repo[];
   /** Repositories of other projects this project's repositories depend
    *  on: the map's shared zone, drawn here, not stored in the map. */

@@ -818,10 +818,16 @@ func TestProject_MapExpected(t *testing.T) {
 	if string(body["map"]) != "null" || string(body["map_declined"]) != "true" || string(body["map_expected"]) != "true" {
 		t.Errorf("sentinel: map %s, declined %s, expected %s", body["map"], body["map_declined"], body["map_expected"])
 	}
+	// A collection draws none, and says what it was judged.
+	st.pages[store.ScopeProject+"|PLAT|"] = store.Page{RevisionID: 1, Revision: 1, Summary: "P.", Shape: store.ShapeCollection}
+	_, body = do(t, h, http.MethodGet, "/api/projects/PLAT", "", "", nil)
+	if string(body["map_expected"]) != "false" || string(body["shape"]) != `"collection"` {
+		t.Errorf("collection: expected %s, shape %s", body["map_expected"], body["shape"])
+	}
 	delete(st.pages, store.ScopeProject+"|PLAT|")
 	_, body = do(t, h, http.MethodGet, "/api/projects/PLAT", "", "", nil)
-	if string(body["map_declined"]) != "false" {
-		t.Errorf("no page: map_declined = %s", body["map_declined"])
+	if string(body["map_declined"]) != "false" || string(body["shape"]) != "null" {
+		t.Errorf("no page: map_declined = %s, shape %s", body["map_declined"], body["shape"])
 	}
 	st.repos["PLAT"] = nil
 	for i := range diagram.MapMaxNodes {

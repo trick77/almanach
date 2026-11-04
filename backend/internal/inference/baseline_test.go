@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/toolkit/llmwire"
 	"github.com/trick77/toolkit/llmwire/llmwiretest"
 )
 
@@ -215,10 +216,12 @@ func TestRestyle(t *testing.T) {
 	}
 	for project, kinds := range map[bool][]string{false: RepoKinds, true: ProjectKinds} {
 		for _, diagrams := range []bool{true, false} {
-			f := restyleFormat(diagrams, kinds).Schema
+			f := restyleFormat(diagrams, project).Schema
 			walkObjects(t, f)
 			props := f["properties"].(map[string]any)
-			if props["drop"] != nil || props["confirmed"] != nil || props["outline"] == nil {
+			// Only the project's restyle drops (repository detail) and judges
+			// the shape; neither confirms.
+			if (props["drop"] != nil) != project || (props["shape"] != nil) != project || props["confirmed"] != nil || props["outline"] == nil {
 				t.Errorf("project %v: restyle schema properties %v", project, sortedKeys(props))
 			}
 			added := props["added"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
@@ -425,29 +428,75 @@ func TestSchemaEditsAndAdded(t *testing.T) {
 }
 
 // Every format offers the new kinds; a project description never offers an
-// extension, a repository's change recipe.
+// extension, a repository's change recipe, nor a component, how a part
+// works being its repository's page's.
 func TestSchemaKinds(t *testing.T) {
 	kindsOf := func(st map[string]any) []any {
 		return st["items"].(map[string]any)["properties"].(map[string]any)["kind"].(map[string]any)["enum"].([]any)
 	}
 	merge := mergeFormat(true).Schema["properties"].(map[string]any)
 	for name, tc := range map[string]struct {
-		st        map[string]any
-		extension bool
+		st   map[string]any
+		repo bool
 	}{
-		"patch":         {patchFormat(true).Schema["properties"].(map[string]any)["statements"].(map[string]any), true},
-		"merge repo":    {merge["repository"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), true},
-		"merge project": {merge["project"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), false},
-		"project":       {projectDescription(true)["properties"].(map[string]any)["statements"].(map[string]any), false},
+		"patch":           {patchFormat(true).Schema["properties"].(map[string]any)["statements"].(map[string]any), true},
+		"merge repo":      {merge["repository"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), true},
+		"merge project":   {merge["project"].(map[string]any)["properties"].(map[string]any)["statements"].(map[string]any), false},
+		"project":         {projectDescription(true)["properties"].(map[string]any)["statements"].(map[string]any), false},
+		"project restyle": {restyleFormat(true, true).Schema["properties"].(map[string]any)["statements"].(map[string]any), false},
 	} {
 		got := kindsOf(tc.st)
-		for _, k := range []string{"component", "interface", "flow", "rule", "invariant", "entity", "decision", "pitfall"} {
+		for _, k := range []string{"interface", "flow", "rule", "invariant", "entity", "decision", "pitfall"} {
 			if !slices.Contains(got, any(k)) {
 				t.Errorf("%s: kinds %v lack %s", name, got, k)
 			}
 		}
-		if slices.Contains(got, any("extension")) != tc.extension {
-			t.Errorf("%s: kinds %v, extension offered = %v", name, got, !tc.extension)
+		for _, k := range []string{"extension", "component"} {
+			if slices.Contains(got, any(k)) != tc.repo {
+				t.Errorf("%s: kinds %v, %s offered = %v", name, got, k, !tc.repo)
+			}
 		}
+	}
+}
+
+// Every project call judges the project's shape, with or without a change:
+// the description's and the project restyle's, never a repository's.
+func TestSchemaShape(t *testing.T) {
+	for name, f := range map[string]llmwire.ResponseFormat{
+		"project": descriptionFormat(true), "project restyle": restyleFormat(true, true), "repository restyle": restyleFormat(true, false),
+	} {
+		props := f.Schema["properties"].(map[string]any)
+		want := name != "repository restyle"
+		if (props["shape"] != nil) != want || (props["shape_reason"] != nil) != want {
+			t.Errorf("%s: properties %v, shape asked = %v", name, sortedKeys(props), !want)
+		}
+		if want && !slices.Equal(props["shape"].(map[string]any)["enum"].([]any), []any{"system", "collection"}) {
+			t.Errorf("%s: shape = %v", name, props["shape"])
+		}
+	}
+}
+
+// The shape is read with a change or without one; one off the enum is
+// none, never a sunk answer.
+func TestDescribe_ReadsTheShape(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	for reply, want := range map[string]Shape{
+		`{"shape": "collection", "shape_reason": "Bibliotheken.", "outline": null, "description": null}`:                                                   {Kind: "collection", Reason: "Bibliotheken."},
+		`{"shape": "system", "shape_reason": "", "outline": null, "description": {"summary": [], "statements": [], "added": [], "drop": [], "map": null}}`: {Kind: "system"},
+		`{"shape": "heap", "shape_reason": "?", "outline": null, "description": null}`:                                                                     {},
+		`{"outline": null, "description": null}`: {},
+	} {
+		srv.SetReply(reply)
+		res := testClient(srv.Client()).Describe(context.Background(), "p")
+		if res.Outcome != OutcomeOK || res.Shape != want {
+			t.Errorf("reply %s: outcome %s, shape %+v, want %+v", reply, res.Outcome, res.Shape, want)
+		}
+	}
+	srv.SetReply(`{"shape": "collection", "shape_reason": "x", "summary": null, "statements": [], "added": [], "drop": ["s1"], "outline": null}`)
+	if res := testClient(srv.Client()).Restyle(context.Background(), "p", true); res.Kind != "collection" || !slices.Equal(res.Patch.Drop, []string{"s1"}) {
+		t.Errorf("project restyle = %+v", res)
+	}
+	if res := testClient(srv.Client()).Restyle(context.Background(), "p", false); res.Shape != (Shape{}) {
+		t.Errorf("repository restyle judged a shape: %+v", res.Shape)
 	}
 }

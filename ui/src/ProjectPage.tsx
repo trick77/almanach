@@ -177,6 +177,18 @@ function Body({ data }: { data: ProjectDetail }) {
       </div>
       <h2 className={h2}>{data.key}</h2>
       <p className={meta}>
+        {data.shape !== null && (
+          <>
+            <span
+              className="text-ink-dim"
+              title={S.project.shapeHint[data.shape]}
+              data-shape={data.shape}
+            >
+              {S.project.shape[data.shape]}
+            </span>
+            <Sep />
+          </>
+        )}
         {data.team !== "" && (
           <>
             {S.projects.team} <span className="text-ink-dim">{data.team}</span>

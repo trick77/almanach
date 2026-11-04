@@ -38,16 +38,18 @@ type RunStore interface {
 	ApplyBaselineStep(ctx context.Context, rev store.NewRevision, r store.BaselineRun) (int, bool, error)
 	SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r store.BaselineRun) (bool, error)
 	ArrangePage(ctx context.Context, revisionID int64, statements []store.Statement) (bool, error)
+	JudgeShape(ctx context.Context, revisionID int64, shape string) (bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
+	InnerEdges(ctx context.Context, key string) ([]store.Edge, error)
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 	DepartedRepos(ctx context.Context, key string) ([]string, error)
 	DepartureDue(ctx context.Context, key string) (bool, error)
 	SettleDepartures(ctx context.Context, key string, slugs []string) error
-	RestyleState(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (store.RestyleState, error)
+	RestyleState(ctx context.Context, key, slug string, e store.Epochs, failedBefore time.Time) (store.RestyleState, error)
 	ApplyRestyle(ctx context.Context, r store.BaselineRun, scope string, epoch int, w store.Restyled) (int, bool, error)
 	MarkProjectRestyled(ctx context.Context, runID int64, epoch int) error
 }
@@ -324,14 +326,17 @@ func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
 	return w.save(ctx, *r)
 }
 
-// readsAfresh stamps a full run with the prompts' epoch it reads under, when
-// it starts reading: done, it puts its repository's page at that epoch (the
-// store's), every step having had the page in its prompt. Stamped at the
-// start, never the end: a run a deploy that bumps the epoch cut in two read
-// its first parts under the old rules, and stays due a restyle.
+// readsAfresh stamps a full run with the repository prompts' epoch it reads
+// under (prompts.RepoEpoch), when it starts reading: done, it puts its
+// repository's page at that epoch (the store's), every step having had the
+// page in its prompt. Stamped at the start, never the end: a run a deploy
+// that bumps the epoch cut in two read its first parts under the old rules,
+// and stays due a restyle. The scope's own epoch, never the newer of the
+// two: a page stamped past its scope's would stand through that scope's
+// next bump.
 func readsAfresh(r *store.BaselineRun) {
 	if r.Mode == store.RunFull && r.Epoch == 0 {
-		r.Epoch = prompts.Epoch
+		r.Epoch = prompts.RepoEpoch
 	}
 }
 
@@ -1269,8 +1274,12 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
+	inner, err := w.innerEdges(ctx, r.ProjectKey)
+	if err != nil {
+		return err
+	}
 	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), otherContracts(repos, r.Slug),
-		libs, slugs(repos), departed, w.limits, nil))
+		libs, slugs(repos), departed, inner, w.limits, nil))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -1282,6 +1291,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	// due (its run's call failed) is taken out here. A retried write asks
 	// with the same prompt.
 	w.settle(ctx, r.ProjectKey, departed)
+	shape := w.judgedShape(ctx, projectLabel, projectPage, res.Shape)
 	var rev *store.NewRevision
 	if res.Description == nil {
 		// No change carries the text and the map forward; a project with no
@@ -1289,10 +1299,16 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		if projectPage.RevisionID == 0 {
 			return w.skipProject(ctx, r, plan, baseline.SkipNoPage, "no change asked of a project without a page")
 		}
-		rev = w.carriedRevision(ctx, r, projectPage, slugs(repos))
+		// A page turned into a collection needs the collection's summary: the
+		// stored one is a system's, which the shape's rules forbid. Refused,
+		// the page stands and the next reconcile folds the project again.
+		if why := collectionWithout(projectPage, shape, ""); why != "" {
+			return w.skipProject(ctx, r, plan, baseline.SkipRefused, why)
+		}
+		rev = w.carriedRevision(ctx, r, projectPage, slugs(repos), shape)
 	} else {
 		var refused string
-		rev, plan.ProjectMap, refused, err = w.projectRevision(ctx, r, plan, projectPage, res.Description, slugs(repos))
+		rev, plan.ProjectMap, refused, err = w.projectRevision(ctx, r, plan, projectPage, res.Description, slugs(repos), shape)
 		if err != nil {
 			return err
 		}
@@ -1308,6 +1324,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		rev.Statements = w.applyOutline(ctx, at, rev.Statements, res.Outline)
 	} else if projectPage.RevisionID != 0 {
 		w.arrangePage(ctx, at, &projectPage, res.Outline)
+		w.judgeInPlace(ctx, projectPage, shape)
 	}
 	// A refused map leaves the plan its retry: the description written
 	// first, the map asked again by the steps after.
@@ -1327,12 +1344,14 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 // today's rules: a full run's, or the one that wrote the page first. A
 // reconcile's step folds one repository's change and restyles nothing.
 func (w *Worker) projectRestyled(ctx context.Context, r *store.BaselineRun, first bool) {
-	if !first && (r.Mode != store.RunFull || r.Epoch != prompts.Epoch) {
+	// The project step's prompt is rendered when it runs: whenever the run
+	// started reading, its project call had today's project rules.
+	if !first && r.Mode != store.RunFull {
 		return
 	}
 	// By the run: one gone with its repository, or over, wrote nothing to
 	// mark (writeProject and projectOver report no write of a run over).
-	if err := w.base.Store.MarkProjectRestyled(ctx, r.ID, prompts.Epoch); err != nil {
+	if err := w.base.Store.MarkProjectRestyled(ctx, r.ID, prompts.ProjectEpoch); err != nil {
 		w.log.WarnContext(ctx, "baseline: project restyle epoch not written, a restyle takes the page later", logging.Err(err))
 	}
 }
@@ -1410,7 +1429,8 @@ func (w *Worker) projectStands(ctx context.Context, r *store.BaselineRun, plan r
 	if due {
 		return false, nil, nil
 	}
-	if page.Map != nil {
+	// A collection draws no map: its NULL is no map due.
+	if page.Map != nil || page.Collection() {
 		return true, nil, nil
 	}
 	repos, err := w.repoSummaries(ctx, r)
@@ -1432,14 +1452,129 @@ func (w *Worker) repoSummaries(ctx context.Context, r *store.BaselineRun) ([]sto
 
 // carriedRevision is what a "no change" answer still writes: the page's
 // text with its map carried on (departed repositories out, the sentinel
-// where a map was due and there is none); nil when that is the page as it
-// stands.
-func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page store.Page, slugs []string) *store.NewRevision {
+// where a map was due and there is none) under the shape judged; a
+// collection's page without its statements and map; nil when that is the
+// page as it stands.
+func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page store.Page, slugs []string, shape string) *store.NewRevision {
+	if shape == store.ShapeCollection {
+		return w.collectionRevision(ctx, r, page, page.Summary, nil)
+	}
+	// Carried as the page holds it: a collection's none, so a system it
+	// turns into is due its map, never the sentinel.
 	var m *diagram.Diagram
 	if diagram.MapFits(len(slugs)) {
 		m = w.carriedMap(ctx, page, slugs)
 	}
-	return mapRevision(r, page, m)
+	rev := carriedPage(r, page, page.Statements, m)
+	if rev == nil && shapeMoves(page, shape) {
+		rev = pageRevision(r, page, page.Statements, m)
+	}
+	if rev != nil {
+		rev.Shape = shape
+	}
+	return rev
+}
+
+// shapeMoves reports whether a judged shape changes what the page shows:
+// another than the page's, but a system judged on a page written as one
+// before shapes (its NULL), which changes nothing but the label and is set
+// in place (judgeInPlace).
+func shapeMoves(page store.Page, shape string) bool {
+	return shape != page.Shape && (page.Shape != "" || shape != store.ShapeSystem)
+}
+
+// judgeInPlace sets a first judgment that moves nothing (shapeMoves) on the
+// page's current revision; logged when it fails, the next step judges again.
+func (w *Worker) judgeInPlace(ctx context.Context, page store.Page, shape string) {
+	if page.RevisionID == 0 || page.Shape == shape || shapeMoves(page, shape) {
+		return
+	}
+	if _, err := w.base.Store.JudgeShape(ctx, page.RevisionID, shape); err != nil {
+		w.log.WarnContext(ctx, "baseline: "+projectLabel+": shape not set, judged again by the next step", logging.Err(err))
+	}
+}
+
+// collectionWithout is why an answer turning the page into a collection is
+// refused: it brings no summary of its own (summary, as the answer's prose,
+// "" for none), and the stored one was written for a system, or there is
+// none. "" when the answer stands.
+func collectionWithout(page store.Page, shape, summary string) string {
+	if shape != store.ShapeCollection || strings.TrimSpace(summary) != "" {
+		return ""
+	}
+	if page.Collection() && strings.TrimSpace(page.Summary) != "" {
+		return ""
+	}
+	return "judged a collection without a summary of its own"
+}
+
+// judgedShape is the shape a project call answered, logged where it
+// changes the page's: the page's own when the answer named none (off the
+// schema's enum), a system when neither did. A change is logged at warn
+// with the model's reason, since one answer can empty a page: the old page
+// stays in the revisions.
+func (w *Worker) judgedShape(ctx context.Context, label string, page store.Page, s inference.Shape) string {
+	shape := s.Kind
+	if shape == "" {
+		shape = page.Shape
+	}
+	if shape == "" {
+		shape = store.ShapeSystem
+	}
+	switch {
+	case page.RevisionID == 0:
+		w.log.InfoContext(ctx, "baseline: "+label+": judged a "+shape, slog.String("reason", s.Reason))
+	case page.Shape == "":
+		w.log.InfoContext(ctx, "baseline: "+label+": judged a "+shape+" for the first time", slog.String("reason", s.Reason),
+			slog.Int("statements", len(page.Statements)))
+	case shape != page.Shape:
+		w.log.WarnContext(ctx, "baseline: "+label+": judged a "+shape+", was a "+page.Shape, slog.String("reason", s.Reason),
+			slog.Int("statements", len(page.Statements)))
+	}
+	return shape
+}
+
+// collectionRevision is a collection's page: the summary alone, every
+// statement off (logged, the old page stays in the revisions), no map, the
+// shape set; nil when that is the page as it stands. proposed is what the
+// answer offered beside the summary, left out and logged.
+func (w *Worker) collectionRevision(ctx context.Context, r *store.BaselineRun, page store.Page, summary string, proposed []inference.Statement) *store.NewRevision {
+	at := "baseline: " + projectLabel
+	if len(proposed) > 0 {
+		w.log.WarnContext(ctx, at+": statements of a collection left out", slog.Int("statements", len(proposed)))
+	}
+	if len(page.Statements) > 0 {
+		w.log.WarnContext(ctx, at+": a collection holds no statements, dropped", slog.Int("statements", len(page.Statements)),
+			slog.Any("ids", statementIDs(page.Statements)))
+	}
+	if page.RevisionID != 0 && page.Collection() && summary == page.Summary && len(page.Statements) == 0 && page.Map == nil {
+		return nil
+	}
+	runID := r.ID
+	return &store.NewRevision{
+		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: summary, Statements: []store.Statement{},
+		Chars: prose(summary, nil), SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID,
+		Shape: store.ShapeCollection,
+	}
+}
+
+func statementIDs(statements []store.Statement) []string {
+	out := make([]string, 0, len(statements))
+	for _, s := range statements {
+		out = append(out, s.ID)
+	}
+	return out
+}
+
+// innerEdges is the build dependencies between the project's own
+// repositories, for the project call's judgment of its shape.
+func (w *Worker) innerEdges(ctx context.Context, key string) ([]store.Edge, error) {
+	edges, err := w.base.Store.InnerEdges(ctx, key)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: project dependencies read failed, drain paused", logging.Err(err))
+		return nil, errStop
+	}
+	return edges, nil
 }
 
 // projectPage is the project's current page as a baseline run reads it. A
@@ -1476,6 +1611,12 @@ func carriedPage(r *store.BaselineRun, page store.Page, statements []store.State
 	if sameStatements(page.Statements, statements) && diagram.Equal(m, page.Map) {
 		return nil
 	}
+	return pageRevision(r, page, statements, m)
+}
+
+// pageRevision is the page's summary with statements and the map m as the
+// run's revision, its shape carried.
+func pageRevision(r *store.BaselineRun, page store.Page, statements []store.Statement, m *diagram.Diagram) *store.NewRevision {
 	runID := r.ID
 	return &store.NewRevision{
 		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: page.Summary, Statements: statements,
@@ -1489,14 +1630,27 @@ func carriedPage(r *store.BaselineRun, page store.Page, statements []store.State
 // step's: edits by id, a statement not named kept, removals in drop, so an
 // answer that names none no longer empties the page (an eval's second
 // repository wiped the first one's eleven so). The project has no one tree,
-// so no file decides a drop: a PR-taught statement is never dropped here
-// (a note's fold, which carries what the PR taught, may rewrite it), its
-// drop left out and logged; an edit may change any statement's files.
-// The page has no ceiling. The map never sinks the description: see
+// so no file decides a drop: the model's word decides it (projectDrops);
+// an edit may change any statement's files. A collection's page is its
+// summary alone (collectionRevision), refused without a summary of its
+// own. The page has no ceiling. The map never sinks the description: see
 // revisionMap, whose retry, when its map was refused, comes back for the
 // plan. slugs are the project's source repositories.
 func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description,
-	slugs []string) (*store.NewRevision, *mapRetry, string, error) {
+	slugs []string, shape string) (*store.NewRevision, *mapRetry, string, error) {
+	summary := proseSummary(d.Summary)
+	if why := collectionWithout(page, shape, summary); why != "" {
+		return nil, nil, why, nil
+	}
+	// An empty summary costs only itself: the stored one stays, the rest of
+	// the answer is taken; a first page takes its statements without one.
+	if strings.TrimSpace(summary) == "" {
+		w.log.WarnContext(ctx, "baseline: "+projectLabel+": empty summary left out, the stored one kept")
+		summary = page.Summary
+	}
+	if shape == store.ShapeCollection {
+		return w.collectionRevision(ctx, r, page, summary, append(slices.Clone(d.Statements), d.Added...)), nil, "", nil
+	}
 	next, err := w.store.NextStatementID(ctx, store.ScopeProject, r.ProjectKey, "")
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
@@ -1505,32 +1659,8 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	answer := *d
 	answer.Statements, answer.Added = w.asNew(ctx, "baseline: "+projectLabel, page.Statements, d.Statements, d.Added)
 	d = &answer
-	taught := map[string]bool{}
-	for _, s := range page.Statements {
-		taught[s.ID] = baseline.FromPR(s)
-	}
-	// No tree decides a project drop: a PR-taught one is kept here, before
-	// ApplyPatch (which would judge its files against noTree). Unknown ids
-	// pass on to ApplyPatch, which names them.
-	var drop, kept []string
-	for _, id := range d.Drop {
-		if taught[id] {
-			kept = append(kept, id)
-			continue
-		}
-		drop = append(drop, id)
-	}
-	if len(kept) > 0 {
-		w.log.WarnContext(ctx, "baseline: "+projectLabel+": drop of statements a pull request taught left out", slog.Any("ids", kept))
-	}
-	summary := proseSummary(d.Summary)
-	// An empty summary costs only itself: the stored one stays, the rest of
-	// the answer is taken; a first page takes its statements without one.
-	if strings.TrimSpace(summary) == "" {
-		w.log.WarnContext(ctx, "baseline: "+projectLabel+": empty summary left out, the stored one kept")
-		summary = page.Summary
-	}
-	applied := baseline.ApplyPatch(page.Statements, inference.Patch{Statements: d.Statements, Added: d.Added, Drop: drop}, noTree, validFor(store.ScopeProject))
+	current := w.projectDrops(ctx, "baseline: "+projectLabel, page.Statements, d.Drop, d.Statements)
+	applied := baseline.ApplyPatch(current, inference.Patch{Statements: d.Statements, Added: d.Added}, noTree, validFor(store.ScopeProject))
 	if len(applied.Unknown) > 0 {
 		w.log.WarnContext(ctx, "baseline: "+projectLabel+": unknown ids left out", slog.Any("ids", applied.Unknown))
 	}
@@ -1550,15 +1680,65 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if summary == page.Summary && sameStatements(page.Statements, statements) && diagram.Equal(drawn, page.Map) {
+	if summary == page.Summary && sameStatements(page.Statements, statements) && diagram.Equal(drawn, page.Map) && !shapeMoves(page, shape) {
 		w.log.InfoContext(ctx, "baseline: project description identical, no revision")
 		return nil, retry, "", nil
 	}
 	runID := r.ID
 	return &store.NewRevision{
 		Scope: store.ScopeProject, ProjectKey: r.ProjectKey, Summary: summary, Statements: statements, Chars: chars,
-		SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID, Map: drawn,
+		SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID, Map: drawn, Shape: shape,
 	}, retry, "", nil
+}
+
+// projectDrops is the project page's statements less those an answer
+// drops. No tree decides a project drop, so code takes the model's word,
+// a statement a pull request taught included: how one repository works
+// inside is its page's, where the same note was folded and the tree guards
+// it (user, 2026-11-04). The prompts keep a PR-taught statement about the
+// wiring unless the descriptions show it wrong. A drop of a statement the
+// answer edits too is left out, the edit taken; an unknown id is logged.
+// Before ApplyPatch, which would judge a drop's files against noTree.
+func (w *Worker) projectDrops(ctx context.Context, at string, page []store.Statement, drop []string, edits []inference.Statement) []store.Statement {
+	if len(drop) == 0 {
+		return page
+	}
+	edited := map[string]bool{}
+	for _, s := range edits {
+		if s.ID != nil {
+			edited[*s.ID] = true
+		}
+	}
+	known := map[string]store.Statement{}
+	for _, s := range page {
+		known[s.ID] = s
+	}
+	gone := map[string]bool{}
+	var taught, unknown, both []string
+	for _, id := range drop {
+		s, ok := known[id]
+		switch {
+		case !ok:
+			unknown = append(unknown, id)
+		case edited[id]:
+			both = append(both, id)
+		default:
+			gone[id] = true
+			if baseline.FromPR(s) {
+				taught = append(taught, id)
+			}
+		}
+	}
+	if len(unknown) > 0 {
+		w.log.WarnContext(ctx, at+": drop of unknown ids left out", slog.Any("ids", unknown))
+	}
+	if len(both) > 0 {
+		w.log.WarnContext(ctx, at+": drop of an edited statement left out, the edit taken", slog.Any("ids", both))
+	}
+	if len(gone) > 0 {
+		w.log.InfoContext(ctx, at+": statements dropped", slog.Int("dropped", len(gone)), slog.Any("taught_by_pull_requests", taught))
+	}
+	return slices.DeleteFunc(slices.Clone(page), func(s store.Statement) bool { return gone[s.ID] })
 }
 
 // revisionMap is the map a project revision carries. A project too large for
@@ -1711,8 +1891,12 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if err != nil {
 		return err
 	}
+	inner, err := w.innerEdges(ctx, r.ProjectKey)
+	if err != nil {
+		return err
+	}
 	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), otherContracts(repos, r.Slug), libs, slugs(repos), departed,
-		w.limits, retry)
+		inner, w.limits, retry)
 	res := w.base.Describer.ProjectMap(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeProjectMap, res.Call)
 	if errors.Is(err, errStop) {
@@ -1815,6 +1999,11 @@ func noTree(string) bool { return false }
 // for, not drawn, so a quiet reconcile does not run the step again for it
 // (a run that folds the project anyway asks again).
 func (w *Worker) carriedMap(ctx context.Context, page store.Page, slugs []string) *diagram.Diagram {
+	// A collection has no map, nor the sentinel: none was asked for, and a
+	// project judged a system later is due one at once.
+	if page.Collection() {
+		return nil
+	}
 	if page.Map == nil || diagram.IsSentinel(page.Map) {
 		return diagram.Sentinel()
 	}
@@ -2273,9 +2462,10 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 // renderProject is the project step's prompt; retry is the refused map,
 // asking for the map alone again (nil the first time).
 func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others, contracts string, libs []store.SharedRepo, repoSlugs, departed []string,
-	l config.Limits, retry *mapRetry) string {
+	inner []store.Edge, l config.Limits, retry *mapRetry) string {
 	nodes, edges := mapRoom(libs, len(repoSlugs))
 	return strings.NewReplacer(
+		"{project_shape}", shapeShown(projectPage), "{inner_edges}", innerEdgesShown(inner),
 		"{departed}", departedRule(departed),
 		"{shared}", sharedRepos(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
@@ -2284,6 +2474,32 @@ func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(nodes), "{map_max_edges}", fmt.Sprint(edges),
 		"{map_refused}", refusedMap(retry, true),
 	).Replace(prompts.Project)
+}
+
+// shapeShown is the project's shape as the page holds it, for a project
+// call to keep or change: a page no step judged yet says so.
+func shapeShown(p store.Page) string {
+	switch {
+	case p.RevisionID == 0:
+		return "_None yet: judge it._"
+	case p.Shape == "":
+		return "_Not judged yet: the description below was written as a system's; judge it._"
+	}
+	return "`" + p.Shape + "`"
+}
+
+// innerEdgesShown is the build dependencies between the project's own
+// repositories, one line each: who builds on whose code, by which
+// coordinates.
+func innerEdgesShown(edges []store.Edge) string {
+	if len(edges) == 0 {
+		return "_None: no repository of the project builds on another's code._"
+	}
+	var b strings.Builder
+	for _, e := range edges {
+		fmt.Fprintf(&b, "- `%s` builds on `%s` (%s)\n", e.From.Slug, e.To.Slug, strings.Join(e.Coords, ", "))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // mapRoom is the nodes and edges the model may draw on the system map:
@@ -2337,6 +2553,9 @@ func mapDue(repos int) string {
 // projectMap is the current system map as the JSON the model returns, so
 // keeping it means repeating it. The sentinel is no map.
 func projectMap(p store.Page) string {
+	if p.Collection() {
+		return "_None: a collection has no map. Judged a system, draw it._"
+	}
 	if p.Map == nil || diagram.IsSentinel(p.Map) {
 		return "_None yet: draw it._"
 	}

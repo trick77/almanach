@@ -254,6 +254,24 @@ func (s *Store) Shared(ctx context.Context, key, slug string) ([]SharedRepo, err
 	return out, nil
 }
 
+// InnerEdges is the build dependencies between a project's own source
+// repositories, by their manifests, in the graph's order: one piece of
+// what the project step judges the project's shape by (a library use; a
+// call at runtime no manifest shows).
+func (s *Store) InnerEdges(ctx context.Context, key string) ([]Edge, error) {
+	g, err := s.Dependencies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []Edge{}
+	for _, e := range g.Edges {
+		if e.From.ProjectKey == key && e.To.ProjectKey == key {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // sourceSummaries is the current summaries of the source repositories
 // named, in one query, "" before a first description. By the names the
 // graph read a moment before: a rename between the two reads leaves one

@@ -86,7 +86,8 @@ func (w *Worker) departureStep(ctx context.Context, r *store.BaselineRun, plan r
 			if diagram.IsSentinel(d.Map) {
 				d.Map = nil
 			}
-			next, _, refused, err := w.projectRevision(ctx, r, plan, withMap, &d, active)
+			// A departure judges no shape: the page's stays.
+			next, _, refused, err := w.projectRevision(ctx, r, plan, withMap, &d, active, page.Shape)
 			if err != nil {
 				return err
 			}

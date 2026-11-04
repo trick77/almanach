@@ -104,7 +104,22 @@ type Page struct {
 	// "" before any answer. A basis that no longer matches the page's text
 	// is a map due again.
 	RepoMapBasis string
+	// Shape is what a project page's last judgment found the project to be
+	// (ShapeSystem, ShapeCollection); "" on a repository page and on a
+	// project page no step has judged yet, read as a system.
+	Shape string
 }
+
+// A project's shape: one system its repositories make together, or a
+// holder of repositories that each stand on their own, whose page is a
+// short summary alone: no statements, no map.
+const (
+	ShapeSystem     = "system"
+	ShapeCollection = "collection"
+)
+
+// Collection reports whether the page is a collection's.
+func (p Page) Collection() bool { return p.Shape == ShapeCollection }
 
 // MapStands reports whether the map step answered for a repository page's
 // description as it stands, a map drawn or none (a model that drew none
@@ -247,12 +262,12 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	err = s.db.QueryRowContext(ctx, `
 		SELECT pj.key, COALESCE(rp.slug, ''), r.id, r.revision, r.summary, r.statements, r.source_kind,
 		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), p.updated_at, r.map,
-		       r.repo_map, COALESCE(r.repo_map_basis, '')
+		       r.repo_map, COALESCE(r.repo_map_basis, ''), COALESCE(r.shape, '')
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
 		  JOIN projects pj ON pj.id = p.project_id LEFT JOIN repos rp ON rp.id = p.repo_id
 		 WHERE p.scope = ? AND p.project_id = ? AND p.repo_id = ?`, scope, pid, rid).Scan(
 		&p.ProjectKey, &p.RepoSlug, &p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR,
-		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &repoDrawn, &p.RepoMapBasis)
+		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &repoDrawn, &p.RepoMapBasis, &p.Shape)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Page{}, false, nil
 	}
@@ -299,6 +314,11 @@ type NewRevision struct {
 	// departed repositories from Map and writes its sentinel, so only the
 	// caller knows the map to carry.
 	Map *diagram.Diagram
+	// Shape is a project revision's judgment of the project (ShapeSystem,
+	// ShapeCollection); "" carries the page's current one, as insertRevision
+	// reads it, so a writer that judges nothing (a note's fold, a map, a
+	// departure) never resets it. Ignored on a repository revision.
+	Shape string
 }
 
 // InsertRevision writes the next revision of a page and repoints the page
@@ -349,11 +369,12 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 	// this transaction: a merge or a run's describe step changes the text,
 	// never the map, and the basis then says the map is due again. On a
 	// project revision both stay NULL: the subqueries' scope never matches
-	// a project page.
+	// a project page. A project revision's shape, when its writer judged
+	// none, is the page's current one, read the same way.
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO revisions (scope, project_id, repo_id, revision, summary, statements, chars,
 		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id, map,
-		                       repo_map, repo_map_basis, created_at)
+		                       repo_map, repo_map_basis, created_at, shape)
 		VALUES (?1, ?2, ?3,
 		    (SELECT COALESCE(MAX(revision), 0) + 1 FROM revisions
 		      WHERE scope = ?1 AND project_id = ?2 AND COALESCE(repo_id, 0) = ?4),
@@ -362,10 +383,13 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 		      WHERE ?1 = 'repository' AND p.scope = ?1 AND p.project_id = ?2 AND p.repo_id = ?4),
 		    (SELECT r.repo_map_basis FROM pages p JOIN revisions r ON r.id = p.current_revision_id
 		      WHERE ?1 = 'repository' AND p.scope = ?1 AND p.project_id = ?2 AND p.repo_id = ?4),
-		    ?14)
+		    ?14,
+		    CASE WHEN ?1 = 'project' THEN COALESCE(NULLIF(?15, ''),
+		        (SELECT r.shape FROM pages p JOIN revisions r ON r.id = p.current_revision_id
+		          WHERE p.scope = 'project' AND p.project_id = ?2 AND p.repo_id = 0)) END)
 		RETURNING id, revision`,
 		rev.Scope, pid, repo, rid, rev.Summary, statements, rev.Chars,
-		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn, now).Scan(&id, &n)
+		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn, now, rev.Shape).Scan(&id, &n)
 	if err != nil {
 		return 0, err
 	}

@@ -81,19 +81,55 @@ func TestPromptsReadTheOtherRepositories(t *testing.T) {
 	}
 }
 
-// A restyle reads no code and learns nothing: it says so, drops nothing,
-// and every statement it adds names what it was split from, which the code
-// carries the sources of (consolidate's restyle).
+// A restyle reads no code and learns nothing: it says so, and every
+// statement it adds names what it was split from, which the code carries
+// the sources of (consolidate's restyle). A repository's drops nothing; the
+// project's drops what is one repository's inside, never what spans
+// repositories.
 func TestRestylePromptsLearnNothing(t *testing.T) {
 	for name, p := range map[string]string{"restyle": Restyle, "project restyle": ProjectRestyle} {
-		for _, want := range []string{"you learn nothing", "Nothing is dropped", `"from": ["<id>" | "summary", ...]`, "`outline`"} {
+		for _, want := range []string{"you learn nothing", `"from": ["<id>" | "summary", ...]`, "`outline`"} {
 			if !strings.Contains(p, want) {
 				t.Errorf("%s prompt lacks %q", name, want)
 			}
 		}
-		if strings.Contains(p, `"drop"`) || strings.Contains(p, `"confirmed"`) {
-			t.Errorf("%s prompt's output format offers a drop or a confirmation", name)
+		if strings.Contains(p, `"confirmed"`) {
+			t.Errorf("%s prompt's output format offers a confirmation", name)
 		}
+	}
+	if !strings.Contains(Restyle, "Nothing is dropped") || strings.Contains(Restyle, `"drop"`) {
+		t.Error("repository restyle prompt drops")
+	}
+	for _, want := range []string{`"drop": ["<id>", ...]`, "how one repository works inside", "A statement pull requests taught about how repositories work together stays",
+		"never a source of facts for the page"} {
+		if !strings.Contains(ProjectRestyle, want) {
+			t.Errorf("project restyle prompt lacks %q", want)
+		}
+	}
+}
+
+// Every project prompt that writes the page judges the project's shape the
+// same way and holds a system's page to the wiring: no component, how a
+// repository works inside its page's; the merge reads a collection's from
+// its description's head (consolidate's collectionProject).
+func TestProjectPromptsJudgeTheShape(t *testing.T) {
+	judge := "A repository building on another's code (a common helper library) makes no system by itself"
+	for name, p := range map[string]string{"project": Project, "project restyle": ProjectRestyle} {
+		for _, want := range []string{"## The project's shape", judge, "{project_shape}", "{inner_edges}", `"shape": "system" | "collection"`,
+			"## A collection", "No list of the repositories", "never how one works"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s prompt lacks %q", name, want)
+			}
+		}
+		if strings.Contains(p, `"kind": "component"`) {
+			t.Errorf("%s prompt's output format offers a component", name)
+		}
+	}
+	if !strings.Contains(Merge, "never how one works") || !strings.Contains(Merge, "never a `component` or an `extension`") {
+		t.Error("merge prompt does not hold the project page to the wiring")
+	}
+	if strings.Contains(ProjectDeparture, `"kind": "component"`) {
+		t.Error("departure prompt offers a component")
 	}
 }
 

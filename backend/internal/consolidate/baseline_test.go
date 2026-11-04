@@ -76,14 +76,24 @@ type runStore struct {
 	epochErr                error
 	// reposErr fails SourceRepos.
 	reposErr error
+	// judged counts JudgeShape's writes.
+	judged int
+	// inner is InnerEdges' answer by project, innerErr its failure.
+	inner    map[string][]store.Edge
+	innerErr error
 }
 
 // RestyleState answers as the store's query does, from the epochs, the
 // project's page and its repository count (repoCount, 0 counting as many).
-func (s *runStore) RestyleState(_ context.Context, key, _ string, epoch int, _ time.Time) (store.RestyleState, error) {
+func (s *runStore) RestyleState(_ context.Context, key, _ string, e store.Epochs, _ time.Time) (store.RestyleState, error) {
 	_, page := s.pages[pageKey(store.ScopeProject, key, "")]
-	return store.RestyleState{RepoDue: s.repoEpoch < epoch,
-		ProjectDue: s.projectEpoch < epoch && page && s.repoCount[key] != 1}, s.epochErr
+	return store.RestyleState{RepoDue: s.repoEpoch < e.Repo,
+		ProjectDue: s.projectEpoch < e.Project && page && s.repoCount[key] != 1}, s.epochErr
+}
+
+// InnerEdges is the project's own build dependencies, as set.
+func (s *runStore) InnerEdges(_ context.Context, key string) ([]store.Edge, error) {
+	return s.inner[key], s.innerErr
 }
 
 // MarkProjectRestyled marks while the run stands and did not fail, as the
@@ -117,6 +127,11 @@ func (s *runStore) ApplyRestyle(ctx context.Context, r store.BaselineRun, scope 
 		}
 		if w.ArrangeID != 0 {
 			if _, err := s.ArrangePage(ctx, w.ArrangeID, w.Arranged); err != nil {
+				return 0, false, err
+			}
+		}
+		if w.JudgeID != 0 {
+			if _, err := s.JudgeShape(ctx, w.JudgeID, w.Shape); err != nil {
 				return 0, false, err
 			}
 		}
@@ -191,12 +206,19 @@ func (s *runStore) ApplyBaselineStep(ctx context.Context, rev store.NewRevision,
 	// store's insertRevision does.
 	key := pageKey(rev.Scope, rev.ProjectKey, rev.RepoSlug)
 	var repoMap *diagram.Diagram
-	var basis string
+	var basis, shape string
 	if rev.Scope == store.ScopeRepository {
 		repoMap, basis = s.pages[key].RepoMap, s.pages[key].RepoMapBasis
+	} else {
+		// A project revision without a judgment carries the page's.
+		shape = rev.Shape
+		if shape == "" {
+			shape = s.pages[key].Shape
+		}
 	}
-	s.pages[key] = store.Page{RevisionID: int64(n), Revision: n, Summary: rev.Summary,
-		Statements: rev.Statements, SourceKind: rev.SourceKind, SourceCommit: rev.SourceCommit, Map: rev.Map, RepoMap: repoMap, RepoMapBasis: basis}
+	s.pages[key] = store.Page{Scope: rev.Scope, RevisionID: int64(n), Revision: n, Summary: rev.Summary,
+		Statements: rev.Statements, SourceKind: rev.SourceKind, SourceCommit: rev.SourceCommit, Map: rev.Map, RepoMap: repoMap, RepoMapBasis: basis,
+		Shape: shape}
 	return n, true, err
 }
 
@@ -226,6 +248,20 @@ func (s *runStore) ArrangePage(_ context.Context, revisionID int64, statements [
 			p.Statements = statements
 			s.pages[key] = p
 			s.arranges++
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// JudgeShape sets a shape in place on an unjudged current project
+// revision, as the store does.
+func (s *runStore) JudgeShape(_ context.Context, revisionID int64, shape string) (bool, error) {
+	for key, p := range s.pages {
+		if p.RevisionID == revisionID && p.Scope == store.ScopeProject && p.Shape == "" {
+			p.Shape = shape
+			s.pages[key] = p
+			s.judged++
 			return true, nil
 		}
 	}
@@ -2171,8 +2207,17 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 		return out
 	}
 	added := []inference.Statement{stmt(nil, "decision", "Ein Worker", "Weil.", "w.go")}
+	// A project drop is the model's word, a PR-taught statement's too (how
+	// one repository works inside is its page's; user, 2026-11-04); an
+	// unknown id is left out.
 	p := project(&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}, Drop: []string{"s1", "s2", "s99"}, Added: added})
-	if want := []string{"s1:Schnittstelle:Bleibt.", "s3:Ein Worker:Weil."}; p.Summary != "Das Projekt, neu." || !slices.Equal(ids(p), want) {
+	if want := []string{"s3:Ein Worker:Weil."}; p.Summary != "Das Projekt, neu." || !slices.Equal(ids(p), want) {
+		t.Errorf("project page = %q %v, want %v", p.Summary, ids(p), want)
+	}
+	// A drop of a statement the answer edits too: the edit is taken.
+	p = project(&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{stmt(ref("s2"), "rule", "Alt", "Bleibt doch.", "old.go")},
+		Drop: []string{"s2"}, Added: []inference.Statement{}})
+	if want := []string{"s1:Schnittstelle:Bleibt.", "s2:Alt:Bleibt doch."}; !slices.Equal(ids(p), want) {
 		t.Errorf("project page = %q %v, want %v", p.Summary, ids(p), want)
 	}
 	// A project page without statements: an edit is a new statement (an
@@ -2240,7 +2285,7 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 		t.Errorf("edit to a long name = %+v, want it taken and checked", s)
 	}
 	// A page of two takes a third: no count holds it.
-	p = project(&inference.Description{Summary: "Voll.", Statements: []inference.Statement{stmt(ref("s1"), "component", "Schnittstelle", "Geschärft.", "api.go")}, Added: added})
+	p = project(&inference.Description{Summary: "Voll.", Statements: []inference.Statement{stmt(ref("s1"), "interface", "Schnittstelle", "Geschärft.", "api.go")}, Added: added})
 	if want := []string{"s1:Schnittstelle:Geschärft.", "s2:Alt:Geht.", "s3:Ein Worker:Weil."}; p.Summary != "Voll." || !slices.Equal(ids(p), want) {
 		t.Errorf("project page = %q %v, want %v", p.Summary, ids(p), want)
 	}

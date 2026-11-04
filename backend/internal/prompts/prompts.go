@@ -46,18 +46,33 @@ var RepoMap string
 //go:embed almanach_restyle.txt
 var Restyle string
 
-// ProjectRestyle is Restyle for the project page, from the page alone.
+// ProjectRestyle is Restyle for the project page: the page, its
+// repositories' summaries, interfaces and entities, never their code. It
+// judges the project's shape too.
 //
 //go:embed almanach_project_restyle.txt
 var ProjectRestyle string
 
-// Epoch is the prompts' generation for stored pages: a page restyled below
-// it is due one restyle run (store.RunRestyle), one page at a time. Bump it
-// in the change whose prompt rules (layout, kinds, areas, the summary's
-// order) must reach every stored page; a change that only shapes new
-// writing leaves it, and stored pages change as today, by a note or a run
-// that reads code. Each bump costs one call per page.
-const Epoch = 1
+// RepoEpoch and ProjectEpoch are the prompts' generation for stored pages,
+// one per scope: a page restyled below its scope's is due one restyle run
+// (store.RunRestyle), one page at a time. Bump one, to Epoch+1, in the
+// change whose prompt rules (layout, kinds, areas, the summary's order, the
+// project's shape) must reach every stored page of that scope; a change
+// that only shapes new writing leaves them, and stored pages change as
+// today, by a note or a run that reads code. Each bump costs one call per
+// page of its scope.
+const (
+	RepoEpoch = 1
+	// ProjectEpoch 2: the project's shape, a system's page only its wiring
+	// (user, 2026-11-04).
+	ProjectEpoch = 2
+)
+
+// Epoch is the newer of the two: what a restyle run is stamped with. A page
+// is marked at its own scope's, a full run stamped with RepoEpoch; a run's
+// failures count against a scope while stamped at or past its epoch, which
+// is why a bump goes to Epoch+1, never back to a value a run already holds.
+const Epoch = max(RepoEpoch, ProjectEpoch)
 
 // Diagrams is the diagram rules the merge, describe and project prompts
 // share, rendered into their {diagram_rules}.
