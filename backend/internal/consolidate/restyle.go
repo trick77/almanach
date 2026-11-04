@@ -174,7 +174,12 @@ func (w *Worker) writeRestyle(ctx context.Context, r *store.BaselineRun, plan ru
 	if err := encodeInto(r, plan); err != nil {
 		return err
 	}
-	n, ok, err := w.base.Store.ApplyRestyle(ctx, *r, scope, prompts.Epoch, out)
+	// Each page at its own scope's epoch (store.Epochs).
+	epoch := prompts.RepoEpoch
+	if scope == store.ScopeProject {
+		epoch = prompts.ProjectEpoch
+	}
+	n, ok, err := w.base.Store.ApplyRestyle(ctx, *r, scope, epoch, out)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: restyle write failed, drain paused", logging.Err(err))
 		return w.stepBusy(ctx, r, prev, "restyle", err)
@@ -202,9 +207,18 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	if scope == store.ScopeProject {
 		shape = w.judgedShape(ctx, "restyle "+projectLabel, stored, res.Shape)
 		if shape == store.ShapeCollection {
+			answered := ""
+			if patch.Summary != nil {
+				answered = proseSummary(*patch.Summary)
+			}
+			// A page turned into a collection needs the collection's summary:
+			// refused, the step fails and counts against the page's tries.
+			if why := collectionWithout(stored, shape, answered); why != "" {
+				return store.Restyled{}, fmt.Errorf("project restyle refused: %s", why)
+			}
 			summary := stored.Summary
-			if patch.Summary != nil && strings.TrimSpace(proseSummary(*patch.Summary)) != "" {
-				summary = proseSummary(*patch.Summary)
+			if strings.TrimSpace(answered) != "" {
+				summary = answered
 			}
 			rr := r
 			return store.Restyled{Revision: w.collectionRevision(ctx, &rr, stored, summary, append(slices.Clone(patch.Statements), patch.Added...))}, nil

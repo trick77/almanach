@@ -104,11 +104,31 @@ func TestProjectStep_ShapeAloneWrites(t *testing.T) {
 	if page := x.projectPage(); page.Revision != 1 || page.Shape != store.ShapeSystem || x.st.judged != 1 {
 		t.Fatalf("page = revision %d shape %q, judged %d; want revision 1 judged in place", page.Revision, page.Shape, x.st.judged)
 	}
+	// A system judged a collection with no rewrite would keep a system's
+	// summary as the collection's: refused, the page stands, the step
+	// skipped so the next reconcile folds the project again.
 	x = shapeWorld(t, systemPage(store.ShapeSystem), inference.DescriptionResult{Shape: inference.Shape{Kind: store.ShapeCollection}})
 	x.w.drain(context.Background())
+	if page := x.projectPage(); page.Revision != 1 || page.Shape != store.ShapeSystem || len(page.Statements) != 2 || x.run().Skipped != 1 {
+		t.Fatalf("page = revision %d shape %q, %d statements, run skipped %d; want the page standing, the step skipped",
+			page.Revision, page.Shape, len(page.Statements), x.run().Skipped)
+	}
+	// With a summary of its own it is a collection's revision.
+	x = shapeWorld(t, systemPage(store.ShapeSystem), inference.DescriptionResult{Shape: inference.Shape{Kind: store.ShapeCollection},
+		Description: &inference.Description{Summary: "Kurz.", Statements: []inference.Statement{}}})
+	x.w.drain(context.Background())
 	if page := x.projectPage(); page.Revision != 2 || page.Shape != store.ShapeCollection || len(page.Statements) != 0 ||
-		page.Summary != "Das System, lang und breit." || page.Map != nil {
-		t.Fatalf("page = %+v, want a collection's revision of the summary as stored", page)
+		page.Summary != "Kurz." || page.Map != nil {
+		t.Fatalf("page = %+v, want a collection's revision", page)
+	}
+	// A first page judged a collection with an empty summary is refused:
+	// never a blank page.
+	x = shapeWorld(t, store.Page{}, inference.DescriptionResult{Shape: inference.Shape{Kind: store.ShapeCollection},
+		Description: &inference.Description{Summary: " ", Statements: []inference.Statement{}}})
+	delete(x.st.pages, pageKey(store.ScopeProject, "tools", ""))
+	x.w.drain(context.Background())
+	if _, ok := x.st.pages[pageKey(store.ScopeProject, "tools", "")]; ok {
+		t.Fatal("a blank collection page was written")
 	}
 	// An answer naming no shape keeps the page's.
 	collection := store.Page{Scope: store.ScopeProject, RevisionID: 1, Revision: 1, Summary: "Bibliotheken.", Shape: store.ShapeCollection,
@@ -204,6 +224,24 @@ func TestRestyle_ProjectCollection(t *testing.T) {
 	x.w.drain(context.Background())
 	if got := ids(x.projectPage().Statements); !slices.Equal(got, []string{"s1", "s2"}) {
 		t.Fatalf("statements = %v, want s1 kept: what a left-out split came from", got)
+	}
+}
+
+// A project restyle turning a system into a collection with no summary of
+// its own fails the step: the page stands, a try spent, never a system's
+// summary kept under a collection.
+func TestRestyle_CollectionWithoutASummary(t *testing.T) {
+	x := restyleWorld(t)
+	x.st.repoEpoch = prompts.RepoEpoch
+	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = systemPage(store.ShapeSystem)
+	x.models.restyles = []inference.RestyleResult{{Call: called, Shape: inference.Shape{Kind: store.ShapeCollection},
+		Patch: inference.Patch{Statements: []inference.Statement{}}}}
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunFailed || r.Step != store.RestyleProjectStep || !strings.Contains(r.Error, "without a summary") {
+		t.Fatalf("run = %+v, want failed on the project page", r)
+	}
+	if p := x.projectPage(); p.Shape != store.ShapeSystem || len(p.Statements) != 2 || x.st.projectEpoch != 0 {
+		t.Fatalf("page = %+v, epoch %d: want it standing, still due", p, x.st.projectEpoch)
 	}
 }
 

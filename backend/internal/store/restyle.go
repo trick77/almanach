@@ -66,49 +66,51 @@ type RestyleState struct {
 }
 
 // Epochs is the prompts' generation per scope (prompts.RepoEpoch,
-// prompts.ProjectEpoch): a page restyled below its scope's is due. Run is
-// the newer, what a run is stamped with (BaselineRun.Epoch), its failures
-// counted at, and a page marked restyled at.
+// prompts.ProjectEpoch): a page restyled below its scope's is due, and is
+// marked restyled at its scope's own. Run is the newer, what a restyle run
+// is stamped with (BaselineRun.Epoch).
 type Epochs struct {
 	Repo, Project int
 }
 
-// Run is the epoch a run runs under: the newer of the two.
+// Run is the epoch a restyle run runs under: the newer of the two.
 func (e Epochs) Run() int { return max(e.Repo, e.Project) }
 
 // RestyleState reports what of a repository is due a restyle at e. Its page
 // while below e.Repo; its project's page while below e.Project, written,
 // and the project has more than one active source repository (a project of
 // one has none: its repository's page is the project's). Either only while
-// fewer than RestyleTries of its restyles failed at the run epoch, the
-// newest of them before failedBefore (the retry's wait). Nothing is due of
-// a repository that is no active source.
+// fewer than RestyleTries of its restyles failed under the scope's rules
+// (a run stamped at or past the scope's epoch: the epochs only grow), the
+// newest of them before failedBefore (the retry's wait); so a bump of one
+// scope gives the other's pages no new tries. Nothing is due of a
+// repository that is no active source.
 func (s *Store) RestyleState(ctx context.Context, key, slug string, e Epochs, failedBefore time.Time) (RestyleState, error) {
 	var st RestyleState
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil || !ok {
 		return st, err
 	}
-	// f is the failed restyles at the run epoch: the repository's own, and
-	// the project's that failed on the project page.
+	// f is the failed restyles under the scope's rules: the repository's
+	// own, and the project's that failed on the project page.
 	err = s.db.QueryRowContext(ctx, `
-		SELECT sr.restyle_epoch < ?6
+		SELECT sr.restyle_epoch < ?2
 		       AND (SELECT COUNT(*) FROM baseline_runs f
-		             WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2) < ?3
+		             WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch >= ?2) < ?3
 		       AND COALESCE((SELECT MAX(f.finished_at) FROM baseline_runs f
-		                      WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2), '') < ?4,
-		       p.restyle_epoch < ?7
+		                      WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch >= ?2), '') < ?4,
+		       p.restyle_epoch < ?6
 		       AND EXISTS (SELECT 1 FROM pages pg WHERE pg.scope = 'project' AND pg.project_id = sr.project_id)
 		       AND (SELECT COUNT(*) FROM source_repos o WHERE o.project_id = sr.project_id AND o.deactivated_at IS NULL) > 1
 		       AND (SELECT COUNT(*) FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
-		             WHERE o.project_id = sr.project_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2 AND f.step = ?5) < ?3
+		             WHERE o.project_id = sr.project_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch >= ?6 AND f.step = ?5) < ?3
 		       AND COALESCE((SELECT MAX(f.finished_at) FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
-		                      WHERE o.project_id = sr.project_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2
+		                      WHERE o.project_id = sr.project_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch >= ?6
 		                        AND f.step = ?5), '') < ?4,
 		       EXISTS (SELECT 1 FROM baseline_runs o WHERE o.mode = 'restyle' AND o.state NOT IN ('done', 'failed'))
 		  FROM source_repos sr JOIN projects p ON p.id = sr.project_id
 		 WHERE sr.repo_id = ?1 AND `+activeRow,
-		rid, e.Run(), RestyleTries, stamp(failedBefore), RestyleProjectStep, e.Repo, e.Project).Scan(&st.RepoDue, &st.ProjectDue, &st.Open)
+		rid, e.Repo, RestyleTries, stamp(failedBefore), RestyleProjectStep, e.Project).Scan(&st.RepoDue, &st.ProjectDue, &st.Open)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RestyleState{}, nil
 	}

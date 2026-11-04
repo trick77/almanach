@@ -326,14 +326,17 @@ func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
 	return w.save(ctx, *r)
 }
 
-// readsAfresh stamps a full run with the prompts' epoch it reads under, when
-// it starts reading: done, it puts its repository's page at that epoch (the
-// store's), every step having had the page in its prompt. Stamped at the
-// start, never the end: a run a deploy that bumps the epoch cut in two read
-// its first parts under the old rules, and stays due a restyle.
+// readsAfresh stamps a full run with the repository prompts' epoch it reads
+// under (prompts.RepoEpoch), when it starts reading: done, it puts its
+// repository's page at that epoch (the store's), every step having had the
+// page in its prompt. Stamped at the start, never the end: a run a deploy
+// that bumps the epoch cut in two read its first parts under the old rules,
+// and stays due a restyle. The scope's own epoch, never the newer of the
+// two: a page stamped past its scope's would stand through that scope's
+// next bump.
 func readsAfresh(r *store.BaselineRun) {
 	if r.Mode == store.RunFull && r.Epoch == 0 {
-		r.Epoch = prompts.Epoch
+		r.Epoch = prompts.RepoEpoch
 	}
 }
 
@@ -1296,6 +1299,12 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		if projectPage.RevisionID == 0 {
 			return w.skipProject(ctx, r, plan, baseline.SkipNoPage, "no change asked of a project without a page")
 		}
+		// A page turned into a collection needs the collection's summary: the
+		// stored one is a system's, which the shape's rules forbid. Refused,
+		// the page stands and the next reconcile folds the project again.
+		if why := collectionWithout(projectPage, shape, ""); why != "" {
+			return w.skipProject(ctx, r, plan, baseline.SkipRefused, why)
+		}
 		rev = w.carriedRevision(ctx, r, projectPage, slugs(repos), shape)
 	} else {
 		var refused string
@@ -1335,12 +1344,14 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 // today's rules: a full run's, or the one that wrote the page first. A
 // reconcile's step folds one repository's change and restyles nothing.
 func (w *Worker) projectRestyled(ctx context.Context, r *store.BaselineRun, first bool) {
-	if !first && (r.Mode != store.RunFull || r.Epoch != prompts.Epoch) {
+	// The project step's prompt is rendered when it runs: whenever the run
+	// started reading, its project call had today's project rules.
+	if !first && r.Mode != store.RunFull {
 		return
 	}
 	// By the run: one gone with its repository, or over, wrote nothing to
 	// mark (writeProject and projectOver report no write of a run over).
-	if err := w.base.Store.MarkProjectRestyled(ctx, r.ID, prompts.Epoch); err != nil {
+	if err := w.base.Store.MarkProjectRestyled(ctx, r.ID, prompts.ProjectEpoch); err != nil {
 		w.log.WarnContext(ctx, "baseline: project restyle epoch not written, a restyle takes the page later", logging.Err(err))
 	}
 }
@@ -1483,6 +1494,20 @@ func (w *Worker) judgeInPlace(ctx context.Context, page store.Page, shape string
 	}
 }
 
+// collectionWithout is why an answer turning the page into a collection is
+// refused: it brings no summary of its own (summary, as the answer's prose,
+// "" for none), and the stored one was written for a system, or there is
+// none. "" when the answer stands.
+func collectionWithout(page store.Page, shape, summary string) string {
+	if shape != store.ShapeCollection || strings.TrimSpace(summary) != "" {
+		return ""
+	}
+	if page.Collection() && strings.TrimSpace(page.Summary) != "" {
+		return ""
+	}
+	return "judged a collection without a summary of its own"
+}
+
 // judgedShape is the shape a project call answered, logged where it
 // changes the page's: the page's own when the answer named none (off the
 // schema's enum), a system when neither did. A change is logged at warn
@@ -1605,15 +1630,18 @@ func pageRevision(r *store.BaselineRun, page store.Page, statements []store.Stat
 // step's: edits by id, a statement not named kept, removals in drop, so an
 // answer that names none no longer empties the page (an eval's second
 // repository wiped the first one's eleven so). The project has no one tree,
-// so no file decides a drop: a PR-taught statement is never dropped here
-// (a note's fold, which carries what the PR taught, may rewrite it), its
-// drop left out and logged; an edit may change any statement's files.
-// The page has no ceiling. The map never sinks the description: see
+// so no file decides a drop: the model's word decides it (projectDrops);
+// an edit may change any statement's files. A collection's page is its
+// summary alone (collectionRevision), refused without a summary of its
+// own. The page has no ceiling. The map never sinks the description: see
 // revisionMap, whose retry, when its map was refused, comes back for the
 // plan. slugs are the project's source repositories.
 func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, d *inference.Description,
 	slugs []string, shape string) (*store.NewRevision, *mapRetry, string, error) {
 	summary := proseSummary(d.Summary)
+	if why := collectionWithout(page, shape, summary); why != "" {
+		return nil, nil, why, nil
+	}
 	// An empty summary costs only itself: the stored one stays, the rest of
 	// the answer is taken; a first page takes its statements without one.
 	if strings.TrimSpace(summary) == "" {
@@ -2525,6 +2553,9 @@ func mapDue(repos int) string {
 // projectMap is the current system map as the JSON the model returns, so
 // keeping it means repeating it. The sentinel is no map.
 func projectMap(p store.Page) string {
+	if p.Collection() {
+		return "_None: a collection has no map. Judged a system, draw it._"
+	}
 	if p.Map == nil || diagram.IsSentinel(p.Map) {
 		return "_None yet: draw it._"
 	}

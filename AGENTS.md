@@ -50,7 +50,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   used, any case, never to another; own may change case (user, 2026-11-01). Carry-over:
   `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
 - Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
-  2026-10-30). Token never in URL,
+  2026-10-30). Clone paths `filepath.Rel`-checked before `RemoveAll`; removal: lock, folder, row. Token never in URL,
   stderr, response or log; sealed at rest; one origin only (static folder = one host).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
   poller; repo failure on its row. Run due = read from rows each cycle, never from an event.
@@ -58,11 +58,11 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   source key: from project URL, case-only rename.
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
   stored (user, 2026-10-30). Gate: key, slug any case (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
-  start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
-  only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  1 source repo = project of one: no project call/page. Project = system (page: wiring only, no
-  `component`) or collection (summary alone), model-judged, no switch (user, 2026-11-04). Project
-  drop = model's word, PR-taught too: repo inside is repo page's.
+  start; repo's notes wait out its run. Step answers a patch: unnamed ids kept; repo page: PR statement
+  dropped only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
+  1 source repo = project of one: no project call/page. Project = system (page: wiring, no
+  `component`) or collection (summary alone); model judges, no switch (user, 2026-11-04); its
+  drops the model's word, PR-taught too.
 - Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, no
   kind, not "library"; map zone UI-drawn.
 - Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice): model's tags, `RuntimeOnly`.

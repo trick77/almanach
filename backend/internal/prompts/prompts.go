@@ -68,8 +68,10 @@ const (
 	ProjectEpoch = 2
 )
 
-// Epoch is the newer of the two: what a run is stamped with and its
-// failures counted at, what a page is marked restyled at.
+// Epoch is the newer of the two: what a restyle run is stamped with. A page
+// is marked at its own scope's, a full run stamped with RepoEpoch; a run's
+// failures count against a scope while stamped at or past its epoch, which
+// is why a bump goes to Epoch+1, never back to a value a run already holds.
 const Epoch = max(RepoEpoch, ProjectEpoch)
 
 // Diagrams is the diagram rules the merge, describe and project prompts
