@@ -4,7 +4,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 
 ## Commands
 
-- Prompts compiled in, never configurable; a rule meant for stored pages bumps `prompts.Epoch`.
+- Prompts compiled in, never configurable; a rule meant for stored pages bumps its scope's epoch.
   UI: German, copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
   browser write. Text, summary: schema blocks, never newlines in a JSON string (models drop
@@ -30,17 +30,17 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   read (rows verbatim), `lang.Prose`/`Laid`. Shapes need a value's mark, prose stays. New shape → test.
 - Description = documentation, no one-liners: statement as long as subject needs, no
   sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
-  (user, 2026-11-01); bad path: off file list. Same rewrite = no revision.
+  (user, 2026-11-01); bad path: off file list.
 - Provenance is code's: `sources` carried by id, current PR/run appended on text change; departure
   run neither credits nor adds (removal teaches nothing; user, 2026-11-02), restyle never credits. Bad item
   (unknown/repeated id, bad kind, empty): merge (whole page) rejected; step's patch never, item
-  left out, logged, stored kept (user, 2026-11-01). New statements in id-less `added`; id from `NextStatementID` over whole history, never reissued.
+  left out, logged, stored kept (user, 2026-11-01). New statements in id-less `added`; ids never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:
   worker holds, note kept, ≤ `maxFoldAttempts`: none blocks queue forever. Failed mark pauses drain (else one paid call per lap).
 - One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
-  schema, no in-call retry. Models = llmwire profile ids in config.
+  schema, no in-call retry.
 - Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.
 - SQLite: `serve` never migrates; never edit applied migration (0001 squashed once, DB dropped,
   2026-11-01). Probes exec.
@@ -60,8 +60,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   stored (user, 2026-10-30). Gate: key, slug any case (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  1 source repo = project of one: no project call/page.
-- Deps code's: manifests ≤1 deep or declared; edges joined at read, never stored; ambiguous = no
-  edge; 1 clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
-- Flow: self/repeated edges dropped first. Both maps runtime+prod only, no build/CI/CD (user,
-  2026-11-02, twice): model's tags, `RuntimeOnly`.
+  1 source repo = project of one: no project call/page. Project = system (page: wiring only, no
+  `component`) or collection (summary alone), model-judged, no switch (user, 2026-11-04). Project
+  drop = model's word, PR-taught too: repo inside is repo page's.
+- Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, no
+  kind, not "library"; map zone UI-drawn.
+- Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice): model's tags, `RuntimeOnly`.
