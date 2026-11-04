@@ -73,6 +73,15 @@ type RepoMapResult struct {
 	Outline []OutlineArea
 }
 
+// RestyleResult is one restyle call: a patch over the page (edits, new
+// statements naming what they were split from, a summary or null; never a
+// drop or a confirmation) and the page's layout, nil to keep it.
+type RestyleResult struct {
+	Call
+	Patch   Patch
+	Outline []OutlineArea
+}
+
 // Schema names on the wire.
 const (
 	CatalogueSchemaName   = "almanach_catalogue"
@@ -80,7 +89,48 @@ const (
 	DescriptionSchemaName = "almanach_description"
 	RepoMapSchemaName     = "almanach_repo_map"
 	ProjectMapSchemaName  = "almanach_project_map"
+	RestyleSchemaName     = "almanach_restyle"
 )
+
+// Restyle asks for a stored page brought to the rules of today, the page
+// alone in the prompt: the repository's, or with project the project's,
+// whose kinds it takes.
+func (c *Client) Restyle(ctx context.Context, prompt string, project bool) RestyleResult {
+	kinds := RepoKinds
+	if project {
+		kinds = ProjectKinds
+	}
+	content, call := c.call(ctx, prompt, restyleFormat(c.diagrams, kinds))
+	out := RestyleResult{Call: call}
+	if call.Outcome != OutcomeOK {
+		return out
+	}
+	var outline struct {
+		Outline json.RawMessage `json:"outline"`
+	}
+	if !parse(content, &out.Patch) || out.Patch.Statements == nil || !parse(content, &outline) {
+		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
+		return out
+	}
+	// The schema offers neither: whatever an answer outside it carries is
+	// no restyle's to apply.
+	out.Patch.Drop, out.Patch.Confirmed = nil, nil
+	out.Outline = parseOutline(outline.Outline)
+	return out
+}
+
+// restyleFormat is a restyle's answer: the patch's summary and edits, new
+// statements each with its origin, and the outline.
+func restyleFormat(diagrams bool, kinds []string) llmwire.ResponseFormat {
+	props := statementProps(diagrams, kinds)
+	props["from"] = array(str())
+	return strict(RestyleSchemaName, map[string]any{
+		"summary":    nullableBlocks(),
+		"statements": statements(diagrams, kinds),
+		"added":      array(object(props)),
+		"outline":    outlineSchema(),
+	})
+}
 
 // Catalogue asks which subjects a repository is made of.
 func (c *Client) Catalogue(ctx context.Context, prompt string) CatalogueResult {

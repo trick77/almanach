@@ -983,6 +983,47 @@ the poller holds (a long clone or fetch of this repository) defers the
 step to the next drain rather than holding the worker behind it; the reads
 take the clone's lock for the read only, never across a model call.
 
+**Prompt changes reach stored pages by a restyle.** A prompt shapes only
+the calls made after it ships; a stored page is touched again by a note's
+fold (what the note changes), a reconcile (the changed parts) or a full run
+(every part, up to `BACKEND_BASELINE_MAX_CALLS` calls and
+`BACKEND_BASELINE_MAX_BYTES` of code a repository). Rules of layout, kind
+and area need no code read again (user, 2026-11-04: "that's pretty
+expensive to redescribe"). `prompts.Epoch`, bumped by hand in the change
+whose rules must reach every stored page, says which pages are due: each
+page's `restyle_epoch` (`source_repos`, `projects`) is the epoch it was
+last restyled at, 0 for every page written before, and a full run done
+under an epoch puts its repository's page there. The poller queues a
+restyle run (mode `restyle`, trigger `epoch`) at the documented commit
+when the repository's page or its project's is below the epoch and
+nothing that reads the code is due (the failed and unfinished retries, a
+reconcile first), the reconcile interval on, a page documented; one restyle
+open in the whole wiki at a time, so a bump trickles through one page after
+another and never crowds out the notes. A failed one is queued again a day
+later (the interval when shorter), at most three more times an epoch.
+The run reads no code. Its steps: the repository's page, one call
+(`almanach_restyle.txt`) over the page alone; the project's page, one call
+(`almanach_project_restyle.txt`), in the run of the first repository of a
+project of more than one whose page is below the epoch, never waiting for
+the others; then the map step as in any run, which draws only when the
+text moved. Each page that is at the epoch already is skipped without a
+call. The answer is a patch with an outline: edits by id, new statements in
+`added` each naming what it was split out of (`from`, statement ids or
+`summary`), a summary or null; no drop, no confirmation in the schema. It
+learns nothing, so it neither credits nor checks: an edit keeps its files,
+sources and last check; a new statement keeps only files of what it came
+from (any file of the page when from the summary) and carries their sources
+(from the summary: those of the statements sharing a file with it), and
+with none to carry, or none the page can hold, it is left out and logged;
+nothing is dropped. Text changed is a revision (the project's with its map
+as stored), a layout alone is set in place. Each step's write, the run's
+progress and the page's epoch land in one transaction: a restart or a
+later failure never pays a step twice. A restyle documents nothing:
+`LastRun`, `DocumentedRun` and the source page never see it, so the next
+reconcile starts from the plan of the run that read the code, and no
+retry streak counts it. A change whose rules only shape new writing leaves
+the epoch: stored pages change as before.
+
 ## 5. Operations
 
 - `almanach migrate` applies the embedded migrations to the file
@@ -1131,10 +1172,13 @@ time and error, and beside the state when it was deactivated
 source repository, and the wiki lists the sources (4b).
 
 **The baseline.** `baseline_runs` is one row per run: the repository, the
-mode (`full` or `reconcile` from `base_commit`), the trigger (`manual`,
+mode (`full` or `reconcile` from `base_commit`, or `restyle`: the stored
+pages alone, always trigger `epoch`), the trigger (`manual`,
 `first_ready`, `monthly`, `retry`: a failed run queued again in its own
 mode, up to three times in a row, a day apart or after the reconcile
-interval when that is shorter, or `departure`: a deactivation's), the commit (the head when queued, pinned when
+interval when that is shorter, `departure`: a deactivation's, or `epoch`),
+`epoch` (the `prompts.Epoch` a full or restyle run ran under, 0 otherwise:
+the failed restyles of one epoch bound its retries), the commit (the head when queued, pinned when
 the run starts), the state (`queued`, `cataloguing`, `describing`,
 `project`, `done`, `failed`), the step and the steps, the plan (the
 catalogue as JSON: subjects with their files and sizes, what this run
@@ -1620,6 +1664,13 @@ baseline step's patch never is: its bad items are left out one by one (see
   answered call settles only the repositories it named; a departure run
   that finds nothing due (an earlier call took it out) makes no call. A
   project left with fewer than two repositories settles without one.
+- A restyle run (mode `restyle`) reads no code and learns nothing: no drop,
+  no credit, no check; an edit keeps its files, a statement split off only
+  files and sources of what it came from, left out without a source. One
+  open in the wiki at a time. It documents nothing and counts in no
+  streak: `DocumentedRun`, `LastRun` and the source page never return it.
+  A page's `restyle_epoch` moves with its step's write, a full run done
+  moving its repository's.
 
 ### Startup and operations
 

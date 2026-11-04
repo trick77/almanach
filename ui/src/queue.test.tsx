@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { duration, QueuePage } from "./QueuePage";
-import type { Me, Queue, QueueItem, QueueRun } from "./api";
+import type { Me, Queue, QueueItem, QueueRun, RunStep } from "./api";
 import { S } from "./strings";
 
 function serve(table: Record<string, unknown>) {
@@ -230,6 +230,54 @@ describe("QueuePage", () => {
       within(item).getByText(S.queue.trigger.departure),
     ).toBeInTheDocument();
     expect(within(item).queryByText(S.queue.mode.full)).not.toBeInTheDocument();
+  });
+
+  it("names a restyle by its mode and trigger, its steps the pages", async () => {
+    const step = (kind: RunStep["kind"], state: RunStep["state"]): RunStep => ({
+      kind,
+      name: "",
+      files: 0,
+      bytes: 0,
+      state,
+      skip: "",
+      calls: state === "done" ? 1 : 0,
+      failed: 0,
+      at: state === "done" ? iso(-1) : null,
+    });
+    serve({
+      queue: queue({
+        current: {
+          ...runItem(
+            run({
+              id: 44,
+              state: "project",
+              mode: "restyle",
+              trigger: "epoch",
+              base_commit: "a1b2c3d4e5",
+              calls: 1,
+              steps: [
+                step("restyle", "done"),
+                step("project_restyle", "current"),
+                step("repo_map", "todo"),
+              ],
+            }),
+          ),
+          since: iso(-1),
+        },
+      }),
+    });
+    render(<QueuePage />);
+    const [item] = await screen.findAllByTestId("queue-item");
+    expect(within(item).getByText(S.queue.mode.restyle)).toBeInTheDocument();
+    expect(
+      within(item).getByText(S.queue.trigger.epoch, { exact: false }),
+    ).toBeInTheDocument();
+    expect(within(item).getByText(S.queue.step.restyle)).toBeInTheDocument();
+    expect(
+      within(item).getAllByText(S.queue.stepSub.project_restyle, {
+        exact: false,
+      }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("puts a hold on the next item, its cause and its end", async () => {

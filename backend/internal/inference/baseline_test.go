@@ -179,6 +179,57 @@ func TestRepoMap(t *testing.T) {
 	}
 }
 
+// A restyle's answer: the patch with its new statements' origins, the
+// outline beside it; a drop or a confirmation outside the schema is no
+// restyle's; the repository's kinds or the project's; strict at every depth.
+func TestRestyle(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(`{"summary": null, "statements": [{"id": "s1", "kind": "component", "name": "Kern", "text": "Kurz.", "files": [], "area": "Kern"}],
+		"added": [{"from": ["s1", "summary"], "kind": "flow", "name": "Ablauf", "text": [{"kind": "numbered", "text": "", "items": ["a", "b"]}], "files": ["x.go"], "area": "Kern"}],
+		"outline": [{"area": "Kern", "ids": ["s1"]}], "drop": ["s2"], "confirmed": ["s3"]}`)
+	res := testClient(srv.Client()).Restyle(context.Background(), "restyle this", false)
+	if res.Outcome != OutcomeOK {
+		t.Fatalf("Outcome = %s err %v", res.Outcome, res.Err)
+	}
+	p := res.Patch
+	if p.Summary != nil || *p.Statements[0].ID != "s1" || len(p.Added) != 1 || !slices.Equal(p.Added[0].From, []string{"s1", "summary"}) ||
+		!strings.Contains(p.Added[0].Text, "1. a") || p.Drop != nil || p.Confirmed != nil {
+		t.Fatalf("Patch = %+v", p)
+	}
+	if len(res.Outline) != 1 || res.Outline[0].IDs[0] != "s1" {
+		t.Errorf("outline = %+v", res.Outline)
+	}
+	if name := schemaName(t, srv); name != RestyleSchemaName {
+		t.Errorf("schema = %q", name)
+	}
+	for _, reply := range []string{"null", "Gerne!", "{}", `{"summary": null, "added": []}`} {
+		srv.SetReply(reply)
+		if res := testClient(srv.Client()).Restyle(context.Background(), "p", false); res.Outcome != OutcomeUnparseable {
+			t.Errorf("reply %q: Outcome = %s, want unparseable", reply, res.Outcome)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if res := testClient(srv.Client()).Restyle(ctx, "p", true); res.Outcome == OutcomeOK || res.Outcome == OutcomeUnparseable {
+		t.Errorf("restyle on a cancelled context: Outcome = %s, want a failure of the call", res.Outcome)
+	}
+	for project, kinds := range map[bool][]string{false: RepoKinds, true: ProjectKinds} {
+		for _, diagrams := range []bool{true, false} {
+			f := restyleFormat(diagrams, kinds).Schema
+			walkObjects(t, f)
+			props := f["properties"].(map[string]any)
+			if props["drop"] != nil || props["confirmed"] != nil || props["outline"] == nil {
+				t.Errorf("project %v: restyle schema properties %v", project, sortedKeys(props))
+			}
+			added := props["added"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+			kind := added["kind"].(map[string]any)["enum"].([]any)
+			if added["from"] == nil || len(kind) != len(kinds) {
+				t.Errorf("project %v: added %v, kinds %v", project, sortedKeys(added), kind)
+			}
+		}
+	}
+}
+
 // A call that fails at the gateway says so the same way for every kind of
 // step, so the worker classes them alike.
 func TestBaselineCallsShareTheFailureOutcomes(t *testing.T) {

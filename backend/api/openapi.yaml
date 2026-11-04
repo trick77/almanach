@@ -1249,10 +1249,11 @@ components:
           enum: [queued, cataloguing, describing, project]
         mode:
           type: string
-          enum: [full, reconcile]
+          enum: [full, reconcile, restyle]
+          description: restyle reads no code, the stored pages alone, for a prompt epoch they are not at (trigger epoch); it documents nothing, so the source page never shows one.
         trigger:
           type: string
-          enum: [manual, first_ready, monthly, retry, departure]
+          enum: [manual, first_ready, monthly, retry, departure, epoch]
         commit:
           type: string
         base_commit:
@@ -1270,14 +1271,14 @@ components:
           description: 3 decimals; omitted when none of its calls was priced.
         steps:
           type: array
-          description: The catalogue, the overview, the subjects in reading order, the project, the repository map; a queued run lists the catalogue, the project and the map alone.
+          description: The catalogue, the overview, the subjects in reading order, the project, the repository map; a queued run lists the catalogue, the project and the map alone. A restyle lists the repository page's restyle, the project page's and the map.
           items:
             type: object
             required: [kind, name, files, bytes, state, skip, calls, failed, at]
             properties:
               kind:
                 type: string
-                enum: [catalogue, overview, subject, project, repo_map]
+                enum: [catalogue, overview, subject, project, repo_map, restyle, project_restyle]
               name:
                 type: string
                 description: A subject's name, empty otherwise.

@@ -402,7 +402,13 @@ export type WaitReason =
   | "placing";
 
 export type StepKind =
-  "catalogue" | "overview" | "subject" | "project" | "repo_map";
+  | "catalogue"
+  | "overview"
+  | "subject"
+  | "project"
+  | "repo_map"
+  | "restyle"
+  | "project_restyle";
 
 export interface RunStep {
   kind: StepKind;
@@ -421,8 +427,10 @@ export interface RunStep {
 export interface QueueRun {
   id: number;
   state: Exclude<RunState, "done" | "failed">;
-  mode: "full" | "reconcile";
-  trigger: Baseline["trigger"];
+  /** restyle reads no code: the stored pages alone, for a prompt epoch they
+   *  are not at. The source page never shows one. */
+  mode: "full" | "reconcile" | "restyle";
+  trigger: Baseline["trigger"] | "epoch";
   commit: string;
   base_commit: string;
   calls: number;

@@ -69,6 +69,48 @@ type runStore struct {
 	// settled is every settle's slugs.
 	departureDue bool
 	settled      [][]string
+	// repoEpoch and projectEpoch are the pages' restyle epochs, set by a
+	// restyle step's write; restyles counts those writes.
+	repoEpoch, projectEpoch int
+	restyles                int
+	epochErr                error
+}
+
+func (s *runStore) RestyleEpochs(context.Context, string, string) (int, int, error) {
+	return s.repoEpoch, s.projectEpoch, s.epochErr
+}
+
+// ApplyRestyle writes a restyle step as the store does: the run, the
+// revision or the layout in place, the page's epoch.
+func (s *runStore) ApplyRestyle(ctx context.Context, r store.BaselineRun, scope string, epoch int, w store.Restyled) (int, bool, error) {
+	if s.applyErr != nil {
+		return 0, false, s.applyErr
+	}
+	n := 0
+	switch {
+	case w.Revision != nil:
+		var ok bool
+		var err error
+		if n, ok, err = s.ApplyBaselineStep(ctx, *w.Revision, r); !ok || err != nil {
+			return 0, ok, err
+		}
+	default:
+		if ok, err := s.SaveRun(ctx, r); !ok || err != nil {
+			return 0, ok, err
+		}
+		if w.ArrangeID != 0 {
+			if _, err := s.ArrangePage(ctx, w.ArrangeID, w.Arranged); err != nil {
+				return 0, false, err
+			}
+		}
+	}
+	s.restyles++
+	if scope == store.ScopeProject {
+		s.projectEpoch = max(s.projectEpoch, epoch)
+	} else {
+		s.repoEpoch = max(s.repoEpoch, epoch)
+	}
+	return n, true, nil
 }
 
 func (s *runStore) DepartedRepos(context.Context, string) ([]string, error) { return s.departed, nil }
@@ -262,7 +304,22 @@ type fakeModels struct {
 	repoMap     inference.RepoMapResult
 	repoMaps    []inference.RepoMapResult
 	projectMaps []inference.RepoMapResult
-	prompts     []string
+	// restyles answers the restyle calls in order; restyledProject says
+	// which of them asked for the project's page.
+	restyles        []inference.RestyleResult
+	restyledProject []bool
+	prompts         []string
+}
+
+func (m *fakeModels) Restyle(_ context.Context, prompt string, project bool) inference.RestyleResult {
+	m.prompts = append(m.prompts, prompt)
+	m.restyledProject = append(m.restyledProject, project)
+	if len(m.restyles) == 0 {
+		return inference.RestyleResult{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}}
+	}
+	res := m.restyles[0]
+	m.restyles = m.restyles[1:]
+	return res
 }
 
 func (m *fakeModels) RepoMap(_ context.Context, prompt string) inference.RepoMapResult {

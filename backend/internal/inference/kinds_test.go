@@ -22,6 +22,8 @@ func TestPromptKindsMatchTheSchema(t *testing.T) {
 		"merge":             {prompts.Merge, RepoKinds},
 		"project":           {prompts.Project, ProjectKinds},
 		"project departure": {prompts.ProjectDeparture, ProjectKinds},
+		"restyle":           {prompts.Restyle, RepoKinds},
+		"project restyle":   {prompts.ProjectRestyle, ProjectKinds},
 	} {
 		if want := union(tc.kinds); !strings.Contains(tc.prompt, want) {
 			t.Errorf("%s prompt lacks %s", name, want)

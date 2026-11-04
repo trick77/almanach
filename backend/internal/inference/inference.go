@@ -241,6 +241,10 @@ type Statement struct {
 	// Area is the part of the system it is about, the page's sub-chunk;
 	// "" keeps the stored one.
 	Area string `json:"area"`
+	// From is a restyle's new statement's origin: the ids of the
+	// statements, or "summary", its text was split out of. Only the restyle
+	// schema offers it; the code carries their sources.
+	From []string `json:"from,omitempty"`
 }
 
 // OutlineArea is one area of the map step's outline: its name and its
