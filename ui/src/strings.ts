@@ -525,6 +525,8 @@ export const S = {
       project: "Projekt",
       // The run's last step, in state project once the project step is over.
       repoMap: "Aufbau",
+      // A restyle, open: the pages brought to new rules, no code read.
+      restyle: "Wird neu gegliedert",
       done: "Beschrieben",
       partial: "Teilweise",
       failed: "Fehlgeschlagen",
@@ -606,28 +608,34 @@ export const S = {
     },
     note: "Notiz",
     run: (id: number) => `Run #${id}`,
-    mode: { full: "Vollständig", reconcile: "Abgleich" } satisfies Record<
-      QueueRun["mode"],
-      string
-    >,
+    mode: {
+      full: "Vollständig",
+      reconcile: "Abgleich",
+      restyle: "Neu gegliedert",
+    } satisfies Record<QueueRun["mode"], string>,
     trigger: {
       manual: "manuell",
       first_ready: "Erster Clone",
       monthly: "Monatlich",
       retry: "Erneut",
       departure: "Deaktiviert",
+      epoch: "Neue Regeln",
     } satisfies Record<QueueRun["trigger"], string>,
     step: {
       catalogue: "Katalog",
       overview: "Überblick",
       project: "Projektseite",
       repo_map: "Aufbau",
+      restyle: "Repository-Seite",
+      project_restyle: "Projektseite",
     } satisfies Record<Exclude<StepKind, "subject">, string>,
     stepSub: {
       catalogue: "Teile und ihre Dateien",
       overview: "README und Dokumente",
       project: "aus den Repository-Seiten",
       repo_map: "Repository-Karte",
+      restyle: "neu gegliedert, ohne Code",
+      project_restyle: "neu gegliedert, ohne Code",
     } satisfies Record<Exclude<StepKind, "subject">, string>,
     files: (n: number, size: string) =>
       n === 1 ? `1 Datei, ${size}` : `${n} Dateien, ${size}`,

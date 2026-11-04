@@ -20,6 +20,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/manifest"
+	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/urlorigin"
@@ -41,6 +42,8 @@ type Store interface {
 	MarkRepoReady(ctx context.Context, key, slug, branch, head string) error
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
+	EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int) (int64, error)
+	RestyleDue(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (bool, error)
 	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, store.RunStreak, bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
@@ -551,13 +554,17 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			// that may not move again: the last run's skipped names are
 			// read again, the map drawn, nothing else read.
 			mode, trigger, base = store.RunReconcile, store.TriggerRetry, doc.Commit
-		case p.Describe.Reconcile <= 0 || since < p.Describe.Reconcile:
+		case p.Describe.Reconcile <= 0:
+			return
+		case since < p.Describe.Reconcile:
+			p.restyle(ctx, key, slug, doc, documented)
 			return
 		case !documented:
 			// Never documented and past its retries: the interval tries
 			// the full read again.
 			trigger = store.TriggerMonthly
 		case doc.Commit == head:
+			p.restyle(ctx, key, slug, doc, documented)
 			return
 		default:
 			mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
@@ -566,11 +573,40 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	p.enqueue(ctx, key, slug, mode, trigger, base, head)
 }
 
+// restyle queues a restyle run (store.RunRestyle) when the repository's
+// page, or its project's, is below prompts.Epoch and nothing that reads the
+// code is due: a prompt change reaches stored pages one call a page, one
+// page at a time across the wiki, never a full read (user, 2026-11-04). A
+// failed restyle is queued again after retryAfter, while a page has fewer
+// than store.RestyleTries failures an epoch (a project page's counted over
+// its project). Only with the reconcile interval on (zero: buttons only)
+// and a documented page to restyle.
+func (p *Poller) restyle(ctx context.Context, key, slug string, doc store.BaselineRun, documented bool) {
+	if !documented || doc.Commit == "" {
+		return
+	}
+	due, err := p.Store.RestyleDue(ctx, key, slug, prompts.Epoch, p.Now().Add(-p.retryAfter()))
+	if err != nil {
+		p.logRunCheck(err, key, slug)
+		return
+	}
+	if !due {
+		return
+	}
+	id, err := p.Store.EnqueueRestyle(ctx, key, slug, doc.Commit, prompts.Epoch)
+	p.queued(err, key, slug, id, store.RunRestyle, store.TriggerEpoch, doc.Commit)
+}
+
 // enqueue queues a run and wakes the worker. A run already open is no
 // failure; a failed write is logged and, the repository still without
 // its run, tried again by the next cycle.
 func (p *Poller) enqueue(ctx context.Context, key, slug, mode, trigger, base, head string) {
 	id, err := p.Store.EnqueueRun(ctx, key, slug, mode, trigger, base, head)
+	p.queued(err, key, slug, id, mode, trigger, head)
+}
+
+// queued logs a run's queueing and wakes the worker.
+func (p *Poller) queued(err error, key, slug string, id int64, mode, trigger, head string) {
 	switch {
 	case errors.Is(err, store.ErrExists), errors.Is(err, store.ErrNoRepo):
 		// A run already open, or the repository removed under the cycle:
@@ -660,6 +696,17 @@ func (p *Poller) retryAfter() time.Duration {
 // the retries spent).
 func (p *Poller) RetryAt(finished time.Time, failedInRow int) (time.Time, bool) {
 	if p.Describe.Wake == nil || failedInRow > maxRetries {
+		return time.Time{}, false
+	}
+	return finished.Add(p.retryAfter()), true
+}
+
+// RestyleRetryAt is when the poller queues a failed restyle again, its
+// page's failures at the epoch counted (store.RestyleState's count): only
+// with the reconcile interval on, as restyle queues none without, and
+// while the page has failed fewer than store.RestyleTries times.
+func (p *Poller) RestyleRetryAt(finished time.Time, failed int) (time.Time, bool) {
+	if p.Describe.Wake == nil || p.Describe.Reconcile <= 0 || failed >= store.RestyleTries {
 		return time.Time{}, false
 	}
 	return finished.Add(p.retryAfter()), true

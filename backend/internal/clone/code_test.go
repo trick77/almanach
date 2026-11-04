@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/trick77/almanach/internal/consolidate"
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -81,6 +83,86 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 				t.Errorf("DocumentedRun asked %d times after a done run", s.docAsked)
 			}
 		})
+	}
+}
+
+// A page below prompts.Epoch is restyled at its documented commit when
+// nothing that reads the code is due: a reconcile due goes first, and with
+// the interval off (buttons only) or nothing documented no restyle is
+// asked. The store is asked with the epoch and the retry's wait.
+func TestDescribe_QueuesARestyle(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	month := 30 * 24 * time.Hour
+	long, recent := now.Add(-month-time.Hour), now.Add(-time.Hour)
+	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
+	restyle := fmt.Sprintf("tools cli restyle epoch d0 %d", prompts.Epoch)
+	for name, c := range map[string]struct {
+		head       string
+		documented bool
+		finished   time.Time
+		reconcile  time.Duration
+		due        bool
+		want       string
+		asked      bool
+	}{
+		"head documented":    {"d0", true, long, month, true, restyle, true},
+		"interval not yet":   {"h1", true, recent, month, true, restyle, true},
+		"reconcile first":    {"h1", true, long, month, true, "tools cli reconcile monthly d0 h1", false},
+		"not due":            {"d0", true, long, month, false, "", true},
+		"buttons only":       {"d0", true, long, 0, true, "", false},
+		"nothing documented": {"h1", false, recent, month, true, "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, g := newFakeStore(), newFakeGit()
+			s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", src)}
+			g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+			g.heads[dirOf("tools", "cli")+"@main"] = c.head
+			s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, Commit: "d0", State: store.RunDone, FinishedAt: &c.finished}
+			if !c.documented {
+				s.last.State = store.RunFailed
+				s.failed = maxRetries + 1
+			}
+			s.restyleDue = c.due
+			p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}, Now: func() time.Time { return now }})
+			if err := p.CycleOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(s.enqueued, "|"); got != c.want {
+				t.Fatalf("queued %q, want %q", got, c.want)
+			}
+			if (len(s.restyleAsked) > 0) != c.asked {
+				t.Fatalf("RestyleDue asked %v, want asked %v", s.restyleAsked, c.asked)
+			}
+			if c.asked {
+				want := fmt.Sprintf("%d %s", prompts.Epoch, now.Add(-retryWait).Format(time.RFC3339))
+				if s.restyleAsked[0] != want {
+					t.Errorf("RestyleDue asked %q, want %q", s.restyleAsked[0], want)
+				}
+			}
+		})
+	}
+}
+
+// A failed restyle's retry, as the queue shows it: a day on, only with the
+// interval on and while its page has tries left.
+func TestRestyleRetryAt(t *testing.T) {
+	at := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	for name, c := range map[string]struct {
+		reconcile time.Duration
+		failed    int
+		want      bool
+	}{
+		"retried":      {30 * 24 * time.Hour, 1, true},
+		"tries spent":  {30 * 24 * time.Hour, store.RestyleTries, false},
+		"buttons only": {0, 1, false},
+	} {
+		p := New(Deps{Store: newFakeStore(), Git: newFakeGit(), Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}})
+		got, ok := p.RestyleRetryAt(at, c.failed)
+		if ok != c.want || (ok && !got.Equal(at.Add(retryWait))) {
+			t.Errorf("%s: %v %v, want %v", name, got, ok, c.want)
+		}
 	}
 }
 

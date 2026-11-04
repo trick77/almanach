@@ -68,8 +68,12 @@ func (s *Store) OpenRuns(ctx context.Context) ([]BaselineRun, error) {
 }
 
 // FinishedRun is a run that ended, with what the poller's retry reads of
-// its repository: whether it is the newest run, and how many runs failed
-// since the newest done one (LastRun's count).
+// its repository: whether it is the newest run of its kind, and how many
+// runs failed since the newest done one (LastRun's count). A restyle is a
+// kind of its own: the newest restyle, its failures its page's at its
+// epoch as RestyleState counts them (one that failed on the project page,
+// the project's over the project); a reading run's never count a restyle,
+// as LastRun's.
 type FinishedRun struct {
 	BaselineRun
 	Latest      bool
@@ -80,14 +84,22 @@ type FinishedRun struct {
 // most limit, in one query.
 func (s *Store) FinishedRuns(ctx context.Context, since time.Time, limit int) ([]FinishedRun, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+`,
-		       b.id = (SELECT MAX(x.id) FROM baseline_runs x WHERE x.repo_id = b.repo_id),
-		       (SELECT COUNT(*) FROM baseline_runs f
-		         WHERE f.repo_id = b.repo_id AND f.state = 'failed'
-		           AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
-		                                 WHERE d.repo_id = b.repo_id AND d.state = 'done'), 0))
+		       b.id = (SELECT MAX(x.id) FROM baseline_runs x WHERE x.repo_id = b.repo_id AND (x.mode = 'restyle') = (b.mode = 'restyle')),
+		       CASE WHEN b.mode = 'restyle' AND b.step = ?3
+		            THEN (SELECT COUNT(*) FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
+		                   WHERE o.project_id = (SELECT project_id FROM source_repos WHERE repo_id = b.repo_id)
+		                     AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = b.epoch AND f.step = ?3)
+		            WHEN b.mode = 'restyle'
+		            THEN (SELECT COUNT(*) FROM baseline_runs f
+		                   WHERE f.repo_id = b.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = b.epoch)
+		            ELSE (SELECT COUNT(*) FROM baseline_runs f
+		                   WHERE f.repo_id = b.repo_id AND f.state = 'failed' AND f.mode <> 'restyle'
+		                     AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
+		                                           WHERE d.repo_id = b.repo_id AND d.state = 'done' AND d.mode <> 'restyle'), 0))
+		       END
 		  FROM `+runsFrom+`
-		 WHERE b.state IN ('done', 'failed') AND b.finished_at >= ?
-		 ORDER BY b.finished_at DESC, b.id DESC LIMIT ?`, stamp(since), limit)
+		 WHERE b.state IN ('done', 'failed') AND b.finished_at >= ?1
+		 ORDER BY b.finished_at DESC, b.id DESC LIMIT ?2`, stamp(since), limit, RestyleProjectStep)
 	if err != nil {
 		return nil, err
 	}

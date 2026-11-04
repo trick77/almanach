@@ -410,6 +410,9 @@ const (
 	// PurposeProjectMap is the system map asked again alone, the project
 	// step's description taken.
 	PurposeProjectMap = "project_map"
+	// PurposeRestyle is a restyle run's call, the repository's page or the
+	// project's (its step says which).
+	PurposeRestyle = "restyle"
 )
 
 // LLMCall is one model call as llmwire described it. SourceKind "" and

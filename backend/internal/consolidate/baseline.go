@@ -47,6 +47,9 @@ type RunStore interface {
 	DepartedRepos(ctx context.Context, key string) ([]string, error)
 	DepartureDue(ctx context.Context, key string) (bool, error)
 	SettleDepartures(ctx context.Context, key string, slugs []string) error
+	RestyleState(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (store.RestyleState, error)
+	ApplyRestyle(ctx context.Context, r store.BaselineRun, scope string, epoch int, w store.Restyled) (int, bool, error)
+	MarkProjectRestyled(ctx context.Context, runID int64, epoch int) error
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -69,12 +72,14 @@ type Cataloguer interface {
 }
 
 // Describer is the model that writes: the patch of a step, the project,
-// the repository's map, and the project's map asked again alone.
+// the repository's map, the project's map asked again alone, and a page's
+// restyle.
 type Describer interface {
 	Patch(ctx context.Context, prompt string) inference.PatchResult
 	Describe(ctx context.Context, prompt string) inference.DescriptionResult
 	RepoMap(ctx context.Context, prompt string) inference.RepoMapResult
 	ProjectMap(ctx context.Context, prompt string) inference.RepoMapResult
+	Restyle(ctx context.Context, prompt string, project bool) inference.RestyleResult
 }
 
 // Baseline is the runs' part of the worker; without it (the sources off)
@@ -125,6 +130,10 @@ type runPlan struct {
 	// set by the store with the run. It reads nothing: its one step takes
 	// the repository out of the project page (departureStep).
 	Departure bool `json:"departure,omitempty"`
+	// Restyle: a restyle run (store.RunRestyle), set by the store with the
+	// run. It reads no code: its steps restyle the pages, then the map step
+	// (restyleStep).
+	Restyle *restylePlan `json:"restyle,omitempty"`
 }
 
 // steps is the reading steps of the plan: the overview, then the subjects.
@@ -281,6 +290,9 @@ func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
 		w.log.InfoContext(ctx, "baseline: departure run started: the repository leaves the project page")
 		return w.save(ctx, *r)
 	}
+	if plan.Restyle != nil {
+		return w.startRestyle(ctx, r)
+	}
 	repos, err := w.base.Store.SourceRepos(ctx, r.ProjectKey)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: source repos read failed, drain paused", logging.Err(err))
@@ -307,8 +319,20 @@ func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
 			r.Mode = store.RunFull
 		}
 	}
+	readsAfresh(r)
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: run started at %s (%s, %s)", gitrepo.ShortSHA(head), r.Mode, r.Trigger))
 	return w.save(ctx, *r)
+}
+
+// readsAfresh stamps a full run with the prompts' epoch it reads under, when
+// it starts reading: done, it puts its repository's page at that epoch (the
+// store's), every step having had the page in its prompt. Stamped at the
+// start, never the end: a run a deploy that bumps the epoch cut in two read
+// its first parts under the old rules, and stays due a restyle.
+func readsAfresh(r *store.BaselineRun) {
+	if r.Mode == store.RunFull && r.Epoch == 0 {
+		r.Epoch = prompts.Epoch
+	}
 }
 
 // call records one model call in the ledger and classes its failure. ok
@@ -317,7 +341,7 @@ func (w *Worker) startRun(ctx context.Context, r *store.BaselineRun) error {
 func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string, res inference.Call) (bool, error) {
 	runID := r.ID
 	var step *int
-	if purpose == store.PurposeOverview || purpose == store.PurposeSubject {
+	if purpose == store.PurposeOverview || purpose == store.PurposeSubject || purpose == store.PurposeRestyle {
 		i := r.Step
 		step = &i
 	}
@@ -453,6 +477,7 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	if !ok || err != nil || derr != nil || baseline.FullInstead(old.Plan, changes) {
 		w.log.InfoContext(ctx, "baseline: reconcile reads the repository afresh")
 		r.Mode = store.RunFull
+		readsAfresh(r)
 		return runPlan{}, false, w.save(ctx, *r)
 	}
 	_, unplaced := baseline.Touched(old.Plan, changes)
@@ -1198,6 +1223,9 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if plan.Departure {
 		return w.departureStep(ctx, r, plan)
 	}
+	if plan.Restyle != nil && !plan.ProjectDone {
+		return w.restyleStep(ctx, r, plan)
+	}
 	if plan.ProjectDone {
 		return w.repoMapStep(ctx, r, plan)
 	}
@@ -1284,9 +1312,29 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	// A refused map leaves the plan its retry: the description written
 	// first, the map asked again by the steps after.
 	if rev == nil {
-		return w.projectOver(ctx, r, plan)
+		err = w.projectOver(ctx, r, plan)
+	} else {
+		err = w.writeProject(ctx, r, plan, rev)
 	}
-	return w.writeProject(ctx, r, plan, rev)
+	if err == nil {
+		w.projectRestyled(ctx, r, projectPage.RevisionID == 0)
+	}
+	return err
+}
+
+// projectRestyled puts the project page at the prompts' epoch when the
+// project step that just answered had the whole page in its prompt under
+// today's rules: a full run's, or the one that wrote the page first. A
+// reconcile's step folds one repository's change and restyles nothing.
+func (w *Worker) projectRestyled(ctx context.Context, r *store.BaselineRun, first bool) {
+	if !first && (r.Mode != store.RunFull || r.Epoch != prompts.Epoch) {
+		return
+	}
+	// By the run: one gone with its repository, or over, wrote nothing to
+	// mark (writeProject and projectOver report no write of a run over).
+	if err := w.base.Store.MarkProjectRestyled(ctx, r.ID, prompts.Epoch); err != nil {
+		w.log.WarnContext(ctx, "baseline: project restyle epoch not written, a restyle takes the page later", logging.Err(err))
+	}
 }
 
 // writeProject writes the project revision and the step's end in one

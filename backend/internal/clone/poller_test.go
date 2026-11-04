@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -40,6 +41,10 @@ type fakeStore struct {
 	pageAsked  int
 	// page is the repository page, none when its scope is "".
 	page store.Page
+	// restyleDue is what RestyleDue answers; restyleAsked is its questions
+	// ("epoch failedBefore").
+	restyleDue   bool
+	restyleAsked []string
 	// conflicts is what ApplyListing reports left out; listedAt whether a
 	// listing's time was recorded, by key.
 	conflicts []string
@@ -109,6 +114,21 @@ func (f *fakeStore) EnqueueRun(_ context.Context, key, slug, mode, trigger, base
 	}
 	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, mode, trigger, base, commit}, " "))
 	return int64(len(f.enqueued)), nil
+}
+func (f *fakeStore) EnqueueRestyle(_ context.Context, key, slug, commit string, epoch int) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.enqueueErr != nil {
+		return 0, f.enqueueErr
+	}
+	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, store.RunRestyle, store.TriggerEpoch, commit, fmt.Sprint(epoch)}, " "))
+	return int64(len(f.enqueued)), nil
+}
+func (f *fakeStore) RestyleDue(_ context.Context, _, _ string, epoch int, failedBefore time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restyleAsked = append(f.restyleAsked, fmt.Sprintf("%d %s", epoch, failedBefore.UTC().Format(time.RFC3339)))
+	return f.restyleDue, f.runErr
 }
 func (f *fakeStore) RepoIDs(_ context.Context, key, slug string) (int64, int64, bool, error) {
 	return idOf(key), idOf(key + "/" + slug), true, nil

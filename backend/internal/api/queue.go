@@ -35,6 +35,7 @@ type WorkerStatus interface{ Status() consolidate.Status }
 type SyncStatus interface {
 	Cycle() clone.CycleStatus
 	RetryAt(finished time.Time, failedInRow int) (time.Time, bool)
+	RestyleRetryAt(finished time.Time, failed int) (time.Time, bool)
 }
 
 // QueueDeps is what the queue page needs.
@@ -421,7 +422,11 @@ func (q *QueueDeps) recent(ctx context.Context, since time.Time) ([]recentBody, 
 				rb.CostUSD = usd(&c)
 			}
 			if r.State == store.RunFailed && r.Latest {
-				if at, ok := q.Sync.RetryAt(*r.FinishedAt, r.FailedInRow); ok {
+				retryAt := q.Sync.RetryAt
+				if r.Mode == store.RunRestyle {
+					retryAt = q.Sync.RestyleRetryAt
+				}
+				if at, ok := retryAt(*r.FinishedAt, r.FailedInRow); ok {
 					rb.RetryAt = &at
 				}
 			}

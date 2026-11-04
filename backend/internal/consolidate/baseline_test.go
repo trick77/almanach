@@ -69,6 +69,65 @@ type runStore struct {
 	// settled is every settle's slugs.
 	departureDue bool
 	settled      [][]string
+	// repoEpoch and projectEpoch are the pages' restyle epochs, set by a
+	// restyle step's write; restyles counts those writes.
+	repoEpoch, projectEpoch int
+	restyles                int
+	epochErr                error
+	// reposErr fails SourceRepos.
+	reposErr error
+}
+
+// RestyleState answers as the store's query does, from the epochs, the
+// project's page and its repository count (repoCount, 0 counting as many).
+func (s *runStore) RestyleState(_ context.Context, key, _ string, epoch int, _ time.Time) (store.RestyleState, error) {
+	_, page := s.pages[pageKey(store.ScopeProject, key, "")]
+	return store.RestyleState{RepoDue: s.repoEpoch < epoch,
+		ProjectDue: s.projectEpoch < epoch && page && s.repoCount[key] != 1}, s.epochErr
+}
+
+// MarkProjectRestyled marks while the run stands and did not fail, as the
+// store's query does.
+func (s *runStore) MarkProjectRestyled(_ context.Context, runID int64, epoch int) error {
+	for _, r := range s.runs {
+		if r.ID == runID && r.State != store.RunFailed {
+			s.projectEpoch = max(s.projectEpoch, epoch)
+		}
+	}
+	return nil
+}
+
+// ApplyRestyle writes a restyle step as the store does: the run, the
+// revision or the layout in place, the page's epoch.
+func (s *runStore) ApplyRestyle(ctx context.Context, r store.BaselineRun, scope string, epoch int, w store.Restyled) (int, bool, error) {
+	if s.applyErr != nil {
+		return 0, false, s.applyErr
+	}
+	n := 0
+	switch {
+	case w.Revision != nil:
+		var ok bool
+		var err error
+		if n, ok, err = s.ApplyBaselineStep(ctx, *w.Revision, r); !ok || err != nil {
+			return 0, ok, err
+		}
+	default:
+		if ok, err := s.SaveRun(ctx, r); !ok || err != nil {
+			return 0, ok, err
+		}
+		if w.ArrangeID != 0 {
+			if _, err := s.ArrangePage(ctx, w.ArrangeID, w.Arranged); err != nil {
+				return 0, false, err
+			}
+		}
+	}
+	s.restyles++
+	if scope == store.ScopeProject {
+		s.projectEpoch = max(s.projectEpoch, epoch)
+	} else {
+		s.repoEpoch = max(s.repoEpoch, epoch)
+	}
+	return n, true, nil
 }
 
 func (s *runStore) DepartedRepos(context.Context, string) ([]string, error) { return s.departed, nil }
@@ -181,7 +240,7 @@ func (s *runStore) DocumentedRun(context.Context, string, string) (store.Baselin
 }
 
 func (s *runStore) SourceRepos(context.Context, string) ([]store.SourceRepo, error) {
-	return s.repos, nil
+	return s.repos, s.reposErr
 }
 
 func (s *runStore) IsSourceRepo(_ context.Context, key, slug string) (bool, error) {
@@ -262,7 +321,22 @@ type fakeModels struct {
 	repoMap     inference.RepoMapResult
 	repoMaps    []inference.RepoMapResult
 	projectMaps []inference.RepoMapResult
-	prompts     []string
+	// restyles answers the restyle calls in order; restyledProject says
+	// which of them asked for the project's page.
+	restyles        []inference.RestyleResult
+	restyledProject []bool
+	prompts         []string
+}
+
+func (m *fakeModels) Restyle(_ context.Context, prompt string, project bool) inference.RestyleResult {
+	m.prompts = append(m.prompts, prompt)
+	m.restyledProject = append(m.restyledProject, project)
+	if len(m.restyles) == 0 {
+		return inference.RestyleResult{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}}
+	}
+	res := m.restyles[0]
+	m.restyles = m.restyles[1:]
+	return res
 }
 
 func (m *fakeModels) RepoMap(_ context.Context, prompt string) inference.RepoMapResult {

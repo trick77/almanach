@@ -828,6 +828,10 @@ function RepoRow({
 /** baselineState is a run's state as the column shows it: done with
  *  skipped parts is partial. */
 function baselineState(b: Baseline): { label: string; tone: Tone } {
+  // A restyle shows only while open, holding the repository's run.
+  if (b.mode === "restyle" && runOpen(b)) {
+    return { label: S.baseline.state.restyle, tone: "warn" };
+  }
   switch (b.state) {
     case "done":
       return b.skipped > 0

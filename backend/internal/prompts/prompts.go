@@ -39,6 +39,26 @@ var ProjectDeparture string
 //go:embed almanach_repo_map.txt
 var RepoMap string
 
+// Restyle brings a stored repository page to the rules of today without
+// reading code, a restyle run's first call: a patch whose new statements
+// say what they were split from, and the page's outline.
+//
+//go:embed almanach_restyle.txt
+var Restyle string
+
+// ProjectRestyle is Restyle for the project page, from the page alone.
+//
+//go:embed almanach_project_restyle.txt
+var ProjectRestyle string
+
+// Epoch is the prompts' generation for stored pages: a page restyled below
+// it is due one restyle run (store.RunRestyle), one page at a time. Bump it
+// in the change whose prompt rules (layout, kinds, areas, the summary's
+// order) must reach every stored page; a change that only shapes new
+// writing leaves it, and stored pages change as today, by a note or a run
+// that reads code. Each bump costs one call per page.
+const Epoch = 1
+
 // Diagrams is the diagram rules the merge, describe and project prompts
 // share, rendered into their {diagram_rules}.
 //

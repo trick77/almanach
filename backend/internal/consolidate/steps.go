@@ -20,6 +20,10 @@ const (
 	StepSubject   = "subject"
 	StepProject   = "project"
 	StepRepoMap   = "repo_map"
+	// StepRestyle and StepProjectRestyle are a restyle run's calls, the
+	// repository's page and the project's.
+	StepRestyle        = "restyle"
+	StepProjectRestyle = "project_restyle"
 )
 
 // States of a step.
@@ -61,6 +65,9 @@ func RunSteps(r store.BaselineRun, calls []store.RunCall) ([]RunStep, error) {
 	}
 	if plan.Departure {
 		return departureSteps(r, calls), nil
+	}
+	if plan.Restyle != nil {
+		return restyleSteps(r, plan, calls), nil
 	}
 	var steps []RunStep
 	steps = append(steps, RunStep{Kind: StepCatalogue})
@@ -177,6 +184,45 @@ func departureSteps(r store.BaselineRun, calls []store.RunCall) []RunStep {
 		}
 	}
 	return []RunStep{s}
+}
+
+// restyleSteps is a restyle run's steps: the repository's page, the
+// project's, the repository map. A step a page at the epoch already made
+// needless is done with no call.
+func restyleSteps(r store.BaselineRun, plan runPlan, calls []store.RunCall) []RunStep {
+	steps := []RunStep{{Kind: StepRestyle, State: StepTodo}, {Kind: StepProjectRestyle, State: StepTodo}, {Kind: StepRepoMap, State: StepTodo}}
+	current := -1
+	switch {
+	case r.State == store.RunDone:
+		current = len(steps)
+	case r.State != store.RunProject:
+	case plan.ProjectDone:
+		current = 2
+	case plan.Restyle.Repo:
+		current = 1
+	default:
+		current = 0
+	}
+	for i := range steps {
+		switch {
+		case i < current:
+			steps[i].State = StepDone
+		case i == current:
+			steps[i].State = StepCurrent
+		}
+	}
+	for _, c := range calls {
+		switch {
+		case c.Purpose == store.PurposeRepoMap:
+			addCall(&steps[2], c)
+		case c.Purpose != store.PurposeRestyle:
+		case c.Step != nil && *c.Step == store.RestyleProjectStep:
+			addCall(&steps[1], c)
+		default:
+			addCall(&steps[0], c)
+		}
+	}
+	return steps
 }
 
 // addCall counts one call on its step: failed when it did not answer, its

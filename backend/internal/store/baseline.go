@@ -27,6 +27,15 @@ const (
 	// the project step taking the repository out of the project page. It
 	// documents nothing: DocumentedRun never finds it.
 	TriggerDeparture = "departure"
+
+	// RunRestyle is a run that reads no code: the current prompts' layout,
+	// kind and area rules over the stored page alone, the repository's and,
+	// once per project, the project's, for a prompts.Epoch the page is not
+	// at. Always trigger TriggerEpoch, its retries too, so it never counts
+	// in the poller's retry streak. It documents nothing: LastRun,
+	// DocumentedRun and the source page never find it.
+	RunRestyle   = "restyle"
+	TriggerEpoch = "epoch"
 )
 
 // Run states: queued until the worker takes it, then one state per kind of
@@ -66,6 +75,10 @@ type BaselineRun struct {
 	QueuedAt   time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+	// Epoch is the prompts.Epoch a full or restyle run ran under, the
+	// worker's to set when it starts one; 0 on any other run. A full run
+	// done with one restyles its repository's page (RestyleDue).
+	Epoch int
 	// RepoID and ProjectID are the repository's ids; ProjectKey and Slug
 	// its current names.
 	RepoID    int64
@@ -85,11 +98,16 @@ const runColumns = `b.id AS id, p.key AS project_key, r.slug AS slug, b.mode AS 
 	b.base_commit AS base_commit, b."commit" AS "commit", b.state AS state, b.step AS step, b.steps AS steps,
 	b.plan AS plan, b.attempts AS attempts, b.calls AS calls, b.bytes AS bytes, b.skipped AS skipped,
 	b.error AS error, b.queued_at AS queued_at, b.started_at AS started_at, b.finished_at AS finished_at,
-	b.repo_id AS repo_id, r.project_id AS project_id`
+	b.epoch AS epoch, b.repo_id AS repo_id, r.project_id AS project_id`
 
 // lColumns is runColumns of a subquery aliased l, in the same order.
 const lColumns = `l.id, l.project_key, l.slug, l.mode, l.trigger, l.base_commit, l."commit", l.state, l.step, l.steps, l.plan,
-	l.attempts, l.calls, l.bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at, l.repo_id, l.project_id`
+	l.attempts, l.calls, l.bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at, l.epoch, l.repo_id, l.project_id`
+
+// readsRepo holds a run row b to the runs that read its repository: never a
+// departure (no reading) nor a restyle (the page alone). The poller's
+// reconcile chain, its retries and the commit documented go by these.
+const readsRepo = `b.trigger <> 'departure' AND b.mode <> 'restyle'`
 
 // scanner is *sql.Row and *sql.Rows.
 type scanner interface {
@@ -103,7 +121,7 @@ func scanRun(row scanner, extra ...any) (BaselineRun, error) {
 	var plan []byte
 	dest := append([]any{&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
 		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, timeAt(&r.QueuedAt), timeOrNil(&r.StartedAt), timeOrNil(&r.FinishedAt),
-		&r.RepoID, &r.ProjectID}, extra...)
+		&r.Epoch, &r.RepoID, &r.ProjectID}, extra...)
 	err := row.Scan(dest...)
 	if len(plan) > 0 {
 		r.Plan = json.RawMessage(plan)
@@ -170,21 +188,22 @@ type RunStreak struct {
 
 // retriedB and retriedL count the newest runs in a row that are retries of
 // the repository of run row b (LastRun) or l (SourceRuns). Constants, one
-// per alias: SQL is never built at run time.
+// per alias: SQL is never built at run time. A departure or a restyle
+// between them breaks no streak: neither reads the repository.
 const (
 	retriedB = `(SELECT COUNT(*) FROM baseline_runs t
 	  WHERE t.repo_id = b.repo_id AND t.trigger = 'retry'
 	    AND t.id > COALESCE((SELECT MAX(n.id) FROM baseline_runs n
-	                          WHERE n.repo_id = b.repo_id AND n.trigger NOT IN ('retry', 'departure')), 0))`
+	                          WHERE n.repo_id = b.repo_id AND n.trigger NOT IN ('retry', 'departure', 'epoch')), 0))`
 	retriedL = `(SELECT COUNT(*) FROM baseline_runs t
 	  WHERE t.repo_id = l.repo_id AND t.trigger = 'retry'
 	    AND t.id > COALESCE((SELECT MAX(n.id) FROM baseline_runs n
-	                          WHERE n.repo_id = l.repo_id AND n.trigger NOT IN ('retry', 'departure')), 0))`
+	                          WHERE n.repo_id = l.repo_id AND n.trigger NOT IN ('retry', 'departure', 'epoch')), 0))`
 )
 
-// LastRun is a repository's newest run that reads it (never a departure),
-// open or not, and its streak, read in the same query: what the poller
-// decides the next run by.
+// LastRun is a repository's newest run that reads it (never a departure nor
+// a restyle), open or not, and its streak, read in the same query: what the
+// poller decides the next run by.
 func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, RunStreak, bool, error) {
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil || !ok {
@@ -194,12 +213,12 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, Run
 	r, err := scanRun(s.db.QueryRowContext(ctx, `
 		SELECT `+runColumns+`,
 		       (SELECT COUNT(*) FROM baseline_runs f
-		         WHERE f.repo_id = b.repo_id AND f.state = 'failed' AND f.trigger <> 'departure'
+		         WHERE f.repo_id = b.repo_id AND f.state = 'failed' AND f.trigger NOT IN ('departure', 'epoch')
 		           AND f.id > COALESCE((SELECT MAX(d.id) FROM baseline_runs d
-		                                 WHERE d.repo_id = b.repo_id AND d.state = 'done' AND d.trigger <> 'departure'), 0)),
+		                                 WHERE d.repo_id = b.repo_id AND d.state = 'done' AND d.trigger NOT IN ('departure', 'epoch')), 0)),
 		       `+retriedB+`
 		  FROM `+runsFrom+`
-		 WHERE b.repo_id = ? AND b.trigger <> 'departure' ORDER BY b.id DESC LIMIT 1`, rid), &st.Failed, &st.Retried)
+		 WHERE b.repo_id = ? AND `+readsRepo+` ORDER BY b.id DESC LIMIT 1`, rid), &st.Failed, &st.Retried)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BaselineRun{}, RunStreak{}, false, nil
 	}
@@ -210,23 +229,31 @@ func (s *Store) LastRun(ctx context.Context, key, slug string) (BaselineRun, Run
 }
 
 // DocumentedRun is a repository's newest done run that read it (never a
-// departure): its commit is the one the page was last read against.
+// departure nor a restyle): its commit is the one the page was last read
+// against, its plan the one the next reconcile starts from. A restyle's
+// plan holds no subjects: found here, the next reconcile would read afresh.
 func (s *Store) DocumentedRun(ctx context.Context, key, slug string) (BaselineRun, bool, error) {
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil || !ok {
 		return BaselineRun{}, false, err
 	}
 	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+`
-		WHERE b.repo_id = ? AND b.state = 'done' AND b.trigger <> 'departure' ORDER BY b.id DESC LIMIT 1`, rid)
+		WHERE b.repo_id = ? AND b.state = 'done' AND `+readsRepo+` ORDER BY b.id DESC LIMIT 1`, rid)
 }
 
 // SaveRun writes a run's progress: the commit it pinned, its mode (a reconcile
-// that reads afresh becomes full), state, step, plan,
+// that reads afresh becomes full), its epoch, state, step, plan,
 // counters, error and times. A run that is over is never written again:
 // reports false when the run is done, failed or gone (its repository
 // removed), and writes nothing.
 func (s *Store) SaveRun(ctx context.Context, r BaselineRun) (bool, error) {
-	return saveRun(ctx, s.db, r)
+	var ok bool
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		ok, err = saveRun(ctx, tx, r)
+		return err
+	})
+	return ok, err
 }
 
 // execer is *sql.DB and *sql.Tx.
@@ -234,14 +261,29 @@ type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+// saveRun writes the run; a full run done under an epoch, no part skipped,
+// restyled its repository's page with it, every step having had the page
+// in its prompt under that epoch's rules: the repository is not due a
+// restyle (user, 2026-11-04). One that skipped a part left that part's
+// statements as they were: still due.
 func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 	n, err := affected(db.ExecContext(ctx, `
 		UPDATE baseline_runs SET state = ?, step = ?, steps = ?, plan = ?, attempts = ?, calls = ?, bytes = ?,
-		       skipped = ?, error = ?, started_at = ?, finished_at = ?, "commit" = ?, mode = ?
+		       skipped = ?, error = ?, started_at = ?, finished_at = ?, "commit" = ?, mode = ?, epoch = ?
 		 WHERE id = ? AND state NOT IN ('done', 'failed')`,
 		r.State, r.Step, r.Steps, jsonOrNull(r.Plan), r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error,
-		stampOrNull(r.StartedAt), stampOrNull(r.FinishedAt), r.Commit, r.Mode, r.ID))
-	return n == 1, err
+		stampOrNull(r.StartedAt), stampOrNull(r.FinishedAt), r.Commit, r.Mode, r.Epoch, r.ID))
+	if err != nil || n != 1 {
+		return false, err
+	}
+	if r.State == RunDone && r.Mode == RunFull && r.Trigger != TriggerDeparture && r.Epoch > 0 && r.Skipped == 0 {
+		if _, err := db.ExecContext(ctx, `
+			UPDATE source_repos SET restyle_epoch = MAX(restyle_epoch, ?)
+			 WHERE repo_id = (SELECT repo_id FROM baseline_runs WHERE id = ?)`, r.Epoch, r.ID); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // ApplyBaselineStep writes a step's revision and the run's progress in one
@@ -313,18 +355,21 @@ func (s *Store) SetRepoMap(ctx context.Context, project, repo string, m *diagram
 // text changed. ok false, and nothing written, when revisionID is no
 // longer its page's current revision.
 func (s *Store) ArrangePage(ctx context.Context, revisionID int64, statements []Statement) (bool, error) {
+	return arrangeRevision(ctx, s.db, revisionID, statements)
+}
+
+// arrangeRevision is ArrangePage's write, alone or in a restyle step's
+// transaction: the statements set in place while revisionID is its page's
+// current revision.
+func arrangeRevision(ctx context.Context, db execer, revisionID int64, statements []Statement) (bool, error) {
 	raw, err := jsonOf(orEmptyStatements(statements))
 	if err != nil {
 		return false, err
 	}
-	res, err := s.db.ExecContext(ctx, `
+	n, err := affected(db.ExecContext(ctx, `
 		UPDATE revisions SET statements = ?
 		 WHERE id = ? AND id IN (SELECT current_revision_id FROM pages)`,
-		raw, revisionID)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
+		raw, revisionID))
 	return n > 0, err
 }
 
@@ -347,17 +392,20 @@ func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns
 	if err != nil || !ok {
 		return map[string]RepoRuns{}, err
 	}
-	// l is each repository's newest run, d its newest done one.
+	// l is each repository's newest run, a restyle only while it is open:
+	// it holds the repository's one open run, and the page must say why its
+	// buttons wait; over, the reading's run shows again. d is its newest
+	// done one that read it.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+lColumns+`,
 		       (SELECT SUM(c.cost_nano_usd) FROM llm_calls c WHERE c.baseline_run_id = l.id),
 		       d."commit", d.finished_at, `+retriedL+`
 		  FROM (SELECT `+runColumns+`, ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
-		          FROM `+runsFrom+` WHERE r.project_id = ?1) l
+		          FROM `+runsFrom+` WHERE r.project_id = ?1 AND (b.mode <> 'restyle' OR b.state NOT IN ('done', 'failed'))) l
 		  LEFT JOIN (SELECT b.repo_id, b."commit", b.finished_at,
 		                    ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
 		               FROM baseline_runs b JOIN repos r ON r.id = b.repo_id
-		              WHERE r.project_id = ?1 AND b.state = 'done' AND b.trigger <> 'departure') d
+		              WHERE r.project_id = ?1 AND b.state = 'done' AND `+readsRepo+`) d
 		    ON d.repo_id = l.repo_id AND d.rn = 1
 		 WHERE l.rn = 1`, pid)
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 // Every prompt that reads code or notes says what the redaction marker is.
 func TestPromptsStateTheRedactionMarker(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
-		"project departure": ProjectDeparture, "repo map": RepoMap} {
+		"project departure": ProjectDeparture, "repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle} {
 		if !strings.Contains(p, Redacted) {
 			t.Errorf("%s prompt lacks the redaction sentence %q", name, Redacted)
 		}
@@ -18,7 +18,7 @@ func TestPromptsStateTheRedactionMarker(t *testing.T) {
 // Every prompt that asks for German states the one spelling rule.
 func TestPromptsStateTheSpelling(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
-		"project departure": ProjectDeparture, "repo map": RepoMap, "diagrams": Diagrams} {
+		"project departure": ProjectDeparture, "repo map": RepoMap, "diagrams": Diagrams, "restyle": Restyle, "project restyle": ProjectRestyle} {
 		if !strings.Contains(p, Spelling) {
 			t.Errorf("%s prompt lacks the spelling rule %q", name, Spelling)
 		}
@@ -28,12 +28,14 @@ func TestPromptsStateTheSpelling(t *testing.T) {
 // Every prompt that writes statements, or lays the page out, states the one
 // rule for areas; every statement it asks for carries one.
 func TestPromptsStateTheAreas(t *testing.T) {
-	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "repo map": RepoMap} {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "repo map": RepoMap,
+		"restyle": Restyle, "project restyle": ProjectRestyle} {
 		if !strings.Contains(p, Areas) {
 			t.Errorf("%s prompt lacks the area rule %q", name, Areas)
 		}
 	}
-	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture} {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture,
+		"restyle": Restyle, "project restyle": ProjectRestyle} {
 		if !strings.Contains(p, `"area": "<area>"`) {
 			t.Errorf("%s prompt's statement has no area", name)
 		}
@@ -43,7 +45,8 @@ func TestPromptsStateTheAreas(t *testing.T) {
 // Every prompt that writes statement text and a summary states the one
 // layout rule and how the summary takes it; none bars the summary from it.
 func TestPromptsStateTheLayout(t *testing.T) {
-	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture} {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture,
+		"restyle": Restyle, "project restyle": ProjectRestyle} {
 		if !strings.Contains(p, Layout) {
 			t.Errorf("%s prompt lacks the layout rule %q", name, Layout)
 		}
@@ -72,8 +75,25 @@ func TestPromptsReadTheOtherRepositories(t *testing.T) {
 	if !strings.Contains(Describe, "{sibling_interfaces}") || !strings.Contains(Describe, "never from the list alone") {
 		t.Error("describe prompt lacks the other repositories' interfaces or the rule that guards them")
 	}
-	if !strings.Contains(Project, "never one flat list of repositories") || !strings.Contains(Merge, "the repositories' roles, grouped by") {
-		t.Error("project or merge prompt still lists the repositories' roles flat")
+	if !strings.Contains(Project, "never one flat list of repositories") || !strings.Contains(Merge, "the repositories' roles, grouped by") ||
+		!strings.Contains(ProjectRestyle, "never one flat list of repositories") {
+		t.Error("project, merge or project restyle prompt still lists the repositories' roles flat")
+	}
+}
+
+// A restyle reads no code and learns nothing: it says so, drops nothing,
+// and every statement it adds names what it was split from, which the code
+// carries the sources of (consolidate's restyle).
+func TestRestylePromptsLearnNothing(t *testing.T) {
+	for name, p := range map[string]string{"restyle": Restyle, "project restyle": ProjectRestyle} {
+		for _, want := range []string{"you learn nothing", "Nothing is dropped", `"from": ["<id>" | "summary", ...]`, "`outline`"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s prompt lacks %q", name, want)
+			}
+		}
+		if strings.Contains(p, `"drop"`) || strings.Contains(p, `"confirmed"`) {
+			t.Errorf("%s prompt's output format offers a drop or a confirmation", name)
+		}
 	}
 }
 
@@ -82,7 +102,7 @@ func TestPromptsReadTheOtherRepositories(t *testing.T) {
 // flows, never retells them end to end. That each output format offers it
 // is inference's TestPromptKindsMatchTheSchema.
 func TestPromptsStateTheFlowKind(t *testing.T) {
-	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project} {
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "restyle": Restyle, "project restyle": ProjectRestyle} {
 		if !strings.Contains(p, "- `flow`: a flow") {
 			t.Errorf("%s prompt does not define the flow kind", name)
 		}
