@@ -89,6 +89,11 @@ func (f fakeSync) RetryAt(finished time.Time, failed int) (time.Time, bool) {
 	return finished.Add(24 * time.Hour), failed <= 3
 }
 
+// RestyleRetryAt answers a restyle's retry an hour on, at most once.
+func (f fakeSync) RestyleRetryAt(finished time.Time, failed int) (time.Time, bool) {
+	return finished.Add(time.Hour), failed < 2
+}
+
 func getQueue(t *testing.T, q *QueueDeps) queueBody {
 	t.Helper()
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))

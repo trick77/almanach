@@ -86,8 +86,14 @@ func (s *runStore) RestyleState(_ context.Context, key, _ string, epoch int, _ t
 		ProjectDue: s.projectEpoch < epoch && page && s.repoCount[key] != 1}, s.epochErr
 }
 
-func (s *runStore) MarkProjectRestyled(_ context.Context, _ string, epoch int) error {
-	s.projectEpoch = max(s.projectEpoch, epoch)
+// MarkProjectRestyled marks while the run stands and did not fail, as the
+// store's query does.
+func (s *runStore) MarkProjectRestyled(_ context.Context, runID int64, epoch int) error {
+	for _, r := range s.runs {
+		if r.ID == runID && r.State != store.RunFailed {
+			s.projectEpoch = max(s.projectEpoch, epoch)
+		}
+	}
 	return nil
 }
 

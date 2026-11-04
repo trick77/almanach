@@ -701,6 +701,17 @@ func (p *Poller) RetryAt(finished time.Time, failedInRow int) (time.Time, bool) 
 	return finished.Add(p.retryAfter()), true
 }
 
+// RestyleRetryAt is when the poller queues a failed restyle again, its
+// page's failures at the epoch counted (store.RestyleState's count): only
+// with the reconcile interval on, as restyle queues none without, and
+// while the page has failed fewer than store.RestyleTries times.
+func (p *Poller) RestyleRetryAt(finished time.Time, failed int) (time.Time, bool) {
+	if p.Describe.Wake == nil || p.Describe.Reconcile <= 0 || failed >= store.RestyleTries {
+		return time.Time{}, false
+	}
+	return finished.Add(p.retryAfter()), true
+}
+
 // maxRetries is how many times in a row the poller queues a failed run
 // again; past it the repository waits for the reconcile interval or a
 // button.

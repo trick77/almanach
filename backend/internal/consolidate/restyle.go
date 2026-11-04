@@ -67,6 +67,14 @@ func (w *Worker) restyleStep(ctx context.Context, r *store.BaselineRun, plan run
 	if st.ProjectDue {
 		return w.restyleProject(ctx, r, plan)
 	}
+	return w.restyleMap(ctx, r, plan)
+}
+
+// restyleMap ends a restyle's page steps: on to the map step, counted as
+// its own (store.RestyleMapStep), so a map that fails spends no page's
+// tries.
+func (w *Worker) restyleMap(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
+	r.Step = store.RestyleMapStep
 	return w.projectOver(ctx, r, plan)
 }
 
@@ -84,6 +92,10 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 	if !ok {
 		w.log.InfoContext(ctx, at+": no repository page yet, nothing to restyle")
 	} else {
+		// A run's first call: none left is a cap below one call, never a
+		// spent run. Failed, not skipped: a skip would leave the page due
+		// and the poller queue the same run every cycle; a failure counts
+		// against store.RestyleTries and ends.
 		if r.Calls >= w.base.Limits.MaxCalls {
 			return fmt.Errorf("no call left for the restyle")
 		}
@@ -104,18 +116,20 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 }
 
 // restyleProject is the project page's restyle, the page alone in the
-// prompt with its repositories by slug; its map is carried as stored.
+// prompt with its repositories by slug; its map is carried as a baseline
+// run reads it (projectPage: one stored before the tags as none, drawn by
+// the next project step).
 func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	at := "baseline: restyle " + projectLabel
-	page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
+	page, err := w.projectPage(ctx, r.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return errStop
+		return err
 	}
 	if r.Calls >= w.base.Limits.MaxCalls {
-		// Still due: the next restyle of one of its repositories takes it.
+		// The run's calls spent by the repository's page: still due, the
+		// next restyle of one of its repositories takes it, with a call.
 		w.log.WarnContext(ctx, at+" skipped: the run's calls are spent, still due")
-		return w.projectOver(ctx, r, plan)
+		return w.restyleMap(ctx, r, plan)
 	}
 	// The repositories by slug, what the summary's roles name; never their
 	// summaries, which a restyle does not read.
@@ -142,7 +156,7 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 	if err != nil {
 		return err
 	}
-	plan.ProjectDone = true
+	plan.ProjectDone, r.Step = true, store.RestyleMapStep
 	return w.writeRestyle(ctx, r, plan, store.ScopeProject, out)
 }
 
@@ -177,20 +191,31 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	}
 	patch := res.Patch
 	patch.Drop, patch.Confirmed = nil, nil
-	// An edit keeps the files it has: a restyle reads none.
-	patch.Statements = slices.Clone(patch.Statements)
-	for i, s := range patch.Statements {
-		if s.ID != nil {
-			if old, ok := byID[*s.ID]; ok {
-				patch.Statements[i].Files = old.Files
-			}
-		}
-	}
-	added, sources, leftOut := splitOff(page, patch.Added, validFor(scope))
+	added, sources, leftOut, kept := splitOff(page, patch.Added, validFor(scope))
 	if len(leftOut) > 0 {
-		w.log.WarnContext(ctx, at+": new statement left out", slog.Any("statements", leftOut))
+		w.log.WarnContext(ctx, at+": new statement left out, what it came from kept as stored", slog.Any("statements", leftOut))
 	}
 	patch.Added = added
+	if kept["summary"] {
+		patch.Summary = nil
+	}
+	// An edit keeps the files it has, a restyle reads none, and the diagram
+	// it has, or none: a reworded text returned without it would drop it,
+	// and a restyle drops nothing nor draws what no reading taught. One a
+	// left-out statement came from stays as stored.
+	edits := make([]inference.Statement, 0, len(patch.Statements))
+	for _, s := range patch.Statements {
+		if s.ID != nil {
+			if kept[*s.ID] {
+				continue
+			}
+			if old, ok := byID[*s.ID]; ok {
+				s.Files, s.Diagram = old.Files, old.Diagram
+			}
+		}
+		edits = append(edits, s)
+	}
+	patch.Statements = edits
 	// No tree: every edit keeps its stored files and nothing is dropped, so
 	// no file check of ApplyPatch has anything to judge.
 	applied := baseline.ApplyPatch(page.Statements, patch, func(string) bool { return true }, validFor(scope))
@@ -244,7 +269,7 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 		Chars: prose(summary, statements), SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID,
 	}
 	if scope == store.ScopeProject {
-		// The map is the project step's: carried as stored, sentinel and all.
+		// The map is the project step's: carried as projectPage read it.
 		rev.Map = page.Map
 	}
 	grown, n := growth(page, summary, statements)
@@ -260,8 +285,21 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 // left out, by name: a fact with no origin is a fact learned, which a
 // restyle never does. One the page cannot hold (valid) is left out here
 // too, so ApplyPatch takes every one and sources stays in the order of
-// added, the order attach numbers them in.
-func splitOff(page store.Page, proposed []inference.Statement, valid func(inference.Statement) string) (added []inference.Statement, sources [][]store.Source, leftOut []string) {
+// added, the order attach numbers them in. kept is what a left-out one
+// came from: those statements' ids, "summary" for the summary, which the
+// restyle keeps as stored, or the text the answer moved out of them would
+// be lost with it.
+func splitOff(page store.Page, proposed []inference.Statement, valid func(inference.Statement) string) (added []inference.Statement, sources [][]store.Source, leftOut []string, kept map[string]bool) {
+	kept = map[string]bool{}
+	leave := func(st inference.Statement, why string) {
+		leftOut = append(leftOut, st.Name+" ("+why+")")
+		for _, id := range st.From {
+			if strings.EqualFold(strings.TrimSpace(id), "summary") {
+				id = "summary"
+			}
+			kept[id] = true
+		}
+	}
 	byID := make(map[string]store.Statement, len(page.Statements))
 	pageFiles := map[string]bool{}
 	for _, s := range page.Statements {
@@ -272,7 +310,7 @@ func splitOff(page store.Page, proposed []inference.Statement, valid func(infere
 	}
 	for _, st := range proposed {
 		if why := valid(st); why != "" {
-			leftOut = append(leftOut, st.Name+" ("+why+")")
+			leave(st, why)
 			continue
 		}
 		allowed := map[string]bool{}
@@ -310,14 +348,14 @@ func splitOff(page store.Page, proposed []inference.Statement, valid func(infere
 			}
 		}
 		if len(src) == 0 {
-			leftOut = append(leftOut, st.Name+" (nothing it came from carries a source)")
+			leave(st, "nothing it came from carries a source")
 			continue
 		}
 		st.From = nil
 		added = append(added, st)
 		sources = append(sources, src)
 	}
-	return added, sources, leftOut
+	return added, sources, leftOut, kept
 }
 
 // slugOf is a page's repository slug as the store keys it: "" for the

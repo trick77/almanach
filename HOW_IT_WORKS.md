@@ -995,7 +995,8 @@ page's `restyle_epoch` (`source_repos`, `projects`) is the epoch it was
 last restyled at, 0 for every page written before. A full run, stamped
 with the epoch when it starts reading (a run a bump's deploy cut in two
 read its first parts under the old rules), puts its repository's page
-there when done; a project step that answered with the whole page in its
+there when done with no part skipped (a skipped part's statements stayed
+as they were); a project step that answered with the whole page in its
 prompt under today's rules (a full run's of the epoch, or the one that
 wrote the page first) puts the project's page there. The poller queues a
 restyle run (mode `restyle`, trigger `epoch`) at the documented commit
@@ -1020,11 +1021,15 @@ call. The answer is a patch with an outline: edits by id, new statements in
 `added` each naming what it was split out of (`from`, statement ids or
 `summary`), a summary or null; no drop, no confirmation in the schema. It
 learns nothing, so it neither credits nor checks: an edit keeps its files,
-sources and last check; a new statement keeps only files of what it came
-from (any file of the page when from the summary) and carries their sources
-(from the summary: those of the statements sharing a file with it), and
-with none to carry, or none the page can hold, it is left out and logged;
-nothing is dropped. Text changed is a revision (the project's with its map
+sources, last check and diagram (none drawn where there was none); a new
+statement keeps only files of what it came from (any file of the page
+when from the summary) and carries their sources (from the summary: those
+of the statements sharing a file with it), and with none to carry, or
+none the page can hold, it is left out and logged, and what it came from
+(the statements, the summary) is kept as stored, so the text the answer
+moved into it is never lost; nothing is dropped. The run's step says
+which page a failure was on (repository, project, map): a map that fails
+spends neither page's tries. Text changed is a revision (the project's with its map
 as stored), a layout alone is set in place. Each step's write, the run's
 progress and the page's epoch land in one transaction: a restart or a
 later failure never pays a step twice. A restyle documents nothing:

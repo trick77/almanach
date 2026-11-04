@@ -214,13 +214,26 @@ func TestRestyleState_ProjectFailuresOverTheProject(t *testing.T) {
 }
 
 // A reading run's project step that had the whole page under today's rules
-// puts the project page at the epoch; it never moves back.
+// puts the project page at the epoch, by the run: never back, never by a
+// run that failed or is gone.
 func TestMarkProjectRestyled(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	sourceRepo(t, s, "tools", "svc")
+	sourceRepo(t, s, "tools", "web")
+	projectPage(t, s, "tools")
+	failed := finish(t, s, enqueue(t, s, "tools", "web"), RunFailed)
+	for _, id := range []int64{failed.ID, 999} {
+		if err := s.MarkProjectRestyled(ctx, id, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st, _ := s.RestyleState(ctx, "tools", "svc", 2, time.Now()); !st.ProjectDue {
+		t.Fatalf("state = %+v: marked by a failed or a missing run", st)
+	}
+	r := enqueue(t, s, "tools", "svc")
 	for _, epoch := range []int{2, 1} {
-		if err := s.MarkProjectRestyled(ctx, "tools", epoch); err != nil {
+		if err := s.MarkProjectRestyled(ctx, r.ID, epoch); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -242,6 +255,13 @@ func TestApplyRestyle_AndTheFullRunsEpoch(t *testing.T) {
 	ctx := context.Background()
 	sourceRepo(t, s, "tools", "svc")
 	sourceRepo(t, s, "tools", "web")
+	// One that skipped a part left that part's statements as they were.
+	skipped := enqueue(t, s, "tools", "svc")
+	skipped.Epoch, skipped.Skipped = 2, 1
+	finish(t, s, skipped, RunDone)
+	if repo, _, _ := epochs(s, "svc"); repo != 0 {
+		t.Fatalf("epoch after a full run that skipped a part = %d, want 0", repo)
+	}
 	full := enqueue(t, s, "tools", "svc")
 	full.Epoch = 2
 	finish(t, s, full, RunDone)

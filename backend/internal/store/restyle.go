@@ -45,11 +45,13 @@ func (s *Store) EnqueueRestyle(ctx context.Context, key, slug, commit string, ep
 const RestyleTries = 4
 
 // The steps of a restyle run as its row counts them (BaselineRun.Step): the
-// repository's page, then the project's. A run that failed at
-// RestyleProjectStep failed on the project page.
+// repository's page, the project's, the map. A run that failed at
+// RestyleProjectStep failed on the project page; one that failed on the
+// map spends neither page's tries but its repository's.
 const (
 	RestyleRepoStep    = 0
 	RestyleProjectStep = 1
+	RestyleMapStep     = 2
 )
 
 // RestyleState is what is due of a repository's restyle at an epoch: its
@@ -110,12 +112,18 @@ func (s *Store) RestyleDue(ctx context.Context, key, slug string, epoch int, fai
 	return (st.RepoDue || st.ProjectDue) && !st.Open, err
 }
 
-// MarkProjectRestyled puts a project's page at epoch: a reading run's
-// project step answered under today's prompts, the page written, or found
-// as it should be, with the whole of it in the prompt. Outside the step's
-// transaction: a failed write costs one restyle call later, never the page.
-func (s *Store) MarkProjectRestyled(ctx context.Context, key string, epoch int) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE projects SET restyle_epoch = MAX(restyle_epoch, ?) WHERE id = `+projectByName, epoch, key)
+// MarkProjectRestyled puts the project page of run runID's repository at
+// epoch: the run's project step answered under today's prompts, the page
+// written, or found as it should be, with the whole of it in the prompt.
+// Only while the run stands and did not fail: a run gone with its
+// repository, or over another way, wrote nothing to mark. Outside the
+// step's transaction: a failed write costs one restyle call later, never
+// the page.
+func (s *Store) MarkProjectRestyled(ctx context.Context, runID int64, epoch int) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE projects SET restyle_epoch = MAX(restyle_epoch, ?)
+		 WHERE id = (SELECT r.project_id FROM baseline_runs b JOIN repos r ON r.id = b.repo_id
+		              WHERE b.id = ? AND b.state <> 'failed')`, epoch, runID)
 	return err
 }
 

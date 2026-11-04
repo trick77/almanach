@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
@@ -57,7 +58,8 @@ func statementNamed(t *testing.T, page store.Page, name string) store.Statement 
 // A restyle reads no code and learns nothing: the component's flow becomes
 // a flow statement carrying the component's sources, one split from the
 // summary those of the statements sharing its file; one from nowhere is
-// left out. An edit keeps its files, sources and last check; nothing is
+// left out, and what it came from (here the summary) kept as stored, the
+// text it took never lost. An edit keeps its files, sources and last check; nothing is
 // dropped; a new statement is unchecked. Then the project's page, its map
 // as stored, then the map step, the text having moved. Both pages at the
 // epoch, three calls in the ledger, the restyle's by step.
@@ -120,7 +122,7 @@ func TestRestyle_SplitsAndCreditsNothing(t *testing.T) {
 	if !slices.Equal(login.Sources, []store.Source{svcPR}) || !slices.Equal(login.Files, []string{"auth/login.go"}) {
 		t.Errorf("flow split from the summary = %+v, want s2's pull request", login)
 	}
-	if page.Summary != "svc rechnet ab, siehe «Abrechnung»." || statementNamed(t, page, "Anmeldung").Text != "Nur angemeldet." {
+	if page.Summary != "svc rechnet ab. Ablauf: Login, dann Abrechnung." || statementNamed(t, page, "Anmeldung").Text != "Nur angemeldet." {
 		t.Errorf("page = %+v", page)
 	}
 	if x.st.repoEpoch != prompts.Epoch || x.st.projectEpoch != prompts.Epoch {
@@ -129,6 +131,39 @@ func TestRestyle_SplitsAndCreditsNothing(t *testing.T) {
 	project := x.projectPage()
 	if project.Summary != "Werkzeuge, nach Teilen gruppiert." || project.Map == nil || mapSlugs(project.Map)[0] != "svc" {
 		t.Errorf("project page = %+v, want the summary regrouped, the map as stored", project)
+	}
+}
+
+// An edit shortening a statement whose split is left out stays as stored,
+// the text never lost; a reworded statement keeps its diagram whatever the
+// answer returns for it, and an edit draws none where there was none. The
+// steps go repository, project, map, so the map's failure counts as
+// neither page's.
+func TestRestyle_KeepsWhatItWouldLose(t *testing.T) {
+	x := restyleWorld(t)
+	x.st.projectEpoch = prompts.Epoch
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	page := x.st.pages[key]
+	page.Statements[1].Diagram = drawnMap("svc")
+	x.st.pages[key] = page
+	x.models.restyles = []inference.RestyleResult{{Call: called, Patch: inference.Patch{
+		Statements: []inference.Statement{
+			{ID: ref("s1"), Kind: "component", Name: "Kern", Text: "Gekürzt.", Diagram: drawnMap("svc")},
+			{ID: ref("s2"), Kind: "rule", Name: "Anmeldung", Text: "Nur wer angemeldet ist.", Diagram: &diagram.Diagram{Kind: diagram.KindNone}},
+		},
+		Added: []inference.Statement{{Kind: "flow", Name: "Leer", Text: " ", From: []string{"s1"}}},
+	}}}
+	x.models.repoMap = inference.RepoMapResult{Call: inference.Call{Outcome: inference.OutcomeTimedOut}}
+	x.w.drain(context.Background())
+	page = x.repoPage()
+	if kern := statementNamed(t, page, "Kern"); kern.Text != "Der Kern. Ablauf: erst Login, dann Abrechnung." || kern.Diagram != nil {
+		t.Errorf("s1 = %+v, want it as stored: its split was left out", kern)
+	}
+	if rule := statementNamed(t, page, "Anmeldung"); rule.Text != "Nur wer angemeldet ist." || rule.Diagram == nil {
+		t.Errorf("s2 = %+v, want the rewording with its diagram", rule)
+	}
+	if r := x.run(); r.Step != store.RestyleMapStep {
+		t.Errorf("run step = %d at the map, want %d", r.Step, store.RestyleMapStep)
 	}
 }
 
@@ -325,7 +360,8 @@ func TestProjectRestyled(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := newWorld(t, 16)
-			r := store.BaselineRun{ProjectKey: "tools", Mode: c.mode, Epoch: c.epoch}
+			r := store.BaselineRun{ID: 9, ProjectKey: "tools", Mode: c.mode, Epoch: c.epoch, State: store.RunProject}
+			x.st.runs = append(x.st.runs, r)
 			x.w.projectRestyled(context.Background(), &r, c.first)
 			if x.st.projectEpoch != c.want {
 				t.Errorf("project epoch = %d, want %d", x.st.projectEpoch, c.want)

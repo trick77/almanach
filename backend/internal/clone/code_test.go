@@ -144,6 +144,28 @@ func TestDescribe_QueuesARestyle(t *testing.T) {
 	}
 }
 
+// A failed restyle's retry, as the queue shows it: a day on, only with the
+// interval on and while its page has tries left.
+func TestRestyleRetryAt(t *testing.T) {
+	at := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	for name, c := range map[string]struct {
+		reconcile time.Duration
+		failed    int
+		want      bool
+	}{
+		"retried":      {30 * 24 * time.Hour, 1, true},
+		"tries spent":  {30 * 24 * time.Hour, store.RestyleTries, false},
+		"buttons only": {0, 1, false},
+	} {
+		p := New(Deps{Store: newFakeStore(), Git: newFakeGit(), Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Describe: Describe{Reconcile: c.reconcile, Wake: func() {}}})
+		got, ok := p.RestyleRetryAt(at, c.failed)
+		if ok != c.want || (ok && !got.Equal(at.Add(retryWait))) {
+			t.Errorf("%s: %v %v, want %v", name, got, ok, c.want)
+		}
+	}
+}
+
 // A repository back from a deactivation (its head forgotten with the
 // clone) reconciles from the commit last documented on its first ready;
 // never documented, it reads afresh.

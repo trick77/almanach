@@ -49,7 +49,7 @@ type RunStore interface {
 	SettleDepartures(ctx context.Context, key string, slugs []string) error
 	RestyleState(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (store.RestyleState, error)
 	ApplyRestyle(ctx context.Context, r store.BaselineRun, scope string, epoch int, w store.Restyled) (int, bool, error)
-	MarkProjectRestyled(ctx context.Context, key string, epoch int) error
+	MarkProjectRestyled(ctx context.Context, runID int64, epoch int) error
 }
 
 // Code is the clones as a run reads them, each call under the poller's
@@ -1330,7 +1330,9 @@ func (w *Worker) projectRestyled(ctx context.Context, r *store.BaselineRun, firs
 	if !first && (r.Mode != store.RunFull || r.Epoch != prompts.Epoch) {
 		return
 	}
-	if err := w.base.Store.MarkProjectRestyled(ctx, r.ProjectKey, prompts.Epoch); err != nil {
+	// By the run: one gone with its repository, or over, wrote nothing to
+	// mark (writeProject and projectOver report no write of a run over).
+	if err := w.base.Store.MarkProjectRestyled(ctx, r.ID, prompts.Epoch); err != nil {
 		w.log.WarnContext(ctx, "baseline: project restyle epoch not written, a restyle takes the page later", logging.Err(err))
 	}
 }

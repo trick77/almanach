@@ -261,9 +261,11 @@ type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// saveRun writes the run; a full run done under an epoch restyled its
-// repository's page with it, every step having read the page under that
-// epoch's prompts: the repository is not due a restyle (user, 2026-11-04).
+// saveRun writes the run; a full run done under an epoch, no part skipped,
+// restyled its repository's page with it, every step having had the page
+// in its prompt under that epoch's rules: the repository is not due a
+// restyle (user, 2026-11-04). One that skipped a part left that part's
+// statements as they were: still due.
 func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 	n, err := affected(db.ExecContext(ctx, `
 		UPDATE baseline_runs SET state = ?, step = ?, steps = ?, plan = ?, attempts = ?, calls = ?, bytes = ?,
@@ -274,7 +276,7 @@ func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 	if err != nil || n != 1 {
 		return false, err
 	}
-	if r.State == RunDone && r.Mode == RunFull && r.Trigger != TriggerDeparture && r.Epoch > 0 {
+	if r.State == RunDone && r.Mode == RunFull && r.Trigger != TriggerDeparture && r.Epoch > 0 && r.Skipped == 0 {
 		if _, err := db.ExecContext(ctx, `
 			UPDATE source_repos SET restyle_epoch = MAX(restyle_epoch, ?)
 			 WHERE repo_id = (SELECT repo_id FROM baseline_runs WHERE id = ?)`, r.Epoch, r.ID); err != nil {
