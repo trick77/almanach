@@ -992,15 +992,24 @@ and area need no code read again (user, 2026-11-04: "that's pretty
 expensive to redescribe"). `prompts.Epoch`, bumped by hand in the change
 whose rules must reach every stored page, says which pages are due: each
 page's `restyle_epoch` (`source_repos`, `projects`) is the epoch it was
-last restyled at, 0 for every page written before, and a full run done
-under an epoch puts its repository's page there. The poller queues a
+last restyled at, 0 for every page written before. A full run, stamped
+with the epoch when it starts reading (a run a bump's deploy cut in two
+read its first parts under the old rules), puts its repository's page
+there when done; a project step that answered with the whole page in its
+prompt under today's rules (a full run's of the epoch, or the one that
+wrote the page first) puts the project's page there. The poller queues a
 restyle run (mode `restyle`, trigger `epoch`) at the documented commit
 when the repository's page or its project's is below the epoch and
 nothing that reads the code is due (the failed and unfinished retries, a
 reconcile first), the reconcile interval on, a page documented; one restyle
 open in the whole wiki at a time, so a bump trickles through one page after
 another and never crowds out the notes. A failed one is queued again a day
-later (the interval when shorter), at most three more times an epoch.
+later (the interval when shorter), while a page has failed fewer than
+`store.RestyleTries` (4) times at the epoch; a project page's failures (a
+run that failed on its step) count over the project, whichever
+repository's run made them. What is due is one store answer
+(`RestyleState`) for the poller and the run's steps alike, so a run never
+ends leaving a page due that it judged done.
 The run reads no code. Its steps: the repository's page, one call
 (`almanach_restyle.txt`) over the page alone; the project's page, one call
 (`almanach_project_restyle.txt`), in the run of the first repository of a
@@ -1019,9 +1028,11 @@ nothing is dropped. Text changed is a revision (the project's with its map
 as stored), a layout alone is set in place. Each step's write, the run's
 progress and the page's epoch land in one transaction: a restart or a
 later failure never pays a step twice. A restyle documents nothing:
-`LastRun`, `DocumentedRun` and the source page never see it, so the next
-reconcile starts from the plan of the run that read the code, and no
-retry streak counts it. A change whose rules only shape new writing leaves
+`LastRun` and `DocumentedRun` never see it, so the next reconcile starts
+from the plan of the run that read the code, and no retry streak counts
+it. The source page shows one only while it is open ("Wird neu
+gegliedert"): it holds the repository's one open run, so the buttons
+wait for it; over, the reading's run shows again. A change whose rules only shape new writing leaves
 the epoch: stored pages change as before.
 
 ## 5. Operations
@@ -1668,9 +1679,9 @@ baseline step's patch never is: its bad items are left out one by one (see
   no credit, no check; an edit keeps its files, a statement split off only
   files and sources of what it came from, left out without a source. One
   open in the wiki at a time. It documents nothing and counts in no
-  streak: `DocumentedRun`, `LastRun` and the source page never return it.
-  A page's `restyle_epoch` moves with its step's write, a full run done
-  moving its repository's.
+  streak: `DocumentedRun` and `LastRun` never return it, the source page
+  only while open. A page's `restyle_epoch` moves with its step's write,
+  a full run done moving its repository's.
 
 ### Startup and operations
 

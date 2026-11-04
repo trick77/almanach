@@ -89,8 +89,7 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 // A page below prompts.Epoch is restyled at its documented commit when
 // nothing that reads the code is due: a reconcile due goes first, and with
 // the interval off (buttons only) or nothing documented no restyle is
-// asked. The store is asked with the epoch, the retry cap and the retry's
-// wait.
+// asked. The store is asked with the epoch and the retry's wait.
 func TestDescribe_QueuesARestyle(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	month := 30 * 24 * time.Hour
@@ -136,7 +135,7 @@ func TestDescribe_QueuesARestyle(t *testing.T) {
 				t.Fatalf("RestyleDue asked %v, want asked %v", s.restyleAsked, c.asked)
 			}
 			if c.asked {
-				want := fmt.Sprintf("%d %d %s", prompts.Epoch, maxRetries+1, now.Add(-retryWait).Format(time.RFC3339))
+				want := fmt.Sprintf("%d %s", prompts.Epoch, now.Add(-retryWait).Format(time.RFC3339))
 				if s.restyleAsked[0] != want {
 					t.Errorf("RestyleDue asked %q, want %q", s.restyleAsked[0], want)
 				}

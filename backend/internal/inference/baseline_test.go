@@ -180,8 +180,8 @@ func TestRepoMap(t *testing.T) {
 }
 
 // A restyle's answer: the patch with its new statements' origins, the
-// outline beside it; a drop or a confirmation outside the schema is no
-// restyle's; the repository's kinds or the project's; strict at every depth.
+// outline beside it; the repository's kinds or the project's, no drop nor
+// confirmation offered; strict at every depth.
 func TestRestyle(t *testing.T) {
 	srv := llmwiretest.NewServer(t)
 	srv.SetReply(`{"summary": null, "statements": [{"id": "s1", "kind": "component", "name": "Kern", "text": "Kurz.", "files": [], "area": "Kern"}],
@@ -193,7 +193,7 @@ func TestRestyle(t *testing.T) {
 	}
 	p := res.Patch
 	if p.Summary != nil || *p.Statements[0].ID != "s1" || len(p.Added) != 1 || !slices.Equal(p.Added[0].From, []string{"s1", "summary"}) ||
-		!strings.Contains(p.Added[0].Text, "1. a") || p.Drop != nil || p.Confirmed != nil {
+		!strings.Contains(p.Added[0].Text, "1. a") {
 		t.Fatalf("Patch = %+v", p)
 	}
 	if len(res.Outline) != 1 || res.Outline[0].IDs[0] != "s1" {

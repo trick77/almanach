@@ -4,8 +4,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 
 ## Commands
 
-- Prompts compiled in, never configurable. Rule for stored pages: bump `prompts.Epoch` (restyle,
-  1 call/page, no full run; user, 2026-11-04). UI: German, copy only in `strings.ts`, `/api/...` only;
+- Prompts compiled in, never configurable; rule for stored pages: bump `prompts.Epoch` (user,
+  2026-11-04). UI: German, copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
   browser write. Text, summary: schema blocks, never newlines in a JSON string (models drop
   them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
@@ -32,8 +32,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
   (user, 2026-11-01); bad path: off file list. Same rewrite = no revision.
 - Provenance is code's: `sources` carried by id, current PR/run appended on text change; departure
-  run neither credits nor adds (removal teaches nothing; user, 2026-11-02); restyle: no credit,
-  check, drop; split takes `from`'s sources. Bad item
+  run neither credits nor adds (removal teaches nothing; user, 2026-11-02). Bad item
   (unknown/repeated id, bad kind, empty): merge (whole page) rejected; step's patch never, item
   left out, logged, stored kept (user, 2026-11-01). Page without statements: edits taken as new.
   New statements in id-less `added`; id from `NextStatementID` over whole history, never reissued.

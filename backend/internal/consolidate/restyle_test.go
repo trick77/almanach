@@ -32,6 +32,7 @@ func restyleWorld(t *testing.T) world {
 		}}
 	page.RepoMapBasis = page.MapBasis()
 	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = page
+	x.st.repos = append(x.st.repos, store.SourceRepo{ProjectKey: "tools", Slug: "web", HeadCommit: head})
 	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunRestyle,
 		Trigger: store.TriggerEpoch, BaseCommit: head, Commit: head, State: store.RunQueued, Plan: []byte(`{"restyle":{}}`),
 		Epoch: prompts.Epoch, RepoID: 3})
@@ -207,9 +208,8 @@ func TestRestyle_HoldsOnAStoreThatDoesNotAnswer(t *testing.T) {
 	for name, fail := range map[string]func(x world){
 		"epochs":          func(x world) { x.st.epochErr = down },
 		"page":            func(x world) { x.st.pageErr = down },
-		"project count":   func(x world) { x.st.repoEpoch, x.st.countErr = prompts.Epoch, down },
 		"step write":      func(x world) { x.st.applyErr = down },
-		"repository rows": func(x world) { x.st.repoEpoch, x.st.othersErr = prompts.Epoch, down },
+		"repository rows": func(x world) { x.st.repoEpoch, x.st.reposErr = prompts.Epoch, down },
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := restyleWorld(t)
@@ -276,25 +276,61 @@ func TestRestyle_ProjectLeftDue(t *testing.T) {
 	})
 }
 
-// A full run done is at the epoch; a reconcile and a departure are not.
-func TestMarkDone_TheFullRunsEpoch(t *testing.T) {
-	x := newWorld(t, 16)
+// A full run is stamped with the epoch it reads under when it starts, a
+// reconcile that reads afresh too; a reconcile, a departure, and a run a
+// deploy restarted after stamping keep what they have.
+func TestStartRun_StampsAFullRunsEpoch(t *testing.T) {
 	for name, c := range map[string]struct {
-		mode string
-		plan runPlan
-		want int
+		mode, trigger, plan string
+		contains            bool
+		epoch, want         int
 	}{
-		"full":      {store.RunFull, runPlan{}, prompts.Epoch},
-		"reconcile": {store.RunReconcile, runPlan{}, 0},
-		"departure": {store.RunFull, runPlan{Departure: true}, 0},
+		"full":             {store.RunFull, store.TriggerManual, "", true, 0, prompts.Epoch},
+		"reconcile":        {store.RunReconcile, store.TriggerMonthly, "", true, 0, 0},
+		"reconcile afresh": {store.RunReconcile, store.TriggerMonthly, "", false, 0, prompts.Epoch},
+		"departure":        {store.RunFull, store.TriggerDeparture, `{"departure":true}`, true, 0, 0},
+		"stamped before":   {store.RunFull, store.TriggerManual, "", true, prompts.Epoch + 7, prompts.Epoch + 7},
 	} {
-		r := store.BaselineRun{Mode: c.mode}
-		if err := x.w.markDone(context.Background(), &r, c.plan); err != nil {
-			t.Fatal(err)
-		}
-		if r.Epoch != c.want {
-			t.Errorf("%s: epoch %d, want %d", name, r.Epoch, c.want)
-		}
+		t.Run(name, func(t *testing.T) {
+			x := newWorld(t, 16)
+			x.code.contains = c.contains
+			x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: c.mode, Trigger: c.trigger,
+				BaseCommit: older40, Commit: older40, State: store.RunQueued, Epoch: c.epoch, Plan: []byte(c.plan)})
+			r := x.run()
+			if err := x.w.startRun(context.Background(), &r); err != nil {
+				t.Fatal(err)
+			}
+			if got := x.run().Epoch; got != c.want {
+				t.Errorf("epoch = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// A project step that answered with the whole page under today's rules
+// puts the project page at the epoch: a full run's stamped with it, or the
+// step that wrote the page first; a reconcile's, or a full run's from
+// before a bump, does not.
+func TestProjectRestyled(t *testing.T) {
+	for name, c := range map[string]struct {
+		mode  string
+		epoch int
+		first bool
+		want  int
+	}{
+		"full":       {store.RunFull, prompts.Epoch, false, prompts.Epoch},
+		"full, old":  {store.RunFull, prompts.Epoch - 1, false, 0},
+		"reconcile":  {store.RunReconcile, 0, false, 0},
+		"first page": {store.RunReconcile, 0, true, prompts.Epoch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newWorld(t, 16)
+			r := store.BaselineRun{ProjectKey: "tools", Mode: c.mode, Epoch: c.epoch}
+			x.w.projectRestyled(context.Background(), &r, c.first)
+			if x.st.projectEpoch != c.want {
+				t.Errorf("project epoch = %d, want %d", x.st.projectEpoch, c.want)
+			}
+		})
 	}
 }
 

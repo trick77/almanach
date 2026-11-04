@@ -74,10 +74,21 @@ type runStore struct {
 	repoEpoch, projectEpoch int
 	restyles                int
 	epochErr                error
+	// reposErr fails SourceRepos.
+	reposErr error
 }
 
-func (s *runStore) RestyleEpochs(context.Context, string, string) (int, int, error) {
-	return s.repoEpoch, s.projectEpoch, s.epochErr
+// RestyleState answers as the store's query does, from the epochs, the
+// project's page and its repository count (repoCount, 0 counting as many).
+func (s *runStore) RestyleState(_ context.Context, key, _ string, epoch int, _ time.Time) (store.RestyleState, error) {
+	_, page := s.pages[pageKey(store.ScopeProject, key, "")]
+	return store.RestyleState{RepoDue: s.repoEpoch < epoch,
+		ProjectDue: s.projectEpoch < epoch && page && s.repoCount[key] != 1}, s.epochErr
+}
+
+func (s *runStore) MarkProjectRestyled(_ context.Context, _ string, epoch int) error {
+	s.projectEpoch = max(s.projectEpoch, epoch)
+	return nil
 }
 
 // ApplyRestyle writes a restyle step as the store does: the run, the
@@ -223,7 +234,7 @@ func (s *runStore) DocumentedRun(context.Context, string, string) (store.Baselin
 }
 
 func (s *runStore) SourceRepos(context.Context, string) ([]store.SourceRepo, error) {
-	return s.repos, nil
+	return s.repos, s.reposErr
 }
 
 func (s *runStore) IsSourceRepo(_ context.Context, key, slug string) (bool, error) {

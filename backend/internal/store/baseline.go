@@ -353,18 +353,21 @@ func (s *Store) SetRepoMap(ctx context.Context, project, repo string, m *diagram
 // text changed. ok false, and nothing written, when revisionID is no
 // longer its page's current revision.
 func (s *Store) ArrangePage(ctx context.Context, revisionID int64, statements []Statement) (bool, error) {
+	return arrangeRevision(ctx, s.db, revisionID, statements)
+}
+
+// arrangeRevision is ArrangePage's write, alone or in a restyle step's
+// transaction: the statements set in place while revisionID is its page's
+// current revision.
+func arrangeRevision(ctx context.Context, db execer, revisionID int64, statements []Statement) (bool, error) {
 	raw, err := jsonOf(orEmptyStatements(statements))
 	if err != nil {
 		return false, err
 	}
-	res, err := s.db.ExecContext(ctx, `
+	n, err := affected(db.ExecContext(ctx, `
 		UPDATE revisions SET statements = ?
 		 WHERE id = ? AND id IN (SELECT current_revision_id FROM pages)`,
-		raw, revisionID)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
+		raw, revisionID))
 	return n > 0, err
 }
 
@@ -387,15 +390,16 @@ func (s *Store) SourceRuns(ctx context.Context, key string) (map[string]RepoRuns
 	if err != nil || !ok {
 		return map[string]RepoRuns{}, err
 	}
-	// l is each repository's newest run, never a restyle (the queue shows
-	// one while it is open; the source page is the reading's), d its newest
+	// l is each repository's newest run, a restyle only while it is open:
+	// it holds the repository's one open run, and the page must say why its
+	// buttons wait; over, the reading's run shows again. d is its newest
 	// done one that read it.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+lColumns+`,
 		       (SELECT SUM(c.cost_nano_usd) FROM llm_calls c WHERE c.baseline_run_id = l.id),
 		       d."commit", d.finished_at, `+retriedL+`
 		  FROM (SELECT `+runColumns+`, ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
-		          FROM `+runsFrom+` WHERE r.project_id = ?1 AND b.mode <> 'restyle') l
+		          FROM `+runsFrom+` WHERE r.project_id = ?1 AND (b.mode <> 'restyle' OR b.state NOT IN ('done', 'failed'))) l
 		  LEFT JOIN (SELECT b.repo_id, b."commit", b.finished_at,
 		                    ROW_NUMBER() OVER (PARTITION BY b.repo_id ORDER BY b.id DESC) AS rn
 		               FROM baseline_runs b JOIN repos r ON r.id = b.repo_id

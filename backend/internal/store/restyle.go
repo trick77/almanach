@@ -37,53 +37,86 @@ func (s *Store) EnqueueRestyle(ctx context.Context, key, slug, commit string, ep
 	return id, uniqueAsExists(err)
 }
 
-// RestyleDue reports whether the poller queues a restyle of a repository at
-// epoch: its page, or its project's page, is below it; fewer than
-// maxFailed restyles of it failed at this epoch, the newest of them before
-// failedBefore (the retry's wait); and no restyle is open anywhere, so a
-// bump trickles through the wiki one page at a time and never crowds out
-// the notes and the reading. The project's page is due only where one is
-// written and the project has more than one source repository (a project
-// of one has none: its repository's page is the project's).
-func (s *Store) RestyleDue(ctx context.Context, key, slug string, epoch, maxFailed int, failedBefore time.Time) (bool, error) {
-	rid, ok, err := repoID(ctx, s.db, key, slug)
-	if err != nil || !ok {
-		return false, err
-	}
-	var due bool
-	err = s.db.QueryRowContext(ctx, `
-		SELECT (sr.restyle_epoch < ?2
-		        OR (p.restyle_epoch < ?2
-		            AND EXISTS (SELECT 1 FROM pages pg WHERE pg.scope = 'project' AND pg.project_id = sr.project_id)
-		            AND (SELECT COUNT(*) FROM source_repos o WHERE o.project_id = sr.project_id AND o.deactivated_at IS NULL) > 1))
-		   AND (SELECT COUNT(*) FROM baseline_runs f
-		         WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2) < ?3
-		   AND COALESCE((SELECT MAX(f.finished_at) FROM baseline_runs f
-		                  WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2), '') < ?4
-		   AND NOT EXISTS (SELECT 1 FROM baseline_runs o WHERE o.mode = 'restyle' AND o.state NOT IN ('done', 'failed'))
-		  FROM source_repos sr JOIN projects p ON p.id = sr.project_id
-		 WHERE sr.repo_id = ?1 AND `+activeRow,
-		rid, epoch, maxFailed, stamp(failedBefore)).Scan(&due)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return due, err
+// RestyleTries is how many restyles of one page may fail at one epoch: the
+// first and three retries, as the poller's reading runs. The project page's
+// are counted over the project, whichever repository's run made them, so a
+// page that keeps failing costs RestyleTries calls, not that many per
+// repository.
+const RestyleTries = 4
+
+// The steps of a restyle run as its row counts them (BaselineRun.Step): the
+// repository's page, then the project's. A run that failed at
+// RestyleProjectStep failed on the project page.
+const (
+	RestyleRepoStep    = 0
+	RestyleProjectStep = 1
+)
+
+// RestyleState is what is due of a repository's restyle at an epoch: its
+// page, its project's. One answer for the poller's queueing and the run's
+// steps, so the two never disagree and a run never ends with a page left
+// due that it judged not due.
+type RestyleState struct {
+	RepoDue, ProjectDue bool
+	// Open: a restyle is open somewhere in the wiki.
+	Open bool
 }
 
-// RestyleEpochs is the epochs a repository's page and its project's page
-// were last restyled at, what a restyle run's steps go by.
-func (s *Store) RestyleEpochs(ctx context.Context, key, slug string) (repo, project int, err error) {
+// RestyleState reports what of a repository is due a restyle at epoch. Its
+// page while below it; its project's page while below it, written, and the
+// project has more than one active source repository (a project of one has
+// none: its repository's page is the project's). Either only while fewer
+// than RestyleTries of its restyles failed at this epoch, the newest of
+// them before failedBefore (the retry's wait). Nothing is due of a
+// repository that is no active source.
+func (s *Store) RestyleState(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (RestyleState, error) {
+	var st RestyleState
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil || !ok {
-		return 0, 0, err
+		return st, err
 	}
+	// f is the failed restyles at the epoch: the repository's own, and the
+	// project's that failed on the project page.
 	err = s.db.QueryRowContext(ctx, `
-		SELECT sr.restyle_epoch, p.restyle_epoch FROM source_repos sr JOIN projects p ON p.id = sr.project_id
-		 WHERE sr.repo_id = ?`, rid).Scan(&repo, &project)
+		SELECT sr.restyle_epoch < ?2
+		       AND (SELECT COUNT(*) FROM baseline_runs f
+		             WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2) < ?3
+		       AND COALESCE((SELECT MAX(f.finished_at) FROM baseline_runs f
+		                      WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2), '') < ?4,
+		       p.restyle_epoch < ?2
+		       AND EXISTS (SELECT 1 FROM pages pg WHERE pg.scope = 'project' AND pg.project_id = sr.project_id)
+		       AND (SELECT COUNT(*) FROM source_repos o WHERE o.project_id = sr.project_id AND o.deactivated_at IS NULL) > 1
+		       AND (SELECT COUNT(*) FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
+		             WHERE o.project_id = sr.project_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2 AND f.step = ?5) < ?3
+		       AND COALESCE((SELECT MAX(f.finished_at) FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
+		                      WHERE o.project_id = sr.project_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2
+		                        AND f.step = ?5), '') < ?4,
+		       EXISTS (SELECT 1 FROM baseline_runs o WHERE o.mode = 'restyle' AND o.state NOT IN ('done', 'failed'))
+		  FROM source_repos sr JOIN projects p ON p.id = sr.project_id
+		 WHERE sr.repo_id = ?1 AND `+activeRow,
+		rid, epoch, RestyleTries, stamp(failedBefore), RestyleProjectStep).Scan(&st.RepoDue, &st.ProjectDue, &st.Open)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, nil
+		return RestyleState{}, nil
 	}
-	return repo, project, err
+	return st, err
+}
+
+// RestyleDue reports whether the poller queues a restyle of a repository at
+// epoch (RestyleState): its page or its project's is due, and no restyle
+// is open anywhere, so a bump trickles through the wiki one page at a time
+// and never crowds out the notes and the reading.
+func (s *Store) RestyleDue(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (bool, error) {
+	st, err := s.RestyleState(ctx, key, slug, epoch, failedBefore)
+	return (st.RepoDue || st.ProjectDue) && !st.Open, err
+}
+
+// MarkProjectRestyled puts a project's page at epoch: a reading run's
+// project step answered under today's prompts, the page written, or found
+// as it should be, with the whole of it in the prompt. Outside the step's
+// transaction: a failed write costs one restyle call later, never the page.
+func (s *Store) MarkProjectRestyled(ctx context.Context, key string, epoch int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET restyle_epoch = MAX(restyle_epoch, ?) WHERE id = `+projectByName, epoch, key)
+	return err
 }
 
 // Restyled is what one restyle step writes beside the run's progress: a
@@ -117,13 +150,7 @@ func (s *Store) ApplyRestyle(ctx context.Context, r BaselineRun, scope string, e
 				return err
 			}
 		case w.ArrangeID != 0:
-			raw, err := jsonOf(orEmptyStatements(w.Arranged))
-			if err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE revisions SET statements = ?
-				 WHERE id = ? AND id IN (SELECT current_revision_id FROM pages)`, raw, w.ArrangeID); err != nil {
+			if _, err := arrangeRevision(ctx, tx, w.ArrangeID, w.Arranged); err != nil {
 				return err
 			}
 		}

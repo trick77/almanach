@@ -42,7 +42,7 @@ type fakeStore struct {
 	// page is the repository page, none when its scope is "".
 	page store.Page
 	// restyleDue is what RestyleDue answers; restyleAsked is its questions
-	// ("epoch maxFailed failedBefore").
+	// ("epoch failedBefore").
 	restyleDue   bool
 	restyleAsked []string
 	// conflicts is what ApplyListing reports left out; listedAt whether a
@@ -124,10 +124,10 @@ func (f *fakeStore) EnqueueRestyle(_ context.Context, key, slug, commit string, 
 	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, store.RunRestyle, store.TriggerEpoch, commit, fmt.Sprint(epoch)}, " "))
 	return int64(len(f.enqueued)), nil
 }
-func (f *fakeStore) RestyleDue(_ context.Context, _, _ string, epoch, maxFailed int, failedBefore time.Time) (bool, error) {
+func (f *fakeStore) RestyleDue(_ context.Context, _, _ string, epoch int, failedBefore time.Time) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.restyleAsked = append(f.restyleAsked, fmt.Sprintf("%d %d %s", epoch, maxFailed, failedBefore.UTC().Format(time.RFC3339)))
+	f.restyleAsked = append(f.restyleAsked, fmt.Sprintf("%d %s", epoch, failedBefore.UTC().Format(time.RFC3339)))
 	return f.restyleDue, f.runErr
 }
 func (f *fakeStore) RepoIDs(_ context.Context, key, slug string) (int64, int64, bool, error) {

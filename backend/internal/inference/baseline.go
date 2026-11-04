@@ -74,8 +74,9 @@ type RepoMapResult struct {
 }
 
 // RestyleResult is one restyle call: a patch over the page (edits, new
-// statements naming what they were split from, a summary or null; never a
-// drop or a confirmation) and the page's layout, nil to keep it.
+// statements naming what they were split from, a summary or null; the
+// schema offers no drop nor confirmation, and the worker takes none) and
+// the page's layout, nil to keep it.
 type RestyleResult struct {
 	Call
 	Patch   Patch
@@ -112,9 +113,6 @@ func (c *Client) Restyle(ctx context.Context, prompt string, project bool) Resty
 		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
 		return out
 	}
-	// The schema offers neither: whatever an answer outside it carries is
-	// no restyle's to apply.
-	out.Patch.Drop, out.Patch.Confirmed = nil, nil
 	out.Outline = parseOutline(outline.Outline)
 	return out
 }

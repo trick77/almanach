@@ -33,34 +33,30 @@ type restylePlan struct {
 	Repo bool `json:"repo,omitempty"`
 }
 
-// The steps of a restyle run, as r.Step counts them: the ledger's step of
-// each call, so the queue tells the two calls apart.
-const (
-	restyleRepoStep    = 0
-	restyleProjectStep = 1
-)
-
 // startRestyle starts a restyle run: no clone, no head pinned, at the
 // documented commit the store queued it with, straight to its steps.
 func (w *Worker) startRestyle(ctx context.Context, r *store.BaselineRun) error {
 	now := w.now().UTC()
-	r.StartedAt, r.State, r.Error, r.Step = &now, store.RunProject, "", restyleRepoStep
+	r.StartedAt, r.State, r.Error, r.Step = &now, store.RunProject, "", store.RestyleRepoStep
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: restyle run started (epoch %d)", r.Epoch))
 	return w.save(ctx, *r)
 }
 
 // restyleStep is a restyle run's next step: the repository's page, then
-// the project's, each only while below the epoch; then the map step.
+// the project's, each only while the store says it is due (the poller's
+// own answer, so the run never ends with a page left due it judged not
+// due); then the map step.
 func (w *Worker) restyleStep(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
-	repoEpoch, projectEpoch, err := w.base.Store.RestyleEpochs(ctx, r.ProjectKey, r.Slug)
+	// The past failures' wait is the poller's: the run is queued.
+	st, err := w.base.Store.RestyleState(ctx, r.ProjectKey, r.Slug, prompts.Epoch, w.now())
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: restyle epochs read failed, drain paused", logging.Err(err))
+		w.log.WarnContext(ctx, "baseline: restyle state read failed, drain paused", logging.Err(err))
 		return errStop
 	}
 	if !plan.Restyle.Repo {
-		if repoEpoch >= prompts.Epoch {
-			w.log.InfoContext(ctx, "baseline: restyle: the repository page is at the epoch already")
-			plan.Restyle.Repo, r.Step = true, restyleProjectStep
+		if !st.RepoDue {
+			w.log.InfoContext(ctx, "baseline: restyle: the repository page is not due")
+			plan.Restyle.Repo, r.Step = true, store.RestyleProjectStep
 			if err := encodeInto(r, plan); err != nil {
 				return err
 			}
@@ -68,37 +64,10 @@ func (w *Worker) restyleStep(ctx context.Context, r *store.BaselineRun, plan run
 		}
 		return w.restyleRepo(ctx, r, plan)
 	}
-	due, err := w.projectRestyleDue(ctx, r, projectEpoch)
-	if err != nil {
-		return err
-	}
-	if due {
+	if st.ProjectDue {
 		return w.restyleProject(ctx, r, plan)
 	}
 	return w.projectOver(ctx, r, plan)
-}
-
-// projectRestyleDue reports whether the run restyles its project's page: one
-// is written, the project has more than one source repository, and the page
-// is below the epoch.
-func (w *Worker) projectRestyleDue(ctx context.Context, r *store.BaselineRun, projectEpoch int) (bool, error) {
-	if projectEpoch >= prompts.Epoch {
-		return false, nil
-	}
-	n, err := w.store.SourceRepoCount(ctx, r.ProjectKey)
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project source read failed, drain paused", logging.Err(err))
-		return false, errStop
-	}
-	if store.Single(n) {
-		return false, nil
-	}
-	page, _, err := w.store.CurrentPage(ctx, store.ScopeProject, r.ProjectKey, "")
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project page read failed, drain paused", logging.Err(err))
-		return false, errStop
-	}
-	return page.RevisionID != 0, nil
 }
 
 // restyleRepo is the repository page's restyle: one call, its answer applied
@@ -130,7 +99,7 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 			return err
 		}
 	}
-	plan.Restyle.Repo, r.Step = true, restyleProjectStep
+	plan.Restyle.Repo, r.Step = true, store.RestyleProjectStep
 	return w.writeRestyle(ctx, r, plan, store.ScopeRepository, out)
 }
 
@@ -148,11 +117,20 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		w.log.WarnContext(ctx, at+" skipped: the run's calls are spent, still due")
 		return w.projectOver(ctx, r, plan)
 	}
-	repos, err := w.repoSummaries(ctx, r)
+	// The repositories by slug, what the summary's roles name; never their
+	// summaries, which a restyle does not read.
+	rows, err := w.base.Store.SourceRepos(ctx, r.ProjectKey)
 	if err != nil {
-		return err
+		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
+		return errStop
 	}
-	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, true, slugs(repos)), true)
+	var active []string
+	for _, row := range rows {
+		if row.Active() {
+			active = append(active, row.Slug)
+		}
+	}
+	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, true, active), true)
 	okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 	if err != nil {
 		return err
@@ -188,10 +166,10 @@ func (w *Worker) writeRestyle(ctx context.Context, r *store.BaselineRun, plan ru
 }
 
 // restyled is a restyle answer applied to the page under its rules: what to
-// write, a revision when the text changed, else the layout in place. The
-// answer's drops and confirmations were cleared by inference; an edit keeps
-// its files; a new statement keeps only files of what it came from (from)
-// and carries their sources, left out without any.
+// write, a revision when the text changed, else the layout in place. A drop
+// or a confirmation, which the schema never offers, is no restyle's; an
+// edit keeps its files; a new statement keeps only files of what it came
+// from (from) and carries their sources, left out without any.
 func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, scope string, page store.Page, res inference.RestyleResult) (store.Restyled, error) {
 	byID := make(map[string]store.Statement, len(page.Statements))
 	for _, s := range page.Statements {
@@ -213,7 +191,9 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 		w.log.WarnContext(ctx, at+": new statement left out", slog.Any("statements", leftOut))
 	}
 	patch.Added = added
-	applied := applyRestyle(page.Statements, patch, scope)
+	// No tree: every edit keeps its stored files and nothing is dropped, so
+	// no file check of ApplyPatch has anything to judge.
+	applied := baseline.ApplyPatch(page.Statements, patch, func(string) bool { return true }, validFor(scope))
 	if len(applied.BadEdits) > 0 {
 		w.log.WarnContext(ctx, fmt.Sprintf("%s: edit left out: %s", at, strings.Join(applied.BadEdits, ", ")))
 	}
@@ -270,19 +250,6 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	grown, n := growth(page, summary, statements)
 	w.log.InfoContext(ctx, fmt.Sprintf("%s: %d chars of prose more; %s split off", at, grown, plural(n, "statement")))
 	return store.Restyled{Revision: rev}, nil
-}
-
-// applyRestyle is baseline.ApplyPatch for a page with no tree behind it: a
-// file exists when the page names it, so a statement a pull request taught
-// never sheds one.
-func applyRestyle(current []store.Statement, p inference.Patch, scope string) baseline.Applied {
-	files := map[string]bool{}
-	for _, s := range current {
-		for _, f := range s.Files {
-			files[f] = true
-		}
-	}
-	return baseline.ApplyPatch(current, p, func(path string) bool { return files[path] }, validFor(scope))
 }
 
 // splitOff holds a restyle's new statements to what they came from: the

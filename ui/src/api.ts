@@ -350,8 +350,12 @@ export interface Baseline {
   /** In state project, the project step is over and the run draws the
    *  repository map, its last step. */
   map_step: boolean;
-  mode: "full" | "reconcile";
-  trigger: "manual" | "first_ready" | "monthly" | "retry" | "departure";
+  /** restyle reads no code: the stored pages alone, for a prompt epoch
+   *  they are not at. Shown only while open: over, the newest reading run
+   *  shows again. */
+  mode: "full" | "reconcile" | "restyle";
+  trigger:
+    "manual" | "first_ready" | "monthly" | "retry" | "departure" | "epoch";
   commit: string;
   step: number;
   steps: number;
@@ -427,10 +431,8 @@ export interface RunStep {
 export interface QueueRun {
   id: number;
   state: Exclude<RunState, "done" | "failed">;
-  /** restyle reads no code: the stored pages alone, for a prompt epoch they
-   *  are not at. The source page never shows one. */
-  mode: "full" | "reconcile" | "restyle";
-  trigger: Baseline["trigger"] | "epoch";
+  mode: Baseline["mode"];
+  trigger: Baseline["trigger"];
   commit: string;
   base_commit: string;
   calls: number;

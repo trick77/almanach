@@ -43,7 +43,7 @@ type Store interface {
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
 	EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int) (int64, error)
-	RestyleDue(ctx context.Context, key, slug string, epoch, maxFailed int, failedBefore time.Time) (bool, error)
+	RestyleDue(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (bool, error)
 	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, store.RunStreak, bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
@@ -577,14 +577,15 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 // page, or its project's, is below prompts.Epoch and nothing that reads the
 // code is due: a prompt change reaches stored pages one call a page, one
 // page at a time across the wiki, never a full read (user, 2026-11-04). A
-// failed restyle is queued again after retryAfter, at most maxRetries more
-// times an epoch. Only with the reconcile interval on (zero: buttons only)
+// failed restyle is queued again after retryAfter, while a page has fewer
+// than store.RestyleTries failures an epoch (a project page's counted over
+// its project). Only with the reconcile interval on (zero: buttons only)
 // and a documented page to restyle.
 func (p *Poller) restyle(ctx context.Context, key, slug string, doc store.BaselineRun, documented bool) {
 	if !documented || doc.Commit == "" {
 		return
 	}
-	due, err := p.Store.RestyleDue(ctx, key, slug, prompts.Epoch, maxRetries+1, p.Now().Add(-p.retryAfter()))
+	due, err := p.Store.RestyleDue(ctx, key, slug, prompts.Epoch, p.Now().Add(-p.retryAfter()))
 	if err != nil {
 		p.logRunCheck(err, key, slug)
 		return

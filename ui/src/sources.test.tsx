@@ -541,6 +541,29 @@ describe("SourcePage baseline", () => {
     expect(screen.getByText("Aufbau")).toBeInTheDocument();
   });
 
+  it("names an open restyle, its row's run buttons waiting", async () => {
+    const run = detail.repos[0]!.baseline!;
+    const repos = [
+      {
+        ...detail.repos[0],
+        slug: "a",
+        baseline: {
+          ...run,
+          mode: "restyle" as const,
+          trigger: "epoch" as const,
+          state: "project" as const,
+          documented_commit: detail.repos[0]!.head_commit,
+        },
+      },
+    ];
+    serve({ "sources/werkzeuge": { ...detail, repos } });
+    render(<SourcePage projectKey="werkzeuge" />);
+    expect(
+      await screen.findByText(S.baseline.state.restyle),
+    ).toBeInTheDocument();
+    expect(screen.getByText(S.baseline.actions.full)).toBeDisabled();
+  });
+
   it("offers a reconcile of a documented head only while parts were skipped", async () => {
     const run = detail.repos[0]!.baseline!;
     const head = detail.repos[0]!.head_commit;

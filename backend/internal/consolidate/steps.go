@@ -216,7 +216,7 @@ func restyleSteps(r store.BaselineRun, plan runPlan, calls []store.RunCall) []Ru
 		case c.Purpose == store.PurposeRepoMap:
 			addCall(&steps[2], c)
 		case c.Purpose != store.PurposeRestyle:
-		case c.Step != nil && *c.Step == restyleProjectStep:
+		case c.Step != nil && *c.Step == store.RestyleProjectStep:
 			addCall(&steps[1], c)
 		default:
 			addCall(&steps[0], c)

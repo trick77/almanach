@@ -1250,7 +1250,7 @@ components:
         mode:
           type: string
           enum: [full, reconcile, restyle]
-          description: restyle reads no code, the stored pages alone, for a prompt epoch they are not at (trigger epoch); it documents nothing, so the source page never shows one.
+          description: restyle reads no code, the stored pages alone, for a prompt epoch they are not at (trigger epoch); it documents nothing.
         trigger:
           type: string
           enum: [manual, first_ready, monthly, retry, departure, epoch]
@@ -1381,10 +1381,11 @@ components:
           description: In state project, the project step is over and the run draws the repository map, its last step.
         mode:
           type: string
-          enum: [full, reconcile]
+          enum: [full, reconcile, restyle]
+          description: A restyle shows only while it is open, holding the repository's run; over, the newest reading run shows again.
         trigger:
           type: string
-          enum: [manual, first_ready, monthly, retry, departure]
+          enum: [manual, first_ready, monthly, retry, departure, epoch]
         commit:
           type: string
           description: The head when queued, pinned when the run starts.

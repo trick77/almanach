@@ -25,9 +25,17 @@ func restyleRun(t *testing.T, s *Store, key, slug string, epoch int) BaselineRun
 	return r
 }
 
+// epochs is the epochs tools/slug's page and its project's page stand at.
+func epochs(s *Store, slug string) (repo, project int, err error) {
+	err = s.db.QueryRowContext(context.Background(), `
+		SELECT sr.restyle_epoch, p.restyle_epoch FROM source_repos sr JOIN projects p ON p.id = sr.project_id
+		 WHERE sr.repo_id = `+repoByName, "tools", slug).Scan(&repo, &project)
+	return repo, project, err
+}
+
 func restyleDue(t *testing.T, s *Store, slug string, epoch int, before time.Time) bool {
 	t.Helper()
-	due, err := s.RestyleDue(context.Background(), "tools", slug, epoch, 2, before)
+	due, err := s.RestyleDue(context.Background(), "tools", slug, epoch, before)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,14 +62,16 @@ func TestEnqueueRestyle(t *testing.T) {
 }
 
 // A restyle reads nothing of the repository: the poller's last run, its
-// streaks, the documented run and the source page never see it, so the
-// next reconcile starts from the plan of the run that read the code.
+// streaks and the documented run never see it, so the next reconcile
+// starts from the plan of the run that read the code. The source page
+// shows one while it is open, holding the repository's run; over, the
+// reading's run again. The queue's recent list counts a restyle apart.
 func TestRestyle_InvisibleToTheRunHistory(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	sourceRepo(t, s, "tools", "svc")
 	read := finish(t, s, enqueue(t, s, "tools", "svc"), RunDone)
-	finish(t, s, restyleRun(t, s, "tools", "svc", 1), RunFailed)
+	failed := finish(t, s, restyleRun(t, s, "tools", "svc", 1), RunFailed)
 	finish(t, s, restyleRun(t, s, "tools", "svc", 1), RunDone)
 	last, streak, ok, err := s.LastRun(ctx, "tools", "svc")
 	if err != nil || !ok || last.ID != read.ID || streak.Failed != 0 {
@@ -72,8 +82,28 @@ func TestRestyle_InvisibleToTheRunHistory(t *testing.T) {
 		t.Fatalf("DocumentedRun = %d ok=%v err=%v, want %d", doc.ID, ok, err, read.ID)
 	}
 	runs, err := s.SourceRuns(ctx, "tools")
-	if err != nil || runs["svc"].Last.ID != read.ID {
-		t.Fatalf("SourceRuns last = %d err=%v, want %d", runs["svc"].Last.ID, err, read.ID)
+	if err != nil || runs["svc"].Last.ID != read.ID || runs["svc"].Documented != read.Commit {
+		t.Fatalf("SourceRuns = %+v err=%v, want the reading run %d", runs["svc"], err, read.ID)
+	}
+	recent, err := s.FinishedRuns(ctx, time.Now().Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range recent {
+		switch f.ID {
+		case read.ID:
+			if !f.Latest || f.FailedInRow != 0 {
+				t.Errorf("reading run in recent = latest %v, failed %d: a restyle after it counts", f.Latest, f.FailedInRow)
+			}
+		case failed.ID:
+			if f.Latest || f.FailedInRow != 1 {
+				t.Errorf("failed restyle in recent = latest %v, failed %d", f.Latest, f.FailedInRow)
+			}
+		}
+	}
+	open := restyleRun(t, s, "tools", "svc", 2)
+	if runs, _ := s.SourceRuns(ctx, "tools"); runs["svc"].Last.ID != open.ID || runs["svc"].Documented != read.Commit {
+		t.Fatalf("SourceRuns while a restyle is open = %+v, want it, the documented commit the reading's", runs["svc"])
 	}
 }
 
@@ -118,7 +148,11 @@ func TestRestyleDue(t *testing.T) {
 	if restyleDue(t, s, "svc", 2, now) {
 		t.Fatal("due while another restyle is open")
 	}
-	// A failure waits for the retry's time; the cap (2 here) ends it.
+	// A failure waits for the retry's time; RestyleTries end it. The
+	// project's page at 2, the repository's page alone is due.
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET restyle_epoch = 2`); err != nil {
+		t.Fatal(err)
+	}
 	finish(t, s, open, RunFailed)
 	if restyleDue(t, s, "web", 2, now.Add(-time.Hour)) {
 		t.Fatal("a fresh failure is due at once")
@@ -126,12 +160,76 @@ func TestRestyleDue(t *testing.T) {
 	if !restyleDue(t, s, "web", 2, now.Add(time.Hour)) {
 		t.Fatal("a failure past its wait is not due")
 	}
-	finish(t, s, restyleRun(t, s, "tools", "web", 2), RunFailed)
+	for range RestyleTries - 1 {
+		finish(t, s, restyleRun(t, s, "tools", "web", 2), RunFailed)
+	}
 	if restyleDue(t, s, "web", 2, now.Add(time.Hour)) {
 		t.Fatal("due past the cap")
 	}
 	if !restyleDue(t, s, "web", 3, now.Add(time.Hour)) {
 		t.Fatal("the next epoch's restyle is held by the last epoch's failures")
+	}
+}
+
+// The project page's failures count over the project, whichever
+// repository's run made them, and only those that failed on its step: a
+// page that keeps failing costs RestyleTries calls, never that many per
+// repository, and a repository page's failure never spends the project's.
+func TestRestyleState_ProjectFailuresOverTheProject(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, slug := range []string{"a", "b", "c", "d", "e"} {
+		sourceRepo(t, s, "tools", slug)
+	}
+	projectPage(t, s, "tools")
+	if _, err := s.db.ExecContext(ctx, `UPDATE source_repos SET restyle_epoch = 1`); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour)
+	state := func(slug string) RestyleState {
+		t.Helper()
+		st, err := s.RestyleState(ctx, "tools", slug, 1, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	// A failure on a repository page spends nothing of the project's.
+	r := restyleRun(t, s, "tools", "e", 1)
+	finish(t, s, r, RunFailed)
+	if !state("a").ProjectDue {
+		t.Fatal("a repository page's failure spent the project page's tries")
+	}
+	for i, slug := range []string{"a", "b", "c", "d"}[:RestyleTries] {
+		if !state(slug).ProjectDue {
+			t.Fatalf("project page not due before failure %d", i+1)
+		}
+		r := restyleRun(t, s, "tools", slug, 1)
+		r.Step = RestyleProjectStep
+		finish(t, s, r, RunFailed)
+	}
+	if st := state("e"); st.ProjectDue || st.RepoDue {
+		t.Fatalf("state after %d project failures over the project = %+v, want nothing due", RestyleTries, st)
+	}
+}
+
+// A reading run's project step that had the whole page under today's rules
+// puts the project page at the epoch; it never moves back.
+func TestMarkProjectRestyled(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "tools", "svc")
+	for _, epoch := range []int{2, 1} {
+		if err := s.MarkProjectRestyled(ctx, "tools", epoch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := s.RestyleState(ctx, "tools", "svc", 2, time.Now())
+	if err != nil || st.ProjectDue {
+		t.Fatalf("state = %+v err=%v, want the project page at 2", st, err)
+	}
+	if st, _ := s.RestyleState(ctx, "tools", "nope", 2, time.Now()); st != (RestyleState{}) {
+		t.Fatalf("state of no repository = %+v", st)
 	}
 }
 
@@ -147,7 +245,7 @@ func TestApplyRestyle_AndTheFullRunsEpoch(t *testing.T) {
 	full := enqueue(t, s, "tools", "svc")
 	full.Epoch = 2
 	finish(t, s, full, RunDone)
-	if repo, _, err := s.RestyleEpochs(ctx, "tools", "svc"); err != nil || repo != 2 {
+	if repo, _, err := epochs(s, "svc"); err != nil || repo != 2 {
 		t.Fatalf("epoch after the full run = %d err=%v, want 2", repo, err)
 	}
 	r := restyleRun(t, s, "tools", "web", 3)
@@ -156,7 +254,7 @@ func TestApplyRestyle_AndTheFullRunsEpoch(t *testing.T) {
 	if err != nil || !ok || n != 1 {
 		t.Fatalf("ApplyRestyle = %d ok=%v err=%v, want revision 1", n, ok, err)
 	}
-	if repo, project, _ := s.RestyleEpochs(ctx, "tools", "web"); repo != 3 || project != 0 {
+	if repo, project, _ := epochs(s, "web"); repo != 3 || project != 0 {
 		t.Fatalf("epochs = %d %d, want the repository's 3 alone", repo, project)
 	}
 	page, _, _ := s.CurrentPage(ctx, ScopeRepository, "tools", "web")
@@ -168,7 +266,7 @@ func TestApplyRestyle_AndTheFullRunsEpoch(t *testing.T) {
 	if page, _, _ = s.CurrentPage(ctx, ScopeRepository, "tools", "web"); page.Revision != 1 || page.Statements[0].Area != "Kern" {
 		t.Fatalf("page after the layout = revision %d, area %q", page.Revision, page.Statements[0].Area)
 	}
-	if _, project, _ := s.RestyleEpochs(ctx, "tools", "web"); project != 3 {
+	if _, project, _ := epochs(s, "web"); project != 3 {
 		t.Fatalf("project epoch = %d, want 3", project)
 	}
 	// Over, the run takes nothing more, the epoch included.
@@ -176,7 +274,7 @@ func TestApplyRestyle_AndTheFullRunsEpoch(t *testing.T) {
 	if _, ok, err := s.ApplyRestyle(ctx, r, ScopeRepository, 9, Restyled{}); err != nil || ok {
 		t.Fatalf("ApplyRestyle on a run over: ok=%v err=%v, want nothing written", ok, err)
 	}
-	if repo, _, _ := s.RestyleEpochs(ctx, "tools", "web"); repo != 3 {
+	if repo, _, _ := epochs(s, "web"); repo != 3 {
 		t.Fatalf("epoch = %d after a write refused, want 3", repo)
 	}
 }
@@ -240,7 +338,7 @@ func TestMigration0004_CarriesRunsAndCalls(t *testing.T) {
 	if next.ID <= gone {
 		t.Fatalf("run id after 0004 = %d, reissues %d", next.ID, gone)
 	}
-	if repo, project, err := s.RestyleEpochs(ctx, "tools", "svc"); err != nil || repo != 0 || project != 0 {
+	if repo, project, err := epochs(s, "svc"); err != nil || repo != 0 || project != 0 {
 		t.Fatalf("epochs after 0004 = %d %d err=%v, want 0 0", repo, project, err)
 	}
 }

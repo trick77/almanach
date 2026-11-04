@@ -525,6 +525,8 @@ export const S = {
       project: "Projekt",
       // The run's last step, in state project once the project step is over.
       repoMap: "Aufbau",
+      // A restyle, open: the pages brought to new rules, no code read.
+      restyle: "Wird neu gegliedert",
       done: "Beschrieben",
       partial: "Teilweise",
       failed: "Fehlgeschlagen",
