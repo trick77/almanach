@@ -493,7 +493,7 @@ func TestDescribe_ReadsTheShape(t *testing.T) {
 		}
 	}
 	srv.SetReply(`{"shape": "collection", "shape_reason": "x", "summary": null, "statements": [], "added": [], "drop": ["s1"], "outline": null}`)
-	if res := testClient(srv.Client()).Restyle(context.Background(), "p", true); res.Shape.Kind != "collection" || !slices.Equal(res.Patch.Drop, []string{"s1"}) {
+	if res := testClient(srv.Client()).Restyle(context.Background(), "p", true); res.Kind != "collection" || !slices.Equal(res.Patch.Drop, []string{"s1"}) {
 		t.Errorf("project restyle = %+v", res)
 	}
 	if res := testClient(srv.Client()).Restyle(context.Background(), "p", false); res.Shape != (Shape{}) {

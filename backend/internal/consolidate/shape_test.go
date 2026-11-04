@@ -82,7 +82,7 @@ func TestProjectStep_CollectionBecomesASystem(t *testing.T) {
 	}{
 		"with a map": {&inference.Description{Summary: "Ein System.", Statements: []inference.Statement{},
 			Added: []inference.Statement{stmt(nil, "interface", "API", "svc bietet sie web.")}, Map: drawnMap("svc", "web")}, true},
-		"without": {&inference.Description{Summary: "Ein System.", Statements: []inference.Statement{}}, false},
+		"without":   {&inference.Description{Summary: "Ein System.", Statements: []inference.Statement{}}, false},
 		"no change": {nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {

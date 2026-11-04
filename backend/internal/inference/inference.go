@@ -511,8 +511,8 @@ var (
 	ProjectKinds = slices.DeleteFunc(slices.Clone(RepoKinds), func(k string) bool { return k == "extension" || k == "component" })
 )
 
-// The project's shapes as a project call judges them: store.ShapeSystem,
-// store.ShapeCollection.
+// Shapes are the project's shapes as a project call judges them:
+// store.ShapeSystem, store.ShapeCollection.
 var Shapes = []string{"system", "collection"}
 
 // shapeProps is a project call's judgment of the project: its shape and,
