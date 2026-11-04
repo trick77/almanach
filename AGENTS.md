@@ -4,8 +4,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 
 ## Commands
 
-- Prompts compiled in, never configurable; rule for stored pages: bump `prompts.Epoch` (user,
-  2026-11-04). UI: German, copy only in `strings.ts`, `/api/...` only;
+- Prompts compiled in, never configurable; a rule meant for stored pages bumps `prompts.Epoch`.
+  UI: German, copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
   browser write. Text, summary: schema blocks, never newlines in a JSON string (models drop
   them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
@@ -34,8 +34,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Provenance is code's: `sources` carried by id, current PR/run appended on text change; departure
   run neither credits nor adds (removal teaches nothing; user, 2026-11-02), restyle never credits. Bad item
   (unknown/repeated id, bad kind, empty): merge (whole page) rejected; step's patch never, item
-  left out, logged, stored kept (user, 2026-11-01). Page without statements: edits taken as new.
-  New statements in id-less `added`; id from `NextStatementID` over whole history, never reissued.
+  left out, logged, stored kept (user, 2026-11-01). New statements in id-less `added`; id from `NextStatementID` over whole history, never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:
@@ -51,19 +50,17 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   used, any case, never to another; own may change case (user, 2026-11-01). Carry-over:
   `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
 - Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
-  2026-10-30). Clone path segments `filepath.Rel`-checked before `RemoveAll`. Token never in URL,
+  2026-10-30). Token never in URL,
   stderr, response or log; sealed at rest; one origin only (static folder = one host).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
-  poller; repo failure on its row. Lock per clone (project removal: all); removal: lock,
-  folder, then row. Run due = read from rows each cycle, never from an event.
+  poller; repo failure on its row. Run due = read from rows each cycle, never from an event.
   UI copy: capital only if first char letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
   source key: from project URL, case-only rename.
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
   stored (user, 2026-10-30). Gate: key, slug any case (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept, PR statement dropped
   only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  Left part/no map at head: ≤3 auto retries, rule `LeftParts`. 1 source repo = project of one,
-  derived: no project call/page (`projectStands`).
+  1 source repo = project of one: no project call/page.
 - Deps code's: manifests ≤1 deep or declared; edges joined at read, never stored; ambiguous = no
   edge; 1 clone URL = 1 row. Shared repo derived, no kind, not "library"; map zone UI-drawn.
 - Flow: self/repeated edges dropped first. Both maps runtime+prod only, no build/CI/CD (user,
