@@ -6,7 +6,7 @@ import (
 
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/store"
-	"github.com/trick77/llmwire"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // What the worker is doing right now, for the queue page: the note or run

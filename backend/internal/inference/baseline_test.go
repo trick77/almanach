@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/llmwire/llmwiretest"
+	"github.com/trick77/toolkit/llmwire/llmwiretest"
 )
 
 // schemaName is the json_schema name the last request carried.
