@@ -733,16 +733,40 @@ resumes after a restart. The run pins the clone's head when it starts.
    a long summary cut at a paragraph or sentence and marked; those without
    a summary, or past hundreds of repositories without room for one, by
    slug only after them, and the page keeps what it says of them and of a
-   cut one), so the page is written as one system: purpose,
-   each repository's role, the flows across them and the runtime in the
-   summary; shared components, shared entities and cross-repository rules
-   as statements. The summary is rewritten whole; the statements are a patch
+   cut one), their interfaces and entities, and the build dependencies
+   between the project's own repositories (`InnerEdges`). It judges the
+   project's **shape** first, in every answer (`shape`, with a reason for
+   the log): a `system` its repositories make together (one calls
+   another's interface, deploys the others, a UI and its backend), or a
+   `collection` of repositories that stand on their own (a team's
+   libraries, tools), a build dependency alone making no system. A
+   Bitbucket project is either (user, 2026-11-04: "it's just a holder of
+   repos"), and writing every one as a system made up a system around a
+   holder and repeated the repositories' inner workings one level up. A
+   collection's page is a short summary alone: no statements (every one
+   dropped, logged), no map, none asked for; no list of the repositories
+   either, which the page shows with their summaries. A system's page is
+   only its wiring: purpose, each repository's role in a sentence or two,
+   the flows across them and the runtime in the summary; interfaces,
+   cross-repository flows, entities and rules as statements, never a
+   `component` (gone from the project's kinds) nor how a repository works
+   inside, which its own page holds. The shape is stored per revision
+   (`revisions.shape`, NULL before a step judged, read as a system), each
+   project revision carrying the page's on unless its writer judged anew,
+   so a note's fold, a map or a departure never resets it. A changed shape
+   is a revision; a first judgment of a system on a page written as one is
+   set in place (`JudgeShape`), no revision for a label. The page says the
+   shape in its head ("System", "Sammlung"). The summary is rewritten
+   whole; the statements are a patch
    like a subject step's (edits by id, `added`, `drop`), a statement not
    named kept: as a full rewrite, one answer naming none emptied a page
    (an eval's second repository wiped the first one's eleven). No tree
-   shows a project statement's files gone, so the step never drops a
-   PR-taught one (a note's fold may rewrite it): that drop is left out
-   and logged. Every new statement is kept: the page has no ceiling. Its
+   shows a project statement's files gone, so a project drop is the
+   model's word, a PR-taught statement's too: how one repository works
+   inside is its page's, where the same note was folded and the tree
+   guards it (user, 2026-11-04); the prompt keeps a PR-taught statement
+   about the wiring unless shown wrong. Drops are logged with the PR-taught
+   ones named. Every new statement is kept: the page has no ceiling. Its
    revision and the step's
    end (`project_done` in the run's plan) land in one transaction, so a
    restart never pays the project call twice. The prompt names the
@@ -989,10 +1013,15 @@ fold (what the note changes), a reconcile (the changed parts) or a full run
 (every part, up to `BACKEND_BASELINE_MAX_CALLS` calls and
 `BACKEND_BASELINE_MAX_BYTES` of code a repository). Rules of layout, kind
 and area need no code read again (user, 2026-11-04: "that's pretty
-expensive to redescribe"). `prompts.Epoch`, bumped by hand in the change
-whose rules must reach every stored page, says which pages are due: each
-page's `restyle_epoch` (`source_repos`, `projects`) is the epoch it was
-last restyled at, 0 for every page written before. A full run, stamped
+expensive to redescribe"). `prompts.RepoEpoch` and `prompts.ProjectEpoch`,
+one bumped by hand (to the newer of the two plus one) in the change whose
+rules must reach every stored page of its scope, say which pages are due:
+each page's `restyle_epoch` (`source_repos`, `projects`) is the epoch it
+was last restyled at, 0 for every page written before; a page below its
+scope's is due. `prompts.Epoch`, the newer, is what a run is stamped with,
+its failures counted at, and a page marked at. ProjectEpoch 2 is the
+project's shape: the bump restyles the project pages alone, the
+repository pages restyled at 1 standing. A full run, stamped
 with the epoch when it starts reading (a run a bump's deploy cut in two
 read its first parts under the old rules), puts its repository's page
 there when done with no part skipped (a skipped part's statements stayed
@@ -1016,10 +1045,17 @@ The run reads no code. Its steps: the repository's page, one call
 (`almanach_project_restyle.txt`), in the run of the first repository of a
 project of more than one whose page is below the epoch, never waiting for
 the others; then the map step as in any run, which draws only when the
-text moved. Each page that is at the epoch already is skipped without a
+text moved. The project's call sees, beside its page, every repository's
+summary, interfaces and entities and the inner build dependencies, to
+judge the shape and tell a repository's detail from the wiring, never as
+a source of facts: it answers the shape and may drop (a repository's
+detail, a `component` once its interface moved out into `added`, which
+carries the component's sources); a collection keeps its summary alone.
+The repository's call never drops. Each page that is at the epoch already is skipped without a
 call. The answer is a patch with an outline: edits by id, new statements in
 `added` each naming what it was split out of (`from`, statement ids or
-`summary`), a summary or null; no drop, no confirmation in the schema. It
+`summary`), a summary or null; no confirmation in the schema, a drop only
+in the project's. It
 learns nothing, so it neither credits nor checks: an edit keeps its files,
 sources, last check and diagram (none drawn where there was none); a new
 statement keeps only files of what it came from (any file of the page
@@ -1027,7 +1063,7 @@ when from the summary) and carries their sources (from the summary: those
 of the statements sharing a file with it), and with none to carry, or
 none the page can hold, it is left out and logged, and what it came from
 (the statements, the summary) is kept as stored, so the text the answer
-moved into it is never lost; nothing is dropped. The run's step says
+moved into it is never lost, a drop of it left out. The run's step says
 which page a failure was on (repository, project, map): a map that fails
 spends neither page's tries. Text changed is a revision (the project's with its map
 as stored), a layout alone is set in place. Each step's write, the run's
@@ -1498,7 +1534,9 @@ baseline step's patch never is: its bad items are left out one by one (see
 
 - A statement's `kind` is one of `component`, `interface`, `rule`,
   `invariant`, `entity`, `decision`, `extension`, `pitfall`; on the
-  project page not `extension`. Any other kind rejects the rewrite.
+  project page neither `extension` nor `component`. Any other kind
+  rejects the rewrite. A collection's project page takes no statement: a
+  fold's are left out, logged, its summary taken.
 - `name` and `text` are trimmed and Swiss-spelled before anything is
   checked; an empty one rejects the rewrite. A statement returned exactly
   as stored is never held to the kind or emptiness rule: one written

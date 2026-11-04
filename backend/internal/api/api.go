@@ -466,8 +466,12 @@ type projectDetailBody struct {
 	MapExpected bool `json:"map_expected"`
 	// MapDeclined says a project step asked for the map and none was
 	// accepted: no map, and none promised for the next run either.
-	MapDeclined bool       `json:"map_declined"`
-	Repos       []repoBody `json:"repos"`
+	MapDeclined bool `json:"map_declined"`
+	// Shape is what the last project step judged the project to be:
+	// "system" or "collection" (no statements, no map); null before one
+	// judged it, and for a project of one.
+	Shape *string    `json:"shape"`
+	Repos []repoBody `json:"repos"`
 	// Shared are the repositories of other projects this project's
 	// repositories depend on: the architecture overview's shared zone.
 	Shared      []sharedBody  `json:"shared"`
@@ -529,8 +533,9 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "notes")
 		return
 	}
-	// With the sources on, repos is the source repositories alone.
-	mapExpected := d.Sources != nil && len(repos) > 0 && diagram.MapFits(len(repos))
+	// With the sources on, repos is the source repositories alone. A
+	// collection draws none.
+	mapExpected := d.Sources != nil && len(repos) > 0 && diagram.MapFits(len(repos)) && !page.Collection()
 	// The sentinel is no map: asked for, not drawn.
 	drawn, declined := page.Map, diagram.IsSentinel(page.Map)
 	if declined {
@@ -544,6 +549,9 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	out := projectDetailBody{Key: key, Team: team, Single: alone, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Problems: problemBodies(problems), Notes: noteBodies(notes)}
+	if found && !alone && page.Shape != "" {
+		out.Shape = &page.Shape
+	}
 	out.Repos = repoBodies(repos)
 	// The shared repositories are the map's zone: no map, none asked for.
 	out.Shared = []sharedBody{}

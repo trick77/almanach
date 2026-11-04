@@ -35,7 +35,7 @@ func epochs(s *Store, slug string) (repo, project int, err error) {
 
 func restyleDue(t *testing.T, s *Store, slug string, epoch int, before time.Time) bool {
 	t.Helper()
-	due, err := s.RestyleDue(context.Background(), "tools", slug, epoch, before)
+	due, err := s.RestyleDue(context.Background(), "tools", slug, Epochs{Repo: epoch, Project: epoch}, before)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestRestyleState_ProjectFailuresOverTheProject(t *testing.T) {
 	later := time.Now().Add(time.Hour)
 	state := func(slug string) RestyleState {
 		t.Helper()
-		st, err := s.RestyleState(ctx, "tools", slug, 1, later)
+		st, err := s.RestyleState(ctx, "tools", slug, Epochs{Repo: 1, Project: 1}, later)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -228,7 +228,8 @@ func TestMarkProjectRestyled(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if st, _ := s.RestyleState(ctx, "tools", "svc", 2, time.Now()); !st.ProjectDue {
+	at2 := Epochs{Repo: 2, Project: 2}
+	if st, _ := s.RestyleState(ctx, "tools", "svc", at2, time.Now()); !st.ProjectDue {
 		t.Fatalf("state = %+v: marked by a failed or a missing run", st)
 	}
 	r := enqueue(t, s, "tools", "svc")
@@ -237,11 +238,11 @@ func TestMarkProjectRestyled(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	st, err := s.RestyleState(ctx, "tools", "svc", 2, time.Now())
+	st, err := s.RestyleState(ctx, "tools", "svc", at2, time.Now())
 	if err != nil || st.ProjectDue {
 		t.Fatalf("state = %+v err=%v, want the project page at 2", st, err)
 	}
-	if st, _ := s.RestyleState(ctx, "tools", "nope", 2, time.Now()); st != (RestyleState{}) {
+	if st, _ := s.RestyleState(ctx, "tools", "nope", at2, time.Now()); st != (RestyleState{}) {
 		t.Fatalf("state of no repository = %+v", st)
 	}
 }

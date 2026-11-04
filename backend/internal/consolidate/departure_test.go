@@ -60,8 +60,8 @@ func mapSlugs(m *diagram.Diagram) []string {
 func (x world) projectPage() store.Page { return x.st.pages[pageKey(store.ScopeProject, "tools", "")] }
 
 // A departure run reads nothing: the code takes old off the map, one call
-// rewrites the statements and the summary (the patch rules holding: a
-// PR-taught statement is never dropped), the departure settled. One
+// rewrites the statements and the summary (the patch rules holding: its
+// drops taken, a PR-taught statement's too), the departure settled. One
 // revision, the run done, one project call in the ledger.
 func TestDeparture_MapThenCall(t *testing.T) {
 	x := departureWorld(t, 16)
@@ -87,15 +87,16 @@ func TestDeparture_MapThenCall(t *testing.T) {
 		t.Fatalf("revisions = %d, want one", len(x.st.revisions))
 	}
 	page := x.projectPage()
-	if got := ids(page.Statements); !slices.Equal(got, []string{"s2", "s3"}) {
-		t.Errorf("statements = %v, want s2 (PR-taught, never dropped) and s3", got)
+	// A project drop is the model's word, a PR-taught statement's too.
+	if got := ids(page.Statements); !slices.Equal(got, []string{"s3"}) {
+		t.Fatalf("statements = %v, want s3 alone", got)
 	}
-	if page.Summary != "Werkzeuge aus svc und web." || page.Statements[1].Text != "svc bietet sie." {
+	if page.Summary != "Werkzeuge aus svc und web." || page.Statements[0].Text != "svc bietet sie." {
 		t.Errorf("page = %+v", page)
 	}
 	// Taking old out teaches nothing: s3 keeps the sources it had, never
 	// credited to the departed repository's run.
-	if got := page.Statements[1].Sources; len(got) != 2 || got[0].Repo != "old" || got[1].Repo != "svc" {
+	if got := page.Statements[0].Sources; len(got) != 2 || got[0].Repo != "old" || got[1].Repo != "svc" {
 		t.Errorf("s3 sources = %+v, want old's and svc's as before", got)
 	}
 	// The map is the code's, whatever the call returned: old is off.
@@ -265,11 +266,11 @@ func TestProjectStep_TakesADueDepartureOut(t *testing.T) {
 // there are none.
 func TestRenderProject_NamesTheDeparted(t *testing.T) {
 	r := store.BaselineRun{ProjectKey: "tools", Slug: "svc", Commit: head}
-	with := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", nil, []string{"svc", "web"}, []string{"old"}, limits, nil)
+	with := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", nil, []string{"svc", "web"}, []string{"old"}, nil, limits, nil)
 	if !strings.Contains(with, "taken out of the project and are no part of it: `old`") {
 		t.Error("the project prompt does not name the departed repository")
 	}
-	without := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", nil, []string{"svc", "web"}, nil, limits, nil)
+	without := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", nil, []string{"svc", "web"}, nil, nil, limits, nil)
 	if strings.Contains(without, "taken out of the project") {
 		t.Error("the project prompt names departed repositories when there are none")
 	}

@@ -502,11 +502,26 @@ func deref(p *int64) int64 {
 const MergeSchemaName = "almanach_merge"
 
 // The statement kinds. A repository page holds them all; a project page
-// all but extension, a change recipe inside one repository.
+// only what weaves its repositories together: no extension, a change recipe
+// inside one repository, and no component, how a part works being its
+// repository's page's (user, 2026-11-04: the outer hull "should NOT
+// describe how the inner parts work").
 var (
 	RepoKinds    = []string{"component", "interface", "flow", "rule", "invariant", "entity", "decision", "extension", "pitfall"}
-	ProjectKinds = slices.DeleteFunc(slices.Clone(RepoKinds), func(k string) bool { return k == "extension" })
+	ProjectKinds = slices.DeleteFunc(slices.Clone(RepoKinds), func(k string) bool { return k == "extension" || k == "component" })
 )
+
+// The project's shapes as a project call judges them: store.ShapeSystem,
+// store.ShapeCollection.
+var Shapes = []string{"system", "collection"}
+
+// shapeProps is a project call's judgment of the project: its shape and,
+// for the log, why.
+func shapeProps(props map[string]any) map[string]any {
+	props["shape"] = enum(Shapes...)
+	props["shape_reason"] = str()
+	return props
+}
 
 func description(diagrams bool, kinds []string) map[string]any {
 	return nullable(object(map[string]any{

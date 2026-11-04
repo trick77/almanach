@@ -43,7 +43,7 @@ type Store interface {
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
 	EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int) (int64, error)
-	RestyleDue(ctx context.Context, key, slug string, epoch int, failedBefore time.Time) (bool, error)
+	RestyleDue(ctx context.Context, key, slug string, e store.Epochs, failedBefore time.Time) (bool, error)
 	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, store.RunStreak, bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
@@ -574,7 +574,8 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 }
 
 // restyle queues a restyle run (store.RunRestyle) when the repository's
-// page, or its project's, is below prompts.Epoch and nothing that reads the
+// page, or its project's, is below its scope's epoch (prompts.RepoEpoch,
+// prompts.ProjectEpoch) and nothing that reads the
 // code is due: a prompt change reaches stored pages one call a page, one
 // page at a time across the wiki, never a full read (user, 2026-11-04). A
 // failed restyle is queued again after retryAfter, while a page has fewer
@@ -585,7 +586,8 @@ func (p *Poller) restyle(ctx context.Context, key, slug string, doc store.Baseli
 	if !documented || doc.Commit == "" {
 		return
 	}
-	due, err := p.Store.RestyleDue(ctx, key, slug, prompts.Epoch, p.Now().Add(-p.retryAfter()))
+	due, err := p.Store.RestyleDue(ctx, key, slug, store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch},
+		p.Now().Add(-p.retryAfter()))
 	if err != nil {
 		p.logRunCheck(err, key, slug)
 		return

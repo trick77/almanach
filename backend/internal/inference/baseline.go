@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 
 	"github.com/trick77/almanach/internal/diagram"
@@ -61,6 +62,24 @@ type DescriptionResult struct {
 	Call
 	Description *Description
 	Outline     []OutlineArea
+	Shape
+}
+
+// Shape is a project call's judgment of the project, given with a change or
+// without one: Kind one of Shapes ("" off the enum, which keeps the page's),
+// Reason the model's why, for the log.
+type Shape struct {
+	Kind   string `json:"shape"`
+	Reason string `json:"shape_reason"`
+}
+
+// parseShape reads an answer's shape; one off the enum is none.
+func parseShape(content string) Shape {
+	var s Shape
+	if !parse(content, &s) || !slices.Contains(Shapes, s.Kind) {
+		return Shape{}
+	}
+	return s
 }
 
 // RepoMapResult is one map call, a repository's map or the system map
@@ -81,6 +100,8 @@ type RestyleResult struct {
 	Call
 	Patch   Patch
 	Outline []OutlineArea
+	// Shape is the project restyle's judgment, none on a repository's.
+	Shape
 }
 
 // Schema names on the wire.
@@ -93,15 +114,11 @@ const (
 	RestyleSchemaName     = "almanach_restyle"
 )
 
-// Restyle asks for a stored page brought to the rules of today, the page
-// alone in the prompt: the repository's, or with project the project's,
-// whose kinds it takes.
+// Restyle asks for a stored page brought to the rules of today: the
+// repository's, the page alone in the prompt, or with project the
+// project's, whose kinds it takes, with its drops and its shape.
 func (c *Client) Restyle(ctx context.Context, prompt string, project bool) RestyleResult {
-	kinds := RepoKinds
-	if project {
-		kinds = ProjectKinds
-	}
-	content, call := c.call(ctx, prompt, restyleFormat(c.diagrams, kinds))
+	content, call := c.call(ctx, prompt, restyleFormat(c.diagrams, project))
 	out := RestyleResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out
@@ -114,20 +131,33 @@ func (c *Client) Restyle(ctx context.Context, prompt string, project bool) Resty
 		return out
 	}
 	out.Outline = parseOutline(outline.Outline)
+	if project {
+		out.Shape = parseShape(content)
+	}
 	return out
 }
 
 // restyleFormat is a restyle's answer: the patch's summary and edits, new
-// statements each with its origin, and the outline.
-func restyleFormat(diagrams bool, kinds []string) llmwire.ResponseFormat {
+// statements each with its origin, and the outline; a project's, its drops
+// and its shape too.
+func restyleFormat(diagrams, project bool) llmwire.ResponseFormat {
+	kinds := RepoKinds
+	if project {
+		kinds = ProjectKinds
+	}
 	props := statementProps(diagrams, kinds)
 	props["from"] = array(str())
-	return strict(RestyleSchemaName, map[string]any{
+	answer := map[string]any{
 		"summary":    nullableBlocks(),
 		"statements": statements(diagrams, kinds),
 		"added":      array(object(props)),
 		"outline":    outlineSchema(),
-	})
+	}
+	if project {
+		answer["drop"] = array(str())
+		shapeProps(answer)
+	}
+	return strict(RestyleSchemaName, answer)
 }
 
 // Catalogue asks which subjects a repository is made of.
@@ -168,6 +198,7 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 		return out
 	}
 	out.Outline = parseOutline(answer.Outline)
+	out.Shape = parseShape(content)
 	if string(answer.Description) == "null" {
 		return out
 	}
@@ -289,5 +320,5 @@ func patchFormat(diagrams bool) llmwire.ResponseFormat {
 }
 
 func descriptionFormat(diagrams bool) llmwire.ResponseFormat {
-	return strict(DescriptionSchemaName, map[string]any{"description": projectDescription(diagrams), "outline": outlineSchema()})
+	return strict(DescriptionSchemaName, shapeProps(map[string]any{"description": projectDescription(diagrams), "outline": outlineSchema()}))
 }

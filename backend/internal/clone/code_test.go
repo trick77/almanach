@@ -135,7 +135,7 @@ func TestDescribe_QueuesARestyle(t *testing.T) {
 				t.Fatalf("RestyleDue asked %v, want asked %v", s.restyleAsked, c.asked)
 			}
 			if c.asked {
-				want := fmt.Sprintf("%d %s", prompts.Epoch, now.Add(-retryWait).Format(time.RFC3339))
+				want := fmt.Sprintf("%d/%d %s", prompts.RepoEpoch, prompts.ProjectEpoch, now.Add(-retryWait).Format(time.RFC3339))
 				if s.restyleAsked[0] != want {
 					t.Errorf("RestyleDue asked %q, want %q", s.restyleAsked[0], want)
 				}

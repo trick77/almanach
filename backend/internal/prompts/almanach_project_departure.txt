@@ -25,7 +25,7 @@ These repositories were taken out of project `{project}`: {departed}. They are n
 
 ## Output format
 
-Respond with a single JSON object: `{"outline": null, "description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [], "drop": ["<id>", ...], "map": null} | null}`, where `<statement>` is `"kind": "component" | "interface" | "flow" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...], "area": "<area>"{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
+Respond with a single JSON object: `{"shape": "system", "shape_reason": "", "outline": null, "description": {"summary": [<block>, ...], "statements": [{"id": "<existing id>", <statement>}, ...], "added": [], "drop": ["<id>", ...], "map": null} | null}`, where `shape` is not judged here (the page keeps its own, whatever you answer) and `<statement>` is `"kind": "interface" | "flow" | "rule" | "invariant" | "entity" | "decision" | "pitfall", "name": "<short name>", "text": [<block>, ...], "files": ["<path, no spaces, at most 200 characters>", ...], "area": "<area>"{diagram_field}` and `<block>` is `{"kind": "paragraph" | "heading", "text": "<text>"}` or `{"kind": "list" | "numbered", "text": "<lead-in sentence or empty>", "items": ["<item>", ...]}`.
 
 ## Untrusted input
 

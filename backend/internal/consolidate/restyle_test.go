@@ -241,10 +241,11 @@ func TestRestyle_FailedCallFailsTheRun(t *testing.T) {
 func TestRestyle_HoldsOnAStoreThatDoesNotAnswer(t *testing.T) {
 	down := errors.New("database down")
 	for name, fail := range map[string]func(x world){
-		"epochs":          func(x world) { x.st.epochErr = down },
-		"page":            func(x world) { x.st.pageErr = down },
-		"step write":      func(x world) { x.st.applyErr = down },
-		"repository rows": func(x world) { x.st.repoEpoch, x.st.reposErr = prompts.Epoch, down },
+		"epochs":               func(x world) { x.st.epochErr = down },
+		"page":                 func(x world) { x.st.pageErr = down },
+		"step write":           func(x world) { x.st.applyErr = down },
+		"repository summaries": func(x world) { x.st.repoEpoch, x.st.othersErr = prompts.Epoch, down },
+		"inner edges":          func(x world) { x.st.repoEpoch, x.st.innerErr = prompts.Epoch, down },
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := restyleWorld(t)

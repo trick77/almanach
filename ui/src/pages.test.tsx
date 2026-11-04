@@ -138,6 +138,7 @@ const project: ProjectDetail = {
   map: null,
   map_expected: false,
   map_declined: false,
+  shape: null,
   shared: [],
   repos: [
     {
@@ -970,6 +971,26 @@ describe("ProjectPage", () => {
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
     expect(screen.queryByText(/Noch keine Systemübersicht/)).toBeNull();
     expect(screen.queryByText("Systemübersicht")).toBeNull();
+  });
+
+  it("says what Almanach judged the project to be, nothing before it judged", async () => {
+    serve({ "projects/PAY": { ...project, shape: "collection" } });
+    const { unmount } = render(<ProjectPage projectKey="PAY" />);
+    const label = await screen.findByText("Sammlung");
+    expect(label).toHaveAttribute(
+      "title",
+      expect.stringContaining("kurze Zusammenfassung"),
+    );
+    unmount();
+    serve({ "projects/PAY": { ...project, shape: "system" } });
+    const again = render(<ProjectPage projectKey="PAY" />);
+    expect(await screen.findByText("System")).toBeInTheDocument();
+    again.unmount();
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
+    expect(screen.queryByText("Sammlung")).toBeNull();
+    expect(screen.queryByText("System")).toBeNull();
   });
 
   it("promises no map where no run will draw one", async () => {

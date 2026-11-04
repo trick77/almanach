@@ -2217,7 +2217,7 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, single, description, map, map_expected, map_declined, repos, shared, problems, problem_window_days, recent_notes]
+      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes]
       properties:
         key:
           type: string
@@ -2248,13 +2248,21 @@ components:
           type: boolean
           description: >-
             A baseline run will draw a map: the sources are on, the project
-            has more than one source repository, and not more of them than
-            one map holds.
+            has more than one source repository, not more of them than one
+            map holds, and it is no collection.
         map_declined:
           type: boolean
           description: >-
             A project step asked for the map and none was accepted: map is
             null, and no run is promised to draw one.
+        shape:
+          type: [string, "null"]
+          enum: [system, collection, null]
+          description: >-
+            What the last project step judged the project to be: one system
+            its repositories make together, or a collection of repositories
+            that each stand on their own (a short summary, no statements, no
+            map). Null before a step judged it, and for a project of one.
         repos:
           type: array
           items:

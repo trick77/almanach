@@ -104,6 +104,17 @@ export const S = {
     map: "Systemübersicht",
     noMap:
       "Noch keine Systemübersicht: sie entsteht beim nächsten Run, der dieses Projekt aus dem Code beschreibt.",
+    // What Almanach judged the project to be, in the page's meta line.
+    shape: {
+      system: "System",
+      collection: "Sammlung",
+    },
+    shapeHint: {
+      system:
+        "Almanach liest die Repositories als ein System: die Projektseite beschreibt, wie sie zusammenspielen, die Repository-Seiten, wie jedes funktioniert.",
+      collection:
+        "Almanach liest die Repositories als Sammlung, die je für sich stehen: die Projektseite hält nur eine kurze Zusammenfassung, alles Weitere steht auf den Repository-Seiten.",
+    },
   },
   diagram: {
     titles: {

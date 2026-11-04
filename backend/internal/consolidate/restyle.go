@@ -24,8 +24,15 @@ import (
 // the text moved. It learns nothing, so it neither credits nor checks: an
 // edit keeps its sources, its files and its last check; a statement split
 // out of others carries their sources, and with none to carry it is left
-// out. Nothing is dropped. Each page's epoch is written with its step, so
+// out. Nothing is dropped from a repository's page; the project's restyle
+// judges the project's shape with its repositories' summaries and
+// contracts in the prompt, and drops what is one repository's inside, which
+// that repository's page holds (a collection's page keeps its summary
+// alone). Each page's epoch is written with its step, so
 // a restart or a later failure never pays for a step twice.
+
+// epochs is the prompts' generation per scope, as the store asks it.
+var epochs = store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch}
 
 // restylePlan is a restyle run's progress beside runPlan's ProjectDone:
 // Repo, the repository's page is over (restyled, or not due).
@@ -48,7 +55,7 @@ func (w *Worker) startRestyle(ctx context.Context, r *store.BaselineRun) error {
 // due); then the map step.
 func (w *Worker) restyleStep(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	// The past failures' wait is the poller's: the run is queued.
-	st, err := w.base.Store.RestyleState(ctx, r.ProjectKey, r.Slug, prompts.Epoch, w.now())
+	st, err := w.base.Store.RestyleState(ctx, r.ProjectKey, r.Slug, epochs, w.now())
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: restyle state read failed, drain paused", logging.Err(err))
 		return errStop
@@ -99,7 +106,7 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 		if r.Calls >= w.base.Limits.MaxCalls {
 			return fmt.Errorf("no call left for the restyle")
 		}
-		res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, false, nil), false)
+		res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, nil), false)
 		okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 		if err != nil {
 			return err
@@ -115,10 +122,12 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 	return w.writeRestyle(ctx, r, plan, store.ScopeRepository, out)
 }
 
-// restyleProject is the project page's restyle, the page alone in the
-// prompt with its repositories by slug; its map is carried as a baseline
-// run reads it (projectPage: one stored before the tags as none, drawn by
-// the next project step).
+// restyleProject is the project page's restyle: the page, with what the
+// project call judges its shape by (every repository's summary, interfaces
+// and entities, the build dependencies between them), never their code;
+// its map is carried as a baseline run reads it (projectPage: one stored
+// before the tags as none, drawn by the next project step), none for a
+// collection.
 func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	at := "baseline: restyle " + projectLabel
 	page, err := w.projectPage(ctx, r.ProjectKey)
@@ -131,20 +140,18 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		w.log.WarnContext(ctx, at+" skipped: the run's calls are spent, still due")
 		return w.restyleMap(ctx, r, plan)
 	}
-	// The repositories by slug, what the summary's roles name; never their
-	// summaries, which a restyle does not read.
-	rows, err := w.base.Store.SourceRepos(ctx, r.ProjectKey)
+	// The active source repositories, every one of them: the run's own is
+	// one among the others here, its page not in the prompt.
+	repos, err := w.repoSummaries(ctx, r)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project repositories read failed, drain paused", logging.Err(err))
-		return errStop
+		return err
 	}
-	var active []string
-	for _, row := range rows {
-		if row.Active() {
-			active = append(active, row.Slug)
-		}
+	inner, err := w.innerEdges(ctx, r.ProjectKey)
+	if err != nil {
+		return err
 	}
-	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, true, active), true)
+	ctxt := &projectContext{repos: otherRepos(repos, ""), contracts: otherContracts(repos, ""), inner: inner, slugs: slugs(repos)}
+	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, ctxt), true)
 	okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 	if err != nil {
 		return err
@@ -184,20 +191,46 @@ func (w *Worker) writeRestyle(ctx context.Context, r *store.BaselineRun, plan ru
 // or a confirmation, which the schema never offers, is no restyle's; an
 // edit keeps its files; a new statement keeps only files of what it came
 // from (from) and carries their sources, left out without any.
-func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, scope string, page store.Page, res inference.RestyleResult) (store.Restyled, error) {
-	byID := make(map[string]store.Statement, len(page.Statements))
-	for _, s := range page.Statements {
-		byID[s.ID] = s
-	}
+func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, scope string, stored store.Page, res inference.RestyleResult) (store.Restyled, error) {
 	patch := res.Patch
-	patch.Drop, patch.Confirmed = nil, nil
-	added, sources, leftOut, kept := splitOff(page, patch.Added, validFor(scope))
+	patch.Confirmed = nil
+	// page is the page the answer is applied to: the repository's as
+	// stored, which a restyle never drops from; the project's less what the
+	// answer drops (projectDrops), under the shape it judged, a collection's
+	// its summary alone.
+	page, shape := stored, ""
+	if scope == store.ScopeProject {
+		shape = w.judgedShape(ctx, "restyle "+projectLabel, stored, res.Shape)
+		if shape == store.ShapeCollection {
+			summary := stored.Summary
+			if patch.Summary != nil && strings.TrimSpace(proseSummary(*patch.Summary)) != "" {
+				summary = proseSummary(*patch.Summary)
+			}
+			rr := r
+			return store.Restyled{Revision: w.collectionRevision(ctx, &rr, stored, summary, append(slices.Clone(patch.Statements), patch.Added...))}, nil
+		}
+	}
+	// A new statement takes its sources from what it came from as stored,
+	// one split out of a statement the answer drops included (a component's
+	// interface moved out before the rest goes).
+	added, sources, leftOut, kept := splitOff(stored, patch.Added, validFor(scope))
 	if len(leftOut) > 0 {
 		w.log.WarnContext(ctx, at+": new statement left out, what it came from kept as stored", slog.Any("statements", leftOut))
 	}
 	patch.Added = added
 	if kept["summary"] {
 		patch.Summary = nil
+	}
+	if scope == store.ScopeProject {
+		// What a left-out statement came from is kept, dropped or not: its
+		// text would go with it.
+		drop := slices.DeleteFunc(slices.Clone(patch.Drop), func(id string) bool { return kept[id] })
+		page.Statements = w.projectDrops(ctx, at, stored.Statements, drop, patch.Statements)
+	}
+	patch.Drop = nil
+	byID := make(map[string]store.Statement, len(page.Statements))
+	for _, s := range page.Statements {
+		byID[s.ID] = s
 	}
 	// An edit keeps the files it has, a restyle reads none, and the diagram
 	// it has, or none: a reworded text returned without it would drop it,
@@ -216,8 +249,8 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 		edits = append(edits, s)
 	}
 	patch.Statements = edits
-	// No tree: every edit keeps its stored files and nothing is dropped, so
-	// no file check of ApplyPatch has anything to judge.
+	// No tree: every edit keeps its stored files and the drops are taken
+	// before, so no file check of ApplyPatch has anything to judge.
 	applied := baseline.ApplyPatch(page.Statements, patch, func(string) bool { return true }, validFor(scope))
 	if len(applied.BadEdits) > 0 {
 		w.log.WarnContext(ctx, fmt.Sprintf("%s: edit left out: %s", at, strings.Join(applied.BadEdits, ", ")))
@@ -251,17 +284,23 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 		s.Sources, s.Checked = newSources[s.ID], ""
 	}
 	statements = w.applyOutline(ctx, at, statements, res.Outline)
-	summary := page.Summary
+	summary := stored.Summary
 	if applied.Summary != nil {
 		summary = proseSummary(*applied.Summary)
 	}
-	if summary == page.Summary && sameStatements(page.Statements, statements) {
-		if slices.EqualFunc(statements, page.Statements, func(a, b store.Statement) bool { return a.ID == b.ID && a.Area == b.Area }) {
+	if summary == stored.Summary && sameStatements(stored.Statements, statements) && !shapeMoves(stored, shape) {
+		// A first judgment that moves nothing is set in place.
+		var out store.Restyled
+		if scope == store.ScopeProject && shape != stored.Shape {
+			out.JudgeID, out.Shape = stored.RevisionID, shape
+		}
+		if slices.EqualFunc(statements, stored.Statements, func(a, b store.Statement) bool { return a.ID == b.ID && a.Area == b.Area }) {
 			w.log.InfoContext(ctx, at+": page stands as the rules want it, no revision")
-			return store.Restyled{}, nil
+			return out, nil
 		}
 		w.log.InfoContext(ctx, fmt.Sprintf("%s: page laid out in %s, no revision", at, plural(areaCount(statements), "area")))
-		return store.Restyled{ArrangeID: page.RevisionID, Arranged: statements}, nil
+		out.ArrangeID, out.Arranged = stored.RevisionID, statements
+		return out, nil
 	}
 	runID := r.ID
 	rev := &store.NewRevision{
@@ -269,10 +308,11 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 		Chars: prose(summary, statements), SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID,
 	}
 	if scope == store.ScopeProject {
-		// The map is the project step's: carried as projectPage read it.
-		rev.Map = page.Map
+		// The map is the project step's: carried as projectPage read it,
+		// none where a collection's page had none (due to the next step).
+		rev.Map, rev.Shape = stored.Map, shape
 	}
-	grown, n := growth(page, summary, statements)
+	grown, n := growth(stored, summary, statements)
 	w.log.InfoContext(ctx, fmt.Sprintf("%s: %d chars of prose more; %s split off", at, grown, plural(n, "statement")))
 	return store.Restyled{Revision: rev}, nil
 }
@@ -367,17 +407,29 @@ func slugOf(scope, slug string) string {
 	return slug
 }
 
+// projectContext is what a project restyle reads beside the page: its
+// repositories' summaries and contracts as the project step shows them, the
+// build dependencies between them, their slugs.
+type projectContext struct {
+	repos, contracts string
+	inner            []store.Edge
+	slugs            []string
+}
+
 // renderRestyle is a restyle call's prompt: the page as the steps show it,
-// which statements pull requests taught without their keys; a project's
-// with its repositories by slug.
-func renderRestyle(r store.BaselineRun, page store.Page, l config.Limits, project bool, repoSlugs []string) string {
-	tmpl := prompts.Restyle
-	if project {
-		tmpl = prompts.ProjectRestyle
+// which statements pull requests taught without their keys; with project,
+// the project page's, with what it judges the shape by.
+func renderRestyle(r store.BaselineRun, page store.Page, l config.Limits, project *projectContext) string {
+	if project == nil {
+		return strings.NewReplacer(
+			"{repo}", r.Slug, "{project}", r.ProjectKey, "{repo_description}", describeTaught(page),
+			"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
+		).Replace(prompts.Restyle)
 	}
 	return strings.NewReplacer(
-		"{repo}", r.Slug, "{project}", r.ProjectKey, "{repo_slugs}", backticked(repoSlugs),
-		"{repo_description}", describeTaught(page), "{project_description}", describeTaught(page),
+		"{project}", r.ProjectKey, "{repo_slugs}", backticked(project.slugs), "{project_description}", describeTaught(page),
+		"{project_shape}", shapeShown(page), "{inner_edges}", innerEdgesShown(project.inner),
+		"{other_repos}", project.repos, "{other_contracts}", project.contracts,
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
-	).Replace(tmpl)
+	).Replace(prompts.ProjectRestyle)
 }

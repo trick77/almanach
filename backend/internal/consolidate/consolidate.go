@@ -370,8 +370,11 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	}
 
 	projectDescription := describe(projectPage)
-	if alone {
+	switch {
+	case alone:
 		projectDescription = singleProject
+	case projectPage.Collection():
+		projectDescription = collectionProject + "\n\n" + projectDescription
 	}
 	prompt := renderWith(prompts.Merge, q, repoPage, projectDescription, w.limits)
 	res := w.llm.Merge(ctx, inference.MergeRequest{Prompt: prompt})
@@ -432,6 +435,12 @@ func (w *Worker) single(ctx context.Context, key string) (bool, error) {
 // a project of one: its repository's page is the project's.
 const singleProject = "_None: this project is one repository, it has no project description. Answer `\"project\": null`._"
 
+// collectionProject heads the merge prompt's project description of a
+// collection: its page is a summary alone, which a note seldom changes.
+const collectionProject = "_This project is a collection: repositories that each stand on their own, grouped for another reason. " +
+	"Its description is a short summary alone, no statements. Answer `\"project\": null` unless this note changes what the project " +
+	"holds; then the summary alone, `statements` and `added` empty._"
+
 // deferNote leaves a note queued with its failed attempt counted, after a
 // hold; reports whether it stays queued: false once maxFoldAttempts is
 // reached (the note is then marked, with a log line).
@@ -472,7 +481,15 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		return nil
 	}
 	answer := *d
-	answer.Statements, answer.Added = w.asNew(ctx, "consolidate: "+scope, current.Statements, d.Statements, d.Added)
+	// A collection's page is its summary alone: code holds what the prompt
+	// says (collectionProject).
+	if scope == store.ScopeProject && current.Collection() {
+		if n := len(d.Statements) + len(d.Added); n > 0 {
+			w.log.WarnContext(ctx, "consolidate: statements of a collection left out", slog.Int("statements", n))
+		}
+		answer.Statements, answer.Added = []inference.Statement{}, nil
+	}
+	answer.Statements, answer.Added = w.asNew(ctx, "consolidate: "+scope, current.Statements, answer.Statements, answer.Added)
 	// A bugfix note is a pitfall's evidence on the merge path; any other
 	// note backs none.
 	if q.ChangeKind != "bugfix" {

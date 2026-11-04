@@ -373,6 +373,23 @@ func arrangeRevision(ctx context.Context, db execer, revisionID int64, statement
 	return n > 0, err
 }
 
+// JudgeShape sets a project page's first judgment of its shape in place on
+// revisionID, when the judgment changes nothing a reader would see but the
+// label (a page written as a system's, judged one): no revision of its own,
+// as ArrangePage. Only on a project revision still unjudged and its page's
+// current one; ok false, and nothing written, otherwise.
+func (s *Store) JudgeShape(ctx context.Context, revisionID int64, shape string) (bool, error) {
+	return judgeShape(ctx, s.db, revisionID, shape)
+}
+
+func judgeShape(ctx context.Context, db execer, revisionID int64, shape string) (bool, error) {
+	n, err := affected(db.ExecContext(ctx, `
+		UPDATE revisions SET shape = ?
+		 WHERE id = ? AND scope = 'project' AND shape IS NULL AND id IN (SELECT current_revision_id FROM pages)`,
+		shape, revisionID))
+	return n > 0, err
+}
+
 // RepoRuns is what the source page shows of one repository's runs: the
 // newest run, what its priced calls cost (nil when none was priced), the
 // commit last documented and how many of the newest runs in a
