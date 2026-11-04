@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/trick77/almanach/internal/diagram"
-	"github.com/trick77/llmwire"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // The calls of a baseline run, one per step, each with its own strict

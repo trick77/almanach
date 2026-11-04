@@ -25,8 +25,8 @@ import (
 	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
-	"github.com/trick77/llmwire"
 	"github.com/trick77/ship/kit/logging"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // Store is what the worker needs of the store.

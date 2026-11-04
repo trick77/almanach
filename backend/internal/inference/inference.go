@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
-	"github.com/trick77/llmwire"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // CallTimeout bounds one call of any kind. A fold rewrites two descriptions
