@@ -54,14 +54,18 @@ func (s *Server) Use(mw func(http.Handler) http.Handler) { s.inner = append(s.in
 // framing, so no other site lays the Quellen page's buttons (a removal, a
 // paid "Neu beschreiben") under a decoy. Framing alone, not kit's
 // DefaultCSP: what the bundle loads (ELK, the fonts) was never held
-// against a script or a worker policy.
+// against a script or a worker policy. kit's SecurityHeaders adds
+// X-Frame-Options DENY, X-Content-Type-Options nosniff and
+// Referrer-Policy same-origin (a link to the forge sends no Referer).
 const framePolicy = "frame-ancestors 'none'"
 
 // Handler is the mux wrapped in the middleware chain: access log outermost,
 // so a panic's log line and its 500 carry the request id; the security
-// headers, so a 401 of the gate carries them too; then what Use added.
+// headers outside the recovery, so a panic's 500 keeps them (kit's Recover
+// restores the headers it saw arrive), and outside the gate, so its 401
+// carries them; then what Use added.
 func (s *Server) Handler() http.Handler {
-	mws := append([]func(http.Handler) http.Handler{httpx.AccessLog(s.log, httpx.AccessLogOptions{}), httpx.Recover(s.log),
-		httpx.SecurityHeaders(framePolicy)}, s.inner...)
+	mws := append([]func(http.Handler) http.Handler{httpx.AccessLog(s.log, httpx.AccessLogOptions{}),
+		httpx.SecurityHeaders(framePolicy), httpx.Recover(s.log)}, s.inner...)
 	return httpx.Chain(s.mux, mws...)
 }

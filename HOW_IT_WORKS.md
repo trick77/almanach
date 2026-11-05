@@ -386,9 +386,11 @@ else 403. SameSite Lax alone would let a sibling subdomain post. The
 origin check runs in none mode too, without the neither-header rule, so
 a script with curl still writes there and a page on another site cannot.
 Nor can one frame Almanach to lay its buttons under a decoy: every
-response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'`,
-the policy's only directive (the bundle was never held against a script
-or worker policy).
+response, a panic's 500 and the gate's 401 included, carries
+`X-Frame-Options: DENY` and `frame-ancestors 'none'`, the policy's only
+directive (the bundle was never held against a script or worker policy),
+with kit's `nosniff` and `Referrer-Policy: same-origin` (a link to the
+forge sends no Referer).
 
 Discovery runs in the background from startup on, each attempt bounded to
 30 s; boot never waits for it. A provider that cannot be reached (no

@@ -210,8 +210,6 @@ func TestPromptEval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// EVAL_REPOS may name a local checkout.
-	git.WithFileRemotes()
 	st := evalStore{&runStore{fakeStore: newFakeStore(), sources: map[string]bool{}, libReads: map[string]int{}}}
 	for _, repo := range evalRepos(t, repos) {
 		slug, url := repo[0], repo[1]

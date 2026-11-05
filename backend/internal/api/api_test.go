@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -718,10 +719,20 @@ func TestLead(t *testing.T) {
 // No response may be framed by another site, the SPA's page and a 401 of
 // the gate included.
 func TestNoFraming(t *testing.T) {
-	h := handler(t, newFakeStore(), &fakeWaker{}, config.AuthNone)
-	for _, path := range []string{"/", "/api/projects", "/webhooks/noergler"} {
+	none := handler(t, newFakeStore(), &fakeWaker{}, config.AuthNone)
+	var buf bytes.Buffer
+	gated := oidcHandler(t, &fakeOIDC{}, testSessions(t), &buf)
+	for _, c := range []struct {
+		h        http.Handler
+		path     string
+		wantCode int
+	}{{none, "/", 0}, {none, "/api/projects", 0}, {none, "/webhooks/noergler", 0}, {gated, "/api/projects", http.StatusUnauthorized}} {
+		path := c.path
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		c.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if c.wantCode != 0 && rec.Code != c.wantCode {
+			t.Errorf("%s: %d, want %d", path, rec.Code, c.wantCode)
+		}
 		if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
 			t.Errorf("%s: X-Frame-Options = %q, want DENY", path, got)
 		}

@@ -71,13 +71,6 @@ type Client struct {
 // remoteProtocols are the transports a forge is reached by.
 const remoteProtocols = "https:http"
 
-// WithFileRemotes lets the client clone from a local path or file:// as
-// well: the tests' and the prompt eval's remotes, never a source's.
-func (c *Client) WithFileRemotes() *Client {
-	c.protocols = remoteProtocols + ":file"
-	return c
-}
-
 // Resolve finds the git binary on PATH; a startup check.
 func Resolve() (string, error) {
 	p, err := exec.LookPath("git")

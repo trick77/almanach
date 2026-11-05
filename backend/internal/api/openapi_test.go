@@ -26,14 +26,15 @@ func specOps(t *testing.T) []string {
 	}
 	defer func() { _ = f.Close() }()
 	pathLine := regexp.MustCompile(`^  (/\S*):$`)
-	methodLine := regexp.MustCompile(`^    (get|put|post|patch|delete):$`)
+	methodLine := regexp.MustCompile(`^    (get|put|post|patch|delete|head|options|trace):$`)
 	var ops []string
 	var path string
 	inPaths := false
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
-		if !strings.HasPrefix(line, " ") && line != "" {
+		// A top-level key ends the block before it; a comment does not.
+		if line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "#") {
 			inPaths = line == "paths:"
 			continue
 		}

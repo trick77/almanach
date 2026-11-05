@@ -50,7 +50,9 @@ func client(t *testing.T) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c.WithFileRemotes()
+	// The tests' remotes are local bare repositories, never a source's.
+	c.protocols = remoteProtocols + ":file"
+	return c
 }
 
 // A source's clone URL reaches a forge over https or http only: a local
@@ -65,7 +67,7 @@ func TestEnsureCloned_RefusesALocalRemote(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := bareRemote(t)
-	for _, url := range []string{remote, "file://" + remote} {
+	for _, url := range []string{remote, "file://" + remote, "ssh://git@forge.example.invalid/x.git", "git@forge.example.invalid:x.git"} {
 		dir, _ := c.Dir("PROJ", "repo")
 		if err := c.EnsureCloned(context.Background(), dir, url, Access{}); err == nil || !strings.Contains(err.Error(), "not allowed") {
 			t.Errorf("EnsureCloned(%s) = %v, want git to refuse the transport", url, err)
