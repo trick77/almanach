@@ -226,21 +226,28 @@ type baselineBody struct {
 	// MapStep: in state project, the project step is over and the run draws
 	// the repository map, its last step. The state has no value of its own
 	// for it (a CHECK on baseline_runs); the plan says so.
-	MapStep          bool              `json:"map_step"`
-	Mode             string            `json:"mode"`
-	Trigger          string            `json:"trigger"`
-	Commit           string            `json:"commit"`
-	Step             int               `json:"step"`
-	Steps            int               `json:"steps"`
-	Skipped          int               `json:"skipped"`
-	SkippedParts     []skippedPartBody `json:"skipped_parts"`
-	CostUSD          string            `json:"cost_usd,omitempty"`
-	Error            string            `json:"error"`
-	QueuedAt         time.Time         `json:"queued_at"`
-	StartedAt        *time.Time        `json:"started_at"`
-	FinishedAt       *time.Time        `json:"finished_at"`
-	DocumentedCommit string            `json:"documented_commit"`
-	DocumentedAt     *time.Time        `json:"documented_at"`
+	MapStep      bool              `json:"map_step"`
+	Mode         string            `json:"mode"`
+	Trigger      string            `json:"trigger"`
+	Commit       string            `json:"commit"`
+	Step         int               `json:"step"`
+	Steps        int               `json:"steps"`
+	Skipped      int               `json:"skipped"`
+	SkippedParts []skippedPartBody `json:"skipped_parts"`
+	// ReadBytes is the distinct file content the run's folded parts read,
+	// ReadableBytes what the tree offered at the full run's commit (a
+	// reconcile carries the documented run's pair): the share says how
+	// much of the code the page rests on. 0 on a restyle, a departure, a
+	// run from before.
+	ReadBytes        int64      `json:"read_bytes"`
+	ReadableBytes    int64      `json:"readable_bytes"`
+	CostUSD          string     `json:"cost_usd,omitempty"`
+	Error            string     `json:"error"`
+	QueuedAt         time.Time  `json:"queued_at"`
+	StartedAt        *time.Time `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+	DocumentedCommit string     `json:"documented_commit"`
+	DocumentedAt     *time.Time `json:"documented_at"`
 	// LeftParts: a done run skipped a part worth reading again
 	// (baseline.LeftParts), the rule the poller retries by.
 	LeftParts bool `json:"left_parts"`
@@ -256,7 +263,8 @@ func baselineOf(rr store.RepoRuns) (*baselineBody, error) {
 	r := rr.Last
 	parts, skipped, err := skippedOf(r.Plan)
 	return &baselineBody{RunID: r.ID, State: r.State, MapStep: inMapStep(r), Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, Step: r.Step, Steps: r.Steps,
-		Skipped: r.Skipped, SkippedParts: parts, CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		Skipped: r.Skipped, SkippedParts: parts, ReadBytes: r.ReadBytes, ReadableBytes: r.ReadableBytes,
+		CostUSD: usd(rr.LastCost), Error: r.Error, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		DocumentedCommit: rr.Documented, DocumentedAt: rr.DocumentedAt,
 		LeftParts: r.State == store.RunDone && baseline.LeftParts(skipped, r.Skipped)}, err
 }

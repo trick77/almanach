@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/store"
 )
+
+// fl is a whole file of a size.
+func fl(path string, size int64) File { return File{Path: path, Size: size} }
 
 func TestBlocked(t *testing.T) {
 	for p, want := range map[string]bool{
@@ -53,6 +57,7 @@ func TestFilesAndReadable(t *testing.T) {
 		{Path: "a.sh", Mode: "100755", Size: 5},
 		{Path: "empty.go", Mode: "100644", Size: 0},
 		{Path: "huge.json", Mode: "100644", Size: FileMaxBytes + 1},
+		{Path: "dump.csv", Mode: "100644", Size: CutMaxBytes + 1},
 		{Path: "max.go", Mode: "100644", Size: FileMaxBytes},
 		{Path: "link", Mode: "120000", Size: 4},
 		{Path: "sub", Mode: "160000"},
@@ -60,7 +65,9 @@ func TestFilesAndReadable(t *testing.T) {
 		{Path: "gone.go", Mode: "100644", Size: 3, Deleted: true},
 	}
 	got := Files(entries)
-	want := []File{{"a.sh", 5}, {"max.go", FileMaxBytes}, {"z.go", 10}}
+	// A file over the cap is read as its head, marked cut; one past
+	// CutMaxBytes is data, refused by its size.
+	want := []File{{Path: "a.sh", Size: 5}, {Path: "huge.json", Size: FileMaxBytes, Cut: true}, {Path: "max.go", Size: FileMaxBytes}, {Path: "z.go", Size: 10}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Files = %v, want %v", got, want)
 	}
@@ -75,10 +82,10 @@ func TestFilesAndReadable(t *testing.T) {
 
 func TestDocs_OrderAndLimit(t *testing.T) {
 	files := []File{
-		{"docs/guide.md", 30}, {"docs/img.txt", 5}, {"internal/x.go", 10}, {"AGENTS.md", 20}, {"README.md", 40},
-		{"backend/go.mod", 8}, {"Makefile", 6}, {"HOW_IT_WORKS.md", 50}, {"backend/README.md", 12}, {"docs/deep/a.md", 7},
-		{"backend/internal/README.md", 9}, {"compose.yaml", 4}, {"api/openapi.yaml", 11},
-		{"src/Configuration.java", 3}, {"design.go", 2},
+		fl("docs/guide.md", 30), fl("docs/img.txt", 5), fl("internal/x.go", 10), fl("AGENTS.md", 20), fl("README.md", 40),
+		fl("backend/go.mod", 8), fl("Makefile", 6), fl("HOW_IT_WORKS.md", 50), fl("backend/README.md", 12), fl("docs/deep/a.md", 7),
+		fl("backend/internal/README.md", 9), fl("compose.yaml", 4), fl("api/openapi.yaml", 11),
+		fl("src/Configuration.java", 3), fl("design.go", 2),
 	}
 	got := Docs(files, 1000)
 	var paths []string
@@ -106,8 +113,8 @@ func TestDocs_OrderAndLimit(t *testing.T) {
 // elsewhere, or as .drawio, they are not docs.
 func TestDocs_DiagramSourcesLast(t *testing.T) {
 	files := []File{
-		{"docs/flow.puml", 3}, {"architecture.mmd", 4}, {"docs/zz.md", 5}, {"README.md", 6},
-		{"src/seq.puml", 2}, {"docs/map.drawio", 2}, {"docs/c4.plantuml", 1},
+		fl("docs/flow.puml", 3), fl("architecture.mmd", 4), fl("docs/zz.md", 5), fl("README.md", 6),
+		fl("src/seq.puml", 2), fl("docs/map.drawio", 2), fl("docs/c4.plantuml", 1),
 	}
 	var paths []string
 	for _, f := range Docs(files, 1000) {
@@ -122,31 +129,95 @@ func TestDocs_DiagramSourcesLast(t *testing.T) {
 // A README is the README whatever its markup.
 func TestDocs_ReadmeInAnyMarkup(t *testing.T) {
 	for _, name := range []string{"README", "README.markdown", "readme.org", "README.asciidoc", "README.textile", "README.rst"} {
-		got := Docs([]File{{"main.go", 1}, {name, 5}}, 100)
+		got := Docs([]File{fl("main.go", 1), fl(name, 5)}, 100)
 		if len(got) != 1 || got[0].Path != name {
 			t.Errorf("Docs with %s = %v, want it read", name, got)
 		}
 	}
-	if got := Docs([]File{{"readme.go", 5}}, 100); len(got) != 0 {
+	if got := Docs([]File{fl("readme.go", 5)}, 100); len(got) != 0 {
 		t.Errorf("readme.go read as a doc: %v", got)
 	}
 }
 
 func TestListing_FilesThenDirectories(t *testing.T) {
-	small := Listing([]File{{"a.go", 3}, {"x/b.go", 4}})
+	small := Listing([]File{fl("a.go", 3), fl("x/b.go", 4)})
 	if small != "a.go\t3\nx/b.go\t4\n" {
 		t.Fatalf("small listing = %q", small)
 	}
 	var many []File
-	many = append(many, File{"README.md", 9})
+	many = append(many, File{Path: "README.md", Size: 9})
 	for i := 0; i < ListMaxEntries; i++ {
-		many = append(many, File{fmt.Sprintf("svc/handlers/h%d.go", i), 1}, File{fmt.Sprintf("svc/main%d.go", i), 2})
+		many = append(many, File{Path: fmt.Sprintf("svc/handlers/h%d.go", i), Size: 1}, File{Path: fmt.Sprintf("svc/main%d.go", i), Size: 2})
 	}
 	big := Listing(many)
-	want := "README.md\t9\nsvc/\t4000 files\t8000 bytes\nsvc/handlers/\t4000 files\t4000 bytes\n"
+	// Neither svc/'s own files nor handlers/ fit laid out: svc/ is opened,
+	// its own files one line, handlers/ one line.
+	want := "README.md\t9\nsvc/\t4000 files directly\t8000 bytes\nsvc/handlers/\t4000 files\t4000 bytes\n"
 	if big != want {
 		t.Fatalf("big listing = %q\nwant %q", big, want)
 	}
+	// A cut file says so.
+	if got := Listing([]File{{Path: "Big.java", Size: FileMaxBytes, Cut: true}}); got != "Big.java\t100000\thead only\n" {
+		t.Errorf("cut listing = %q", got)
+	}
+}
+
+// Over the entries the tree opens where the files are: a Maven tree deep
+// under src/main/java is laid out to its packages, the biggest first, a
+// package too wide to lay out shown with its subpackages, a small one
+// beside it laid out whole, and a directory under a folded one not shown.
+func TestListing_OpensWhereTheFilesAre(t *testing.T) {
+	var files []File
+	add := func(dir string, n int) {
+		for i := 0; i < n; i++ {
+			files = append(files, File{Path: fmt.Sprintf("%s/F%d.java", dir, i), Size: 1})
+		}
+	}
+	add("src/main/java/com/acme/billing", ListMaxEntries-100)
+	add("src/main/java/com/acme/billing/model", 60)
+	add("src/main/java/com/acme/auth", 20)
+	add("src/test/java/com/acme", 300)
+	files = append(files, File{Path: "pom.xml", Size: 5}, File{Path: "README.md", Size: 5})
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	got := Listing(files)
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	if len(lines) > ListMaxEntries {
+		t.Fatalf("%d lines, over the limit", len(lines))
+	}
+	for _, want := range []string{
+		"README.md\t5", "pom.xml\t5",
+		// billing is too wide to lay out: its own files one line, its subpackage laid out.
+		"src/main/java/com/acme/billing/\t3900 files directly\t3900 bytes",
+		"src/main/java/com/acme/billing/model/F0.java\t1",
+		// auth fits whole.
+		"src/main/java/com/acme/auth/F19.java\t1",
+		// The tests, a smaller tree, laid out too.
+		"src/test/java/com/acme/F0.java\t1",
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Errorf("listing lacks %q:\n%s", want, firstLines(got, 12))
+		}
+	}
+	if strings.Contains(got, "src/main/java/com/acme/billing/F0.java") || strings.Contains(got, "src/main/java/\t") {
+		t.Errorf("listing lays billing out, or folds java/:\n%s", firstLines(got, 12))
+	}
+	// A flat repository of more files than the limit at its root: the
+	// root's own files are one line, never over the limit.
+	var flat []File
+	for i := 0; i < ListMaxEntries+10; i++ {
+		flat = append(flat, File{Path: fmt.Sprintf("f%d.txt", i), Size: 1})
+	}
+	if got := Listing(flat); got != fmt.Sprintf("./\t%d files directly\t%d bytes\n", ListMaxEntries+10, ListMaxEntries+10) {
+		t.Errorf("flat listing = %q", firstLines(got, 3))
+	}
+}
+
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func subject(name string, paths ...string) inference.Subject {
@@ -167,8 +238,8 @@ func names(p Plan) []string {
 
 func TestBuildPlan_HoldsTheCatalogueToTheTree(t *testing.T) {
 	files := []File{
-		{"auth/login.go", 100}, {"auth/session.go", 200}, {"auth/token/jwt.go", 50},
-		{"billing/run.go", StepMaxBytes - 10}, {"billing/close.go", 30}, {"billing/tiny.go", 5}, {"main.go", 10},
+		fl("auth/login.go", 100), fl("auth/session.go", 200), fl("auth/token/jwt.go", 50),
+		fl("billing/run.go", StepMaxBytes-10), fl("billing/close.go", 30), fl("billing/tiny.go", 5), fl("main.go", 10),
 	}
 	p := BuildPlan([]inference.Subject{
 		subject("Auth", "auth/", "auth/login.go", "invented.go"),
@@ -237,7 +308,7 @@ func TestPlan_SkipKeepsTheFirstReason(t *testing.T) {
 // through Plan's own JSON.
 func TestRunSkips_ReadsAStoredPlan(t *testing.T) {
 	var p Plan
-	p.Subjects = []Subject{{Name: "Auth", Purpose: "p", Files: []File{{"auth/a.go", 1}}}}
+	p.Subjects = []Subject{{Name: "Auth", Purpose: "p", Files: []File{fl("auth/a.go", 1)}}}
 	p.SkipSubject("Auth", SkipBytes)
 	raw, _ := json.Marshal(p)
 	got, err := RunSkips(raw)
@@ -310,10 +381,10 @@ func TestPlan_UpgradeMovesTheLegacyStepNames(t *testing.T) {
 
 func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	old := Plan{Subjects: []Subject{
-		{Name: "Auth", Purpose: "p", Files: []File{{"auth/login.go", 100}, {"auth/gone.go", 10}}},
-		{Name: "Old", Purpose: "p", Files: []File{{"old/x.go", 5}}},
+		{Name: "Auth", Purpose: "p", Files: []File{fl("auth/login.go", 100), fl("auth/gone.go", 10)}},
+		{Name: "Old", Purpose: "p", Files: []File{fl("old/x.go", 5)}},
 	}, Skipped: []string{"Old"}}
-	files := []File{{"auth/login.go", 120}, {"auth/new.go", 7}, {"jobs/run.go", 9}}
+	files := []File{fl("auth/login.go", 120), fl("auth/new.go", 7), fl("jobs/run.go", 9)}
 	p := MergePlan(old, []inference.Subject{subject("AUTH", "auth/new.go"), subject("Jobs", "jobs/"), subject("Third", "jobs/run.go")}, files, 2)
 	want := []string{"Auth:auth/login.go,auth/new.go", "Jobs:jobs/run.go"}
 	if got := names(p); !reflect.DeepEqual(got, want) {
@@ -327,14 +398,14 @@ func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	}
 	// A subject named with umlauts where the old plan wrote them out is the
 	// same subject, not a second one.
-	spelled := Plan{Subjects: []Subject{{Name: "Datenueberpruefung", Purpose: "p", Files: []File{{"auth/login.go", 100}}}}}
+	spelled := Plan{Subjects: []Subject{{Name: "Datenueberpruefung", Purpose: "p", Files: []File{fl("auth/login.go", 100)}}}}
 	if got := names(MergePlan(spelled, []inference.Subject{subject("Datenüberprüfung", "auth/new.go")}, files, 2)); !reflect.DeepEqual(got, []string{"Datenueberpruefung:auth/login.go,auth/new.go"}) {
 		t.Errorf("respelled subject = %v, want the old one with the new file", got)
 	}
 	// Files that grew are held to the step budget again, in their order.
-	grown := Plan{Subjects: []Subject{{Name: "Big", Files: []File{{"a.go", 100}, {"b.go", 100}, {"c.go", 10}}}}}
+	grown := Plan{Subjects: []Subject{{Name: "Big", Files: []File{fl("a.go", 100), fl("b.go", 100), fl("c.go", 10)}}}}
 	half := StepMaxBytes / 2
-	now := []File{{"a.go", int64(half)}, {"b.go", int64(half) + 1}, {"c.go", 10}}
+	now := []File{fl("a.go", int64(half)), fl("b.go", int64(half)+1), fl("c.go", 10)}
 	if got := names(MergePlan(grown, nil, now, 5)); !reflect.DeepEqual(got, []string{"Big:a.go,c.go"}) {
 		t.Errorf("grown subject = %v, want b.go past the budget left out", got)
 	}
@@ -350,27 +421,33 @@ func TestReconcile_SiftTouchedResting(t *testing.T) {
 		{Path: "billing/huge.go", Mode: "100644", Size: FileMaxBytes + 1},
 	}
 	c := Sift(diff)
-	if len(c.Changed) != 2 || !reflect.DeepEqual(c.Gone, []string{"auth/old.go", "go.sum", "link", "billing/huge.go"}) {
+	// A file grown past the cap is still read, as its head: changed, not gone.
+	if len(c.Changed) != 3 || !c.Changed[2].Cut || c.Changed[2].Size != FileMaxBytes ||
+		!reflect.DeepEqual(c.Gone, []string{"auth/old.go", "go.sum", "link"}) {
 		t.Fatalf("Sift = %+v", c)
 	}
 	plan := Plan{Subjects: []Subject{
-		{Name: "Auth", Files: []File{{"auth/old.go", 50}, {"auth/session.go", 400}}},
-		{Name: "Billing", Files: []File{{"billing/run.go", 300}, {"billing/huge.go", 90}}},
-		{Name: "Docs", Files: []File{{"README.md", 30}}},
-		{Name: "Quiet", Files: []File{{"quiet.go", 10}}},
+		{Name: "Auth", Files: []File{fl("auth/old.go", 50), fl("auth/session.go", 400)}},
+		{Name: "Billing", Files: []File{fl("billing/run.go", 300), fl("billing/huge.go", 90)}},
+		{Name: "Docs", Files: []File{fl("README.md", 30)}},
+		{Name: "Quiet", Files: []File{fl("quiet.go", 10)}},
 	}, Skipped: []string{"Docs"}}
 	touched, unplaced := Touched(plan, c)
 	if !reflect.DeepEqual(touched, []string{"Auth", "Billing", "Docs"}) {
-		t.Errorf("touched = %v, want Auth (deleted), Billing (grown past the cap) and Docs (skipped last time)", touched)
+		t.Errorf("touched = %v, want Auth (deleted), Billing (grown past the cap, its head changed) and Docs (skipped last time)", touched)
 	}
 	if len(unplaced) != 2 || unplaced[0].Path != "auth/login.go" || unplaced[1].Path != "jobs/new.go" {
 		t.Errorf("unplaced = %v", unplaced)
 	}
-	// 160 changed plus 140 catalogued gone, of 880.
-	if FullInstead(plan, c) {
-		t.Error("300 of 880 read as a full run")
+	// The cut file alone moves its 100 kB head: a full run. Without it,
+	// 160 changed plus 50 catalogued gone, of 880.
+	if !FullInstead(plan, c) {
+		t.Error("a 100 kB head over 880 bytes did not ask for a full run")
 	}
-	if !FullInstead(plan, Changes{Changed: []File{{"x", 300}}, Gone: []string{"auth/session.go"}}) || !FullInstead(Plan{}, c) {
+	if FullInstead(plan, Changes{Changed: c.Changed[:2], Gone: c.Gone}) {
+		t.Error("210 of 880 read as a full run")
+	}
+	if !FullInstead(plan, Changes{Changed: []File{fl("x", 300)}, Gone: []string{"auth/session.go"}}) || !FullInstead(Plan{}, c) {
 		t.Error("over half moved counting a deletion, or an empty plan, did not ask for a full run")
 	}
 	statements := []store.Statement{

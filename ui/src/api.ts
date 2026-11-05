@@ -416,6 +416,11 @@ export interface Baseline {
   skipped: number;
   /** The parts the run left out, in the order it hit them. */
   skipped_parts: SkippedPart[];
+  /** What the run read, and what the tree offered: the share is how much
+   *  of the code the page rests on. readable_bytes is 0 on a run that
+   *  read no code. */
+  read_bytes: number;
+  readable_bytes: number;
   /** 3 decimals; absent when none of its calls was priced. */
   cost_usd?: string;
   error: string;

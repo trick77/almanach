@@ -101,6 +101,19 @@ func (c *Client) NewReader(ctx context.Context, dir string) (*Reader, error) {
 // input it would end the request early and leave every later answer one
 // file out of step.
 func (r *Reader) ReadFile(sha, path string, limit int64) ([]byte, error) {
+	return r.readPath(sha, path, limit, false)
+}
+
+// ReadHead is ReadFile for a file over the limit: its first limit bytes,
+// the rest consumed, never TooLargeError.
+func (r *Reader) ReadHead(sha, path string, limit int64) ([]byte, error) {
+	return r.readPath(sha, path, limit, true)
+}
+
+// readPath is one file at a commit, by the batch, or by argument when its
+// path has a newline (the batch takes one path a line); head takes the
+// first limit bytes of a larger file where ReadFile refuses it.
+func (r *Reader) readPath(sha, path string, limit int64, head bool) ([]byte, error) {
 	if err := checkSHA(sha); err != nil {
 		return nil, err
 	}
@@ -115,14 +128,13 @@ func (r *Reader) ReadFile(sha, path string, limit int64) ([]byte, error) {
 	if r.broken != nil {
 		return nil, fmt.Errorf("read %s at %s: %w", path, ShortSHA(sha), r.broken)
 	}
+	var body []byte
+	var err error
 	if strings.Contains(path, "\n") {
-		body, err := r.c.readByArgument(r.ctx, r.dir, sha+":"+path, limit)
-		if err != nil {
-			return nil, fmt.Errorf("read %s at %s: %w", path, ShortSHA(sha), err)
-		}
-		return body, nil
+		body, err = r.c.readByArgument(r.ctx, r.dir, sha+":"+path, limit, head)
+	} else {
+		body, err = r.read(sha+":"+path, limit, head)
 	}
-	body, err := r.read(sha+":"+path, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read %s at %s: %w", path, ShortSHA(sha), err)
 	}
@@ -131,8 +143,9 @@ func (r *Reader) ReadFile(sha, path string, limit int64) ([]byte, error) {
 
 // read sends one request and reads its answer: the header, then for an
 // object its bytes and one newline. Whatever is not returned is consumed,
-// so the stream stays in step.
-func (r *Reader) read(object string, limit int64) ([]byte, error) {
+// so the stream stays in step. Over the limit the blob is refused, or
+// with head its first limit bytes returned and the rest consumed.
+func (r *Reader) read(object string, limit int64, head bool) ([]byte, error) {
 	if _, err := io.WriteString(r.in, object+"\n"); err != nil {
 		return nil, r.fail(fmt.Errorf("ask git: %w", err))
 	}
@@ -154,10 +167,20 @@ func (r *Reader) read(object string, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("not a file at that commit: it is a %s", kind)
 	}
 	if limit > 0 && size > limit {
-		if _, err := io.CopyN(io.Discard, r.out, size+1); err != nil {
-			return nil, r.fail(fmt.Errorf("skip %d bytes: %w", size, err))
+		if !head {
+			if _, err := io.CopyN(io.Discard, r.out, size+1); err != nil {
+				return nil, r.fail(fmt.Errorf("skip %d bytes: %w", size, err))
+			}
+			return nil, &TooLargeError{Size: size}
 		}
-		return nil, &TooLargeError{Size: size}
+		body := make([]byte, limit)
+		if _, err := io.ReadFull(r.out, body); err != nil {
+			return nil, r.fail(fmt.Errorf("read %d bytes: %w", limit, err))
+		}
+		if _, err := io.CopyN(io.Discard, r.out, size-limit+1); err != nil {
+			return nil, r.fail(fmt.Errorf("skip %d bytes: %w", size-limit, err))
+		}
+		return body, nil
 	}
 	body := make([]byte, size)
 	if _, err := io.ReadFull(r.out, body); err != nil {
@@ -206,7 +229,7 @@ func (r *Reader) Close() error {
 // its bytes asked of cat-file with the object in argv, where a newline is
 // just a byte. Same refusals as the batch: no object, not a file, over the
 // limit.
-func (c *Client) readByArgument(ctx context.Context, dir, object string, limit int64) ([]byte, error) {
+func (c *Client) readByArgument(ctx context.Context, dir, object string, limit int64, head bool) ([]byte, error) {
 	kind, err := c.run(ctx, dir, inRepo(dir), "cat-file", "-t", object)
 	if err != nil {
 		if exitCode(err) == 128 {
@@ -225,8 +248,14 @@ func (c *Client) readByArgument(ctx context.Context, dir, object string, limit i
 	if err != nil {
 		return nil, fmt.Errorf("unparseable size %q", strings.TrimSpace(sized))
 	}
-	if limit > 0 && size > limit {
+	if limit > 0 && size > limit && !head {
 		return nil, &TooLargeError{Size: size}
 	}
-	return c.runIn(ctx, dir, nil, inRepo(dir), "cat-file", "blob", object)
+	body, err := c.runIn(ctx, dir, nil, inRepo(dir), "cat-file", "blob", object)
+	if err == nil && head && limit > 0 && int64(len(body)) > limit {
+		// By argument the blob comes whole: no stream to cut. A path with a
+		// newline is rare enough to pay that once.
+		body = body[:limit]
+	}
+	return body, err
 }

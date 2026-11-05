@@ -244,48 +244,194 @@ func (p Plan) find(name string) int {
 }
 
 // Listing is the tree as the catalogue model sees it: every readable file
-// with its size, or, over ListMaxEntries, the files at the root and the
-// directories two levels deep with their file counts and bytes. A
-// directory is named with a trailing slash, the way the model may name it
-// back.
+// with its size (a cut one marked) when they fit ListMaxEntries, else the
+// tree folded to fit: a directory is one line with its file count and bytes
+// until it is opened, and opened where the files are. Over the entries the
+// tree was once folded to two levels whatever its shape, and a Maven or
+// Gradle repository, all of it under src/main/java, became one line the
+// model could only name whole. A directory is named with a trailing slash,
+// the way the model may name it back.
 func Listing(files []File) string {
 	var b strings.Builder
 	if len(files) <= ListMaxEntries {
 		for _, f := range files {
-			fmt.Fprintf(&b, "%s\t%d\n", f.Path, f.Size)
+			b.WriteString(fileLine(f))
 		}
 		return b.String()
 	}
-	type dir struct {
-		files int
-		bytes int64
-	}
-	dirs := map[string]*dir{}
-	var keys []string
-	for _, f := range files {
-		parts := strings.Split(f.Path, "/")
-		if len(parts) == 1 {
-			fmt.Fprintf(&b, "%s\t%d\n", f.Path, f.Size)
-			continue
-		}
-		key := parts[0] + "/"
-		if len(parts) > 2 {
-			key = parts[0] + "/" + parts[1] + "/"
-		}
-		d := dirs[key]
-		if d == nil {
-			d = &dir{}
-			dirs[key] = d
-			keys = append(keys, key)
-		}
-		d.files++
-		d.bytes += f.Size
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&b, "%s\t%d files\t%d bytes\n", k, dirs[k].files, dirs[k].bytes)
-	}
+	root := buildTree(files)
+	root.fold(ListMaxEntries)
+	root.write(&b)
 	return b.String()
+}
+
+// fileLine is one file of the listing, a cut one said to be.
+func fileLine(f File) string {
+	if f.Cut {
+		return fmt.Sprintf("%s\t%d\thead only\n", f.Path, f.Size)
+	}
+	return fmt.Sprintf("%s\t%d\n", f.Path, f.Size)
+}
+
+// treeNode is a directory of the listing: its direct files, its
+// subdirectories, and how it is shown (how).
+type treeNode struct {
+	path     string // "" for the root, else with a trailing slash
+	parent   *treeNode
+	direct   []File
+	children []*treeNode
+	files    int   // files under it, direct and deeper
+	bytes    int64 // their bytes
+	how      fold
+}
+
+// fold is how a directory is shown: one line for all of it; open, its
+// subdirectories listed and its direct files one line; flat, its direct
+// files each on a line.
+type fold int8
+
+const (
+	folded fold = iota
+	open
+	flat
+)
+
+// buildTree is the files as a tree of directories, each child list in path
+// order (the files sorted first: a reconcile's unplaced come in diff
+// order), the root open.
+func buildTree(files []File) *treeNode {
+	if !sort.SliceIsSorted(files, func(i, j int) bool { return files[i].Path < files[j].Path }) {
+		files = append([]File(nil), files...)
+		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	}
+	root := &treeNode{how: open}
+	nodes := map[string]*treeNode{"": root}
+	for _, f := range files {
+		dir := ""
+		parent := root
+		parts := strings.Split(f.Path, "/")
+		for _, part := range parts[:len(parts)-1] {
+			dir += part + "/"
+			n := nodes[dir]
+			if n == nil {
+				n = &treeNode{path: dir, parent: parent}
+				nodes[dir] = n
+				parent.children = append(parent.children, n)
+			}
+			n.files++
+			n.bytes += f.Size
+			parent = n
+		}
+		parent.direct = append(parent.direct, f)
+		root.files++
+		root.bytes += f.Size
+	}
+	return root
+}
+
+// entries is the lines a node takes as it is shown.
+func (n *treeNode) entries() int {
+	switch n.how {
+	case folded:
+		return 1
+	case open:
+		c := len(n.children)
+		if len(n.direct) > 0 {
+			c++
+		}
+		return c
+	default:
+		return len(n.direct) + len(n.children)
+	}
+}
+
+// fold opens the tree where the files are until the listing holds limit
+// lines: of every directory that can be shown one step further (a folded
+// one opened, an open one's direct files laid out), the one holding the
+// most files goes first, skipped when it does not fit, so the big parts
+// are opened before the small and a part too wide to lay out still shows
+// its subdirectories. The root starts open, its own files laid out when
+// they fit like any directory's.
+func (n *treeNode) fold(limit int) {
+	n.how = open
+	count := n.entries()
+	// Every directory, by the files under it, most first, the root among
+	// them; a folded leaf opens straight to flat (opening it would change
+	// no line).
+	all := []*treeNode{n}
+	var collect func(*treeNode)
+	collect = func(d *treeNode) {
+		for _, c := range d.children {
+			all = append(all, c)
+			collect(c)
+		}
+	}
+	collect(n)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].files > all[j].files })
+	for progress := true; progress; {
+		progress = false
+		for _, d := range all {
+			if d.how == flat {
+				continue
+			}
+			// A directory shows only under an open parent.
+			if !d.shown() {
+				continue
+			}
+			next := open
+			if d.how == open || len(d.children) == 0 {
+				next = flat
+			}
+			before, was := d.entries(), d.how
+			d.how = next
+			cost := d.entries() - before
+			if count+cost > limit {
+				d.how = was
+				continue
+			}
+			count += cost
+			progress = true
+		}
+	}
+}
+
+// shown reports whether a directory's own line is on the listing: every
+// ancestor open or flat.
+func (n *treeNode) shown() bool {
+	for p := n.parent; p != nil; p = p.parent {
+		if p.how == folded {
+			return false
+		}
+	}
+	return true
+}
+
+// write lays the tree out: at an open or flat directory its direct files
+// (each, or as one line), then its subdirectories, in path order; a folded
+// one as one line.
+func (n *treeNode) write(b *strings.Builder) {
+	if n.how == folded {
+		fmt.Fprintf(b, "%s\t%d files\t%d bytes\n", n.path, n.files, n.bytes)
+		return
+	}
+	if n.how == flat {
+		for _, f := range n.direct {
+			b.WriteString(fileLine(f))
+		}
+	} else if len(n.direct) > 0 {
+		var bytes int64
+		for _, f := range n.direct {
+			bytes += f.Size
+		}
+		name := n.path
+		if name == "" {
+			name = "./"
+		}
+		fmt.Fprintf(b, "%s\t%d files directly\t%d bytes\n", name, len(n.direct), bytes)
+	}
+	for _, c := range n.children {
+		c.write(b)
+	}
 }
 
 // index is the readable files by path and in path order, for resolving the

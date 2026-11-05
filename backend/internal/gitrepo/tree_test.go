@@ -195,6 +195,18 @@ func TestReader_ReadsRefusesAndStaysInStep(t *testing.T) {
 	if body, err := r.ReadFile(first, "big.txt", 0); err != nil || len(body) != bigSize {
 		t.Fatalf("big read = %d bytes %v", len(body), err)
 	}
+	// The head of a file over the limit, the rest consumed: the stream
+	// stays in step for the next read.
+	if body, err := r.ReadHead(first, "big.txt", 1000); err != nil || len(body) != 1000 {
+		t.Fatalf("head read = %d bytes %v, want 1000", len(body), err)
+	}
+	if body, err := r.ReadHead(second, "docs/für.md", 1000); err != nil || string(body) != "Umlaut, edited\n" {
+		t.Fatalf("head of a small file = %q %v, want it whole", body, err)
+	}
+	// A path with a newline goes by argument: cut there too.
+	if body, err := r.ReadHead(first, "odd\nname.txt", 3); err != nil || string(body) != "new" {
+		t.Fatalf("head by argument = %q %v, want the first 3 bytes", body, err)
+	}
 	if _, err := r.ReadFile(first, "docs", 0); err == nil || !strings.Contains(err.Error(), "tree") {
 		t.Fatalf("a directory: err = %v, want refused as a tree", err)
 	}
@@ -241,7 +253,7 @@ func TestReader_NewlinePathByArgument(t *testing.T) {
 	if body, err := r.ReadFile(first, "run.sh", 0); err != nil || string(body) != "#!/bin/sh\n" {
 		t.Fatalf("batch after the slow way = %q %v", body, err)
 	}
-	if _, err := c.readByArgument(context.Background(), dir, first+":docs", 0); err == nil || !strings.Contains(err.Error(), "tree") {
+	if _, err := c.readByArgument(context.Background(), dir, first+":docs", 0, false); err == nil || !strings.Contains(err.Error(), "tree") {
 		t.Fatalf("a directory by argument: err = %v, want refused as a tree", err)
 	}
 }
@@ -264,7 +276,7 @@ func TestReader_CancelledStepBreaksIt(t *testing.T) {
 	}
 	// A read that reaches the dead process marks the reader broken, once and
 	// for all.
-	if _, err := r.read(first+":run.sh", 0); !errors.Is(err, ErrReaderBroken) {
+	if _, err := r.read(first+":run.sh", 0, false); !errors.Is(err, ErrReaderBroken) {
 		t.Fatalf("read past the kill: err = %v, want ErrReaderBroken", err)
 	}
 	r.ctx = context.Background()

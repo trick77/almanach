@@ -1,6 +1,7 @@
 package clone
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -121,8 +122,9 @@ func (c *Code) CommitTime(ctx context.Context, key, slug, sha string) (time.Time
 	return at, err
 }
 
-// ReadFiles reads files at sha through one batch reader. A file over
-// FileMaxBytes, gone or binary is left out; a broken reader is an error.
+// ReadFiles reads files at sha through one batch reader. A file the plan
+// marks Cut is read as its first FileMaxBytes; one over FileMaxBytes not
+// so marked, gone or binary is left out; a broken reader is an error.
 // Every body passes redact.File: this is the one place code is read for a
 // model, so a credential value never leaves the machine.
 func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []baseline.File) (map[string][]byte, error) {
@@ -137,7 +139,19 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 		}
 		defer func() { _ = r.Close() }()
 		for _, f := range files {
-			body, err := r.ReadFile(sha, f.Path, baseline.FileMaxBytes)
+			var body []byte
+			var err error
+			if f.Cut {
+				// A file over the cap: its head, the plan says so, cut at a
+				// line's end so the redaction sees whole lines: a credential
+				// cut in two under a neutral key matches no shape.
+				body, err = r.ReadHead(sha, f.Path, baseline.FileMaxBytes)
+				if nl := bytes.LastIndexByte(body, '\n'); nl > 0 {
+					body = body[:nl+1]
+				}
+			} else {
+				body, err = r.ReadFile(sha, f.Path, baseline.FileMaxBytes)
+			}
 			// A step cut off, or a reader that broke, is no file left out:
 			// a patch written from code it never saw must not follow.
 			if ctx.Err() != nil {

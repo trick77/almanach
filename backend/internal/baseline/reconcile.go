@@ -23,7 +23,7 @@ func Sift(diff []gitrepo.Entry) Changes {
 	var c Changes
 	for _, e := range diff {
 		if Readable(e) {
-			c.Changed = append(c.Changed, File{Path: e.Path, Size: e.Size})
+			c.Changed = append(c.Changed, FileOf(e))
 			continue
 		}
 		c.Gone = append(c.Gone, e.Path)

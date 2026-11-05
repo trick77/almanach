@@ -586,6 +586,10 @@ export const S = {
     at: (sha: string) => `Bei ${sha}`,
     soFar: "bisher",
     // Parts, not topics: the overview and the project step count too.
+    // The share of the readable code a done run read: twelve subjects of
+    // a large repository once read a tenth and the page said nothing of it.
+    readShare: (pct: number) =>
+      pct === 0 ? "unter 1 % des Codes gelesen" : `${pct} % des Codes gelesen`,
     skipped: (n: number) =>
       n === 1 ? "1 Teil übersprungen" : `${n} Teile übersprungen`,
     // A skipped part by name: a subject is its own, the overview and the

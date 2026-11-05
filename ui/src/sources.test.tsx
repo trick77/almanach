@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { SourcePage } from "./SourcePage";
+import { SourcePage, readShare } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import type { Me, SourceDetail, Sources } from "./api";
 import { dayTime } from "./format";
@@ -165,6 +165,8 @@ const detail: SourceDetail = {
         steps: 4,
         skipped: 0,
         skipped_parts: [],
+        read_bytes: 620_000,
+        readable_bytes: 1_000_000,
         cost_usd: "2.418",
         error: "",
         queued_at: when,
@@ -408,12 +410,26 @@ describe("SourcesPage", () => {
   });
 });
 
+describe("readShare", () => {
+  it("is the percent read, clamped, none without a readable tree", () => {
+    expect(readShare(620_000, 1_000_000)).toBe(62);
+    expect(readShare(1_200, 1_000)).toBe(100);
+    expect(readShare(10, 0)).toBe(0);
+    expect(S.baseline.readShare(readShare(10, 1_000_000))).toBe(
+      "unter 1 % des Codes gelesen",
+    );
+  });
+});
+
 describe("SourcePage baseline", () => {
   it("shows a repository's description state and queues runs", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
     expect(await screen.findByText("Beschrieben")).toBeInTheDocument();
-    expect(screen.getByText(/^Bei 5c3b2a1 · \$2\.42 ·/)).toBeInTheDocument();
+    // The commit, the cost, the day, and the share of the code it read.
+    expect(
+      screen.getByText(/^Bei 5c3b2a1 · \$2\.42 · .* · 62 % des Codes gelesen$/),
+    ).toBeInTheDocument();
     expect(screen.getByText("Noch nicht")).toBeInTheDocument();
     expect(screen.getByText(/1 beschrieben/)).toBeInTheDocument();
     // The clone without a head cannot be described yet.

@@ -1544,7 +1544,7 @@ components:
     Baseline:
       type: object
       description: The repository's newest baseline run and the commit last documented.
-      required: [run_id, state, map_step, mode, trigger, commit, step, steps, skipped, skipped_parts, error, queued_at, started_at, finished_at, documented_commit, documented_at, left_parts, auto_retry]
+      required: [run_id, state, map_step, mode, trigger, commit, step, steps, skipped, skipped_parts, read_bytes, readable_bytes, error, queued_at, started_at, finished_at, documented_commit, documented_at, left_parts, auto_retry]
       properties:
         run_id:
           type: integer
@@ -1571,6 +1571,12 @@ components:
         skipped:
           type: integer
           description: Subjects the run could not fold; the next reconcile reads them again.
+        read_bytes:
+          type: integer
+          description: The distinct file content the run's folded parts read (the docs and the subjects, a file once however many subjects hold it, a skipped part not at all), set when the run ends; a reconcile carries the documented run's.
+        readable_bytes:
+          type: integer
+          description: What the tree offered at the full run's commit, the readable files' bytes (a file over 100 kB counts its head), a reconcile carrying the documented run's; 0 on a restyle, a departure, a run from before. The share of the two is how much of the code the page rests on.
         skipped_parts:
           type: array
           description: The parts the run left out, in the order it hit them; one per part, where skipped counts each time.

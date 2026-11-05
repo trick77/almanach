@@ -64,8 +64,9 @@ type Code interface {
 	// of sha: the documented commit of a rewritten branch is not.
 	Contains(ctx context.Context, key, slug, ancestor, sha string) (bool, error)
 	CommitTime(ctx context.Context, key, slug, sha string) (time.Time, error)
-	// ReadFiles reads files at sha, each within FileMaxBytes; a file that is
-	// too large, missing or binary is left out, not an error.
+	// ReadFiles reads files at sha, each within FileMaxBytes, one the plan
+	// marks Cut as its first FileMaxBytes; a file over the cap not so
+	// marked, missing or binary is left out, not an error.
 	ReadFiles(ctx context.Context, key, slug, sha string, files []baseline.File) (map[string][]byte, error)
 }
 
@@ -124,6 +125,9 @@ type runPlan struct {
 	// once when the plan is made (keptCalls); nil on a plan from before,
 	// which keeps one.
 	Kept *int `json:"kept,omitempty"`
+	// DocsBytes is what the overview step read of the docs, once folded:
+	// the run's coverage (ReadBytes) counts it with the subjects.
+	DocsBytes int64 `json:"docs_bytes,omitempty"`
 	// ProjectMap and RepoMap are a refused map asked again by the next
 	// step, the system map's and the repository's: one call a step, so a
 	// restart resumes the asking, never pays for what came before.
@@ -535,6 +539,13 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 		plan.CommittedAt = at
 		return w.planned(ctx, r, plan)
 	}
+	// What a full run could read, kept on the row: what it read is a share
+	// of it, and a reader sees how much of the code the page rests on. A
+	// reconcile reads a delta of a tree it never measures: none.
+	r.ReadableBytes = 0
+	for _, f := range files {
+		r.ReadableBytes += f.Size
+	}
 	if r.Calls >= w.base.Limits.MaxCalls {
 		return errors.New("no call left for the catalogue")
 	}
@@ -573,6 +584,9 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	var old runPlan
 	if ok {
 		old, err = decodePlan(doc.Plan)
+		// The page's coverage is the last full read's: carried, so the
+		// source page keeps saying it past the next reconcile.
+		r.ReadableBytes, r.ReadBytes = doc.ReadableBytes, doc.ReadBytes
 	}
 	diff, derr := w.base.Code.Diff(ctx, r.ProjectKey, r.Slug, r.BaseCommit, r.Commit)
 	if errors.Is(derr, ErrCloneBusy) {
@@ -592,6 +606,7 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	// placed like new ones, not lost until they change again.
 	unplaced = append(unplaced, evicted(old.Plan, merged, files)...)
 	unplaced = append(unplaced, stillReadable(old.Unplaced, files, unplaced)...)
+	unplaced = append(unplaced, newlyReadable(old, merged, files, unplaced)...)
 	plan := runPlan{}
 	if len(unplaced) > 0 && r.Calls < w.base.Limits.MaxCalls {
 		placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
@@ -845,6 +860,9 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	r.Bytes += size
 	if !ok {
 		return w.skipPart(ctx, r, &plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
+	}
+	if overview {
+		plan.DocsBytes = size
 	}
 	res.Patch.Statements, res.Patch.Added = w.asNew(ctx, "baseline: "+name, page.Statements, res.Patch.Statements, res.Patch.Added)
 	// A step shown no problem area had no evidence for a new pitfall.
@@ -1245,6 +1263,42 @@ func (p *runPlan) skipAt(i int, code baseline.Skip) {
 		return
 	}
 	p.SkipSubject(name, code)
+}
+
+// newlyReadable is the cut files the documented run's plan knows nothing
+// of: in no subject, not among its unplaced, not placed now. A file over
+// the cap was unreadable before it was read as its head
+// (baseline.File.Cut), so a repository documented before that has such
+// files in neither list; unchanged, they are in no diff, and a reconcile
+// would never place them. Cut files only: a whole file a full run's
+// model left out of every subject it left out on purpose, and offering
+// it again would cost a quiet reconcile a placing call each time. A cut
+// file is offered once: what the placing leaves out lands in Unplaced.
+func newlyReadable(old runPlan, merged baseline.Plan, files, already []baseline.File) []baseline.File {
+	known := map[string]bool{}
+	for _, s := range old.Subjects {
+		for _, f := range s.Files {
+			known[f.Path] = true
+		}
+	}
+	for _, s := range merged.Subjects {
+		for _, f := range s.Files {
+			known[f.Path] = true
+		}
+	}
+	for _, p := range old.Unplaced {
+		known[p] = true
+	}
+	for _, f := range already {
+		known[f.Path] = true
+	}
+	var out []baseline.File
+	for _, f := range files {
+		if f.Cut && !known[f.Path] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // evicted is the readable files the old plan held and the merged one no
@@ -2383,9 +2437,42 @@ func (w *Worker) markDone(ctx context.Context, r *store.BaselineRun, plan runPla
 	}
 	now := w.now().UTC()
 	r.State, r.FinishedAt = store.RunDone, &now
+	if r.Mode == store.RunFull && r.Trigger != store.TriggerDeparture {
+		r.ReadBytes = coverage(plan)
+	}
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: run done at %s: %d calls, %d bytes read, %d skipped",
 		gitrepo.ShortSHA(r.Commit), r.Calls, r.Bytes, r.Skipped))
 	return nil
+}
+
+// coverage is the distinct file content a run's folded parts read: every
+// file of a subject read and not skipped, once however many subjects hold
+// it, and the docs the overview folded. The share of the tree the page
+// rests on; the budget's count (Bytes) is another figure, every call's
+// input, failed ones too.
+func coverage(plan runPlan) int64 {
+	skipped := map[string]bool{}
+	for _, name := range plan.Skipped {
+		skipped[name] = true
+	}
+	read := map[string]bool{}
+	for _, name := range plan.Read {
+		read[name] = true
+	}
+	seen := map[string]bool{}
+	var n int64
+	for _, s := range plan.Subjects {
+		if !read[s.Name] || skipped[s.Name] {
+			continue
+		}
+		for _, f := range s.Files {
+			if !seen[f.Path] {
+				seen[f.Path] = true
+				n += f.Size
+			}
+		}
+	}
+	return n + plan.DocsBytes
 }
 
 // finish ends a run done and saves it; the repository's failed notes go
@@ -2433,7 +2520,11 @@ func renderFiles(files []baseline.File, bodies map[string][]byte) string {
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "<<<FILE %s>>>\n%s\n<<<END FILE %s>>>\n\n", f.Path, strings.TrimRight(string(body), "\n"), f.Path)
+		head := ""
+		if f.Cut {
+			head = fmt.Sprintf(" (the first %d bytes of a larger file)", baseline.FileMaxBytes)
+		}
+		fmt.Fprintf(&b, "<<<FILE %s%s>>>\n%s\n<<<END FILE %s>>>\n\n", f.Path, head, strings.TrimRight(string(body), "\n"), f.Path)
 	}
 	if b.Len() == 0 {
 		return "_None._"
