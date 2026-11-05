@@ -228,12 +228,18 @@ func serve(log *slog.Logger) error {
 	// Off when no folder is configured; every fault is a startup fault.
 	var gitBin string
 	var key secret.Key
+	var lister *bitbucket.Lister
 	if app.Sources.Enabled() {
 		var faults []string
 		if b, err := gitrepo.Resolve(); err != nil {
 			faults = append(faults, err.Error())
 		} else {
 			gitBin = b
+		}
+		if l, err := bitbucket.NewWithCA(app.Sources.GitCAFile); err != nil {
+			faults = append(faults, "BACKEND_GIT_CA_FILE: "+err.Error())
+		} else {
+			lister = l
 		}
 		if err := writableDir("BACKEND_REPOS_DIR", app.Sources.ReposDir); err != nil {
 			faults = append(faults, err.Error())
@@ -291,7 +297,7 @@ func serve(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: bitbucket.New(nil), Key: key, Interval: app.Sources.SyncInterval, Log: log,
+		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: lister, Key: key, Interval: app.Sources.SyncInterval, Log: log,
 			Describe: clone.Describe{Reconcile: app.Baseline.Reconcile, Wake: worker.Wake}, Manifests: clone.Manifests{Store: db, Reads: git}})
 		worker.WithBaseline(consolidate.Baseline{Store: db, Code: clone.NewCode(poller, git), Catalogue: catalogue, Describer: llm, Limits: app.Baseline})
 		poller.Start(context.WithoutCancel(ctx))

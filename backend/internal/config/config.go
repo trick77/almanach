@@ -115,8 +115,8 @@ var oidcVars = []string{
 type Limits struct {
 	// DiagramMaxNodes and DiagramMaxEdges cap every statement diagram: past
 	// about a dozen nodes a picture stops reading and should be two. The
-	// system map is held to the drawing's own limits (diagram.DrawMaxNodes,
-	// DrawMaxEdges) instead. MaxDiagrams is the statement diagrams one page
+	// system map is held to its own limits (diagram.MapMaxNodes,
+	// MapMaxEdges) instead. MaxDiagrams is the statement diagrams one page
 	// may hold; the map does not count.
 	DiagramMaxNodes int
 	DiagramMaxEdges int

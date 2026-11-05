@@ -85,7 +85,7 @@ export function RepoPage({
       <div className={page}>
         <div className={column}>
           <RepoCrumbs projectKey={projectKey} slug={single ? "" : slug} />
-          {failed ? <Failed what={S.repo.what} /> : <Skeleton />}
+          {failed ? <Failed message={S.repo.failed} /> : <Skeleton />}
         </div>
       </div>
     );

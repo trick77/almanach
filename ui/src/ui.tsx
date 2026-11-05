@@ -534,8 +534,9 @@ export function Empty({ children }: { children: ReactNode }) {
   );
 }
 
-/** Failed takes `what` in the case the sentence needs ("das Projekt"). */
-export function Failed({ what }: { what: string }) {
+/** Failed shows a page's whole failure sentence: the verb agrees with
+ *  its subject, so strings.ts writes each one out. */
+export function Failed({ message }: { message: string }) {
   return (
     <div
       className={
@@ -543,7 +544,7 @@ export function Failed({ what }: { what: string }) {
         boxWidth
       }
     >
-      {S.common.failed(what)}
+      {message}
     </div>
   );
 }

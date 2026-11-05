@@ -347,7 +347,7 @@ describe("ProjectsPage", () => {
     serve({});
     render(<ProjectsPage />);
     expect(
-      await screen.findByText(/konnte nicht geladen werden/),
+      await screen.findByText("Die Projekte konnten nicht geladen werden."),
     ).toBeInTheDocument();
   });
 });
@@ -671,7 +671,7 @@ describe("ProjectPage", () => {
     serve({});
     render(<ProjectPage projectKey="NOPE" />);
     expect(
-      await screen.findByText(/das Projekt konnte nicht geladen werden/),
+      await screen.findByText("Das Projekt konnte nicht geladen werden."),
     ).toBeInTheDocument();
   });
 
@@ -1689,7 +1689,7 @@ describe("session gate", () => {
     answer({ status: 200, body: anonymous }, 401);
     render(<App />);
     expect(
-      await screen.findByText("die Projekte konnte nicht geladen werden."),
+      await screen.findByText("Die Projekte konnten nicht geladen werden."),
     ).toBeInTheDocument();
     expect(loc.href).toBe("/");
   });

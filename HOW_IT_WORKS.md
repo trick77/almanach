@@ -570,8 +570,9 @@ Who uses whom is code's, never a model's. After a sync, still under the
 clone's lock, the poller reads the build manifests at the head when they
 were last read at another commit: `go.mod`, `pom.xml`, `package.json`,
 `build.gradle(.kts)`, `settings.gradle(.kts)`, `gradle.properties`, at
-the root or one level down (deeper ones are copies, a checked-out corpus
-or a fixture), and `gradle/libs.versions.toml`. `internal/manifest` turns
+the root or one level down, and at any depth in a folder a Gradle
+`include` or a Maven `<module>` declares (an undeclared deeper one is a
+copy, a checked-out corpus or a fixture), and `gradle/libs.versions.toml`. `internal/manifest` turns
 them into coordinates: what the repository provides (`go:<module>`,
 `maven:<group>:<artifact>`, `npm:<name>`) and what it requires, with the
 version as written; a POM's parent counts as required, and an ISO-8859-1
@@ -1122,21 +1123,27 @@ one.
 | Package | Role | Depends on |
 | --- | --- | --- |
 | `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
-| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, and `/` handed to `web`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | config, httpapi, ingest, store, teamkeys, web |
+| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, and `/` handed to `web`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | auth, baseline, clone, config, consolidate, diagram, gitrepo, httpapi, ingest, markup, secret, store, teamkeys, web |
+| `internal/auth` | The oidc sign-in: kit's OIDC flow with discovery retried in the background, kit's signed session cookie, the gate in front of `/api`. | authroute, urlorigin, kit/auth |
+| `internal/authroute` | The sign-in's route names, a leaf so `config` checks the redirect URL without pulling in the OIDC client. | nothing |
+| `internal/urlorigin` | A URL's origin, the one normaliser wherever two are compared: the auth gate's browser check, the host a source's token is bound to. | nothing |
 | `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
 | `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
-| `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |
-| `internal/consolidate` | The worker: loop, hold, fold, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | config, inference, lang, prompts, store, llmwire (error classes) |
-| `internal/inference` | The llmwire client: startup checks, one `Merge` call with the strict schema, answer parsing, cost extraction. | llmwire |
-| `internal/prompts` | `almanach_merge.txt`, compiled in with `go:embed`. Never configurable. | nothing |
-| `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | nothing |
-| `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only. | gitrepo (Access), store (types only) |
-| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | gitrepo, manifest, secret, store |
+| `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | diagram, manifest, redact, urlorigin, ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |
+| `internal/consolidate` | The worker: loop, hold, fold, the baseline runs' steps, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | baseline, config, diagram, gitrepo, inference, lang, markup, prompts, store, llmwire (error classes) |
+| `internal/baseline` | What a baseline run decides without I/O: the files worth reading, the docs, the catalogue's plan within budget, what a reconcile reads again, how a step's patch applies to a page without erasing what the PRs taught, the diagram validation. | diagram, gitrepo, inference, lang, store (types) |
+| `internal/inference` | The llmwire clients, one per profile: startup checks, one streamed call per fold or baseline step with its strict schema, answer parsing, cost extraction. | diagram, markup, llmwire |
+| `internal/prompts` | Every model prompt (`almanach_*.txt`: merge, catalogue, describe, project, repository map, restyle, departure, diagrams), compiled in with `go:embed`. Never configurable. | nothing |
+| `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | urlorigin |
+| `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only, trusting `BACKEND_GIT_CA_FILE` like git. | gitrepo (Access), store (types only) |
+| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it, the code reads of a baseline step. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | baseline, consolidate, gitrepo, manifest, prompts, redact, secret, store, urlorigin |
 | `internal/manifest` | `Parse`: a repository's go.mod, pom.xml, package.json and Gradle build as the coordinates it provides and requires. Pure, no I/O. | nothing |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
-| `internal/lang` | `SwissSS`: the sharp s to `ss`. | nothing |
+| `internal/redact` | Credential values out before anything leaves the machine: `File` for code a step shows the model, `Text` and `JSON` for prose and notes. By regex, never by prompt. | nothing |
+| `internal/markup` | The one layout a statement's text and a summary may carry: paragraphs, flat lists, bold, code spans, one sub-heading level. | nothing |
+| `internal/lang` | The spelling rule (`ss`, never the sharp s) over model prose, after redaction and the layout. | markup, redact |
 | `internal/diagram` | A diagram's shape (rongo's intermediate form), data only; `baseline/diagram.go` validates it. | nothing |
 | `internal/config` | The environment, read once through kit's reader, every fault collected. | kit/env |
 
@@ -1658,7 +1665,8 @@ baseline step's patch never is: its bad items are left out one by one (see
   poller; the cycle in flight finishes first, the next one serves it.
 - One clone URL, one source row, across sources (`CloneKey`), checked in
   the transaction that writes it; a missing row holds none.
-- Manifests at the root or one level down only, read by the poller at the
+- Manifests at the root or one level down, deeper only in a folder the
+  build declares (Gradle include, Maven module), read by the poller at the
   head under the clone's lock, redacted first; a failed read or save is a
   log line, never the repository's state. Edges joined at read, never
   stored; a coordinate two repositories provide is no edge.

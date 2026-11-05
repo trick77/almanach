@@ -22,8 +22,8 @@ export const S = {
   },
   deps: {
     title: "Abhängigkeiten",
-    what: "die Abhängigkeiten",
-    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json und Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; im Wurzelverzeichnis oder eine Ebene darunter) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
+    failed: "Die Abhängigkeiten konnten nicht geladen werden.",
+    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json und Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; im Wurzelverzeichnis, eine Ebene darunter und in jedem Ordner, den der Build als Gradle-Projekt oder Maven-Modul einbindet) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
     disabled:
       "Abhängigkeiten gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
     empty:
@@ -49,7 +49,6 @@ export const S = {
   },
   common: {
     loading: "Lädt …",
-    failed: (what: string) => `${what} konnte nicht geladen werden.`,
     none: "keine",
     never: "nie",
     sep: "·",
@@ -57,7 +56,7 @@ export const S = {
   projects: {
     title: "Projekte",
     lede: "Was Almanach über jedes Projekt weiss: pro Repository und pro Projekt eine Beschreibung, aus dem Code gelesen und mit den Notizen gemergter Pull Requests fortgeschrieben, nie von Hand.",
-    what: "die Projekte",
+    failed: "Die Projekte konnten nicht geladen werden.",
     empty:
       "Noch kein Projekt: die erste Notiz kommt mit dem ersten gemergten Pull Request eines Teams mit almanach-Block.",
     team: "Team",
@@ -77,7 +76,7 @@ export const S = {
           : `${n} Problemzonen`,
   },
   project: {
-    what: "das Projekt",
+    failed: "Das Projekt konnte nicht geladen werden.",
     breadcrumbRoot: "Projekte",
     noDescription: "Noch keine Beschreibung.",
     noDescriptionHint:
@@ -204,7 +203,7 @@ export const S = {
     noRepo: "Kein Repository",
   },
   repo: {
-    what: "das Repository",
+    failed: "Das Repository konnte nicht geladen werden.",
     project: "Projekt",
     single: "Projekt aus einem Repository",
     map: "Aufbau",
@@ -274,7 +273,7 @@ export const S = {
     other: "Andere",
   },
   note: {
-    what: "die Notiz",
+    failed: "Die Notiz konnte nicht geladen werden.",
     ticket: "Ticket",
     merge: "Merge",
     summary: "Zusammenfassung",
@@ -315,8 +314,8 @@ export const S = {
   sources: {
     title: "Quellen",
     lede: "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories Almanach über die API liest, oder ein Projekt, dessen Repositories von Hand eingetragen werden. Die Clones sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.",
-    what: "die Quellen",
-    whatOne: "die Quelle",
+    failed: "Die Quellen konnten nicht geladen werden.",
+    failedOne: "Die Quelle konnte nicht geladen werden.",
     empty: "Noch keine Quelle.",
     disabled:
       "Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
@@ -586,7 +585,7 @@ export const S = {
   },
   queue: {
     title: "Warteschlange",
-    what: "die Warteschlange",
+    failed: "Die Warteschlange konnte nicht geladen werden.",
     polling: (s: number) => `Aktualisiert alle ${s} s, solange etwas läuft`,
     more: (n: number) => (n === 1 ? "Und 1 weitere" : `Und ${n} weitere`),
     tiles: {

@@ -68,7 +68,7 @@ export function ProjectsPage() {
         <h2 className={h2}>{S.projects.title}</h2>
         <p className={lede}>{S.projects.lede}</p>
         {failed ? (
-          <Failed what={S.projects.what} />
+          <Failed message={S.projects.failed} />
         ) : data === null ? (
           <Skeleton />
         ) : data.projects.length === 0 ? (

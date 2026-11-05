@@ -132,7 +132,7 @@ export function DepsPage() {
         <h2 className={h2}>{S.deps.title}</h2>
         <p className={lede}>{S.deps.lede}</p>
         {failed || sourcesFailed ? (
-          <Failed what={S.deps.what} />
+          <Failed message={S.deps.failed} />
         ) : data === null || sources === null ? (
           <Skeleton />
         ) : !sources.enabled ? (

@@ -590,8 +590,8 @@ func TestRun_ProjectWithoutAMap(t *testing.T) {
 // drawn, the stored one stays, and the text is applied all the same. A
 // repository no longer in the project is taken out of a returned map
 // before the check. A changed map alone is a revision, the same map with
-// the same text none. The map is held to the drawing's limits, not the
-// statement diagrams' caps.
+// the same text none. The map is held to its own limits (MapMax*), not
+// the statement diagrams' caps.
 func TestRun_ProjectMap(t *testing.T) {
 	projectAs := func(summary string, m *diagram.Diagram) world {
 		x := newWorld(t, 16)

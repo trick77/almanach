@@ -5,12 +5,15 @@ package bitbucket
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +41,34 @@ func New(client *http.Client) *Lister {
 		client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	return &Lister{client: client}
+}
+
+// NewWithCA is New with caFile's certificates trusted beside the system's:
+// the forge git reaches with GIT_SSL_CAINFO is the one the listing asks,
+// and an internal CA that git trusts and the listing does not lists
+// nothing. "" is New(nil). A file that cannot be read or holds no
+// certificate is an error, so a typo is a startup fault, not a failed
+// listing later.
+func NewWithCA(caFile string) (*Lister, error) {
+	if caFile == "" {
+		return New(nil), nil
+	}
+	pem, err := os.ReadFile(caFile) //nolint:gosec // the operator's configured CA bundle, by design
+	if err != nil {
+		return nil, err
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s: no PEM certificate in it", caFile)
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	l := New(nil)
+	l.client.Transport = t
+	return l, nil
 }
 
 type page struct {
