@@ -435,14 +435,15 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		var read manifest.Read
 		var readOK bool
 		// A panic in the sync is this repository's failure, on its row
-		// like any other.
+		// like any other; one reading the manifests after a good sync is
+		// a log line, the manifests left unread like any failed read.
 		if perr := p.guarded(j, func() {
 			head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
-			if err == nil {
-				read, readOK = p.syncedManifests(jobCtx, j, head)
-			}
 		}); perr != nil {
 			err = perr
+		}
+		if err == nil {
+			_ = p.guarded(j, func() { read, readOK = p.syncedManifests(jobCtx, j, head) })
 		}
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()

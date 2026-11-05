@@ -168,7 +168,13 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	ctx = logging.With(ctx, "project", r.ProjectKey, "repo", r.Slug, "run_id", r.ID)
 	w.setBusy(Busy{Kind: KindRun, ProjectKey: r.ProjectKey, RepoSlug: r.Slug, RunID: r.ID})
 	defer w.clearBusy()
+	loaded := r
 	err := w.step(ctx, &r)
+	if errors.Is(err, errPanicked) {
+		// What the step set before it panicked was never committed by
+		// it: the failure is written on the run as it was loaded.
+		r = loaded
+	}
 	if errors.Is(err, errStop) {
 		return false
 	}
@@ -198,13 +204,16 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	return w.saveFailed == nil
 }
 
+// errPanicked marks a step that panicked.
+var errPanicked = errors.New("panicked")
+
 // step runs the run's next step. A panic is the run's failure: uncaught it
 // ends the process, and every restart meets the same step again.
 func (w *Worker) step(ctx context.Context, r *store.BaselineRun) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			w.log.ErrorContext(ctx, fmt.Sprintf("baseline: step panicked: %v", p), slog.String("stack", string(debug.Stack())))
-			err = fmt.Errorf("step panicked: %v", p)
+			err = fmt.Errorf("step %w: %v", errPanicked, p)
 		}
 	}()
 	switch r.State {

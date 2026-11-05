@@ -32,13 +32,14 @@ var fixedShapes = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[
 	`|(?i:aws_secret_access_key)\s*[=:]\s*\S{20,}` +
 	`|\bENC\([A-Za-z0-9+/=_-]{4,}\)`)
 
-// vendorTokens are the prefixed tokens. The rest of a real one is random
-// and carries a digit; npm_config_cache_folder and sk-learn-pipeline do not.
-var vendorTokens = regexp.MustCompile(`\b` + vendorFamily + `[A-Za-z0-9_-]{16,}`)
+// vendorTokens are the prefixed tokens, one pass. The rest of a real
+// vendorFamily one is random and carries a digit; npm_config_cache_folder
+// and sk-learn-pipeline do not. A vendorPrefixed one is held to randomish
+// instead: a Hugging Face token is letters only.
+var vendorTokens = regexp.MustCompile(`\b(?:` + vendorFamily + `[A-Za-z0-9_-]{16,}|` + vendorPrefixed + `)`)
 
-// moreVendorTokens are vendorPrefixed in prose. A Hugging Face token is
-// letters only, so the second look is randomish, not a digit.
-var moreVendorTokens = regexp.MustCompile(`\b(?:` + vendorPrefixed + `)`)
+// familyToken tells a vendorTokens match of vendorFamily from the rest.
+var familyToken = regexp.MustCompile(`^` + vendorFamily)
 
 // authHeader is an Authorization value. German prose writes "HTTP Basic
 // Authentication/Authorization" and "Bearer Token-Authentifizierung".
@@ -51,13 +52,11 @@ func Text(s string) string {
 	out = urlCredentials.ReplaceAllString(out, "://"+Marker+"@")
 	out = fixedShapes.ReplaceAllString(out, Marker)
 	out = vendorTokens.ReplaceAllStringFunc(out, func(m string) string {
-		if !strings.ContainsAny(m, "0123456789") {
-			return m
+		token := randomish(m)
+		if familyToken.MatchString(m) {
+			token = strings.ContainsAny(m, "0123456789")
 		}
-		return Marker
-	})
-	out = moreVendorTokens.ReplaceAllStringFunc(out, func(m string) string {
-		if !randomish(m) {
+		if !token {
 			return m
 		}
 		return Marker

@@ -37,12 +37,12 @@ const (
 )
 
 // Provider is kit's OIDC flow once discovery has answered. A provider that
-// cannot be reached (a transport error, a timeout, a 5xx) is a warning,
+// cannot be reached (a transport error, a timeout, a 5xx, a 408, a 429) is a warning,
 // never a fault: the webhook, the ping and the probes must not depend on
 // it, and boot never waits for it. Until it answers, the login lands on
 // UnavailableURL and the gated /api answers 401 as ever; Run keeps trying
 // in the background. An answer that is configuration, not reachability (an
-// issuer that does not match, a 4xx, a 200 that is no discovery document),
+// issuer that does not match, another 4xx, a 200 that is no discovery document),
 // is a fault: logged at error level once, never retried, the login landing
 // on MisconfiguredURL until a restart with a corrected configuration.
 type Provider struct {

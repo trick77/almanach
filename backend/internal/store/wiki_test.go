@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -99,6 +101,15 @@ func TestMarkConsolidated_RedeliveredDuringFoldStaysQueued(t *testing.T) {
 	}
 	if got := count(t, s, "notes", "fold_attempts = 0"); got != 1 {
 		t.Errorf("notes with no attempt = %d, want 1: the replaced note's attempt is not counted", got)
+	}
+	// No note for the PR, or no delivery named, is no replacement.
+	for _, c := range []struct {
+		pr       int
+		delivery string
+	}{{9, "d-x"}, {1, ""}} {
+		if _, err := s.DeferFold(ctx, "PRJ", "svc", c.pr, c.delivery); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("DeferFold(pr %d, %q) = %v, want sql.ErrNoRows", c.pr, c.delivery, err)
+		}
 	}
 }
 

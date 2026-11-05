@@ -152,7 +152,7 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 			}
 			body, ok := redact.File(f.Path, body)
 			if !ok {
-				c.p.Log.InfoContext(ctx, "baseline: Secret manifest left out", "project", key, "repo", slug, "path", f.Path)
+				c.p.Log.InfoContext(ctx, "baseline: Secret manifest or Terraform state left out", "project", key, "repo", slug, "path", f.Path)
 				continue
 			}
 			out[f.Path] = body

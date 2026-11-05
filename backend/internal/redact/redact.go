@@ -163,7 +163,6 @@ var inlineShapes = regexp.MustCompile(`\bENC\([^)]*\)` +
 	`|\b(?i:basic)\s+[A-Za-z0-9+/]{12,}={0,2}` +
 	`|\b(?i:bearer)\s+[A-Za-z0-9._~+/-]{20,}` +
 	`|\b` + vendorFamily + `[A-Za-z0-9_-]{16,}` +
-	`|\b(?:` + vendorPrefixed + `)` +
 	`|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)
 
 // urlCredentials is user:password inside a URL, on ANY line: a key line's

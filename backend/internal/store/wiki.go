@@ -228,10 +228,14 @@ func (s *Store) NextStatementID(ctx context.Context, scope, project, repo string
 
 // DeferFold counts a failed gateway call against the note delivered by
 // delivery and leaves it queued; returns the attempts so far. The worker
-// gives up past its bound. A note replaced since (a later delivery for the
-// same PR; notes are never deleted) is not counted against: 0 attempts,
-// nil error, which no counted defer returns.
+// gives up past its bound. A note replaced since by a later delivery for
+// the same PR is not counted against: 0 attempts, nil error, which no
+// counted defer returns. No note for the PR at all, or no delivery named,
+// is sql.ErrNoRows.
 func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int, delivery string) (int, error) {
+	if delivery == "" {
+		return 0, sql.ErrNoRows
+	}
 	rid, ok, err := repoID(ctx, s.db, project, repo)
 	if err != nil {
 		return 0, err
@@ -242,10 +246,17 @@ func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int, d
 	var n int
 	err = s.db.QueryRowContext(ctx, `UPDATE notes SET fold_attempts = fold_attempts + 1
 		WHERE repo_id = ? AND pr_id = ? AND delivery_id = ? RETURNING fold_attempts`, rid, prID, delivery).Scan(&n)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+	if !errors.Is(err, sql.ErrNoRows) {
+		return n, err
 	}
-	return n, err
+	var replaced bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM notes WHERE repo_id = ? AND pr_id = ?)`, rid, prID).Scan(&replaced); err != nil {
+		return 0, err
+	}
+	if !replaced {
+		return 0, sql.ErrNoRows
+	}
+	return 0, nil
 }
 
 // MarkConsolidated takes the note delivered by delivery off the queue,

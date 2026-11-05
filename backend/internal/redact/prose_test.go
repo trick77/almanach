@@ -122,8 +122,8 @@ func TestMoreVendorTokens(t *testing.T) {
 			if got, want := Text("Der Token "+tok+" stand im Code."), "Der Token <redacted> stand im Code."; got != want {
 				t.Errorf("Text = %q, want %q", got, want)
 			}
-			if got, want := string(Redact("run.conf", []byte(`curl -H "X-Key: `+tok+`"`))), `curl -H "X-Key: <redacted>"`; got != want {
-				t.Errorf("Redact key-less line = %q, want %q", got, want)
+			if got, ok := File("run.conf", []byte(`curl -H "X-Key: `+tok+`"`)); !ok || string(got) != `curl -H "X-Key: <redacted>"` {
+				t.Errorf("File key-less config line = %q %v", got, ok)
 			}
 			if got, ok := File("leak.go", []byte(`const t = "`+tok+`"`)); !ok || string(got) != `const t = "<redacted>"` {
 				t.Errorf("File source = %q %v", got, ok)
@@ -147,5 +147,11 @@ func TestMoreVendorPrefixesStay(t *testing.T) {
 		if got := Text(s); got != s {
 			t.Errorf("Text(%q) = %q, want unchanged", s, got)
 		}
+	}
+	// A config line naming one with a word after it keeps it: the
+	// randomness look is Text's, which File runs on every file.
+	line := "docs.hint=Siehe sk_test_placeholderfordocs im Handbuch"
+	if got, _ := File("app.conf", []byte(line)); string(got) != line {
+		t.Errorf("File(%q) = %q, want unchanged", line, got)
 	}
 }

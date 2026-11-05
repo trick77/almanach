@@ -220,6 +220,34 @@ func existingRepoPage() store.Page {
 	}
 }
 
+// panicSource panics on the source check of one repository: outside Fold.
+type panicSource struct {
+	*runStore
+	slug string
+}
+
+func (p panicSource) IsSourceRepo(ctx context.Context, key, slug string) (bool, error) {
+	if slug == p.slug {
+		panic("boom")
+	}
+	return p.runStore.IsSourceRepo(ctx, key, slug)
+}
+
+// A panic outside a fold's own recover (the source check) takes the note
+// it was on off the queue and ends the drain, the process up; the next
+// drain goes on behind it.
+func TestDrainPanicOutsideFoldMarksTheNote(t *testing.T) {
+	st := newFakeStore()
+	bad := queued("PLAT/bad#1")
+	bad.RepoSlug = "bad"
+	st.queue = []store.QueuedNote{bad}
+	w := newWorker(st, &fakeMerger{}).WithBaseline(Baseline{Store: panicSource{&runStore{fakeStore: st}, "bad"}})
+	w.drain(context.Background())
+	if len(st.marked) != 1 || st.marked[0] != pageKey("PLAT", "bad", "42") || st.deliveries[0] != bad.DeliveryID {
+		t.Errorf("marked = %v deliveries = %v, want the panicking note marked by its delivery", st.marked, st.deliveries)
+	}
+}
+
 type panicMerger struct{}
 
 func (panicMerger) Merge(context.Context, inference.MergeRequest) inference.MergeResult {
@@ -874,7 +902,7 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 		}
 	}
 	if len(st.deliveries) != maxFoldAttempts+1 {
-		t.Errorf("deliveries = %d, want %d defers and the mark", len(st.deliveries), maxFoldAttempts)
+		t.Errorf("deliveries = %d, want %d (%d defers and the mark)", len(st.deliveries), maxFoldAttempts+1, maxFoldAttempts)
 	}
 
 	// A defer the store refuses pauses the drain like a failed mark.
