@@ -168,7 +168,9 @@ describe("DepsPage", () => {
     serve({ dependencies: graph });
     render(<DepsPage />);
     expect(
-      await screen.findByText(/konnte nicht geladen werden/),
+      await screen.findByText(
+        "Die Abhängigkeiten konnten nicht geladen werden.",
+      ),
     ).toBeInTheDocument();
   });
 

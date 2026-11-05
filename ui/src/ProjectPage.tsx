@@ -75,7 +75,7 @@ export function ProjectPage({ projectKey }: { projectKey: string }) {
       <div className={page}>
         <div className={column}>
           <ProjectCrumbs projectKey={projectKey} />
-          {failed ? <Failed what={S.project.what} /> : <Skeleton />}
+          {failed ? <Failed message={S.project.failed} /> : <Skeleton />}
         </div>
       </div>
     );

@@ -58,7 +58,7 @@ export function SourcesPage() {
         <h2 className={h2}>{S.sources.title}</h2>
         <p className={lede}>{S.sources.lede}</p>
         {failed ? (
-          <Failed what={S.sources.what} />
+          <Failed message={S.sources.failed} />
         ) : data === null ? (
           <Skeleton />
         ) : !data.enabled ? (
@@ -280,9 +280,7 @@ function NewSourceForm({
       });
       if (created) onDone(created);
     } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : S.common.failed(S.sources.whatOne),
-      );
+      setError(e instanceof ApiError ? e.message : S.sources.unreachable);
     } finally {
       setBusy(false);
     }

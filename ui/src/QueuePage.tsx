@@ -61,7 +61,7 @@ export function QueuePage() {
     <div className={page}>
       <div className={column}>
         <h2 className={h2}>{S.queue.title}</h2>
-        {failed && !data && <Failed what={S.queue.what} />}
+        {failed && !data && <Failed message={S.queue.failed} />}
         {!failed && !data && <Skeleton />}
         {data && <Body q={data} />}
       </div>

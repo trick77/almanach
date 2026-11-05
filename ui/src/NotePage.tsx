@@ -62,7 +62,7 @@ export function NotePage({
           ]}
         />
         {failed ? (
-          <Failed what={S.note.what} />
+          <Failed message={S.note.failed} />
         ) : data === null ? (
           <Skeleton />
         ) : (

@@ -2,9 +2,12 @@ package bitbucket
 
 import (
 	"context"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -90,6 +93,52 @@ func TestListRepos_BasicAuthAndFailures(t *testing.T) {
 	}
 	if _, err := l.ListRepos(context.Background(), "ftp://x", "SHOP", gitrepo.Access{}); err == nil {
 		t.Fatal("non-http host accepted")
+	}
+}
+
+// A forge behind an internal CA is listed with BACKEND_GIT_CA_FILE, the
+// file git trusts too, and fails without it; a file with no certificate,
+// or none at all, is an error at once.
+func TestNewWithCA(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"values":[],"isLastPage":true}`)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	ca := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := NewWithCA(ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ListRepos(context.Background(), srv.URL, "SHOP", gitrepo.Access{}); err != nil {
+		t.Errorf("with the CA: %v", err)
+	}
+	plain, err := NewWithCA("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plain.ListRepos(context.Background(), srv.URL, "SHOP", gitrepo.Access{}); err == nil {
+		t.Error("without the CA: listed, want a certificate error")
+	}
+	notPEM := filepath.Join(dir, "x.pem")
+	if err := os.WriteFile(notPEM, []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{notPEM, filepath.Join(dir, "missing.pem")} {
+		if _, err := NewWithCA(f); err == nil {
+			t.Errorf("NewWithCA(%s) = nil error", f)
+		}
+	}
+	// The file is read for each listing, as git reads it for each command:
+	// what replaced it is the trust of the next listing, not the startup's.
+	if err := os.WriteFile(ca, []byte("rotated, not PEM"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ListRepos(context.Background(), srv.URL, "SHOP", gitrepo.Access{}); err == nil || !strings.Contains(err.Error(), "BACKEND_GIT_CA_FILE") {
+		t.Errorf("after the bundle was replaced: %v, want the file read again", err)
 	}
 }
 
