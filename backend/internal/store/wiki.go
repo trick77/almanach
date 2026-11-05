@@ -156,10 +156,14 @@ func (p Page) MapBasis() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// QueuedNote is the next note the worker folds in.
+// QueuedNote is the next note the worker folds in. DeliveryID is the
+// delivery that wrote this version of the note: a second note for the same
+// PR replaces the row and queues it again, and the mark of a fold that
+// read the first must not take the second off the queue.
 type QueuedNote struct {
 	Note
 	ReceivedAt time.Time
+	DeliveryID string
 }
 
 // NextQueued is the oldest note not yet consolidated, ok false when none. A
@@ -177,14 +181,14 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT p.key, r.slug, n.pr_id, n.team, n.pr_key, n.pr_title, n.ticket_key, n.jira_issue_type, n.change_kind,
 		       n.bugfix, n.bugfix_area, n.bugfix_component, n.note, n.reviewed_commit, n.source_commit, n.merge_commit,
-		       n.merged_at, n.run_id, n.model_label, n.issues_posted, n.suggestions_posted, n.received_at
+		       n.merged_at, n.run_id, n.model_label, n.issues_posted, n.suggestions_posted, n.received_at, n.delivery_id
 		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
 		 WHERE n.consolidated_at IS NULL
 		   AND NOT EXISTS (`+startedRunOfNote+`)
 		 ORDER BY n.received_at, n.pr_id LIMIT 1`).Scan(
 		&q.ProjectKey, &q.RepoSlug, &q.PRID, &q.Team, &q.PRKey, &q.PRTitle, &ticket, &issueType, &kind,
 		&bugfix, &area, &comp, &note, &reviewed, &q.SourceCommit, &merge, timeAt(&q.MergedAt),
-		&runID, &model, &q.IssuesPosted, &q.Suggestions, timeAt(&q.ReceivedAt))
+		&runID, &model, &q.IssuesPosted, &q.Suggestions, timeAt(&q.ReceivedAt), &q.DeliveryID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return QueuedNote{}, false, nil
 	}
@@ -222,9 +226,11 @@ func (s *Store) NextStatementID(ctx context.Context, scope, project, repo string
 	return n, err
 }
 
-// DeferFold counts a failed gateway call against the note and leaves it
-// queued; returns the attempts so far. The worker gives up past its bound.
-func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int) (int, error) {
+// DeferFold counts a failed gateway call against the note delivered by
+// delivery and leaves it queued; returns the attempts so far. The worker
+// gives up past its bound. A note replaced since (a later delivery for the
+// same PR) is not counted against: 0 attempts, nil error.
+func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int, delivery string) (int, error) {
 	rid, ok, err := repoID(ctx, s.db, project, repo)
 	if err != nil {
 		return 0, err
@@ -234,18 +240,23 @@ func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int) (
 	}
 	var n int
 	err = s.db.QueryRowContext(ctx, `UPDATE notes SET fold_attempts = fold_attempts + 1
-		WHERE repo_id = ? AND pr_id = ? RETURNING fold_attempts`, rid, prID).Scan(&n)
+		WHERE repo_id = ? AND pr_id = ? AND delivery_id = ? RETURNING fold_attempts`, rid, prID, delivery).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	return n, err
 }
 
-// MarkConsolidated takes the note off the queue, folded or refused.
-func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID int) error {
+// MarkConsolidated takes the note delivered by delivery off the queue,
+// folded or refused. A note replaced while it was folded stays queued: the
+// fold read the old one.
+func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID int, delivery string) error {
 	rid, ok, err := repoID(ctx, s.db, project, repo)
 	if err != nil || !ok {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE notes SET consolidated_at = ? WHERE repo_id = ? AND pr_id = ?`,
-		nowStamp(), rid, prID)
+	_, err = s.db.ExecContext(ctx, `UPDATE notes SET consolidated_at = ? WHERE repo_id = ? AND pr_id = ? AND delivery_id = ?`,
+		nowStamp(), rid, prID, delivery)
 	return err
 }
 

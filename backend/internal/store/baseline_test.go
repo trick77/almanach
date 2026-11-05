@@ -335,7 +335,7 @@ func TestNextQueued_WaitsForTheRepositorysStartedRun(t *testing.T) {
 	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 2 {
 		t.Fatalf("other repository: pr=%d ok=%v err=%v, want 2", q.PRID, ok, err)
 	}
-	if err := s.MarkConsolidated(ctx, "PRJ", "other", 2); err != nil {
+	if err := s.MarkConsolidated(ctx, "PRJ", "other", 2, "d-PRJ-other-2"); err != nil {
 		t.Fatal(err)
 	}
 	finish(t, s, r, RunDone)

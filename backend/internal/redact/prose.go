@@ -36,6 +36,10 @@ var fixedShapes = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[
 // and carries a digit; npm_config_cache_folder and sk-learn-pipeline do not.
 var vendorTokens = regexp.MustCompile(`\b(?:gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk-|npm_)[A-Za-z0-9_-]{16,}`)
 
+// moreVendorTokens are vendorPrefixed in prose. A Hugging Face token is
+// letters only, so the second look is randomish, not a digit.
+var moreVendorTokens = regexp.MustCompile(`\b(?:` + vendorPrefixed + `)`)
+
 // authHeader is an Authorization value. German prose writes "HTTP Basic
 // Authentication/Authorization" and "Bearer Token-Authentifizierung".
 var authHeader = regexp.MustCompile(`\b((?i:basic)\s+)([A-Za-z0-9+/]{12,}={0,2})|\b((?i:bearer)\s+)([A-Za-z0-9._~+/-]{20,})`)
@@ -48,6 +52,12 @@ func Text(s string) string {
 	out = fixedShapes.ReplaceAllString(out, Marker)
 	out = vendorTokens.ReplaceAllStringFunc(out, func(m string) string {
 		if !strings.ContainsAny(m, "0123456789") {
+			return m
+		}
+		return Marker
+	})
+	out = moreVendorTokens.ReplaceAllStringFunc(out, func(m string) string {
+		if !randomish(m) {
 			return m
 		}
 		return Marker

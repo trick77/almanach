@@ -125,10 +125,10 @@ func TestIngest_SamePRReplacesAndRequeues(t *testing.T) {
 	ctx := context.Background()
 	n := noteFor("PRJ", "svc", 1)
 	ingest(t, s, n)
-	if _, err := s.DeferFold(ctx, "PRJ", "svc", 1); err != nil {
+	if _, err := s.DeferFold(ctx, "PRJ", "svc", 1, deliveryFor(n).ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1); err != nil {
+	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1, deliveryFor(n).ID); err != nil {
 		t.Fatal(err)
 	}
 	again := n

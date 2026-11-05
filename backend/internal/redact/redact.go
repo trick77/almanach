@@ -31,7 +31,23 @@ var configExt = map[string]bool{
 	".properties": true, ".yaml": true, ".yml": true, ".conf": true,
 	".env": true, ".toml": true, ".ini": true, ".json": true,
 	".tfvars": true, ".cfg": true, ".xml": true, ".config": true,
+	// Terraform state is JSON holding every resource's attributes,
+	// passwords and keys in plain text.
+	".tfstate": true,
 }
+
+// vendorPrefixed are tokens whose vendor prefix gives them away, beyond
+// the gh/glpat/xox/sk-/npm_ family: Bitbucket Data Center's HTTP access
+// token, Atlassian's API token, a Google API key, Stripe's secret and
+// restricted keys, GitLab's pipeline trigger token, a Hugging Face token.
+// Each carries its own body's class and minimum length, so the prefix
+// alone in a name or a sentence is no match.
+const vendorPrefixed = `BBDC-[A-Za-z0-9+/_-]{20,}` +
+	`|ATATT[A-Za-z0-9_=-]{20,}` +
+	`|AIza[0-9A-Za-z_-]{35}` +
+	`|[sr]k_(?:live|test)_[0-9A-Za-z]{16,}` +
+	`|glptt-[0-9A-Za-z_-]{20,}` +
+	`|hf_[A-Za-z0-9]{30,}`
 
 // IsConfigPath reports whether a path is a configuration file this package
 // redacts. ".env" has no extension in path.Ext's eyes, so it is matched on
@@ -43,7 +59,7 @@ func IsConfigPath(p string) bool {
 	// .env, .env.prod, .env.local: path.Ext reads the stage suffix as the
 	// extension, and a stage-suffixed env file is exactly the file at stake.
 	base := strings.ToLower(path.Base(p))
-	return base == ".env" || strings.HasPrefix(base, ".env.") || base == ".npmrc"
+	return base == ".env" || strings.HasPrefix(base, ".env.") || base == ".npmrc" || strings.HasSuffix(base, ".tfstate.backup")
 }
 
 // keyLine is the one shape every supported format shares: optional indent
@@ -130,6 +146,7 @@ var secretValueShapes = []*regexp.Regexp{
 	regexp.MustCompile(`://[^/\s@:]+:[^/\s@]+@`),                                        // credentials inside a URL
 	regexp.MustCompile(`^(?i)(AKIA|ASIA)[0-9A-Z]{16}$`),                                 // AWS access key id
 	regexp.MustCompile(`^(?i)(gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk-|npm_)\S+$`), // vendor token prefixes
+	regexp.MustCompile(`^(?:` + vendorPrefixed + `)$`),                                  // more vendor tokens
 }
 
 // inlineShapes are credentials recognisable wherever they stand in a line
@@ -145,6 +162,7 @@ var inlineShapes = regexp.MustCompile(`\bENC\([^)]*\)` +
 	`|\b(?i:basic)\s+[A-Za-z0-9+/]{12,}={0,2}` +
 	`|\b(?i:bearer)\s+[A-Za-z0-9._~+/-]{20,}` +
 	`|\b(?:gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk-|npm_)[A-Za-z0-9_-]{16,}` +
+	`|\b(?:` + vendorPrefixed + `)` +
 	`|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)
 
 // urlCredentials is user:password inside a URL, on ANY line: a key line's

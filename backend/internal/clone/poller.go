@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -429,14 +430,25 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		p.cur.Lock()
 		p.current = inFlight{projectID: j.Repo.ProjectID, repoID: j.Repo.RepoID, cancel: cancel}
 		p.cur.Unlock()
-		head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
 		// The manifests are read while the clone is still locked; stored
 		// after, the lock is for the disk only.
 		var read manifest.Read
 		var readOK bool
-		if err == nil {
-			read, readOK = p.syncedManifests(jobCtx, j, head)
-		}
+		func() {
+			// A panic is this repository's failure, on its row like any
+			// other: uncaught it ends the process, and every restart meets
+			// the same repository again.
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("sync panicked: %v", r)
+					p.Log.Error("repo_sync_panicked", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "stack", string(debug.Stack()))
+				}
+			}()
+			head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
+			if err == nil {
+				read, readOK = p.syncedManifests(jobCtx, j, head)
+			}
+		}()
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()
 		p.current = inFlight{}

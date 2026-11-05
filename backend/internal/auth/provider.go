@@ -97,8 +97,12 @@ func (p *Provider) Discover(ctx context.Context) error {
 // than reachability: the provider answered 4xx, or it answered 2xx and the
 // discovery still failed, which is an issuer that does not match or a body
 // that is no discovery document. No status at all (a transport error, a
-// timeout) and a 5xx are worth another try.
+// timeout), a 5xx, a 408 and a 429 are worth another try: a rate limit
+// marked broken would hold until the next restart.
 func permanent(status int) bool {
+	if status == http.StatusRequestTimeout || status == http.StatusTooManyRequests {
+		return false
+	}
 	return status >= 200 && status < 300 || status >= 400 && status < 500
 }
 

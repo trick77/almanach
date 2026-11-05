@@ -101,7 +101,7 @@ func (f *fakeStore) NextQueued(context.Context) (store.QueuedNote, bool, error) 
 	return q, true, nil
 }
 
-func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, prID int) error {
+func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, prID int, _ string) error {
 	if f.markErr != nil {
 		return f.markErr
 	}
@@ -109,7 +109,7 @@ func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, pr
 	return nil
 }
 
-func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int) (int, error) {
+func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int, _ string) (int, error) {
 	if f.deferErr != nil {
 		return 0, f.deferErr
 	}
@@ -213,6 +213,24 @@ func existingRepoPage() store.Page {
 			Sources: []store.Source{{PRKey: "PLAT/files#1", MergedAt: older}},
 		}},
 		SourcePR: "PLAT/files#1", UpdatedAt: older,
+	}
+}
+
+type panicMerger struct{}
+
+func (panicMerger) Merge(context.Context, inference.MergeRequest) inference.MergeResult {
+	panic("boom")
+}
+
+// A fold that panics is a failure of its note: marked, the drain goes on,
+// the process stays up.
+func TestFoldPanicMarksTheNote(t *testing.T) {
+	st := newFakeStore()
+	if next := newWorker(st, panicMerger{}).Fold(context.Background(), queued("PLAT/files#42")); !next {
+		t.Errorf("Fold after a panic = false, want the drain to go on")
+	}
+	if len(st.marked) != 1 || len(st.revisions) != 0 {
+		t.Errorf("marked = %v, revisions = %d; want the note marked, no revision", st.marked, len(st.revisions))
 	}
 }
 

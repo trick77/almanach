@@ -68,7 +68,7 @@ keep working, the login lands on a page that says so
 (`/?auth_error=provider_unavailable`), and discovery is retried (5 s,
 doubling up to 5 min), each failure logged, until it answers. A provider
 that answers but disagrees with the configuration (an issuer that does
-not match, a 4xx, a page that is no discovery document) is a fault:
+not match, a 4xx other than a 408 or a 429, a page that is no discovery document) is a fault:
 logged at error level once, never retried, the login landing on
 `/?auth_error=provider_misconfigured` until the configuration is fixed
 and the service restarted. A deep link survives the sign-in: the login carries the page in

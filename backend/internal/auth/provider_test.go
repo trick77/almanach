@@ -157,16 +157,20 @@ func TestProviderMisconfiguredIsAFault(t *testing.T) {
 	}
 }
 
-// Reachability keeps the warning and the retry: a 5xx, a refused
-// connection.
+// Reachability keeps the warning and the retry: a 5xx, a rate limit, a
+// request timeout, a refused connection.
 func TestProviderUnreachableIsRetried(t *testing.T) {
-	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "busy", http.StatusBadGateway)
-	}))
-	defer down.Close()
+	answering := func(status int) string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "busy", status)
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
 	gone := httptest.NewServer(http.NotFoundHandler())
 	gone.Close()
-	for name, issuer := range map[string]string{"502": down.URL, "refused": gone.URL} {
+	for name, issuer := range map[string]string{"502": answering(http.StatusBadGateway), "429": answering(http.StatusTooManyRequests),
+		"408": answering(http.StatusRequestTimeout), "refused": gone.URL} {
 		p := NewProvider(Config{Issuer: issuer}, slog.New(slog.NewTextHandler(newSyncBuffer(), nil)))
 		err := p.Discover(t.Context())
 		if err == nil || errors.Is(err, ErrMisconfigured) {

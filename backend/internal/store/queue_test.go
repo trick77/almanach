@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -21,7 +22,7 @@ func TestPendingAndFoldedNotes(t *testing.T) {
 	if ok, err := s.SaveRun(ctx, r); err != nil || !ok {
 		t.Fatalf("SaveRun: ok=%v err=%v", ok, err)
 	}
-	if _, err := s.DeferFold(ctx, "PRJ", "other", 2); err != nil {
+	if _, err := s.DeferFold(ctx, "PRJ", "other", 2, "d-PRJ-other-2"); err != nil {
 		t.Fatal(err)
 	}
 	if one, err := s.PendingNotes(ctx, 1); err != nil || len(one) != 1 || one[0].RepoSlug != "svc" {
@@ -46,7 +47,7 @@ func TestPendingAndFoldedNotes(t *testing.T) {
 	}
 	for _, repo := range []string{"other", "gone"} {
 		pr := map[string]int{"other": 2, "gone": 3}[repo]
-		if err := s.MarkConsolidated(ctx, "PRJ", repo, pr); err != nil {
+		if err := s.MarkConsolidated(ctx, "PRJ", repo, pr, fmt.Sprintf("d-PRJ-%s-%d", repo, pr)); err != nil {
 			t.Fatal(err)
 		}
 	}

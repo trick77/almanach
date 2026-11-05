@@ -147,6 +147,7 @@ func TestIsConfigPath(t *testing.T) {
 	for p, want := range map[string]bool{
 		"a/b/application.properties": true, "x.yaml": true, "x.yml": true, ".env": true,
 		"x.json": true, "x.toml": true, "x.ini": true, "nginx.conf": true, "deploy/.env.prod": true, ".env.local": true,
+		"infra/terraform.tfstate": true, "terraform.tfstate.backup": true,
 		"Main.java": false, "main.go": false, "README.md": false, "x.jks": false,
 	} {
 		if got := IsConfigPath(p); got != want {
@@ -203,6 +204,7 @@ func TestRedact_moreShapes(t *testing.T) {
 		{"npmrc auth token", ".npmrc", "//registry.npmjs.org/:_authToken=npm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9", "//registry.npmjs.org/:_authToken=<redacted>"},
 		{"npmrc registry line stays", ".npmrc", "registry=https://registry.npmjs.org/", "registry=https://registry.npmjs.org/"},
 		{"tfvars", "prod.tfvars", `db_password = "hunter2"`, `db_password = "<redacted>"`},
+		{"tfstate attribute", "infra/terraform.tfstate", `            "password": "hunter2hunter2",`, `            "password": "<redacted>",`},
 		{"cfg", "app.cfg", "secret_key = abc", "secret_key = <redacted>"},
 		{"maven settings password element", "settings.xml", "      <password>hunter2</password>", "      <password><redacted></password>"},
 		{"spring xml named property", "beans.xml", `  <property name="password" value="hunter2"/>`, `  <property name="password" value="<redacted>"/>`},
