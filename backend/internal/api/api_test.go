@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -712,5 +713,31 @@ func TestLead(t *testing.T) {
 	}
 	if got := firstSentence(lead("**Der Dienst.** Mehr.\n\nX")); got != "Der Dienst." {
 		t.Errorf("first sentence = %q", got)
+	}
+}
+
+// No response may be framed by another site, the SPA's page and a 401 of
+// the gate included.
+func TestNoFraming(t *testing.T) {
+	none := handler(t, newFakeStore(), &fakeWaker{}, config.AuthNone)
+	var buf bytes.Buffer
+	gated := oidcHandler(t, &fakeOIDC{}, testSessions(t), &buf)
+	for _, c := range []struct {
+		h        http.Handler
+		path     string
+		wantCode int
+	}{{none, "/", 0}, {none, "/api/projects", 0}, {none, "/webhooks/noergler", 0}, {gated, "/api/projects", http.StatusUnauthorized}} {
+		path := c.path
+		rec := httptest.NewRecorder()
+		c.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if c.wantCode != 0 && rec.Code != c.wantCode {
+			t.Errorf("%s: %d, want %d", path, rec.Code, c.wantCode)
+		}
+		if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: X-Frame-Options = %q, want DENY", path, got)
+		}
+		if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+			t.Errorf("%s: Content-Security-Policy = %q", path, got)
+		}
 	}
 }

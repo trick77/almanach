@@ -151,6 +151,16 @@ func TestListRepos_NoHTTPLinksIsAnError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "none with an http clone link") {
 		t.Fatalf("err = %v", err)
 	}
+	// A link named http that is no http(s) URL is no http clone link.
+	odd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"values":[{"slug":"a","links":{"clone":[{"href":"file:///srv/other.git","name":"http"}]}},`+
+			`{"slug":"b","links":{"clone":[{"href":"https://x/scm/shop/b.git","name":"http"}]}}],"isLastPage":true}`)
+	}))
+	defer odd.Close()
+	listed, err := New(odd.Client()).ListRepos(context.Background(), odd.URL, "SHOP", gitrepo.Access{})
+	if err != nil || len(listed) != 1 || listed[0].Slug != "b" {
+		t.Fatalf("odd links: %+v %v, want b alone", listed, err)
+	}
 	// An empty project is simply empty.
 	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"values":[],"isLastPage":true}`)

@@ -109,6 +109,15 @@ type page struct {
 	NextPageStart int  `json:"nextPageStart"`
 }
 
+// httpURL reports a clone link git may follow: http or https with a host.
+// A link named "http" that is a file://, an ssh:// or a bare path is left
+// out at the listing, rather than stored and refused by git
+// (GIT_ALLOW_PROTOCOL) on every cycle.
+func httpURL(href string) bool {
+	u, err := url.Parse(href)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
+}
+
 // ListRepos is GET /rest/api/1.0/projects/{key}/repos, every page. An
 // archived repository is skipped; one without an http clone link is
 // skipped with its slug in the error-free result's log line left to the
@@ -135,7 +144,7 @@ func (l *Lister) ListRepos(ctx context.Context, host, project string, a gitrepo.
 			}
 			live++
 			for _, c := range v.Links.Clone {
-				if c.Name == "http" {
+				if c.Name == "http" && httpURL(c.Href) {
 					out = append(out, store.ListedRepo{Slug: v.Slug, CloneURL: c.Href, ForgeID: v.ID})
 					break
 				}
