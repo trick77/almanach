@@ -34,7 +34,7 @@ var fixedShapes = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[
 
 // vendorTokens are the prefixed tokens. The rest of a real one is random
 // and carries a digit; npm_config_cache_folder and sk-learn-pipeline do not.
-var vendorTokens = regexp.MustCompile(`\b(?:gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk-|npm_)[A-Za-z0-9_-]{16,}`)
+var vendorTokens = regexp.MustCompile(`\b` + vendorFamily + `[A-Za-z0-9_-]{16,}`)
 
 // moreVendorTokens are vendorPrefixed in prose. A Hugging Face token is
 // letters only, so the second look is randomish, not a digit.

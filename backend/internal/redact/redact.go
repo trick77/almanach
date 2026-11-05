@@ -31,13 +31,14 @@ var configExt = map[string]bool{
 	".properties": true, ".yaml": true, ".yml": true, ".conf": true,
 	".env": true, ".toml": true, ".ini": true, ".json": true,
 	".tfvars": true, ".cfg": true, ".xml": true, ".config": true,
-	// Terraform state is JSON holding every resource's attributes,
-	// passwords and keys in plain text.
-	".tfstate": true,
 }
 
+// vendorFamily is the gh/glpat/xox/sk-/npm_ token prefixes; each use adds
+// its own body rule (any length as a whole value, 16+ inline and in prose).
+const vendorFamily = `(?:gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk-|npm_)`
+
 // vendorPrefixed are tokens whose vendor prefix gives them away, beyond
-// the gh/glpat/xox/sk-/npm_ family: Bitbucket Data Center's HTTP access
+// vendorFamily: Bitbucket Data Center's HTTP access
 // token, Atlassian's API token, a Google API key, Stripe's secret and
 // restricted keys, GitLab's pipeline trigger token, a Hugging Face token.
 // Each carries its own body's class and minimum length, so the prefix
@@ -59,7 +60,7 @@ func IsConfigPath(p string) bool {
 	// .env, .env.prod, .env.local: path.Ext reads the stage suffix as the
 	// extension, and a stage-suffixed env file is exactly the file at stake.
 	base := strings.ToLower(path.Base(p))
-	return base == ".env" || strings.HasPrefix(base, ".env.") || base == ".npmrc" || strings.HasSuffix(base, ".tfstate.backup")
+	return base == ".env" || strings.HasPrefix(base, ".env.") || base == ".npmrc"
 }
 
 // keyLine is the one shape every supported format shares: optional indent
@@ -137,16 +138,16 @@ var segmentSplit = regexp.MustCompile(`[.\-_\[\]]+|(?:[a-z0-9])(?:[A-Z])`)
 // registry image name or a URL path, which are exactly the values an infra
 // answer is made of.
 var secretValueShapes = []*regexp.Regexp{
-	regexp.MustCompile(`^ENC\(.*\)$`),                                                   // jasypt
-	regexp.MustCompile(`^eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$`),       // JWT
-	regexp.MustCompile(`^[A-Za-z0-9+/]{40,}={0,2}$`),                                    // base64 blob
-	regexp.MustCompile(`^[0-9a-fA-F]{32,}$`),                                            // hex digest or key
-	regexp.MustCompile(`(?i)(password|secret)\s*=`),                                     // a JAAS line carries its password inline
-	regexp.MustCompile(`^(?i)(basic|bearer)\s+\S+$`),                                    // an Authorization header value
-	regexp.MustCompile(`://[^/\s@:]+:[^/\s@]+@`),                                        // credentials inside a URL
-	regexp.MustCompile(`^(?i)(AKIA|ASIA)[0-9A-Z]{16}$`),                                 // AWS access key id
-	regexp.MustCompile(`^(?i)(gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk-|npm_)\S+$`), // vendor token prefixes
-	regexp.MustCompile(`^(?:` + vendorPrefixed + `)$`),                                  // more vendor tokens
+	regexp.MustCompile(`^ENC\(.*\)$`),                                             // jasypt
+	regexp.MustCompile(`^eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$`), // JWT
+	regexp.MustCompile(`^[A-Za-z0-9+/]{40,}={0,2}$`),                              // base64 blob
+	regexp.MustCompile(`^[0-9a-fA-F]{32,}$`),                                      // hex digest or key
+	regexp.MustCompile(`(?i)(password|secret)\s*=`),                               // a JAAS line carries its password inline
+	regexp.MustCompile(`^(?i)(basic|bearer)\s+\S+$`),                              // an Authorization header value
+	regexp.MustCompile(`://[^/\s@:]+:[^/\s@]+@`),                                  // credentials inside a URL
+	regexp.MustCompile(`^(?i)(AKIA|ASIA)[0-9A-Z]{16}$`),                           // AWS access key id
+	regexp.MustCompile(`^(?i)` + vendorFamily + `\S+$`),                           // vendor token prefixes
+	regexp.MustCompile(`^(?:` + vendorPrefixed + `)$`),                            // more vendor tokens
 }
 
 // inlineShapes are credentials recognisable wherever they stand in a line
@@ -161,7 +162,7 @@ var inlineShapes = regexp.MustCompile(`\bENC\([^)]*\)` +
 	`|\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*` +
 	`|\b(?i:basic)\s+[A-Za-z0-9+/]{12,}={0,2}` +
 	`|\b(?i:bearer)\s+[A-Za-z0-9._~+/-]{20,}` +
-	`|\b(?:gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk-|npm_)[A-Za-z0-9_-]{16,}` +
+	`|\b` + vendorFamily + `[A-Za-z0-9_-]{16,}` +
 	`|\b(?:` + vendorPrefixed + `)` +
 	`|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)
 
@@ -329,14 +330,24 @@ func SecretManifest(p string, body []byte) bool {
 	return false
 }
 
-// File is a repository file as a model may see it: a Secret manifest left
-// out whole (ok false), a configuration file's credential values replaced
+// TerraformState reports a Terraform state file, .tfstate or its
+// .tfstate.backup. Its secrets sit under neutral keys (a random_password's
+// "result", a sensitive output's "value") that no key rule can tell from
+// the rest, and the state documents nothing the .tf files do not: File
+// leaves it out whole.
+func TerraformState(p string) bool {
+	base := strings.ToLower(path.Base(p))
+	return strings.HasSuffix(base, ".tfstate") || strings.HasSuffix(base, ".tfstate.backup")
+}
+
+// File is a repository file as a model may see it: a Secret manifest or a
+// Terraform state left out whole (ok false), a configuration file's credential values replaced
 // line by line, then on every file, source included, each credential shape
 // Text knows replaced where it stands. A shape match no longer drops the
 // file: a TLS loader naming the PEM header is the code a page needs, and
 // the value itself is gone either way.
 func File(p string, body []byte) (_ []byte, ok bool) {
-	if SecretManifest(p, body) {
+	if SecretManifest(p, body) || TerraformState(p) {
 		return nil, false
 	}
 	body = Redact(p, body)

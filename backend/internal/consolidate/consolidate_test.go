@@ -31,13 +31,15 @@ var (
 // fakeStore is the worker's store in memory: pages by scope|project|repo,
 // a queue popped oldest-first, every write recorded.
 type fakeStore struct {
-	queue        []store.QueuedNote
-	queueErr     error
-	markErr      error
-	deferErr     error
-	attempts     map[string]int
-	pages        map[string]store.Page
-	marked       []string
+	queue    []store.QueuedNote
+	queueErr error
+	markErr  error
+	deferErr error
+	attempts map[string]int
+	pages    map[string]store.Page
+	marked   []string
+	// deliveries are the delivery ids the marks and defers named, in order.
+	deliveries   []string
 	revisions    []store.NewRevision
 	calls        []store.LLMCall
 	nextQueuedN  int
@@ -101,7 +103,8 @@ func (f *fakeStore) NextQueued(context.Context) (store.QueuedNote, bool, error) 
 	return q, true, nil
 }
 
-func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, prID int, _ string) error {
+func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, prID int, delivery string) error {
+	f.deliveries = append(f.deliveries, delivery)
 	if f.markErr != nil {
 		return f.markErr
 	}
@@ -109,7 +112,8 @@ func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, pr
 	return nil
 }
 
-func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int, _ string) (int, error) {
+func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int, delivery string) (int, error) {
+	f.deliveries = append(f.deliveries, delivery)
 	if f.deferErr != nil {
 		return 0, f.deferErr
 	}
@@ -193,7 +197,7 @@ func queued(prKey string) store.QueuedNote {
 	return store.QueuedNote{Note: store.Note{
 		ProjectKey: "PLAT", RepoSlug: "files", PRID: 42, Team: "platform", PRKey: prKey, PRTitle: "t", TicketKey: "PLAT-7",
 		ChangeKind: "feature", MergedAt: mergedAt, Body: json.RawMessage(`{"components":[]}`),
-	}, ReceivedAt: mergedAt}
+	}, ReceivedAt: mergedAt, DeliveryID: "d-" + prKey}
 }
 
 func str(s string) *string { return &s }
@@ -861,6 +865,16 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 	}
 	if len(st.marked) != 1 || st.attempts["PLAT|files|42"] != maxFoldAttempts || len(st.revisions) != 0 {
 		t.Errorf("after %d attempts: marked %v attempts %v revisions %d; want given up once", maxFoldAttempts, st.marked, st.attempts, len(st.revisions))
+	}
+	// Every defer and the mark named the delivery the fold read, so a note
+	// delivered again meanwhile is never counted against or taken off.
+	for _, d := range st.deliveries {
+		if d != "d-PLAT/files#42" {
+			t.Fatalf("deliveries = %v, want each the queued note's", st.deliveries)
+		}
+	}
+	if len(st.deliveries) != maxFoldAttempts+1 {
+		t.Errorf("deliveries = %d, want %d defers and the mark", len(st.deliveries), maxFoldAttempts)
 	}
 
 	// A defer the store refuses pauses the drain like a failed mark.

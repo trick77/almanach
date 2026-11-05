@@ -53,6 +53,9 @@ func TestFile(t *testing.T) {
 		ok                   bool
 	}{
 		{"secret manifest out", "k8s/secret.yaml", "apiVersion: v1\nkind: Secret\ndata:\n  x: eQ==\n", "", false},
+		{"terraform state out", "infra/terraform.tfstate", `{"resources": [{"instances": [{"attributes": {"result": "p@ss-W0rd!x"}}]}]}`, "", false},
+		{"terraform state backup out", "infra/Terraform.tfstate.backup", `{"outputs": {"db_pass": {"value": "hunter2", "sensitive": true}}}`, "", false},
+		{"terraform source stays", "infra/main.tf", `resource "random_password" "db" {}`, `resource "random_password" "db" {}`, true},
 		{"config value by key", "application.yaml", "db:\n  password: s3cr3t-invented\n", "db:\n  password: <redacted>\n", true},
 		{"config token mid-value", ".env", `CURL_OPTS=-H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0In0.abc"`, `CURL_OPTS=-H "Authorization: Bearer <redacted>"`, true},
 		{"url credentials in a Jenkinsfile", "Jenkinsfile", `sh "curl https://ci:hunter2@nexus.example.invalid/repo"`, `sh "curl https://<redacted>@nexus.example.invalid/repo"`, true},

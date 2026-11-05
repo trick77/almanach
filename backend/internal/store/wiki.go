@@ -229,7 +229,8 @@ func (s *Store) NextStatementID(ctx context.Context, scope, project, repo string
 // DeferFold counts a failed gateway call against the note delivered by
 // delivery and leaves it queued; returns the attempts so far. The worker
 // gives up past its bound. A note replaced since (a later delivery for the
-// same PR) is not counted against: 0 attempts, nil error.
+// same PR; notes are never deleted) is not counted against: 0 attempts,
+// nil error, which no counted defer returns.
 func (s *Store) DeferFold(ctx context.Context, project, repo string, prID int, delivery string) (int, error) {
 	rid, ok, err := repoID(ctx, s.db, project, repo)
 	if err != nil {

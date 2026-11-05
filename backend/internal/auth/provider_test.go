@@ -157,6 +157,28 @@ func TestProviderMisconfiguredIsAFault(t *testing.T) {
 	}
 }
 
+// A provider that sends 200 headers and then stalls past the deadline is
+// unreachable, not misconfigured: the status alone does not decide.
+func TestProviderStalledBodyIsRetried(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+	p := NewProvider(Config{Issuer: srv.URL}, slog.New(slog.NewTextHandler(newSyncBuffer(), nil)))
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := p.Discover(ctx); err == nil || errors.Is(err, ErrMisconfigured) {
+		t.Fatalf("err = %v, want retryable", err)
+	}
+	if p.broken.Load() {
+		t.Error("a stalled body marked the provider broken")
+	}
+}
+
 // Reachability keeps the warning and the retry: a 5xx, a rate limit, a
 // request timeout, a refused connection.
 func TestProviderUnreachableIsRetried(t *testing.T) {

@@ -83,7 +83,9 @@ func (p *Provider) Discover(ctx context.Context) error {
 	rec := &statusRecorder{}
 	flow, err := p.discover(context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: rec}), p.cfg)
 	if err != nil {
-		if permanent(int(rec.status.Load())) {
+		// A timeout is reachability whatever status came first: 200
+		// headers and a body that stalls past DiscoverTimeout included.
+		if ctx.Err() == nil && permanent(int(rec.status.Load())) {
 			p.broken.Store(true)
 			return fmt.Errorf("%w: %w", ErrMisconfigured, err)
 		}

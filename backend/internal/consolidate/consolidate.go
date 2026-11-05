@@ -234,6 +234,15 @@ func (w *Worker) stopping() bool {
 // QueueOrder lays the queue out in this order for the queue page: a
 // change here changes it too.
 func (w *Worker) drain(ctx context.Context) {
+	// The backstop: a fold's and a step's own panics mark their item (Fold,
+	// step); one outside them (a source check, a run's failure write) ends
+	// the drain with a log line, not the process. The next wake or poll
+	// tries again.
+	defer func() {
+		if r := recover(); r != nil {
+			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: drain panicked: %v", r), slog.String("stack", string(debug.Stack())))
+		}
+	}()
 	w.saveFailed = nil
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		q, ok, err := w.store.NextQueued(ctx)
@@ -456,6 +465,13 @@ func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome stri
 	attempts, err := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: defer failed, drain paused", logging.Err(err))
+		return true
+	}
+	if attempts == 0 {
+		// A later delivery replaced the note while it was folded: that one
+		// is queued with no attempt against it.
+		w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s, delivered again meanwhile, the new note kept for after the hold",
+			q.PRKey, outcome), logging.Err(cause))
 		return true
 	}
 	if attempts < maxFoldAttempts {
