@@ -400,7 +400,8 @@ callback land on `/?auth_error=provider_unavailable`, where the UI halts
 with a button to try again, and the wiki stays behind its 401 until a
 retry (5 s, doubling up to 5 min, each failure logged) reaches the
 provider. An answer that is configuration, not reachability (an issuer
-that does not match, a 4xx, a 200 that is no discovery document; the
+that does not match, a 4xx other than a 408 or a 429, which are retried
+like a 5xx, a 200 that is no discovery document; the
 discovery's transport records the status, since the discovery reports
 every failure as text), is a fault: logged at error level once, never retried, the login
 landing on `/?auth_error=provider_misconfigured` until a restart. In
@@ -1262,7 +1263,10 @@ areas, `bugfix_area` (the longest directory every component file of a
 bugfix note shares) and `bugfix_component` (the first component's name).
 `consolidated_at` and `fold_attempts` are the worker's queue state: NULL
 means queued, the partial index `notes_queue_idx` makes the oldest queued
-note one cheap lookup. `note_calls` holds, per delivery, every lane the
+note one cheap lookup. The worker's mark and attempt count name the
+`delivery_id` the fold read: a note delivered again while its first
+version is folded stays queued, its own attempts not counted against.
+`note_calls` holds, per delivery, every lane the
 gateway reported for the round's note call plus the PR's round totals, as
 columns: the cache-hit rate and the cost per note are one query.
 
@@ -1518,8 +1522,9 @@ things a change must not undo by accident.
   - the model's answer off the schema, an answer cut by the model's output
     limit (`too_long`: the description asked for does not fit one call), a
     4xx from the gateway (context overflow, rejected format), a 2xx of the
-    wrong shape: specific to this call, the note is marked consolidated
-    with a log line and never retried;
+    wrong shape, a panic in the fold: specific to this call, the note is
+    marked consolidated with a log line and never retried (a baseline
+    step's panic fails its run, a sync's its repository, on the row);
   - a timeout, a 5xx, a transport failure, a refused key, a rate limit, a
     proxy page where the answer should be: the gateway's, the worker holds
     (thirty seconds, doubling to ten minutes, or the rate limit's

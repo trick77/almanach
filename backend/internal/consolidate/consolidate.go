@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -32,8 +33,8 @@ import (
 // Store is what the worker needs of the store.
 type Store interface {
 	NextQueued(ctx context.Context) (store.QueuedNote, bool, error)
-	MarkConsolidated(ctx context.Context, project, repo string, prID int) error
-	DeferFold(ctx context.Context, project, repo string, prID int) (int, error)
+	MarkConsolidated(ctx context.Context, project, repo string, prID int, delivery string) error
+	DeferFold(ctx context.Context, project, repo string, prID int, delivery string) (int, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
 	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
@@ -233,14 +234,28 @@ func (w *Worker) stopping() bool {
 // QueueOrder lays the queue out in this order for the queue page: a
 // change here changes it too.
 func (w *Worker) drain(ctx context.Context) {
+	// The backstop: a fold's and a step's own panics mark their item (Fold,
+	// step); one outside them (a source check, a run's failure write) ends
+	// the drain with a log line and takes the item it was on off the queue,
+	// so it never blocks the rest: none blocks the queue forever.
+	var note *store.QueuedNote
+	var run *store.BaselineRun
+	defer func() {
+		if r := recover(); r != nil {
+			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: drain panicked: %v", r), slog.String("stack", string(debug.Stack())))
+			w.dropAfterPanic(ctx, note, run, r)
+		}
+	}()
 	w.saveFailed = nil
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
+		note, run = nil, nil
 		q, ok, err := w.store.NextQueued(ctx)
 		if err != nil {
 			w.log.WarnContext(ctx, "consolidate: queue read failed", logging.Err(err))
 			return
 		}
 		if ok {
+			note = &q
 			if !w.foldOrIgnore(ctx, q) {
 				return
 			}
@@ -254,9 +269,33 @@ func (w *Worker) drain(ctx context.Context) {
 			w.log.WarnContext(ctx, "baseline: run queue read failed", logging.Err(err))
 			return
 		}
-		if !ok || !w.stepRun(ctx, r) {
+		if !ok {
 			return
 		}
+		loaded := r
+		run = &loaded
+		if !w.stepRun(ctx, r) {
+			return
+		}
+	}
+}
+
+// dropAfterPanic takes the item a drain panicked on off the queue: the
+// note marked, the run failed as it was loaded. A panic here too is only
+// logged; the next drain meets the item again.
+func (w *Worker) dropAfterPanic(ctx context.Context, note *store.QueuedNote, run *store.BaselineRun, cause any) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: dropping the item after a panic panicked too: %v", r))
+		}
+	}()
+	switch {
+	case note != nil:
+		if err := w.store.MarkConsolidated(ctx, note.ProjectKey, note.RepoSlug, note.PRID, note.DeliveryID); err != nil {
+			w.log.WarnContext(ctx, "consolidate: mark after a panic failed", logging.Err(err))
+		}
+	case run != nil:
+		w.failRun(ctx, *run, fmt.Sprintf("panicked: %v", cause))
 	}
 }
 
@@ -275,7 +314,7 @@ func (w *Worker) foldOrIgnore(ctx context.Context, q store.QueuedNote) bool {
 		}
 		if !known {
 			w.log.InfoContext(ctx, "consolidate: "+q.PRKey+" ignored: no source repository "+q.ProjectKey+"/"+q.RepoSlug)
-			if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
+			if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID); err != nil {
 				w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
 				return false
 			}
@@ -333,11 +372,18 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	ctx = logging.With(ctx, "team", q.Team, "pr_key", q.PRKey)
 	deferred := false
 	defer func() {
+		// A panic is a failure specific to this note: marked, logged.
+		// Uncaught it ends the process, and every restart meets the same
+		// oldest note again.
+		if r := recover(); r != nil {
+			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: %s not folded: panic: %v", q.PRKey, r), slog.String("stack", string(debug.Stack())))
+			deferred = false
+		}
 		if deferred {
 			next = false
 			return
 		}
-		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID); err != nil {
+		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID); err != nil {
 			w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
 			next = false
 			return
@@ -445,9 +491,16 @@ const collectionProject = "_This project is a collection: repositories that each
 // hold; reports whether it stays queued: false once maxFoldAttempts is
 // reached (the note is then marked, with a log line).
 func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome string, cause error) bool {
-	attempts, err := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID)
+	attempts, err := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID)
 	if err != nil {
 		w.log.WarnContext(ctx, "consolidate: defer failed, drain paused", logging.Err(err))
+		return true
+	}
+	if attempts == 0 {
+		// A later delivery replaced the note while it was folded: that one
+		// is queued with no attempt against it.
+		w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s, delivered again meanwhile, the new note kept for after the hold",
+			q.PRKey, outcome), logging.Err(cause))
 		return true
 	}
 	if attempts < maxFoldAttempts {

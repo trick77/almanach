@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -43,7 +45,7 @@ func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 
 	// A deferred fold counts its attempt and leaves the note where it is.
 	for want := 1; want <= 2; want++ {
-		if n, err := s.DeferFold(ctx, "PRJ", "svc", 1); err != nil || n != want {
+		if n, err := s.DeferFold(ctx, "PRJ", "svc", 1, q.DeliveryID); err != nil || n != want {
 			t.Fatalf("DeferFold = %d, %v; want %d", n, err, want)
 		}
 	}
@@ -51,18 +53,63 @@ func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 		t.Fatalf("after defer: ok=%v pr=%d err=%v, want pr 1 still queued", ok, q.PRID, err)
 	}
 
-	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1); err != nil {
+	if q.DeliveryID != "d-PRJ-svc-1" {
+		t.Errorf("DeliveryID = %q, want d-PRJ-svc-1", q.DeliveryID)
+	}
+	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1, q.DeliveryID); err != nil {
 		t.Fatal(err)
 	}
 	q, ok, err = s.NextQueued(ctx)
 	if err != nil || !ok || q.PRID != 2 {
 		t.Fatalf("after mark: ok=%v pr=%d err=%v, want pr 2", ok, q.PRID, err)
 	}
-	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 2); err != nil {
+	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 2, q.DeliveryID); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := s.NextQueued(ctx); err != nil || ok {
 		t.Fatalf("drained queue: ok=%v err=%v", ok, err)
+	}
+}
+
+// A note re-delivered while its first version was folded stays queued: the
+// fold's mark and defer name the delivery it read, not the row.
+func TestMarkConsolidated_RedeliveredDuringFoldStaysQueued(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	n := noteFor("PRJ", "svc", 1)
+	ingest(t, s, n)
+	first, ok, err := s.NextQueued(ctx)
+	if err != nil || !ok {
+		t.Fatalf("NextQueued: ok=%v err=%v", ok, err)
+	}
+	again := n
+	again.PRTitle = "merged again"
+	d := deliveryFor(n)
+	d.ID = "d-second"
+	if ok, err := s.Ingest(ctx, d, again, callFor(again), nil); err != nil || !ok {
+		t.Fatalf("second ingest: ok=%v err=%v", ok, err)
+	}
+	if n, err := s.DeferFold(ctx, "PRJ", "svc", 1, first.DeliveryID); err != nil || n != 0 {
+		t.Fatalf("DeferFold of the replaced note = %d, %v; want 0, nil", n, err)
+	}
+	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1, first.DeliveryID); err != nil {
+		t.Fatal(err)
+	}
+	q, ok, err := s.NextQueued(ctx)
+	if err != nil || !ok || q.DeliveryID != "d-second" || q.PRTitle != "merged again" {
+		t.Fatalf("after the first fold's mark: ok=%v delivery=%q title=%q err=%v, want the second still queued", ok, q.DeliveryID, q.PRTitle, err)
+	}
+	if got := count(t, s, "notes", "fold_attempts = 0"); got != 1 {
+		t.Errorf("notes with no attempt = %d, want 1: the replaced note's attempt is not counted", got)
+	}
+	// No note for the PR, or no delivery named, is no replacement.
+	for _, c := range []struct {
+		pr       int
+		delivery string
+	}{{9, "d-x"}, {1, ""}} {
+		if _, err := s.DeferFold(ctx, "PRJ", "svc", c.pr, c.delivery); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("DeferFold(pr %d, %q) = %v, want sql.ErrNoRows", c.pr, c.delivery, err)
+		}
 	}
 }
 

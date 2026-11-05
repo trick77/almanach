@@ -53,6 +53,9 @@ func TestFile(t *testing.T) {
 		ok                   bool
 	}{
 		{"secret manifest out", "k8s/secret.yaml", "apiVersion: v1\nkind: Secret\ndata:\n  x: eQ==\n", "", false},
+		{"terraform state out", "infra/terraform.tfstate", `{"resources": [{"instances": [{"attributes": {"result": "p@ss-W0rd!x"}}]}]}`, "", false},
+		{"terraform state backup out", "infra/Terraform.tfstate.backup", `{"outputs": {"db_pass": {"value": "hunter2", "sensitive": true}}}`, "", false},
+		{"terraform source stays", "infra/main.tf", `resource "random_password" "db" {}`, `resource "random_password" "db" {}`, true},
 		{"config value by key", "application.yaml", "db:\n  password: s3cr3t-invented\n", "db:\n  password: <redacted>\n", true},
 		{"config token mid-value", ".env", `CURL_OPTS=-H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0In0.abc"`, `CURL_OPTS=-H "Authorization: Bearer <redacted>"`, true},
 		{"url credentials in a Jenkinsfile", "Jenkinsfile", `sh "curl https://ci:hunter2@nexus.example.invalid/repo"`, `sh "curl https://<redacted>@nexus.example.invalid/repo"`, true},
@@ -96,5 +99,59 @@ func TestJSON_untouchedIsSameBytes(t *testing.T) {
 	}
 	if strings.Contains(string(JSON(json.RawMessage(`"x\\"`))), "redacted") {
 		t.Fatal("escaped backslash misread")
+	}
+}
+
+// moreTokens are invented tokens of the vendorPrefixed shapes, joined at run
+// time so no literal token sits in the source for a scanner to stop.
+var moreTokens = map[string]string{
+	"bitbucket dc":       "BB" + "DC-" + "Mzk2NjE0Njg3NTQ1Ok" + "invented0Abc",
+	"atlassian":          "ATA" + "TT3xFfGF0" + "invented0Abc_def-Ghi=",
+	"google api key":     "AI" + "za" + "SyD" + "invented0Abc_def-Ghi1234567890ab",
+	"stripe secret":      "sk" + "_live_" + "51Hinvented0AbcDef",
+	"stripe restricted":  "rk" + "_live_" + "51Hinvented0AbcDef",
+	"gitlab trigger":     "gl" + "ptt-" + "invented0Abc_def-Ghi12",
+	"hugging face token": "hf" + "_" + "InventedAbcDefGhiJklMnoPqrStuVwx",
+}
+
+// Every vendorPrefixed shape, in a sentence, in a key-less config line,
+// in source code and as a value under any key.
+func TestMoreVendorTokens(t *testing.T) {
+	for name, tok := range moreTokens {
+		t.Run(name, func(t *testing.T) {
+			if got, want := Text("Der Token "+tok+" stand im Code."), "Der Token <redacted> stand im Code."; got != want {
+				t.Errorf("Text = %q, want %q", got, want)
+			}
+			if got, ok := File("run.conf", []byte(`curl -H "X-Key: `+tok+`"`)); !ok || string(got) != `curl -H "X-Key: <redacted>"` {
+				t.Errorf("File key-less config line = %q %v", got, ok)
+			}
+			if got, ok := File("leak.go", []byte(`const t = "`+tok+`"`)); !ok || string(got) != `const t = "<redacted>"` {
+				t.Errorf("File source = %q %v", got, ok)
+			}
+			if got, want := string(Redact("app.properties", []byte("forge.pat="+tok))), "forge.pat=<redacted>"; got != want {
+				t.Errorf("Redact under any key = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// The prefixes alone, in names and prose, are no token.
+func TestMoreVendorPrefixesStay(t *testing.T) {
+	for _, s := range []string{
+		"Ruft hf_hub_download fuer das Modell auf.",
+		"BBDC-Tokens werden pro Repository vergeben.",
+		"Stripe-Schluessel beginnen mit sk_live_ oder rk_live_.",
+		"AIzaSy ist das Praefix eines Google-Schluessels.",
+		"glptt-Tokens loesen Pipelines aus.",
+	} {
+		if got := Text(s); got != s {
+			t.Errorf("Text(%q) = %q, want unchanged", s, got)
+		}
+	}
+	// A config line naming one with a word after it keeps it: the
+	// randomness look is Text's, which File runs on every file.
+	line := "docs.hint=Siehe sk_test_placeholderfordocs im Handbuch"
+	if got, _ := File("app.conf", []byte(line)); string(got) != line {
+		t.Errorf("File(%q) = %q, want unchanged", line, got)
 	}
 }

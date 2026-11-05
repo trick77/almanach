@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -429,13 +430,20 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		p.cur.Lock()
 		p.current = inFlight{projectID: j.Repo.ProjectID, repoID: j.Repo.RepoID, cancel: cancel}
 		p.cur.Unlock()
-		head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
 		// The manifests are read while the clone is still locked; stored
 		// after, the lock is for the disk only.
 		var read manifest.Read
 		var readOK bool
+		// A panic in the sync is this repository's failure, on its row
+		// like any other; one reading the manifests after a good sync is
+		// a log line, the manifests left unread like any failed read.
+		if perr := p.guarded(j, func() {
+			head, moved, err = p.sync(jobCtx, j, bound[j.Source.ProjectKey])
+		}); perr != nil {
+			err = perr
+		}
 		if err == nil {
-			read, readOK = p.syncedManifests(jobCtx, j, head)
+			_ = p.guarded(j, func() { read, readOK = p.syncedManifests(jobCtx, j, head) })
 		}
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()
@@ -464,12 +472,31 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			unchanged++
 			p.Log.Debug("repo_unchanged", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head), "took", took(repoStart))
 		}
-		if readOK {
-			p.saveManifests(ctx, j, head, read)
-		}
-		p.describe(ctx, j, head)
+		// The clone is synced: a panic in what follows is logged, the
+		// next cycle tries again, the row stays as the sync left it.
+		_ = p.guarded(j, func() {
+			if readOK {
+				p.saveManifests(ctx, j, head, read)
+			}
+			p.describe(ctx, j, head)
+		})
 	}
 	p.Log.Info("sync cycle finished", "checked", len(jobs), "synced", synced, "unchanged", unchanged, "failed", failed, "took", took(started))
+	return nil
+}
+
+// guarded runs fn for j's repository and returns a panic in it as an
+// error, logged with its stack: uncaught it ends the process, and every
+// restart's first cycle meets the same repository again. fn holds no lock
+// across a panic: the clone's is released by the caller either way.
+func (p *Poller) guarded(j store.SyncJob, fn func()) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panicked: %v", r)
+			p.Log.Error("repo_panicked", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "err", err.Error(), "stack", string(debug.Stack()))
+		}
+	}()
+	fn()
 	return nil
 }
 

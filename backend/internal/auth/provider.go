@@ -37,12 +37,12 @@ const (
 )
 
 // Provider is kit's OIDC flow once discovery has answered. A provider that
-// cannot be reached (a transport error, a timeout, a 5xx) is a warning,
+// cannot be reached (a transport error, a timeout, a 5xx, a 408, a 429) is a warning,
 // never a fault: the webhook, the ping and the probes must not depend on
 // it, and boot never waits for it. Until it answers, the login lands on
 // UnavailableURL and the gated /api answers 401 as ever; Run keeps trying
 // in the background. An answer that is configuration, not reachability (an
-// issuer that does not match, a 4xx, a 200 that is no discovery document),
+// issuer that does not match, another 4xx, a 200 that is no discovery document),
 // is a fault: logged at error level once, never retried, the login landing
 // on MisconfiguredURL until a restart with a corrected configuration.
 type Provider struct {
@@ -83,7 +83,9 @@ func (p *Provider) Discover(ctx context.Context) error {
 	rec := &statusRecorder{}
 	flow, err := p.discover(context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: rec}), p.cfg)
 	if err != nil {
-		if permanent(int(rec.status.Load())) {
+		// A timeout is reachability whatever status came first: 200
+		// headers and a body that stalls past DiscoverTimeout included.
+		if ctx.Err() == nil && permanent(int(rec.status.Load())) {
 			p.broken.Store(true)
 			return fmt.Errorf("%w: %w", ErrMisconfigured, err)
 		}
@@ -97,8 +99,12 @@ func (p *Provider) Discover(ctx context.Context) error {
 // than reachability: the provider answered 4xx, or it answered 2xx and the
 // discovery still failed, which is an issuer that does not match or a body
 // that is no discovery document. No status at all (a transport error, a
-// timeout) and a 5xx are worth another try.
+// timeout), a 5xx, a 408 and a 429 are worth another try: a rate limit
+// marked broken would hold until the next restart.
 func permanent(status int) bool {
+	if status == http.StatusRequestTimeout || status == http.StatusTooManyRequests {
+		return false
+	}
 	return status >= 200 && status < 300 || status >= 400 && status < 500
 }
 

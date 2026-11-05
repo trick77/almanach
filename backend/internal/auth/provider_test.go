@@ -157,16 +157,42 @@ func TestProviderMisconfiguredIsAFault(t *testing.T) {
 	}
 }
 
-// Reachability keeps the warning and the retry: a 5xx, a refused
-// connection.
-func TestProviderUnreachableIsRetried(t *testing.T) {
-	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "busy", http.StatusBadGateway)
+// A provider that sends 200 headers and then stalls past the deadline is
+// unreachable, not misconfigured: the status alone does not decide.
+func TestProviderStalledBodyIsRetried(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
 	}))
-	defer down.Close()
+	defer srv.Close()
+	defer close(release)
+	p := NewProvider(Config{Issuer: srv.URL}, slog.New(slog.NewTextHandler(newSyncBuffer(), nil)))
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := p.Discover(ctx); err == nil || errors.Is(err, ErrMisconfigured) {
+		t.Fatalf("err = %v, want retryable", err)
+	}
+	if p.broken.Load() {
+		t.Error("a stalled body marked the provider broken")
+	}
+}
+
+// Reachability keeps the warning and the retry: a 5xx, a rate limit, a
+// request timeout, a refused connection.
+func TestProviderUnreachableIsRetried(t *testing.T) {
+	answering := func(status int) string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "busy", status)
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
 	gone := httptest.NewServer(http.NotFoundHandler())
 	gone.Close()
-	for name, issuer := range map[string]string{"502": down.URL, "refused": gone.URL} {
+	for name, issuer := range map[string]string{"502": answering(http.StatusBadGateway), "429": answering(http.StatusTooManyRequests),
+		"408": answering(http.StatusRequestTimeout), "refused": gone.URL} {
 		p := NewProvider(Config{Issuer: issuer}, slog.New(slog.NewTextHandler(newSyncBuffer(), nil)))
 		err := p.Discover(t.Context())
 		if err == nil || errors.Is(err, ErrMisconfigured) {

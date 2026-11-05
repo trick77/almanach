@@ -406,6 +406,29 @@ func TestCycle_ReclonesOnOriginMismatch_AndRecordsFailures(t *testing.T) {
 	}
 }
 
+// A sync that panics is its repository's failure, on its row; the cycle
+// goes on and the process stays up.
+func TestCycle_PanicFailsTheRepo(t *testing.T) {
+	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
+	src := store.ProjectSource{Kind: store.SourceStatic}
+	s.jobs = []store.SyncJob{job("tools", "bad", "https://x/bad.git", "main", "", src), job("tools", "fine", "https://x/fine.git", "main", "", src)}
+	g.heads[dirOf("tools", "fine")+"@main"] = "abc"
+	g.onClone = func(dir string) {
+		if dir == dirOf("tools", "bad") {
+			panic("boom")
+		}
+	}
+	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.states["bad"] != store.RepoFailed || !strings.Contains(s.errs["bad"], "panicked: boom") {
+		t.Errorf("bad: %s %q, want failed with the panic", s.states["bad"], s.errs["bad"])
+	}
+	if s.states["fine"] != store.RepoReady {
+		t.Errorf("fine after a panic: %s", s.states["fine"])
+	}
+}
+
 func TestCycle_ListsBitbucketSources(t *testing.T) {
 	s, g, k := newFakeStore(), newFakeGit(), testKey(t)
 	sealed, _ := k.Seal("pat")
