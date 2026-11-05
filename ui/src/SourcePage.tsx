@@ -171,7 +171,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
       await fn();
       reload();
     } catch (e) {
-      onError(e instanceof ApiError ? e.message : S.sources.failedOne);
+      onError(e instanceof ApiError ? e.message : S.sources.unreachable);
     }
   };
   const act = (fn: () => Promise<unknown>) => run(fn, setError);
@@ -991,7 +991,7 @@ function AccessForm({
       );
       onDone();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : S.sources.failedOne);
+      setError(e instanceof ApiError ? e.message : S.sources.unreachable);
     } finally {
       setBusy(false);
     }
@@ -1137,7 +1137,7 @@ function RenameForm({
       );
       onDone(stored?.project_key ?? to);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : S.sources.failedOne);
+      setError(e instanceof ApiError ? e.message : S.sources.unreachable);
     } finally {
       setBusy(false);
     }
@@ -1210,7 +1210,7 @@ function RenameRepoForm({
       );
       onDone();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : S.sources.failedOne);
+      setError(e instanceof ApiError ? e.message : S.sources.unreachable);
     } finally {
       setBusy(false);
     }
@@ -1299,7 +1299,7 @@ function AddRepoForm({
       );
       onDone();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : S.sources.failedOne);
+      setError(e instanceof ApiError ? e.message : S.sources.unreachable);
     } finally {
       setBusy(false);
     }

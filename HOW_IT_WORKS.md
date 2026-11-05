@@ -1139,13 +1139,13 @@ one.
 | `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | urlorigin |
 | `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only, trusting `BACKEND_GIT_CA_FILE` like git. | gitrepo (Access), store (types only) |
 | `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it, the code reads of a baseline step. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | baseline, consolidate, gitrepo, manifest, prompts, redact, secret, store, urlorigin |
-| `internal/manifest` | `Parse`: a repository's go.mod, pom.xml, package.json and Gradle build as the coordinates it provides and requires. Pure, no I/O. | nothing |
+| `internal/manifest` | `Parse`: a repository's go.mod, pom.xml, package.json and Gradle build as the coordinates it provides and requires. Pure, no I/O. | redact |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/redact` | Credential values out before anything leaves the machine: `File` for code a step shows the model, `Text` and `JSON` for prose and notes. By regex, never by prompt. | nothing |
 | `internal/markup` | The one layout a statement's text and a summary may carry: paragraphs, flat lists, bold, code spans, one sub-heading level. | nothing |
 | `internal/lang` | The spelling rule (`ss`, never the sharp s) over model prose, after redaction and the layout. | markup, redact |
 | `internal/diagram` | A diagram's shape (rongo's intermediate form), data only; `baseline/diagram.go` validates it. | nothing |
-| `internal/config` | The environment, read once through kit's reader, every fault collected. | kit/env |
+| `internal/config` | The environment, read once through kit's reader, every fault collected. | authroute, diagram (caps), gitrepo (host check), kit/env |
 
 The interfaces are declared where they are used (`api.Store`,
 `consolidate.Store`, `consolidate.Merger`) and satisfied by `*store.Store`

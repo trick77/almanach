@@ -132,6 +132,14 @@ func TestNewWithCA(t *testing.T) {
 			t.Errorf("NewWithCA(%s) = nil error", f)
 		}
 	}
+	// The file is read for each listing, as git reads it for each command:
+	// what replaced it is the trust of the next listing, not the startup's.
+	if err := os.WriteFile(ca, []byte("rotated, not PEM"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ListRepos(context.Background(), srv.URL, "SHOP", gitrepo.Access{}); err == nil || !strings.Contains(err.Error(), "BACKEND_GIT_CA_FILE") {
+		t.Errorf("after the bundle was replaced: %v, want the file read again", err)
+	}
 }
 
 func TestListRepos_NoHTTPLinksIsAnError(t *testing.T) {

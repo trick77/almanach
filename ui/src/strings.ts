@@ -316,6 +316,9 @@ export const S = {
     lede: "Die Projekte, deren Code Almanach selbst clont: ein Bitbucket-Projekt, dessen Repositories Almanach über die API liest, oder ein Projekt, dessen Repositories von Hand eingetragen werden. Die Clones sind die Grundlage, die später beschrieben und mit jedem gemergten Pull Request fortgeschrieben wird.",
     failed: "Die Quellen konnten nicht geladen werden.",
     failedOne: "Die Quelle konnte nicht geladen werden.",
+    // A write that got no answer at all (the server's own refusals carry
+    // their message).
+    unreachable: "Der Server war nicht erreichbar. Bitte erneut versuchen.",
     empty: "Noch keine Quelle.",
     disabled:
       "Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",

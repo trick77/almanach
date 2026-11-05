@@ -32,43 +32,63 @@ const (
 // Lister lists a project's repositories.
 type Lister struct {
 	client *http.Client
+	// caFile, when set, is the trust of every listing, read for each one.
+	caFile string
 }
 
+// noRedirect: a login page redirect must read as a failure.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 // New builds a Lister; a nil client is http.DefaultClient's transport with
-// no redirects followed (a login page redirect must read as a failure).
+// no redirects followed.
 func New(client *http.Client) *Lister {
 	if client == nil {
-		client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client = &http.Client{CheckRedirect: noRedirect}
 	}
 	return &Lister{client: client}
 }
 
-// NewWithCA is New with caFile's certificates trusted beside the system's:
-// the forge git reaches with GIT_SSL_CAINFO is the one the listing asks,
-// and an internal CA that git trusts and the listing does not lists
-// nothing. "" is New(nil). A file that cannot be read or holds no
-// certificate is an error, so a typo is a startup fault, not a failed
-// listing later.
+// NewWithCA is a Lister trusting caFile as git does with GIT_SSL_CAINFO:
+// the file alone, not the system's store, read again for each listing as
+// git reads it for each command, so the two never disagree on a forge's
+// certificate, a rotated bundle included. "" is New(nil). A file that
+// cannot be read or holds no certificate is an error here, so a typo is a
+// startup fault, not a failed listing later.
 func NewWithCA(caFile string) (*Lister, error) {
 	if caFile == "" {
 		return New(nil), nil
 	}
+	if _, err := caClient(caFile); err != nil {
+		return nil, err
+	}
+	return &Lister{caFile: caFile}, nil
+}
+
+// caClient is a client trusting caFile's certificates alone.
+func caClient(caFile string) (*http.Client, error) {
 	pem, err := os.ReadFile(caFile) //nolint:gosec // the operator's configured CA bundle, by design
 	if err != nil {
 		return nil, err
 	}
-	pool, err := x509.SystemCertPool()
-	if err != nil {
-		pool = x509.NewCertPool()
-	}
+	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pem) {
 		return nil, fmt.Errorf("%s: no PEM certificate in it", caFile)
 	}
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-	l := New(nil)
-	l.client.Transport = t
-	return l, nil
+	return &http.Client{Transport: t, CheckRedirect: noRedirect}, nil
+}
+
+// httpClient is the client of one listing.
+func (l *Lister) httpClient() (*http.Client, error) {
+	if l.caFile == "" {
+		return l.client, nil
+	}
+	c, err := caClient(l.caFile)
+	if err != nil {
+		return nil, fmt.Errorf("BACKEND_GIT_CA_FILE: %w", err)
+	}
+	return c, nil
 }
 
 type page struct {
@@ -98,10 +118,14 @@ func (l *Lister) ListRepos(ctx context.Context, host, project string, a gitrepo.
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
 		return nil, errors.New("host is not an http(s) URL")
 	}
+	client, err := l.httpClient()
+	if err != nil {
+		return nil, err
+	}
 	out := []store.ListedRepo{}
 	start, live, ended := 0, 0, false
 	for i := 0; i < maxPages && !ended; i++ {
-		p, err := l.page(ctx, base, project, a, start)
+		p, err := fetchPage(ctx, client, base, project, a, start)
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +156,7 @@ func (l *Lister) ListRepos(ctx context.Context, host, project string, a gitrepo.
 	return out, nil
 }
 
-func (l *Lister) page(ctx context.Context, base *url.URL, project string, a gitrepo.Access, start int) (page, error) {
+func fetchPage(ctx context.Context, client *http.Client, base *url.URL, project string, a gitrepo.Access, start int) (page, error) {
 	ctx, cancel := context.WithTimeout(ctx, pageTimeout)
 	defer cancel()
 	u := *base
@@ -146,7 +170,7 @@ func (l *Lister) page(ctx context.Context, base *url.URL, project string, a gitr
 	if h := a.Authorization(u.String()); h != "" {
 		req.Header.Set("Authorization", h)
 	}
-	resp, err := l.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return page{}, fmt.Errorf("list repositories: %w", err)
 	}

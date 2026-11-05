@@ -280,7 +280,7 @@ function NewSourceForm({
       });
       if (created) onDone(created);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : S.sources.failedOne);
+      setError(e instanceof ApiError ? e.message : S.sources.unreachable);
     } finally {
       setBusy(false);
     }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,21 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if app.ProblemWindow != 30 || app.LogLevel != "DEBUG" {
 		t.Errorf("problem window / log level = %d %q", app.ProblemWindow, app.LogLevel)
+	}
+}
+
+// A relative CA file is made absolute: git runs in the clone's folder and
+// would look for it there.
+func TestGitCAFileAbsolute(t *testing.T) {
+	env := minimal()
+	env["BACKEND_GIT_CA_FILE"] = "conf/ca.pem"
+	app, err := Load(lookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want, _ := filepath.Abs("conf/ca.pem")
+	if app.Sources.GitCAFile != want {
+		t.Errorf("GitCAFile = %q, want %q", app.Sources.GitCAFile, want)
 	}
 }
 

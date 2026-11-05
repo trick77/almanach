@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -235,6 +236,16 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if app.Sources.SyncInterval < 0 {
 		r.Fail("BACKEND_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
+	}
+	// Absolute once: git runs in the clone's folder and would resolve a
+	// relative path there, the listing and the startup check where the
+	// process started.
+	if app.Sources.GitCAFile != "" {
+		if abs, err := filepath.Abs(app.Sources.GitCAFile); err != nil {
+			r.Fail("BACKEND_GIT_CA_FILE: %v", err)
+		} else {
+			app.Sources.GitCAFile = abs
+		}
 	}
 	if app.Baseline.MaxCalls > 0 && app.Baseline.MaxCalls < minBaselineCalls {
 		r.Fail("BACKEND_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
