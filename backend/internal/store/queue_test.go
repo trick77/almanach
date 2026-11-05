@@ -7,6 +7,57 @@ import (
 	"time"
 )
 
+// The ledger by month and project, merges apart from runs, an unpriced
+// call counted but costing nothing; and by project alone.
+func TestCostsByMonthAndProject(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("ZED", "web", 2))
+	for _, c := range []LLMCall{
+		{ProjectKey: "PRJ", RepoSlug: "svc", SourcePR: "PRJ/svc#1", Outcome: "ok", CostNanoUSD: i64(30_000_000)},
+		{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "c0ffee", Purpose: PurposeSubject, Outcome: "ok", CostNanoUSD: i64(1_000_000_000)},
+		{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "c0ffee", Purpose: PurposeCatalogue, Outcome: "ok"},
+		{ProjectKey: "ZED", RepoSlug: "web", SourcePR: "ZED/web#2", Outcome: "error"},
+	} {
+		if _, err := s.InsertLLMCall(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := s.Costs(ctx, time.Now())
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("Costs = %+v, %v", rows, err)
+	}
+	// The month the rows were written in, off the rows: a test straddling
+	// midnight on the last of a month must not fail.
+	var month string
+	if err := s.db.QueryRowContext(ctx, `SELECT substr(created_at, 1, 7) FROM llm_calls LIMIT 1`).Scan(&month); err != nil {
+		t.Fatal(err)
+	}
+	prj, zed := rows[0], rows[1]
+	if prj.Month != month || prj.ProjectKey != "PRJ" || prj.Merges.Calls != 1 || prj.Merges.NanoUSD == nil || *prj.Merges.NanoUSD != 30_000_000 ||
+		prj.Runs.Calls != 2 || prj.Runs.Unpriced != 1 || prj.Runs.NanoUSD == nil || *prj.Runs.NanoUSD != 1_000_000_000 {
+		t.Errorf("PRJ = %+v", prj)
+	}
+	if zed.ProjectKey != "ZED" || zed.Merges.Calls != 1 || zed.Merges.Unpriced != 1 || zed.Merges.NanoUSD != nil || zed.Runs.Calls != 0 {
+		t.Errorf("ZED = %+v", zed)
+	}
+	// Only the last CostsMonths: a clock far ahead sees none of the rows.
+	if later, err := s.Costs(ctx, time.Now().AddDate(0, CostsMonths+1, 0)); err != nil || len(later) != 0 {
+		t.Errorf("Costs a year on = %+v, %v; want none", later, err)
+	}
+	// Money as the API prints it, on the integer; the UTC day's start.
+	for nano, want := range map[int64]string{1_030_000_000: "1.030", 1_234_567_500: "1.235", -5_000: "-0.000", 999_500_000: "1.000"} {
+		if got := USD(nano); got != want {
+			t.Errorf("USD(%d) = %q, want %q", nano, got, want)
+		}
+	}
+	at := time.Date(2026, 11, 5, 23, 30, 0, 0, time.FixedZone("CET", 3600))
+	if got := DayStart(at); !got.Equal(time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("DayStart(%v) = %v", at, got)
+	}
+}
+
 // The pending notes in NextQueued's order, each with the started run it
 // waits for; a folded note leaves them, with its merge call's outcome.
 func TestPendingAndFoldedNotes(t *testing.T) {

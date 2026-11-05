@@ -459,7 +459,7 @@ describe("the queue's entry", () => {
       me,
       "auth/me": me,
       projects: { projects: [] },
-      sources: { enabled: false, default_host: "", sources: [] },
+      sources: { enabled: false, default_host: "", max_calls: 0, sources: [] },
       queue: queue({
         current: { ...runItem(run()), since: iso(-1) },
         next: [note(812)],

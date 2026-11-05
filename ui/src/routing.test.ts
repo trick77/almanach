@@ -32,6 +32,8 @@ describe("routeFromPath", () => {
     expect(routeFromPath("/queue/x")).toEqual({ page: "projects" });
     expect(routeFromPath("/dependencies")).toEqual({ page: "deps" });
     expect(routeFromPath("/dependencies/x")).toEqual({ page: "projects" });
+    expect(routeFromPath("/costs")).toEqual({ page: "costs" });
+    expect(routeFromPath("/costs/x")).toEqual({ page: "projects" });
     expect(routeFromPath("/sources/~jan")).toEqual({
       page: "source",
       key: "~jan",

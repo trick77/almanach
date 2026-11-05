@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -161,7 +162,20 @@ type Baseline struct {
 	// Reconcile is how long after its last run a repository whose head
 	// moved is read again on its own; zero means the buttons only.
 	Reconcile time.Duration
+	// DailyBudgetNanoUSD is what the worker's own calls may cost in one
+	// UTC day before the runs wait for the next (BACKEND_DAILY_BUDGET_USD);
+	// zero means no ceiling. Notes are never held: a note is a small delta
+	// the merge already paid for in noergler's context.
+	DailyBudgetNanoUSD int64
 }
+
+// Floors on the intervals that drive spend: an hourly reconcile would
+// re-read every moved head twenty-four times a day, a sync of seconds
+// hammer the forge; zero stays what it means (off, on demand).
+const (
+	MinReconcile    = 24 * time.Hour
+	MinSyncInterval = time.Minute
+)
 
 // minBaselineCalls is a run with no subject: catalogue, overview, project.
 // The repository map's call is kept only from four (best effort below).
@@ -236,6 +250,24 @@ func Load(lookup func(string) string) (*App, error) {
 	if strings.ContainsAny(app.MetricsToken, " \t") {
 		r.Fail("BACKEND_METRICS_TOKEN: want no space or tab, a bearer cannot carry one")
 	}
+	// Money is an integer of nano-USD, never a float (AGENTS.md): the
+	// variable is a decimal string, read by hand.
+	if s := strings.TrimSpace(lookup("BACKEND_DAILY_BUDGET_USD")); s != "" {
+		nano, err := ParseUSD(s)
+		switch {
+		case !app.Sources.Enabled():
+			// No sources, no runs, nothing a budget could hold: a page
+			// promising held runs would lie.
+			r.Fail("BACKEND_DAILY_BUDGET_USD is read only with BACKEND_REPOS_DIR set (no run without the sources); remove it")
+		case err != nil:
+			r.Fail("BACKEND_DAILY_BUDGET_USD: %v, got %q", err, s)
+		case nano == 0:
+			// Zero would read as no ceiling (the unset default) to an
+			// operator who meant "spend nothing": refused, named.
+			r.Fail("BACKEND_DAILY_BUDGET_USD: must be positive; unset means no ceiling, got %q", s)
+		}
+		app.Baseline.DailyBudgetNanoUSD = nano
+	}
 	for _, old := range slices.Sorted(maps.Keys(renamed)) {
 		if strings.TrimSpace(lookup(old)) != "" {
 			r.Fail("%s was renamed to %s; rename it", old, renamed[old])
@@ -251,6 +283,9 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if app.Sources.SyncInterval < 0 {
 		r.Fail("BACKEND_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
+	}
+	if i := app.Sources.SyncInterval; i > 0 && i < MinSyncInterval {
+		r.Fail("BACKEND_SYNC_INTERVAL: at least %s, or 0 for on demand only, got %s", MinSyncInterval, i)
 	}
 	// Absolute once: git runs in the clone's folder and would resolve a
 	// relative path there, the listing and the startup check where the
@@ -280,6 +315,9 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if app.Baseline.Reconcile < 0 {
 		r.Fail("BACKEND_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
+	}
+	if i := app.Baseline.Reconcile; i > 0 && i < MinReconcile {
+		r.Fail("BACKEND_BASELINE_RECONCILE: at least %s (a paid read of every moved head), or 0 for the buttons only, got %s", MinReconcile, i)
 	}
 	if app.AuthMode == AuthOIDC {
 		app.OIDC = loadOIDC(r)
@@ -397,6 +435,35 @@ func positive(r *kitenv.Reader, name string, def int) int {
 		r.Fail("%s: must be a positive integer, got %d", name, v)
 	}
 	return v
+}
+
+// ParseUSD reads a dollar amount written as a decimal ("25", "12.50",
+// "0.001") into nano-USD, at most nine decimals, never through a float:
+// money is an integer here.
+func ParseUSD(s string) (int64, error) {
+	whole, frac, _ := strings.Cut(strings.TrimSpace(s), ".")
+	if whole == "" && frac == "" {
+		return 0, errors.New("a decimal amount of dollars")
+	}
+	if len(frac) > 9 {
+		return 0, errors.New("at most nine decimals")
+	}
+	for _, part := range []string{whole, frac} {
+		for _, c := range part {
+			if c < '0' || c > '9' {
+				return 0, errors.New("a decimal amount of dollars, digits and one point")
+			}
+		}
+	}
+	// Nine decimals: a million dollars is 1e15 nano, far under int64.
+	if len(whole) > 9 {
+		return 0, errors.New("too large")
+	}
+	var nano int64
+	for _, c := range whole + frac + strings.Repeat("0", 9-len(frac)) {
+		nano = nano*10 + int64(c-'0')
+	}
+	return nano, nil
 }
 
 // nonNegative is an int that may be 0: no statement diagrams at all.

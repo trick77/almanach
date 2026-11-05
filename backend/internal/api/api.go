@@ -57,6 +57,10 @@ type Store interface {
 	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
 	Dependencies(ctx context.Context, all bool) (store.Graph, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
+	// Costs is Almanach's own ledger by month and project, the costs page;
+	// Spent the calls since a time, the page's "today".
+	Costs(ctx context.Context, now time.Time) ([]store.CostRow, error)
+	Spent(ctx context.Context, since time.Time) (*int64, int, error)
 }
 
 // Waker is poked when a note was queued.
@@ -76,6 +80,9 @@ type Deps struct {
 	Queue *QueueDeps
 	// Metrics is /metrics; nil answers it 404.
 	Metrics *MetricsDeps
+	// DailyBudgetNanoUSD is BACKEND_DAILY_BUDGET_USD, 0 for none: the
+	// costs page shows it beside the day's spend.
+	DailyBudgetNanoUSD int64
 	// OIDC, Sessions and RedirectURL are the sign-in, set in oidc mode
 	// only; RedirectURL's origin is trusted for a change beside the
 	// request's own host.
@@ -104,6 +111,7 @@ func Register(s *httpapi.Server, d Deps) {
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
 	s.HandleFunc("GET /api/dependencies", d.dependencies)
+	s.HandleFunc("GET /api/costs", d.costs)
 	if d.Queue != nil {
 		s.HandleFunc("GET /api/queue", d.queue)
 		s.HandleFunc("GET /api/queue/count", d.queueCount)
@@ -845,25 +853,11 @@ func orNull(b json.RawMessage) json.RawMessage {
 	return b
 }
 
-// usd renders nano-USD as a 3-decimal string, never a float; "" when
-// unpriced (the field is then omitted).
+// usd renders nano-USD as a 3-decimal string (store.USD); "" when unpriced
+// (the field is then omitted).
 func usd(nano *int64) string {
 	if nano == nil {
 		return ""
 	}
-	n := *nano
-	sign := ""
-	if n < 0 {
-		sign, n = "-", -n
-	}
-	// Round half up to milli-USD.
-	milli := (n + 500_000) / 1_000_000
-	return sign + strconv.FormatInt(milli/1000, 10) + "." + leftPad(strconv.FormatInt(milli%1000, 10), 3)
-}
-
-func leftPad(s string, n int) string {
-	for len(s) < n {
-		s = "0" + s
-	}
-	return s
+	return store.USD(*nano)
 }

@@ -19,6 +19,39 @@ func minimal() map[string]string {
 	}
 }
 
+// The intervals that drive spend have floors: an hourly reconcile or a
+// sync of seconds is a fault, zero still means off or on demand.
+func TestIntervalFloors(t *testing.T) {
+	for name, c := range map[string]struct{ value, fault string }{
+		"BACKEND_BASELINE_RECONCILE": {"1h", "at least 24h0m0s"},
+		"BACKEND_SYNC_INTERVAL":      {"5s", "at least 1m0s"},
+	} {
+		env := minimal()
+		env[name] = c.value
+		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), name+": "+c.fault) {
+			t.Errorf("%s=%s: error = %v", name, c.value, err)
+		}
+		env[name] = "0"
+		if _, err := Load(lookup(env)); err != nil {
+			t.Errorf("%s=0: error = %v, want none", name, err)
+		}
+	}
+}
+
+// A dollar amount is read as nano-USD by hand, never through a float.
+func TestParseUSD(t *testing.T) {
+	for in, want := range map[string]int64{"25": 25_000_000_000, "12.50": 12_500_000_000, "0.001": 1_000_000, ".5": 500_000_000, "7.": 7_000_000_000, "0.000000001": 1} {
+		if got, err := ParseUSD(in); err != nil || got != want {
+			t.Errorf("ParseUSD(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", ".", "-1", "1e3", "1,5", "0.0000000001", "1234567890", "$5"} {
+		if got, err := ParseUSD(in); err == nil {
+			t.Errorf("ParseUSD(%q) = %d, want an error", in, got)
+		}
+	}
+}
+
 func TestLoadRequiredMissing(t *testing.T) {
 	_, err := Load(lookup(map[string]string{}))
 	if err == nil {
@@ -330,6 +363,26 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 	app, err = Load(lookup(env))
 	if err != nil || app.Baseline.CatalogueModel != "cheap" || app.Baseline.MaxCalls != 3 || app.Baseline.Reconcile != 0 {
 		t.Fatalf("overrides = %+v %v", app.Baseline, err)
+	}
+	// The budget: read with the sources on, a fault without them (no run
+	// to hold); zero would read as no ceiling to an operator who meant
+	// none at all.
+	env = minimal()
+	env["BACKEND_DAILY_BUDGET_USD"] = "12.5"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_DAILY_BUDGET_USD is read only with BACKEND_REPOS_DIR set") {
+		t.Errorf("budget without sources: error = %v", err)
+	}
+	env["BACKEND_REPOS_DIR"] = t.TempDir()
+	if app, err = Load(lookup(env)); err != nil || app.Baseline.DailyBudgetNanoUSD != 12_500_000_000 {
+		t.Fatalf("budget = %+v %v", app.Baseline, err)
+	}
+	env["BACKEND_DAILY_BUDGET_USD"] = "0.0"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_DAILY_BUDGET_USD: must be positive") {
+		t.Errorf("budget 0: error = %v", err)
+	}
+	env["BACKEND_DAILY_BUDGET_USD"] = "1e3"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_DAILY_BUDGET_USD: a decimal amount of dollars") {
+		t.Errorf("budget 1e3: error = %v", err)
 	}
 	for name, c := range map[string]struct{ value, fault string }{
 		"BACKEND_BASELINE_MAX_CALLS": {"2", "a run needs at least 3 calls"},

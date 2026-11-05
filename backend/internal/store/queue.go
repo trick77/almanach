@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/trick77/almanach/internal/redact"
@@ -294,6 +295,93 @@ func (s *Store) RunCosts(ctx context.Context, ids []int64) (map[int64]int64, err
 		}
 	}
 	return out, rows.Err()
+}
+
+// CostRow is one month of one project's own model calls, the merges (a
+// note's fold) apart from the runs (every baseline call): what they cost,
+// how many there were, and how many of them no one priced. Never summed
+// with note_calls, noergler's ledger.
+type CostRow struct {
+	// Month is YYYY-MM, UTC.
+	Month      string
+	ProjectKey string
+	Merges     CostSum
+	Runs       CostSum
+}
+
+// CostSum is calls and their cost; NanoUSD nil when none was priced.
+type CostSum struct {
+	Calls    int
+	Unpriced int
+	NanoUSD  *int64
+}
+
+// CostsMonths is how far back Costs looks: the ledger only grows, and the
+// page is read on every visit.
+const CostsMonths = 12
+
+// Costs is every project's calls by month over the last CostsMonths,
+// newest month first, then by key: the Kosten page. One query over the
+// ledger's tail (llm_calls_created_idx), grouped in SQL.
+func (s *Store) Costs(ctx context.Context, now time.Time) ([]CostRow, error) {
+	from := DayStart(now)
+	from = time.Date(from.Year(), from.Month()-CostsMonths+1, 1, 0, 0, 0, 0, time.UTC)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT substr(c.created_at, 1, 7), p.key, c.purpose = 'merge',
+		       COUNT(*), COUNT(*) - COUNT(c.cost_nano_usd), SUM(c.cost_nano_usd)
+		  FROM llm_calls c JOIN repos r ON r.id = c.repo_id JOIN projects p ON p.id = r.project_id
+		 WHERE c.created_at >= ?
+		 GROUP BY 1, 2, 3
+		 ORDER BY 1 DESC, 2, 3`, stamp(from))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []CostRow{}
+	for rows.Next() {
+		var month, key string
+		var merge bool
+		var sum CostSum
+		var nano sql.NullInt64
+		if err := rows.Scan(&month, &key, &merge, &sum.Calls, &sum.Unpriced, &nano); err != nil {
+			return nil, err
+		}
+		if nano.Valid {
+			sum.NanoUSD = &nano.Int64
+		}
+		if n := len(out); n == 0 || out[n-1].Month != month || out[n-1].ProjectKey != key {
+			out = append(out, CostRow{Month: month, ProjectKey: key})
+		}
+		row := &out[len(out)-1]
+		if merge {
+			row.Merges = sum
+		} else {
+			row.Runs = sum
+		}
+	}
+	return out, rows.Err()
+}
+
+// DayStart is the start of t's UTC day: the day a budget and the costs
+// page's "today" count by, one rule for both.
+func DayStart(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// USD renders nano-USD as a 3-decimal string, never through a float: the
+// amount is rounded half up to milli-USD on the integer.
+func USD(nano int64) string {
+	sign := ""
+	if nano < 0 {
+		sign, nano = "-", -nano
+	}
+	milli := (nano + 500_000) / 1_000_000
+	frac := strconv.FormatInt(milli%1000, 10)
+	for len(frac) < 3 {
+		frac = "0" + frac
+	}
+	return sign + strconv.FormatInt(milli/1000, 10) + "." + frac
 }
 
 // Spent is what Almanach's own model calls since a time cost, and how many

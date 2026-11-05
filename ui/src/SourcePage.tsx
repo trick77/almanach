@@ -124,6 +124,8 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const [removing, setRemoving] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deactivating, setDeactivating] = useState<string | null>(null);
+  // A full run is paid for whole: asked under its row before it is queued.
+  const [fullOf, setFullOf] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [rowError, setRowError] = useState<RowError | null>(null);
   const isStatic = data.kind === "static";
@@ -155,6 +157,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   if (gone(removing)) setRemoving(null);
   if (gone(renaming)) setRenaming(null);
   if (gone(deactivating)) setDeactivating(null);
+  if (gone(fullOf)) setFullOf(null);
   if (rowError !== null && gone(rowError.slug)) setRowError(null);
 
   // Every action clears both alerts, the page's and a row's: a later success
@@ -175,8 +178,17 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
     }
   };
   const act = (fn: () => Promise<unknown>) => run(fn, setError);
-  const rowAct = (slug: string, fn: () => Promise<unknown>) =>
-    run(fn, (message) => setRowError({ slug, message }));
+  // busyRow is the repository whose action is out: its row's buttons hold,
+  // so a confirm's request and a button's never race.
+  const [busyRow, setBusyRow] = useState<string | null>(null);
+  const rowAct = async (slug: string, fn: () => Promise<unknown>) => {
+    setBusyRow(slug);
+    try {
+      await run(fn, (message) => setRowError({ slug, message }));
+    } finally {
+      setBusyRow(null);
+    }
+  };
   const path = `sources/${encodeURIComponent(data.project_key)}`;
   const repoPath = (slug: string) =>
     `${path}/repos/${encodeURIComponent(slug)}`;
@@ -418,22 +430,36 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
             rowAct(slug, () => send("POST", `${repoPath(slug)}/sync`))
           }
           onDescribe={(slug, mode) =>
-            rowAct(slug, () =>
-              send("POST", `${repoPath(slug)}/describe`, { mode }),
-            )
+            rowAct(slug, async () => {
+              await send("POST", `${repoPath(slug)}/describe`, { mode });
+              // The confirm closes on success alone: a refused request
+              // keeps it, with the error under the row.
+              setFullOf((cur) => (cur === slug ? null : cur));
+            })
           }
           removing={removing}
           onAskRemove={(slug) => {
             setRowError(null);
             setRenaming(null);
             setDeactivating(null);
+            setFullOf(null);
             setRemoving(slug);
           }}
+          fullOf={fullOf}
+          onAskFull={(slug) => {
+            setRowError(null);
+            setRenaming(null);
+            setDeactivating(null);
+            setRemoving(null);
+            setFullOf(slug);
+          }}
+          busy={busyRow}
           deactivating={deactivating}
           onAskDeactivate={(slug) => {
             setRowError(null);
             setRenaming(null);
             setRemoving(null);
+            setFullOf(null);
             setDeactivating(slug);
           }}
           onDeactivate={(slug) =>
@@ -457,6 +483,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
             setRowError(null);
             setRemoving(null);
             setDeactivating(null);
+            setFullOf(null);
             setRenaming(slug);
           }}
           onRenamed={() => {
@@ -485,6 +512,9 @@ function ReposTable({
   renaming,
   onAskRename,
   onRenamed,
+  fullOf,
+  onAskFull,
+  busy,
 }: {
   data: SourceDetail;
   rowError: RowError | null;
@@ -500,6 +530,10 @@ function ReposTable({
   renaming: string | null;
   onAskRename: (slug: string | null) => void;
   onRenamed: () => void;
+  fullOf: string | null;
+  onAskFull: (slug: string | null) => void;
+  /** The repository whose action is out, its row's buttons held. */
+  busy: string | null;
 }) {
   // What a row asks or reports opens under that row: below the table it
   // lands out of sight on a long listing, and the click looks dead.
@@ -534,6 +568,23 @@ function ReposTable({
           onCancel={() => onAskDeactivate(null)}
         >
           {S.sources.confirmDeactivateRepo(r.slug)}
+        </RowConfirm>
+      ) : fullOf === r.slug ? (
+        <RowConfirm
+          key="full"
+          yes={S.baseline.yesFull}
+          onYes={() => onDescribe(r.slug, "full")}
+          onCancel={() => onAskFull(null)}
+        >
+          {S.baseline.confirmFull(
+            r.slug,
+            data.max_calls,
+            // The last full run's price, never a reconcile's, which read
+            // only what changed.
+            r.baseline?.mode === "full" && r.baseline.cost_usd
+              ? money(r.baseline.cost_usd)
+              : "",
+          )}
         </RowConfirm>
       ) : null;
     if (error === "" && panel === null) return null;
@@ -581,6 +632,8 @@ function ReposTable({
                 under={under(r)}
                 onSync={() => onSync(r.slug)}
                 onDescribe={(mode) => onDescribe(r.slug, mode)}
+                onAskFull={() => onAskFull(r.slug)}
+                held={busy === r.slug}
                 onAskRemove={() => onAskRemove(r.slug)}
                 onAskRename={() => onAskRename(r.slug)}
                 onAskDeactivate={() => onAskDeactivate(r.slug)}
@@ -642,6 +695,8 @@ function RepoRow({
   under,
   onSync,
   onDescribe,
+  onAskFull,
+  held,
   onAskRemove,
   onAskRename,
   onAskDeactivate,
@@ -653,6 +708,11 @@ function RepoRow({
   under: ReactNode;
   onSync: () => void;
   onDescribe: (mode: "reconcile" | "full") => Promise<void>;
+  /** A full run is asked for under the row (RowConfirm), never sent on
+   *  the click: it is paid for whole. */
+  onAskFull: () => void;
+  /** An action of the row is out (a confirm's): its run buttons hold. */
+  held: boolean;
   onAskRemove: () => void;
   onAskRename: () => void;
   onAskDeactivate: () => void;
@@ -668,7 +728,7 @@ function RepoRow({
   const renamable = r.origin === "manual";
   const documented = r.baseline !== null && r.baseline.documented_commit !== "";
   const [sending, setSending] = useState(false);
-  const noRun = sending || runOpen(r.baseline) || r.head_commit === "";
+  const noRun = sending || held || runOpen(r.baseline) || r.head_commit === "";
   // A reconcile of a head already documented reads nothing, unless the
   // last run skipped parts: those it reads again.
   const upToDate =
@@ -751,7 +811,7 @@ function RepoRow({
                 type="button"
                 className={rowBtn}
                 disabled={noRun}
-                onClick={() => describe("full")}
+                onClick={onAskFull}
               >
                 {S.baseline.actions.full}
               </button>

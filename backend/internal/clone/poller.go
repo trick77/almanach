@@ -716,17 +716,12 @@ func leftParts(r store.BaselineRun) bool {
 }
 
 // retryWait is how long a failed run waits before it is queued again:
-// long enough for a gateway outage, short of the monthly reconcile.
+// long enough for a gateway outage, never past the reconcile interval,
+// whose floor it is (config.MinReconcile).
 const retryWait = 24 * time.Hour
 
-// retryAfter is retryWait, or the reconcile interval when that is shorter:
-// a failure must not slow the cadence it interrupted.
-func (p *Poller) retryAfter() time.Duration {
-	if r := p.Describe.Reconcile; r > 0 && r < retryWait {
-		return r
-	}
-	return retryWait
-}
+// retryAfter is retryWait: the reconcile interval is never shorter.
+func (p *Poller) retryAfter() time.Duration { return retryWait }
 
 // RetryAt is when the poller queues a repository's failed run again at
 // the earliest (the first cycle after it), given when it finished and how

@@ -77,6 +77,7 @@ export function SourcesPage() {
             {adding && (
               <NewSourceForm
                 defaultHost={data.default_host}
+                maxCalls={data.max_calls}
                 onDone={(created) => {
                   setAdding(false);
                   reload();
@@ -218,10 +219,14 @@ function authFor(kind: SourceKind): TokenAuth {
  *  BACKEND_BITBUCKET_HOST/projects/; host and key are read off it. */
 function NewSourceForm({
   defaultHost,
+  maxCalls,
   onDone,
   onCancel,
 }: {
   defaultHost: string;
+  /** What a repository's first run may cost in calls, said before the
+   *  click: a source of many repositories queues as many full runs. */
+  maxCalls: number;
   onDone: (created: SourceDetail) => void;
   onCancel: () => void;
 }) {
@@ -428,7 +433,8 @@ function NewSourceForm({
           </label>
         )}
       </div>
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <p className="mt-4 text-[12.5px] text-muted">{f.costHint(maxCalls)}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
           className={btnPrimary}

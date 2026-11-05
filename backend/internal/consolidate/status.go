@@ -34,6 +34,9 @@ const (
 	WaitClone = "clone_busy"
 	// WaitPlace is a merge commit git could not place yet.
 	WaitPlace = "placing"
+	// WaitBudget is the day's budget spent: every run waits for the next
+	// UTC day, the notes go on.
+	WaitBudget = "budget"
 )
 
 // Kinds of work in flight.
@@ -107,14 +110,16 @@ func (w *Worker) clearBusy() {
 }
 
 // setWait marks a run's step as waiting for reason; the first time of the
-// same wait stays.
-func (w *Worker) setWait(runID int64, reason string) {
+// same wait stays. Reports whether the wait is new: a line is logged once,
+// not every lap of the poll.
+func (w *Worker) setWait(runID int64, reason string) bool {
 	w.smu.Lock()
 	defer w.smu.Unlock()
 	if w.waiting != nil && w.waiting.RunID == runID && w.waiting.Reason == reason {
-		return
+		return false
 	}
 	w.waiting = &Wait{RunID: runID, Reason: reason, Since: w.now().UTC()}
+	return true
 }
 
 func (w *Worker) clearWait() {

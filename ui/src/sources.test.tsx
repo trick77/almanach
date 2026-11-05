@@ -84,6 +84,7 @@ const synced = new Date(2026, 9, 31, 9, 5).toISOString();
 const sources: Sources = {
   enabled: true,
   default_host: "",
+  max_calls: 16,
   sources: [
     {
       project_key: "SHOP",
@@ -128,6 +129,7 @@ const sources: Sources = {
 
 const detail: SourceDetail = {
   project_key: "werkzeuge",
+  max_calls: 16,
   kind: "static",
   host: "",
   has_token: false,
@@ -217,7 +219,9 @@ describe("SourcesPage", () => {
   });
 
   it("says when the feature is off", async () => {
-    serve({ sources: { enabled: false, default_host: "", sources: [] } });
+    serve({
+      sources: { enabled: false, default_host: "", max_calls: 0, sources: [] },
+    });
     render(<SourcesPage />);
     expect(await screen.findByText(/BACKEND_REPOS_DIR/)).toBeInTheDocument();
     expect(screen.queryByText("Neue Quelle")).not.toBeInTheDocument();
@@ -422,7 +426,16 @@ describe("SourcePage baseline", () => {
     await waitFor(() =>
       expect(screen.getByText("Neu beschreiben")).toBeEnabled(),
     );
+    // A full run is paid for whole: asked first, with what it may cost
+    // and what the last run cost.
     fireEvent.click(screen.getByText("Neu beschreiben"));
+    expect(writes).toHaveLength(1);
+    expect(
+      screen.getByText(
+        /acme-cli neu beschreiben\? .*bis zu 16 Modellaufrufe; der letzte Lauf kostete \$2\.42\./,
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText(S.baseline.yesFull));
     await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes).toEqual([
       {
@@ -997,12 +1010,13 @@ describe("App with sources", () => {
       "Abhängigkeiten",
       "Quellen",
       "Warteschlange",
+      "Kosten",
     ]);
     unmount();
     vi.unstubAllGlobals();
     serve({
       me,
-      sources: { enabled: false, default_host: "", sources: [] },
+      sources: { enabled: false, default_host: "", max_calls: 0, sources: [] },
       projects: { projects: [] },
     });
     render(<App />);
@@ -1011,6 +1025,6 @@ describe("App with sources", () => {
     await waitFor(() =>
       expect(screen.queryByText("Quellen")).not.toBeInTheDocument(),
     );
-    expect(entries()).toEqual(["Projekte", "Warteschlange"]);
+    expect(entries()).toEqual(["Projekte", "Warteschlange", "Kosten"]);
   });
 });

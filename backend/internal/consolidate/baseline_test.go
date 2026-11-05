@@ -535,6 +535,59 @@ func (x world) plan(t *testing.T) runPlan {
 	return p
 }
 
+// The day's budget spent, a queued run waits for the next UTC day, the
+// queue page told why, a started one goes on to its end; a note is folded
+// all the same; a spend the store cannot read pauses the drain.
+func TestRun_BudgetHoldsTheRuns(t *testing.T) {
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.w.base.Limits.DailyBudgetNanoUSD = 1_000_000_000
+	x.st.callAt = mergedAt.Add(-time.Hour)
+	x.st.calls = []store.LLMCall{{CostNanoUSD: nano(600_000_000)}, {CostNanoUSD: nano(400_000_000)}}
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunQueued || len(x.models.prompts) != 0 {
+		t.Fatalf("over budget: run = %+v, calls %d; want untouched", r, len(x.models.prompts))
+	}
+	if s := x.w.Status(); s.Wait == nil || s.Wait.Reason != WaitBudget || s.Wait.RunID != x.run().ID {
+		t.Errorf("Status = %+v, want the run waiting for the budget", s.Wait)
+	}
+	// A run already started goes on: its repository's notes wait for it,
+	// and a budget that held it would hold them for the day.
+	x.st.runs[0].State, x.st.runs[0].Commit = store.RunCataloguing, head
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	if next := x.w.stepRun(context.Background(), x.run()); !next || x.run().State == store.RunCataloguing || len(x.models.prompts) != 1 {
+		t.Errorf("started run under a spent budget: next %v run %+v calls %d, want the step taken", next, x.run(), len(x.models.prompts))
+	}
+	x.st.runs[0].State, x.st.runs[0].Commit = store.RunQueued, ""
+	x.models.prompts = nil
+	// A note is folded whatever the budget says.
+	x.st.queue = []store.QueuedNote{queued("PLAT/files#42")}
+	x.w.llm = &fakeMerger{result: okResult(nil, nil)}
+	x.w.drain(context.Background())
+	if len(x.st.marked) != 1 {
+		t.Errorf("marked = %v, want the note folded under a spent budget", x.st.marked)
+	}
+	// The calls of yesterday count nothing: the next day the run steps.
+	x.w.now = func() time.Time { return mergedAt.Add(24 * time.Hour) }
+	if next := x.w.stepRun(context.Background(), x.run()); !next || x.run().State != store.RunCataloguing {
+		t.Errorf("next day: next %v run = %+v, want started", next, x.run())
+	}
+	if s := x.w.Status(); s.Wait != nil {
+		t.Errorf("Status after the step = %+v, want no wait", s.Wait)
+	}
+	// A spend the store cannot read pauses the drain, no call made.
+	y := newWorld(t, 16)
+	y.queue(store.RunFull, "")
+	y.w.base.Limits.DailyBudgetNanoUSD = 1
+	y.st.spentErr = errors.New("read-only")
+	y.w.drain(context.Background())
+	if r := y.run(); r.State != store.RunQueued || len(y.models.prompts) != 0 {
+		t.Errorf("spend read failed: run = %+v, calls %d", r, len(y.models.prompts))
+	}
+}
+
+func nano(n int64) *int64 { return &n }
+
 // A full run: the catalogue, the overview from the docs, a step per
 // subject, the project; every revision a baseline's, every statement it
 // wrote checked against the pinned commit, every call in the ledger.

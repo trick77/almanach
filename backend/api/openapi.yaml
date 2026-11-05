@@ -438,6 +438,27 @@ paths:
         "401":
           $ref: "#/components/responses/SignInRequired"
 
+  /api/costs:
+    get:
+      tags: [wiki]
+      summary: What Almanach's own model calls cost, by month and project
+      description: >-
+        Almanach's ledger (`llm_calls`) alone, never noergler's figures: the
+        merges (a note's fold) apart from the runs (every baseline call), by
+        UTC month and project, newest month first, with the calls no one
+        priced counted apart. Beside it what the UTC day's calls cost so far
+        and the daily budget (`BACKEND_DAILY_BUDGET_USD`), when one is set.
+      operationId: getCosts
+      responses:
+        "200":
+          description: The ledger by month.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Costs"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+
   /api/sources:
     get:
       tags: [sources]
@@ -1042,15 +1063,80 @@ components:
           type: string
           description: Where the browser goes next, `/?signed_out=1`.
 
+    Costs:
+      type: object
+      required: [months, today]
+      properties:
+        months:
+          type: array
+          description: The last twelve UTC months, newest first; a month without a call is absent.
+          items:
+            type: object
+            required: [month, calls, projects]
+            properties:
+              month:
+                type: string
+                description: YYYY-MM, UTC.
+              cost_usd:
+                type: string
+                description: 3 decimals; omitted when no call of the month was priced.
+              calls:
+                type: integer
+              projects:
+                type: array
+                items:
+                  type: object
+                  required: [project, calls, merges, runs]
+                  properties:
+                    project:
+                      type: string
+                    cost_usd:
+                      type: string
+                    calls:
+                      type: integer
+                    merges:
+                      $ref: "#/components/schemas/CostSum"
+                    runs:
+                      $ref: "#/components/schemas/CostSum"
+        budget_usd:
+          type: string
+          description: BACKEND_DAILY_BUDGET_USD, 3 decimals; omitted when none is set.
+        today:
+          type: object
+          description: What the calls of the UTC day cost so far.
+          required: [calls]
+          properties:
+            cost_usd:
+              type: string
+            calls:
+              type: integer
+
+    CostSum:
+      type: object
+      description: Calls of one kind and what they cost.
+      required: [calls, unpriced]
+      properties:
+        calls:
+          type: integer
+        unpriced:
+          type: integer
+          description: Calls no one priced; their cost is unknown, not zero.
+        cost_usd:
+          type: string
+          description: 3 decimals; omitted when none was priced.
+
     Sources:
       type: object
-      required: [enabled, default_host, sources]
+      required: [enabled, default_host, max_calls, sources]
       properties:
         enabled:
           type: boolean
         default_host:
           type: string
           description: BACKEND_BITBUCKET_HOST, the host a new Bitbucket source starts with; empty when unset or the feature is off.
+        max_calls:
+          type: integer
+          description: BACKEND_BASELINE_MAX_CALLS, the model calls one baseline run may make; every repository of a new source gets a full run. 0 with the feature off.
         sources:
           type: array
           items:
@@ -1109,8 +1195,11 @@ components:
 
     SourceDetail:
       type: object
-      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos]
+      required: [project_key, kind, host, has_token, token_auth, token_user, dir, disk_bytes, last_listed_at, last_error, created_at, updated_at, repos, max_calls]
       properties:
+        max_calls:
+          type: integer
+          description: BACKEND_BASELINE_MAX_CALLS, the model calls one run may make; what a full run may cost.
         project_key:
           type: string
         kind:
@@ -1287,8 +1376,8 @@ components:
           properties:
             reason:
               type: string
-              enum: [timeout, rate_limit, key_refused, unavailable, busy, clone_busy, placing]
-              description: A hold of the whole worker (the first five, `until` set) or a run step that waits (`since` set).
+              enum: [timeout, rate_limit, key_refused, unavailable, busy, clone_busy, placing, budget]
+              description: A hold of the whole worker (the first five, `until` set) or a run step that waits (`since` set; `budget` is the day's budget spent, every run waits for the next UTC day).
             until:
               type: string
               format: date-time

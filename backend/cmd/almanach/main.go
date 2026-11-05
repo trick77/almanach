@@ -303,7 +303,7 @@ func serve(log *slog.Logger) error {
 		poller.Start(context.WithoutCancel(ctx))
 		// Removals go through the poller, under its disk lock.
 		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: poller, Key: key, DefaultHost: app.Sources.BitbucketHost,
-			Reconcile: app.Baseline.Reconcile}
+			Reconcile: app.Baseline.Reconcile, MaxCalls: app.Baseline.MaxCalls}
 	}
 	worker.Start(context.WithoutCancel(ctx))
 
@@ -318,7 +318,8 @@ func serve(log *slog.Logger) error {
 
 	srv := httpapi.New(db.Ping, log)
 	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
-		Queue: queue, Metrics: metrics, OIDC: oidcSvc, Sessions: sessions, RedirectURL: app.OIDC.RedirectURL, Log: log})
+		Queue: queue, Metrics: metrics, DailyBudgetNanoUSD: app.Baseline.DailyBudgetNanoUSD, OIDC: oidcSvc, Sessions: sessions,
+		RedirectURL: app.OIDC.RedirectURL, Log: log})
 
 	addr := app.Addr
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))
