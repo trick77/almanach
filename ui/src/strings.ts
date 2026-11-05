@@ -720,6 +720,7 @@ export const S = {
       rate_limit: "Modell ausgelastet",
       key_refused: "Schlüssel abgelehnt",
       busy: "Datenbank belegt",
+      write: "Datenbank nimmt keine Schreibzugriffe an (Platte voll?)",
       clone_busy: "Clone belegt",
       placing: "Git ordnet einen Merge-Commit ein",
       budget: "Tagesbudget ausgeschöpft, Läufe warten bis morgen (UTC)",

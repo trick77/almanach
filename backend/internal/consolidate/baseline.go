@@ -284,12 +284,16 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 		w.log.WarnContext(ctx, "baseline: run progress not saved, drain paused", logging.Err(err))
 		w.saveFailed = err
 		// A busy database is held off like a gateway: no next drain at
-		// once, into the same wait.
+		// once, into the same wait. Any other refusal holds longer each
+		// time: the step before the save was a paid call.
 		if store.IsBusy(err) {
 			w.hold(ctx, HoldBusy, 0)
+		} else {
+			w.holdWrite(ctx, err)
 		}
 		return errStop
 	}
+	w.writeOK()
 	if !ok {
 		w.log.InfoContext(ctx, "baseline: run gone (repository removed) or over, dropped")
 	}
@@ -301,9 +305,11 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 // gateway failure: the worker holds, the attempt is counted, and the step
 // is taken again after the hold (nothing of it was written); past
 // maxFoldAttempts in a row it fails the run, as it stood before the step
-// (prev). Any other failure pauses the drain as before.
+// (prev). Any other failure pauses the drain, longer each time (holdWrite):
+// the step's call was paid, and the next poll would pay it again.
 func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.BaselineRun, name string, err error) error {
 	if !store.IsBusy(err) {
+		w.holdWrite(ctx, err)
 		return errStop
 	}
 	w.hold(ctx, HoldBusy, 0)
@@ -322,8 +328,12 @@ func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.
 	return errStop
 }
 
-// stepWritten forgets the busy writes once a step's write got through.
-func (w *Worker) stepWritten() { w.busyRun, w.busyWrites = 0, 0 }
+// stepWritten forgets the busy writes, and the write hold's backoff, once
+// a step's write got through.
+func (w *Worker) stepWritten() {
+	w.busyRun, w.busyWrites = 0, 0
+	w.writeOK()
+}
 
 // failRun ends a run with its reason on the row.
 func (w *Worker) failRun(ctx context.Context, r store.BaselineRun, reason string) {
@@ -410,7 +420,9 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 		BaselineRunID: &runID, Step: step, Outcome: res.Outcome.String(), Model: res.Cost.Model, InputTokens: res.Cost.InputTokens,
 		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
 	}); err != nil {
-		w.log.WarnContext(ctx, "baseline: call row failed", logging.Err(err))
+		// The first write after the paid call: refused, the step goes on
+		// under the write hold.
+		w.holdWrite(ctx, fmt.Errorf("call row: %w", err))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s call %s (%s)", purpose, res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res); gateway {

@@ -39,8 +39,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Merge = patch. Repo revision written = note done (refold dups).
   Code drop: files gone at head, never merge tree. Call failure: note failed, never consolidated.
-  `gatewayClass`: hold, note kept. Both ≤ `maxFoldAttempts`: none blocks queue forever. Failed mark
-  pauses drain (else one paid call per lap).
+  `gatewayClass`: hold, note kept. Refused write: hold, note kept, retry counts once before its
+  call (a pause repaid the call each poll). All ≤ `maxFoldAttempts`: none blocks queue forever.
 - One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
   schema, no in-call retry.
 - Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.

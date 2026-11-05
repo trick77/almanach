@@ -204,7 +204,8 @@ repoint. The note is then marked consolidated, whatever the patches
 changed. A failure specific to the call is different: a 4xx (the note too
 large for the context, a rejected format), an answer of the wrong shape
 or cut by the output limit, a patch that leaves a first page without a
-summary, a store failure other than a busy database. Such a note leaves
+summary, a store failure other than a busy database or a file that
+refuses the write (below). Such a note leaves
 the queue as failed (`fold_failed_at`, with its reason, redacted, then cut
 to 300 runes), its attempt counted, never
 consolidated: the next run of its repository that ends done puts it back
@@ -217,7 +218,7 @@ The repository's patch is applied first, and refused it fails the note
 before anything is written; the project's patch refused, busy or
 panicking after the repository's revision was written costs only itself,
 the note folded, or the retry would fold it into the repository page
-twice (a busy database holds the worker all the same). With no
+twice (a busy database or a refused write holds the worker all the same). With no
 repository revision written, the project's patch refused fails the note. Past eight attempts in all
 it is given up and stays failed, so one note that always fails costs eight
 calls, not one a run. The queue page lists the failed notes with their
@@ -237,8 +238,24 @@ gateway always fails cannot hold the queue forever and what its pull
 request taught is not thrown away for a gateway's bad day. A timed-out call may have been billed at the
 gateway, so a gateway consistently slower than the call cap costs up to
 eight merges per note before giving up; the ledger shows them. If the mark
-itself fails (the database refusing writes), the drain pauses until the
-next wake or poll rather than paying for the same fold again. A shutdown
+itself fails for a reason that is not the database's lock (a full disk, a
+read-only file), the worker holds like after a gateway failure, thirty
+seconds doubling to ten minutes, with a backoff of its own that a write
+getting through resets: the drain once paused until the next poll, thirty
+seconds on, and paid the same fold again, without end. A revision whose
+file refuses it (full, read-only, gone) so keeps its note queued, neither
+failed nor consolidated: its rewrite was once thrown away and the note
+marked folded. Its retry first counts the attempt, a write of its own:
+refused, the worker holds again and pays nothing; a failure of the call
+after it counts no second attempt; past eight the note is given up as
+failed. A run step's refused write counts the same, and a run's retry
+first saves its progress as it stands. A revision that fails for its
+content (a constraint, a row that does not decode) would fail at every
+retry: its note fails as above, and a run step's write that fails so fails
+the run. The worker asks the room on the database's disk before every item
+it found (64 MB free at least), so a full disk is found by a syscall and
+not by a paid call; `/readyz` asks the same, since SQLite answers a ping
+from a full disk. A shutdown
 lets the fold in flight finish, up to a grace of the call timeout plus
 fifteen seconds for its writes, before it is cut off.
 
@@ -1214,7 +1231,9 @@ the epoch: stored pages change as before.
   and refilled from the forge, the database cannot, and a backup is its
   folder. A local disk on one node (ReadWriteOnce), never a shared
   filesystem: SQLite in WAL needs POSIX locks of one host. One replica.
-- `/healthz` is liveness, `/readyz` asks the database. Both answer loopback
+- `/healthz` is liveness, `/readyz` asks the database and the room on its
+  disk (64 MB free at least: SQLite answers a ping from a full disk, and
+  every write after a paid call then fails). Both answer loopback
   callers only, so probes are `exec` probes against the binary's
   `-healthcheck` and `-readycheck`.
 - Startup runs every check (database, team keys, model profile, the
@@ -1718,8 +1737,14 @@ things a change must not undo by accident.
   done, or a day after it failed, while under eight attempts; the
   repository's patch refused fails the note before any write, the
   project's refused after the repository's was written costs only itself.
-- A mark or a defer the store refuses pauses the drain until the next wake
-  or poll rather than paying for the same fold again.
+- A mark, a defer or a run's save the store refuses pauses the drain and
+  holds the worker (`busy` for its lock, else `write`: thirty seconds
+  doubling to ten minutes, reset by a write that gets through) rather than
+  paying for the same fold or step again at the next poll. A page or step
+  write is held so only when the file refuses it (`store.IsRefused`): the
+  note stays queued, neither failed nor consolidated, and its retry counts
+  the attempt before its call, once; one that fails for its content fails
+  the note or the run.
 - Every model call leaves an `llm_calls` row, whatever its outcome, with
   the tokens and the cost: on the gateway route what the gateway charged,
   on the direct route llmwire's list rate for the model (a comparable

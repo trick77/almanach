@@ -1233,6 +1233,12 @@ func TestRun_Failures(t *testing.T) {
 	if r := v.run(); r.State != store.RunQueued {
 		t.Fatalf("store down: %+v, want the run left as it was", r)
 	}
+	// A save the store refuses holds the worker like a gateway failure,
+	// with the write hold's own backoff: the next poll would pay the step
+	// again.
+	if s := v.w.Status(); !v.w.holding() || s.HoldCause != HoldWrite || v.w.writeBackoff != backoffMin {
+		t.Errorf("store down: holding %v cause %q backoff %s, want a write hold of %s", v.w.holding(), s.HoldCause, v.w.writeBackoff, backoffMin)
+	}
 }
 
 // A clone the poller holds defers the step without failing the run; the

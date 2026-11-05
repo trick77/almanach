@@ -4,7 +4,7 @@
 //	almanach migrate      apply pending database migrations and exit
 //	almanach version      print the version and exit
 //	almanach -healthcheck probe /healthz, exit 0 on a 2xx (liveness: the container healthcheck)
-//	almanach -readycheck  probe /readyz, exit 0 on a 2xx (readiness: the database answers)
+//	almanach -readycheck  probe /readyz, exit 0 on a 2xx (readiness: the database answers, its disk has room)
 //
 // Both probes run inside the container: kit's /healthz and /readyz answer a
 // loopback caller only and 404 anyone else, so an orchestrator's HTTP probe
@@ -284,7 +284,11 @@ func serve(log *slog.Logger) error {
 	// server stops first, then Stop lets the fold in flight finish (a paid
 	// call and its writes) and only past the grace cuts it off, before the
 	// database closes under it.
-	worker := consolidate.New(db, llm, app.Limits, log)
+	// The room on the store's disk, asked by the worker before every item:
+	// a full disk is found by a syscall, not by a paid call whose write
+	// then fails.
+	diskFree := httpapi.DiskFree(filepath.Dir(app.DBPath), httpapi.MinFreeBytes)
+	worker := consolidate.New(db, llm, app.Limits, log).WithDiskCheck(func() error { return diskFree(context.Background()) })
 
 	// The poller too runs past the signal: the server drains first, then
 	// Stop cuts the clone in flight (the next cycle redoes it), before the
@@ -317,7 +321,9 @@ func serve(log *slog.Logger) error {
 		metrics.Sync = poller
 	}
 
-	srv := httpapi.New(db.Ping, log)
+	// Readiness: the database, then the room on its disk: SQLite answers a
+	// ping from a full disk, and every write after a paid call then fails.
+	srv := httpapi.New(db.Ping, log, httpx.Check{Name: "disk", Run: diskFree})
 	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
 		Queue: queue, Metrics: metrics, DailyBudgetNanoUSD: app.Baseline.DailyBudgetNanoUSD, OIDC: oidcSvc, Sessions: sessions,
 		RedirectURL: app.OIDC.RedirectURL, Log: log})

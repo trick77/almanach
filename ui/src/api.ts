@@ -458,6 +458,7 @@ export type WaitReason =
   | "key_refused"
   | "unavailable"
   | "busy"
+  | "write"
   | "clone_busy"
   | "placing"
   | "budget";
