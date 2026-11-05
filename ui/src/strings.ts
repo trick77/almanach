@@ -131,7 +131,8 @@ export const S = {
     // the drawing, a boundary (async or optional), dashed here too.
     way: { out: "→", in: "←", both: "↔" },
     dashedWay: { out: "⇢", in: "⇠", both: "⇠⇢" },
-    // Said to a screen reader when a box lights its connections.
+    // Said to a screen reader when a box lights its connections, and shown
+    // in the line under the map, each way whole.
     connections: (name: string, to: string[]) =>
       to.length === 0
         ? `${name}: keine Verbindungen`

@@ -801,10 +801,23 @@ describe("ProjectPage", () => {
     expect(figure.querySelector("[aria-live]")!.textContent).toBe(
       "pay-api: verbunden mit Browser (← HTTP), PostgreSQL (→ DB), pay-gone (⇠ event)",
     );
+    // An eye reads the ways whole in the line under the map, a legend on
+    // a node's border cut to its width; the legend is said once, there.
+    const line = within(figure)
+      .getAllByText(/^pay-api: verbunden mit/)
+      .find((p) => !p.hasAttribute("aria-live"))!;
+    expect(line).toHaveAttribute("aria-hidden", "true");
+    expect(line.textContent).toContain("PostgreSQL (→ DB)");
+    const legend = within(node("PostgreSQL") as HTMLElement).getByText("→ DB");
+    expect(legend).toHaveAttribute("aria-hidden", "true");
+    expect(legend.className).toContain("absolute");
     fireEvent.mouseLeave(api);
     expect(node("PostgreSQL").textContent).toBe("PostgreSQL");
     expect(node("PostgreSQL").className).not.toContain("opacity-40");
     expect(figure.querySelector("[aria-live]")!.textContent).toBe("");
+    expect(
+      within(figure).getByText(/^Zeigen, fokussieren/),
+    ).not.toHaveAttribute("aria-hidden");
 
     // A node without a page is a button: the keyboard reaches it, and a
     // pointer leaving another node does not put out what focus lit.
