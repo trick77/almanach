@@ -182,7 +182,7 @@ export function CompactMap({
                 className={
                   boxes
                     ? "grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-2.5"
-                    : "flex flex-wrap gap-1.5"
+                    : "flex flex-wrap gap-x-1.5 gap-y-3"
                 }
               >
                 {b.ids.map((id) => (
@@ -299,26 +299,40 @@ const Node = memo(function Node({
 }) {
   const described = useId();
   const cls =
-    "border bg-bg text-left transition-[opacity,border-color] duration-100 hover:border-accent-strong focus-visible:outline-2 focus-visible:outline-accent-strong " +
+    "relative border bg-bg text-left transition-[opacity,border-color] duration-100 hover:border-accent-strong focus-visible:outline-2 focus-visible:outline-accent-strong " +
     (box
       ? "block rounded-ui-sm px-3 py-2 "
       : "inline-flex items-baseline gap-1.5 rounded-full px-2.5 py-[3px] text-[12.5px] text-ink-dim " +
         (to === null ? "" : "font-mono ")) +
     tone[state];
+  // The way sits on the node's top border, a legend cut to the node's
+  // width: it takes no room. Written into the node it grew it (a long way
+  // wrapped under a long slug), the rows below moved, and a box pointed at
+  // near its top slid from under the pointer, put its light out, slid back
+  // and lit again, flickering until the pointer moved. The light changes
+  // colours, never a size. The full way is said to a screen reader (said).
   const wayMark = way && way.text !== "" && (
-    <span className="shrink-0 font-sans text-[11.5px] text-ochre">
-      {way.text}
+    <span
+      aria-hidden="true"
+      className={
+        "pointer-events-none absolute flex " +
+        (box ? "-top-[7px] right-2 left-2" : "-top-[10px] right-1 left-1")
+      }
+    >
+      <span
+        className="min-w-0 truncate bg-panel px-1 font-sans text-[11px] leading-3 text-ochre"
+        data-way
+      >
+        {way.text}
+      </span>
     </span>
   );
   const body = box ? (
     <>
-      {/* The way wraps under a long slug rather than cut it. */}
-      <span className="flex flex-wrap items-baseline gap-x-2">
-        <span className="max-w-full min-w-0 truncate font-mono text-[13px] text-ink">
-          {label}
-        </span>
-        {wayMark}
+      <span className="block truncate font-mono text-[13px] text-ink">
+        {label}
       </span>
+      {wayMark}
       {teaser.length > 0 && (
         <span
           id={described}
