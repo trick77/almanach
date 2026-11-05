@@ -297,6 +297,7 @@ func serve(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		git.WithTimeout(app.Sources.GitTimeout)
 		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: lister, Key: key, Interval: app.Sources.SyncInterval, Log: log,
 			Describe: clone.Describe{Reconcile: app.Baseline.Reconcile, Wake: worker.Wake}, Manifests: clone.Manifests{Store: db, Reads: git}})
 		worker.WithBaseline(consolidate.Baseline{Store: db, Code: clone.NewCode(poller, git), Catalogue: catalogue, Describer: llm, Limits: app.Baseline})

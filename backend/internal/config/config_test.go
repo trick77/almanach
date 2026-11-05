@@ -57,6 +57,24 @@ func TestParseUSD(t *testing.T) {
 	}
 }
 
+// The git timeout: an hour by default, any positive duration, never off
+// (a stalled fetch holds every source).
+func TestGitTimeout(t *testing.T) {
+	env := minimal()
+	app, err := Load(lookup(env))
+	if err != nil || app.Sources.GitTimeout != time.Hour {
+		t.Fatalf("default = %v %+v, want 1h", err, app.Sources)
+	}
+	env["BACKEND_GIT_TIMEOUT"] = "0"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_GIT_TIMEOUT: must be positive") {
+		t.Errorf("BACKEND_GIT_TIMEOUT=0: error = %v", err)
+	}
+	env["BACKEND_GIT_TIMEOUT"] = "90s"
+	if app, err := Load(lookup(env)); err != nil || app.Sources.GitTimeout != 90*time.Second {
+		t.Errorf("BACKEND_GIT_TIMEOUT=90s: %v %+v", err, app)
+	}
+}
+
 func TestLoadRequiredMissing(t *testing.T) {
 	_, err := Load(lookup(map[string]string{}))
 	if err == nil {
@@ -501,8 +519,8 @@ func TestSummaryHidesSecrets(t *testing.T) {
 			t.Errorf("Summary leaks %q: %s", secret, s)
 		}
 	}
-	if !strings.Contains(s, "token_key true") {
-		t.Errorf("Summary lacks whether a token key is set: %s", s)
+	if !strings.Contains(s, "token_key true") || !strings.Contains(s, "git_timeout 1h0m0s") {
+		t.Errorf("Summary lacks whether a token key is set, or the git timeout: %s", s)
 	}
 	for _, want := range []string{"addr=0.0.0.0:8080", "model=gpt-x", "limits={diagrams 6 a page / 12 nodes / 20 edges}", "problem_window=90d"} {
 		if !strings.Contains(s, want) {

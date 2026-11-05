@@ -53,7 +53,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   used, any case, never to another; own may change case (user, 2026-11-01). Carry-over:
   `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
 - Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
-  2026-10-30). Clone paths `filepath.Rel`-checked before `RemoveAll`; removal: lock, folder, row. Token never in URL,
+  2026-10-30). Remote commands under `BACKEND_GIT_TIMEOUT` + lowSpeed guard = nothing for 5 min, never
+  a rate (pack-prep sends keep-alives only); own process group, SIGTERM the group (git alone killed
+  leaves index-pack + locks); child env allowlisted, never `os.Environ()` (.env secrets). Clone paths `filepath.Rel`-checked before `RemoveAll`; removal: lock, folder, row. Token never in URL,
   stderr, response or log; sealed at rest; one origin only (static folder = one host).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
   poller; repo failure on its row. Run due = read from rows each cycle, never from an event.

@@ -530,7 +530,21 @@ any repository size, and every rule here was paid for there.
   stderr is still redacted of any URL credentials before it reaches a log
   or a row, the belt to that brace. A cancelled command is given ten
   seconds for its helpers before its pipes are cut, so a shutdown cannot
-  hang on `git-remote-https`.
+  hang on `git-remote-https`. Every command that reaches a remote runs
+  under `BACKEND_GIT_TIMEOUT` (an hour) and git's own stall guard (a
+  connection carrying nothing for five minutes; nothing, not slowly: with
+  `--quiet` a server preparing a large pack sends only keep-alives for
+  minutes, and a rate floor cut every big first clone): the cycle is
+  sequential, and one fetch a remote never answered once held every
+  source, and every baseline step waiting for that clone, for good. Every
+  git runs in its own process group and a deadline terminates the group,
+  SIGTERM first: killing git alone left `git-remote-https` and `index-pack`
+  with the socket and a half-written pack, and a stale lock would fail
+  every later fetch. The child's environment is an allowlist (the path,
+  the home and XDG folders, the temp folders, the locale, the TLS roots,
+  the proxies, `GIT_*`), never the process's: compose hands the process the
+  whole `.env`, gateway key, token key and session secret included, and a
+  helper that prints its environment must not have them.
 - A token reaches one host: a URL's origin as a browser writes it (scheme
   and host, case aside, the default port dropped; one normaliser, the auth
   gate's too). A Bitbucket source's is its host; a static folder holds one

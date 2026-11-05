@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // bareRemote is a bare repository on branch main with one commit, the
@@ -219,6 +222,78 @@ func TestDir_RefusesEscapes(t *testing.T) {
 	}
 	if err := c.Remove("PROJ", ".."); !errors.Is(err, ErrBadSegment) {
 		t.Fatalf("Remove(..) = %v", err)
+	}
+}
+
+// A git child gets the path, the home, the temp folders, the proxies, the
+// TLS roots and GIT_*, never the process's secrets.
+func TestCommand_EnvironmentAllowlisted(t *testing.T) {
+	c := client(t)
+	t.Setenv("BACKEND_SESSION_SECRET", "s3ss10n")
+	t.Setenv("LLMWIRE_API_KEY", "sk-xyz")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
+	t.Setenv("https_proxy", "http://proxy.example.invalid:3128")
+	env := c.command(context.Background(), c.root, []string{"GIT_CONFIG_VALUE_9=x"}, "status").Env
+	joined := strings.Join(env, "\n")
+	for _, secret := range []string{"s3ss10n", "sk-xyz", "BACKEND_SESSION_SECRET", "LLMWIRE_API_KEY"} {
+		if strings.Contains(joined, secret) {
+			t.Errorf("child env carries %q:\n%s", secret, joined)
+		}
+	}
+	for _, want := range []string{"GIT_CONFIG_COUNT=0", "https_proxy=http://proxy.example.invalid:3128", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_VALUE_9=x"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("child env lacks %q:\n%s", want, joined)
+		}
+	}
+	// PATH itself, not GIT_EXEC_PATH: git finds its helpers by it.
+	if !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "PATH=") }) {
+		t.Errorf("child env lacks PATH:\n%s", joined)
+	}
+}
+
+// A remote that never answers is cut by the client's timeout, the error
+// saying so; git's stall guard rides on every remote command.
+func TestRemote_TimesOut(t *testing.T) {
+	c := client(t).WithTimeout(500 * time.Millisecond)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Hold the connection open, answer nothing.
+			defer func() { _ = conn.Close() }()
+		}
+	}()
+	for _, proxy := range []string{"http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
+		t.Setenv(proxy, "")
+	}
+	start := time.Now()
+	_, err = c.DefaultBranch(context.Background(), "http://"+ln.Addr().String()+"/x.git", Access{})
+	if err == nil || !strings.Contains(err.Error(), "no answer within 500ms") || strings.Count(err.Error(), "ls-remote") != 1 {
+		t.Fatalf("ls-remote against a silent remote: err = %v, want the timeout named once", err)
+	}
+	// The whole process group is terminated at the deadline: git-remote-http
+	// goes with git, and the pipes close well inside waitDelay.
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("took %s, want the timeout and little more", took)
+	}
+	// A caller's own deadline is not the client's timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := c.WithTimeout(time.Hour).DefaultBranch(ctx, "http://"+ln.Addr().String()+"/x.git", Access{}); err == nil || strings.Contains(err.Error(), "no answer within") {
+		t.Errorf("caller's deadline: err = %v, want no claim of the client's timeout", err)
+	}
+	if cmd := c.command(context.Background(), c.root, nil, append(lowSpeed, "fetch")...); !strings.Contains(strings.Join(cmd.Args, " "), "http.lowSpeedLimit=1 ") {
+		t.Errorf("remote args lack the stall guard: %v", cmd.Args)
+	}
+	if verb([]string{"-c", "a=b", "fetch", "x"}) != "fetch" || verb(nil) != "" {
+		t.Error("verb does not skip -c pairs")
 	}
 }
 
