@@ -61,6 +61,21 @@ type Client struct {
 	git    string
 	root   string
 	caFile string
+	// protocols is GIT_ALLOW_PROTOCOL for every command: a clone URL comes
+	// from a listing or a form, and git would otherwise follow a file://
+	// or local path to another clone on this disk, or an ssh:// with
+	// whatever key the process finds.
+	protocols string
+}
+
+// remoteProtocols are the transports a forge is reached by.
+const remoteProtocols = "https:http"
+
+// WithFileRemotes lets the client clone from a local path or file:// as
+// well: the tests' and the prompt eval's remotes, never a source's.
+func (c *Client) WithFileRemotes() *Client {
+	c.protocols = remoteProtocols + ":file"
+	return c
 }
 
 // Resolve finds the git binary on PATH; a startup check.
@@ -81,7 +96,7 @@ func New(gitBin, root, caFile string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("repos dir: %w", err)
 	}
-	return &Client{git: gitBin, root: abs, caFile: caFile}, nil
+	return &Client{git: gitBin, root: abs, caFile: caFile, protocols: remoteProtocols}, nil
 }
 
 // Root is the base folder, absolute.
@@ -309,7 +324,7 @@ func (c *Client) command(ctx context.Context, dir string, extra []string, args .
 	cmd := exec.CommandContext(ctx, c.git, full...) //nolint:gosec // argv, no shell; paths come from validated segments
 	cmd.Dir = dir
 	cmd.WaitDelay = waitDelay
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL="+c.protocols)
 	if c.caFile != "" {
 		cmd.Env = append(cmd.Env, "GIT_SSL_CAINFO="+c.caFile)
 	}

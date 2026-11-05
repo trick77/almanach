@@ -385,6 +385,10 @@ trusted too), and a write carrying neither header is refused as well;
 else 403. SameSite Lax alone would let a sibling subdomain post. The
 origin check runs in none mode too, without the neither-header rule, so
 a script with curl still writes there and a page on another site cannot.
+Nor can one frame Almanach to lay its buttons under a decoy: every
+response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'`,
+the policy's only directive (the bundle was never held against a script
+or worker policy).
 
 Discovery runs in the background from startup on, each attempt bounded to
 30 s; boot never waits for it. A provider that cannot be reached (no
@@ -1643,7 +1647,9 @@ baseline step's patch never is: its bad items are left out one by one (see
 - The token is a header per command, never a URL; the clone's config never
   holds a credential. git's stderr is redacted of URL credentials before a
   log line or a row. The base folder is made absolute at startup: git
-  resolves a clone's destination against the command's directory.
+  resolves a clone's destination against the command's directory. git
+  runs with `GIT_ALLOW_PROTOCOL=https:http`: a listed or typed clone URL
+  naming a local path, `file://` or `ssh://` is refused by git itself.
 - A removal takes the folder first, then the row: a folder left behind by
   a failed row delete is re-cloned by the next cycle, harmless; a row gone
   with the folder still there would be an orphan.

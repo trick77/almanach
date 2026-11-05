@@ -714,3 +714,19 @@ func TestLead(t *testing.T) {
 		t.Errorf("first sentence = %q", got)
 	}
 }
+
+// No response may be framed by another site, the SPA's page and a 401 of
+// the gate included.
+func TestNoFraming(t *testing.T) {
+	h := handler(t, newFakeStore(), &fakeWaker{}, config.AuthNone)
+	for _, path := range []string{"/", "/api/projects", "/webhooks/noergler"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: X-Frame-Options = %q, want DENY", path, got)
+		}
+		if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+			t.Errorf("%s: Content-Security-Policy = %q", path, got)
+		}
+	}
+}
