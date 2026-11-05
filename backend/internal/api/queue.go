@@ -22,6 +22,7 @@ type QueueStore interface {
 	RunByID(ctx context.Context, id int64) (store.BaselineRun, bool, error)
 	FinishedRuns(ctx context.Context, since time.Time, limit int) ([]store.FinishedRun, error)
 	FoldedNotes(ctx context.Context, since time.Time, limit int) ([]store.FoldedNote, error)
+	FailedNotes(ctx context.Context, limit int) ([]store.FailedNote, error)
 	QueueCount(ctx context.Context, runs bool) (int, error)
 	RunCalls(ctx context.Context, runID int64) ([]store.RunCall, error)
 	RunCosts(ctx context.Context, ids []int64) (map[int64]int64, error)
@@ -64,6 +65,9 @@ type queueBody struct {
 	Sync   *syncBody    `json:"sync"`
 	Spent  spentBody    `json:"spent"`
 	Recent []recentBody `json:"recent"`
+	// Failed is the notes the merge call failed on, off the queue until the
+	// repository's next run, or for good at MaxAttempts.
+	Failed []failedBody `json:"failed"`
 	// PollSeconds is how often the worker looks on its own.
 	PollSeconds int `json:"poll_seconds"`
 	// MaxAttempts is the attempt an item is given up at.
@@ -182,6 +186,20 @@ type recentBody struct {
 	// earliest, on the repository's last run only.
 	RetryAt *time.Time `json:"retry_at,omitempty"`
 	CostUSD string     `json:"cost_usd,omitempty"`
+}
+
+// failedBody is a note the merge call failed on: why, when, and whether a
+// run of its repository still queues it again (GivenUp false) or it is
+// given up at the bound.
+type failedBody struct {
+	Project  string    `json:"project"`
+	Repo     string    `json:"repo"`
+	PRKey    string    `json:"pr_key"`
+	Title    string    `json:"title,omitempty"`
+	At       time.Time `json:"at"`
+	Reason   string    `json:"reason"`
+	Attempts int       `json:"attempts"`
+	GivenUp  bool      `json:"given_up"`
 }
 
 func (d Deps) queue(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +370,15 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 	out.Spent = spentBody{CostUSD: usd(cost), Calls: calls}
 	if out.Recent, err = q.recent(ctx, since); err != nil {
 		return out, err
+	}
+	failed, err := q.Store.FailedNotes(ctx, recentMax)
+	if err != nil {
+		return out, err
+	}
+	out.Failed = make([]failedBody, 0, len(failed))
+	for _, n := range failed {
+		out.Failed = append(out.Failed, failedBody{Project: n.ProjectKey, Repo: n.RepoSlug, PRKey: n.PRKey, Title: n.PRTitle,
+			At: n.FailedAt, Reason: n.Reason, Attempts: n.Attempts, GivenUp: n.Attempts >= consolidate.MaxAttempts})
 	}
 	return out, nil
 }

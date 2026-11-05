@@ -254,45 +254,26 @@ type OutlineArea struct {
 	IDs  []string `json:"ids"`
 }
 
-// Description is one rewritten description. Map and Drop are the project
-// step's, which the merge never returns.
+// Description is the project step's rewritten description, with its map.
 type Description struct {
 	Summary string `json:"summary"`
-	// Statements is, on the merge, every statement kept, by id; on the
-	// project step only the edits, a statement not named kept. Added is
-	// the new ones; Drop the project step's removals by id.
+	// Statements is the edits, a statement not named kept. Added is the
+	// new ones; Drop the removals by id.
 	Statements []Statement      `json:"statements"`
 	Added      []Statement      `json:"added"`
 	Drop       []string         `json:"drop,omitempty"`
 	Map        *diagram.Diagram `json:"map,omitempty"`
 }
 
-// Proposed is a description's statements as one list, the edits by id and
-// then the new ones with their ids cleared; reason is set when an edit
-// carries no id.
-func (d Description) Proposed() ([]Statement, string) { return Proposed(d.Statements, d.Added) }
-
-// Proposed joins edits and new statements into one list, ID nil marking a
-// new one. An edit without an id names nothing: reason says so.
-func Proposed(edits, added []Statement) ([]Statement, string) {
-	out := make([]Statement, 0, len(edits)+len(added))
-	for _, s := range edits {
-		if s.ID == nil || *s.ID == "" {
-			return nil, "an edit without a statement id"
-		}
-		out = append(out, s)
-	}
-	for _, s := range added {
-		s.ID = nil
-		out = append(out, s)
-	}
-	return out, ""
-}
-
-// Merge is the model's answer: nil for a description it leaves alone.
+// Merge is the model's answer: a patch over each description (edits by id,
+// new statements in added, drops, a summary or null to keep it; a statement
+// not named stays), nil for one it leaves alone. A patch, not the whole
+// page: a page rewritten whole lost every statement the model forgot, and
+// grew with the page until the output limit cut it. The schema offers no
+// confirmation: a fold reads no code.
 type Merge struct {
-	Repository *Description `json:"repository"`
-	Project    *Description `json:"project"`
+	Repository *Patch `json:"repository"`
+	Project    *Patch `json:"project"`
 }
 
 // MergeRequest is one fold's prompt.
@@ -448,11 +429,17 @@ func (c *Client) logUnpriced(callID string, warnings []llmwire.Warning) {
 	c.log.Warn("call unpriced", "model", c.model, "call_id", callID, "reason", reason)
 }
 
-// ParseMerge reads the model's answer. A bare null is a non-answer.
+// ParseMerge reads the model's answer. A bare null is a non-answer, and so
+// is a patch without its statements: {} is no "no change".
 func ParseMerge(content string) (Merge, bool) {
 	var m *Merge
 	if !parse(content, &m) || m == nil {
 		return Merge{}, false
+	}
+	for _, p := range []*Patch{m.Repository, m.Project} {
+		if p != nil && p.Statements == nil {
+			return Merge{}, false
+		}
 	}
 	return *m, true
 }
@@ -523,11 +510,15 @@ func shapeProps(props map[string]any) map[string]any {
 	return props
 }
 
-func description(diagrams bool, kinds []string) map[string]any {
+// mergePatch is one description's patch as the merge returns it: the
+// summary or null to keep it, the edits, the new statements and the ids to
+// drop; no confirmation, a fold reads no code.
+func mergePatch(diagrams bool, kinds []string) map[string]any {
 	return nullable(object(map[string]any{
-		"summary":    blocks(),
+		"summary":    nullableBlocks(),
 		"statements": statements(diagrams, kinds),
 		"added":      added(diagrams, kinds),
+		"drop":       array(str()),
 	}))
 }
 
@@ -582,5 +573,5 @@ func projectDescription(diagrams bool) map[string]any {
 }
 
 func mergeFormat(diagrams bool) llmwire.ResponseFormat {
-	return strict(MergeSchemaName, map[string]any{"repository": description(diagrams, RepoKinds), "project": description(diagrams, ProjectKinds)})
+	return strict(MergeSchemaName, map[string]any{"repository": mergePatch(diagrams, RepoKinds), "project": mergePatch(diagrams, ProjectKinds)})
 }

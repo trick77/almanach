@@ -89,8 +89,8 @@ func TestFoldStatementDiagram(t *testing.T) {
 		t.Errorf("log lacks the dropped stored diagram:\n%s", logs.String())
 	}
 
-	// A rewrite refused (an empty summary) logs its rejection, not the
-	// diagram it would have left out.
+	// A patch refused (a first page left without a summary) logs its
+	// refusal, not the diagram it would have left out.
 	st = newFakeStore()
 	m = &fakeMerger{result: okResult(&inference.Description{Summary: " ", Statements: []inference.Statement{
 		{Kind: "rule", Name: "R", Text: "T", Diagram: dangling()}}}, nil)}
@@ -98,8 +98,8 @@ func TestFoldStatementDiagram(t *testing.T) {
 	logs.Reset()
 	w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	w.Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 0 || !strings.Contains(logs.String(), "rewrite rejected") || strings.Contains(logs.String(), "left out") {
-		t.Errorf("rejected rewrite: revisions %+v, log:\n%s", st.revisions, logs.String())
+	if len(st.revisions) != 0 || !strings.Contains(logs.String(), "patch refused") || strings.Contains(logs.String(), "left out") {
+		t.Errorf("refused patch: revisions %+v, log:\n%s", st.revisions, logs.String())
 	}
 
 	// One diagram past the page's count (1 here) costs that diagram, not the

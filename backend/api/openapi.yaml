@@ -1192,7 +1192,7 @@ components:
     Queue:
       type: object
       description: The worker's queue.
-      required: [current, next, sync, spent, recent, poll_seconds, max_attempts, more]
+      required: [current, next, sync, spent, recent, failed, poll_seconds, max_attempts, more]
       properties:
         current:
           description: The note or run step in flight; null while the worker waits.
@@ -1224,6 +1224,15 @@ components:
           description: What the worker finished in the last 24 hours, newest first, at most 50.
           items:
             $ref: "#/components/schemas/QueueRecent"
+        failed:
+          type: array
+          description: |
+            The notes the merge call failed on, newest first, at most 50: off
+            the queue with their reason until the next run of their
+            repository ends done, which queues them again, or for good once
+            given up at `max_attempts`.
+          items:
+            $ref: "#/components/schemas/QueueFailed"
         poll_seconds:
           type: integer
           description: How often the worker looks on its own; a note's webhook wakes it at once.
@@ -1415,6 +1424,33 @@ components:
           description: When the poller queues this failed run again at the earliest; on the repository's last run only.
         cost_usd:
           type: string
+
+    QueueFailed:
+      type: object
+      description: A note the merge call failed on.
+      required: [project, repo, pr_key, at, reason, attempts, given_up]
+      properties:
+        project:
+          type: string
+        repo:
+          type: string
+        pr_key:
+          type: string
+        title:
+          type: string
+        at:
+          type: string
+          format: date-time
+          description: When the call failed.
+        reason:
+          type: string
+          description: The outcome and the error (unparseable, too_long, error with its cause; a patch refused and why).
+        attempts:
+          type: integer
+          description: Attempts so far, gateway failures included.
+        given_up:
+          type: boolean
+          description: At `max_attempts`; no run queues it again, a new delivery of the note does.
 
     Baseline:
       type: object

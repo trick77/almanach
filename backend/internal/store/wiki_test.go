@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,6 +111,104 @@ func TestMarkConsolidated_RedeliveredDuringFoldStaysQueued(t *testing.T) {
 		if _, err := s.DeferFold(ctx, "PRJ", "svc", c.pr, c.delivery); !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("DeferFold(pr %d, %q) = %v, want sql.ErrNoRows", c.pr, c.delivery, err)
 		}
+	}
+	// A failed mark of the replaced note is no mark either.
+	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, first.DeliveryID, "too_long"); err != nil || n != 0 {
+		t.Fatalf("MarkFoldFailed of the replaced note = %d, %v; want 0, nil", n, err)
+	}
+	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
+		t.Fatalf("FailedNotes after the replaced note's failure = %+v, %v", failed, err)
+	}
+}
+
+// A note the call failed on leaves the queue as failed, its reason and
+// attempt kept, counted by neither the queue nor its nav count; a run of
+// its repository puts it back, unless it is at the bound; a note delivered
+// again starts afresh.
+func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("PRJ", "svc", 2))
+	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "too_long"); err != nil || n != 1 {
+		t.Fatalf("MarkFoldFailed = %d, %v; want attempt 1", n, err)
+	}
+	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 2 {
+		t.Fatalf("after the failure: ok=%v pr=%d err=%v, want pr 2", ok, q.PRID, err)
+	}
+	if pending, err := s.PendingNotes(ctx, 10); err != nil || len(pending) != 1 || pending[0].PRKey != "PRJ/svc#2" {
+		t.Fatalf("PendingNotes = %+v, %v", pending, err)
+	}
+	if n, err := s.QueueCount(ctx, false); err != nil || n != 1 {
+		t.Fatalf("QueueCount = %d, %v", n, err)
+	}
+	failed, err := s.FailedNotes(ctx, 10)
+	if err != nil || len(failed) != 1 || failed[0].PRKey != "PRJ/svc#1" || failed[0].Reason != "too_long" || failed[0].Attempts != 1 ||
+		failed[0].FailedAt.IsZero() || failed[0].RepoSlug != "svc" {
+		t.Fatalf("FailedNotes = %+v, %v", failed, err)
+	}
+	// Another repository's run requeues nothing of this one.
+	if n, err := s.RequeueFailed(ctx, "PRJ", "other", 8); err != nil || n != 0 {
+		t.Fatalf("RequeueFailed of another repository = %d, %v", n, err)
+	}
+	if n, err := s.RequeueFailed(ctx, "PRJ", "svc", 8); err != nil || n != 1 {
+		t.Fatalf("RequeueFailed = %d, %v; want 1", n, err)
+	}
+	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 1 {
+		t.Fatalf("after the requeue: ok=%v pr=%d err=%v, want pr 1 first again", ok, q.PRID, err)
+	}
+	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
+		t.Fatalf("FailedNotes after the requeue = %+v, %v", failed, err)
+	}
+	// At the bound a run leaves it failed.
+	for i := 0; i < 8; i++ {
+		if _, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "unparseable"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.RequeueFailed(ctx, "PRJ", "svc", 8); err != nil || n != 0 {
+		t.Fatalf("RequeueFailed at the bound = %d, %v; want none", n, err)
+	}
+	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 1 || failed[0].Attempts != 9 {
+		t.Fatalf("FailedNotes at the bound = %+v, %v", failed, err)
+	}
+	// Delivered again (a reopened PR merged again): queued afresh.
+	again := noteFor("PRJ", "svc", 1)
+	d := deliveryFor(again)
+	d.ID += "-again"
+	if ok, err := s.Ingest(ctx, d, again, nil, nil); err != nil || !ok {
+		t.Fatalf("redelivery: ok=%v err=%v", ok, err)
+	}
+	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
+		t.Fatalf("FailedNotes after a redelivery = %+v, %v", failed, err)
+	}
+	if pending, err := s.PendingNotes(ctx, 10); err != nil || len(pending) != 2 || pending[1].Attempts != 0 {
+		t.Fatalf("PendingNotes after a redelivery = %+v, %v", pending, err)
+	}
+	// A consolidated note is never failed: the mark finds no row.
+	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 2, "d-PRJ-svc-2"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 2, "d-PRJ-svc-2", "late"); err != nil || n != 0 {
+		t.Fatalf("MarkFoldFailed on a consolidated note = %d, %v; want 0", n, err)
+	}
+	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
+		t.Fatalf("FailedNotes with a consolidated note marked = %+v, %v", failed, err)
+	}
+	// The reason is redacted, in and out; the aged requeue takes a note
+	// that failed before a time, under the bound.
+	if _, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1-again", "bad request: Authorization: Bearer abcdef0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	failed, err = s.FailedNotes(ctx, 10)
+	if err != nil || len(failed) != 1 || strings.Contains(failed[0].Reason, "abcdef0123") || !strings.Contains(failed[0].Reason, "bad request") {
+		t.Fatalf("FailedNotes with a secret in the reason = %+v, %v", failed, err)
+	}
+	if n, err := s.RequeueFailedBefore(ctx, time.Now().Add(-time.Hour), 20); err != nil || n != 0 {
+		t.Fatalf("RequeueFailedBefore an hour ago = %d, %v; want none yet", n, err)
+	}
+	if n, err := s.RequeueFailedBefore(ctx, time.Now().Add(time.Minute), 20); err != nil || n != 1 {
+		t.Fatalf("RequeueFailedBefore now = %d, %v; want 1", n, err)
 	}
 }
 

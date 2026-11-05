@@ -5,7 +5,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { Queue, QueueItem, QueueRecent, QueueRun, RunStep } from "./api";
+import type {
+  Queue,
+  QueueFailed,
+  QueueItem,
+  QueueRecent,
+  QueueRun,
+  RunStep,
+} from "./api";
 import { bytes, changeLabel, clock, dayTime, money, shortSHA } from "./format";
 import { notePathFor, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
@@ -181,6 +188,16 @@ function Body({ q }: { q: Queue }) {
 
       <div className={eyebrow}>{S.queue.recent}</div>
       <Recent rows={q.recent} />
+      {q.failed.length > 0 && (
+        <>
+          <div className={eyebrow}>{S.queue.failedNotes}</div>
+          <p className={meta}>
+            {S.queue.failedHint}
+            {q.failed.some((n) => n.given_up) && ` ${S.queue.givenUpHint}`}
+          </p>
+          <FailedNotes rows={q.failed} maxAttempts={q.max_attempts} />
+        </>
+      )}
     </>
   );
 }
@@ -621,6 +638,62 @@ function Recent({ rows }: { rows: QueueRecent[] }) {
               <td className={tdNum}>{r.cost_usd ? money(r.cost_usd) : "–"}</td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** FailedNotes is the notes the merge call failed on, with the reason and
+ *  how many attempts they have had; one at the bound is given up. */
+function FailedNotes({
+  rows,
+  maxAttempts,
+}: {
+  rows: QueueFailed[];
+  maxAttempts: number;
+}) {
+  const [hTime, hWhat, hReason, hAttempts] = S.queue.failedHeaders;
+  return (
+    <div className={tableBox} data-testid="failed-notes">
+      <table className={table}>
+        <thead>
+          <tr>
+            <th className={th}>{hTime}</th>
+            <th className={th}>{hWhat}</th>
+            <th className={th}>{hReason}</th>
+            <th className={thNum}>{hAttempts}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((n) => {
+            const path = notePathFor(n.pr_key);
+            return (
+              <tr key={n.pr_key}>
+                <td className={tdMono}>{dayTime(n.at)}</td>
+                <td className={td}>
+                  {path ? <Link to={path}>{n.pr_key}</Link> : n.pr_key}
+                  <span className="text-faint">
+                    {" "}
+                    {n.project} / {n.repo}
+                  </span>
+                  {n.title && (
+                    <span className="block text-[12px] text-muted">
+                      {n.title}
+                    </span>
+                  )}
+                </td>
+                <td className={td}>
+                  <span className="text-danger-ink">{n.reason}</span>
+                </td>
+                <td className={tdNum}>
+                  {n.given_up
+                    ? S.queue.givenUp
+                    : S.queue.failedAttempts(n.attempts, maxAttempts)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

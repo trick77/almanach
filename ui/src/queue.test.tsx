@@ -139,6 +139,7 @@ function queue(over: Partial<Queue> = {}): Queue {
     },
     spent: { cost_usd: "1.284", calls: 23 },
     recent: [],
+    failed: [],
     poll_seconds: 20,
     max_attempts: 5,
     more: 0,
@@ -366,6 +367,56 @@ describe("QueuePage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(S.queue.noteOutcome.ok)).toBeInTheDocument();
     expect(screen.getByText(S.queue.noteOutcome[""])).toBeInTheDocument();
+  });
+
+  it("lists the notes the call failed on, with the reason and the attempts", async () => {
+    serve({
+      queue: queue({
+        failed: [
+          {
+            project: "pay",
+            repo: "ledger",
+            pr_key: "pay/ledger#9",
+            title: "Gebühren",
+            at: iso(-10),
+            reason: "too_long: the answer was cut by the model's output limit",
+            attempts: 1,
+            given_up: false,
+          },
+          {
+            project: "pay",
+            repo: "ledger",
+            pr_key: "pay/ledger#8",
+            at: iso(-20),
+            reason: "unparseable",
+            attempts: 5,
+            given_up: true,
+          },
+        ],
+      }),
+    });
+    render(<QueuePage />);
+    const box = await screen.findByTestId("failed-notes");
+    expect(screen.getByText(S.queue.failedNotes)).toBeInTheDocument();
+    expect(
+      screen.getByText(`${S.queue.failedHint} ${S.queue.givenUpHint}`),
+    ).toBeInTheDocument();
+    expect(
+      within(box).getByRole("link", { name: "pay/ledger#9" }),
+    ).toHaveAttribute("href", "/projects/pay/repos/ledger/notes/9");
+    expect(within(box).getByText("Gebühren")).toBeInTheDocument();
+    expect(within(box).getByText(/output limit/)).toBeInTheDocument();
+    expect(
+      within(box).getByText(S.queue.failedAttempts(1, 5)),
+    ).toBeInTheDocument();
+    expect(within(box).getByText(S.queue.givenUp)).toBeInTheDocument();
+  });
+
+  it("shows no failed section while none failed", async () => {
+    serve({ queue: queue() });
+    render(<QueuePage />);
+    await screen.findByText(/^Nichts wartet/);
+    expect(screen.queryByText(S.queue.failedNotes)).not.toBeInTheDocument();
   });
 
   it("counts what it does not list", async () => {

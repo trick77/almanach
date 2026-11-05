@@ -48,7 +48,7 @@ func TestParseMerge(t *testing.T) {
 			if m.Repository == nil || m.Project != nil {
 				t.Fatalf("Merge = %+v, want repository set and project nil", m)
 			}
-			if m.Repository.Summary != "Ein Dienst." || len(m.Repository.Statements) != 0 || len(m.Repository.Added) != 1 {
+			if m.Repository.Summary == nil || *m.Repository.Summary != "Ein Dienst." || len(m.Repository.Statements) != 0 || len(m.Repository.Added) != 1 {
 				t.Fatalf("Repository = %+v", m.Repository)
 			}
 			s := m.Repository.Added[0]
@@ -299,7 +299,7 @@ func TestMergeSendsMessagesAndSchema(t *testing.T) {
 	if res.Outcome != OutcomeOK {
 		t.Fatalf("Outcome = %s, err %v", res.Outcome, res.Err)
 	}
-	if res.Merge.Repository != nil || res.Merge.Project == nil || res.Merge.Project.Summary != "Zwei Repos." {
+	if res.Merge.Repository != nil || res.Merge.Project == nil || res.Merge.Project.Summary == nil || *res.Merge.Project.Summary != "Zwei Repos." {
 		t.Errorf("Merge = %+v", res.Merge)
 	}
 	if !res.Cost.Answered || res.Cost.InputTokens != 10 || res.Cost.OutputTokens != 5 || res.Cost.Model == "" {

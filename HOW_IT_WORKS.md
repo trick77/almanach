@@ -146,10 +146,15 @@ replacing.
 A fold reads the current repository and project descriptions, renders the
 merge prompt (`backend/internal/prompts/almanach_merge.txt`, compiled in)
 and makes one `Chat` call with a strict JSON schema. The model returns, for
-each description, either `null` (no change) or a rewritten summary and
-statements in two lists: `statements`, every statement it keeps or edits,
-each with its `id` (the schema requires the string), and `added`, the new
-ones, which have no id field at all. A model asked to write `null` for a
+each description, either `null` (no change) or a patch, as a baseline step
+does: `summary`, written whole or `null` to keep it; `statements`, the
+edits alone, each with its `id` (the schema requires the string); `added`,
+the new ones, which have no id field at all; `drop`, the ids of statements
+the note contradicts. A statement the patch does not name stays as it is.
+The merge once asked for the whole page back: a statement the model
+forgot was gone with it, and the answer grew with the page, which has no
+ceiling, until the model's output limit cut it and the note was lost. A
+patch is the delta the note is. A model asked to write `null` for a
 new statement's id numbered it anyway (`s1` on an empty page, `s36` on one
 up to `s35`) and lost the rewrite to the invented-id rule; with no field to
 write, it cannot. The code numbers a new statement. On a page without
@@ -164,10 +169,21 @@ The answer is then held to rules the model cannot bend:
   this pull request only when its text or name changed; a new statement
   starts with this pull request, numbered past every id the page's history
   ever used, so an id dropped in one fold never names another fact later.
-  An id the page does not have, or one used twice, rejects the rewrite:
-  the answer is the whole page, so leaving such an edit out would delete
-  the statement it meant to edit (a baseline step's patch keeps every id
-  it does not name, and leaves only that edit out).
+  An item that breaks a rule costs only itself (`baseline.ApplyMerge`): an
+  edit of an id the page does not have, or of one an earlier edit took, a
+  statement of a kind the page cannot hold or an empty one, is left out
+  and logged, the statement it may have meant as stored, the rest of the
+  patch taken.
+- Drops: a pull request's note is the newest word on the code, so a
+  statement an earlier pull request taught is dropped on the model's word
+  (logged by id), and a statement the code alone backs (a baseline run's)
+  only when the tree no longer has any of its files. The tree is the
+  clone's at the note's merge commit, the code as the pull request left
+  it, read before the call under the clone's lock; with none to ask (the
+  sources off, no merge commit, the clone not fetched to the merge, busy
+  or gone) a drop is the model's word, as it was when the answer was the
+  whole page. A project drop is the model's word too: no one tree backs
+  the project page.
 - No ceiling: a description is system documentation, each statement as
   long as its subject needs, the page as long as its statements. No count,
   no size, no cap on a name or the file count; nothing is dropped or
@@ -178,10 +194,27 @@ The answer is then held to rules the model cannot bend:
 
 What passes is written as the next revision of the page and the page
 repointed to it, in one transaction. History is kept; a rollback is a
-repoint. Whatever the model answered, the note is then marked consolidated,
-so a note that fails forever cannot block the queue; the log says why. The
-same for a failure specific to the call: a 4xx (the note too large for the
-context, a rejected format) or an answer of the wrong shape.
+repoint. The note is then marked consolidated, whatever the patches
+changed. A failure specific to the call is different: a 4xx (the note too
+large for the context, a rejected format), an answer of the wrong shape
+or cut by the output limit, a patch that leaves a first page without a
+summary. Such a note leaves the queue as failed (`fold_failed_at`, with
+its reason, redacted and cut to 300 runes), its attempt counted, never
+consolidated: the next run of its repository that ends done puts it back
+on the queue (`RequeueFailed`), so its pull request's knowledge is folded
+late, not lost; the repository's page has been written anew by then, and a
+note of a running repository waits for the run anyway. A note no run
+requeues (the sources off, a repository without runs) goes back a day
+after it failed, asked at the start of every drain (`RequeueFailedBefore`).
+The repository's patch is applied first, and refused it fails the note
+before anything is written; the project's patch refused after the
+repository's was written costs only itself, the note folded, or the retry
+would fold it into the repository page twice. Past eight attempts in all
+it is given up and stays failed, so one note that always fails costs eight
+calls, not one a run. The queue page lists the failed notes with their
+reasons; a note delivered again starts afresh. Before, such a note was
+marked consolidated with a log line, and what its pull request taught was
+gone.
 
 A failure of the gateway as a whole is different: a timeout, a 5xx or
 transport failure, a refused key, a rate limit, a proxy page where the
@@ -190,8 +223,9 @@ holds: no fold for thirty seconds, doubling on each further failure up to
 ten minutes, or for as long as a rate limit asked. The note stays queued
 with its attempt counted and is tried again after the hold; a call that
 gets through clears the hold. After eight such failures of one note it is
-given up, with a log line, so one note the gateway always fails cannot
-hold the queue forever. A timed-out call may have been billed at the
+given up, as failed with its reason, never consolidated, so one note the
+gateway always fails cannot hold the queue forever and what its pull
+request taught is not thrown away for a gateway's bad day. A timed-out call may have been billed at the
 gateway, so a gateway consistently slower than the call cap costs up to
 eight merges per note before giving up; the ledger shows them. If the mark
 itself fails (the database refusing writes), the drain pauses until the
@@ -1350,12 +1384,14 @@ noergler attached: ticket, change kind, commits, run id, the posted issue
 and suggestion counts, and two columns computed at ingest for the problem
 areas, `bugfix_area` (the longest directory every component file of a
 bugfix note shares) and `bugfix_component` (the first component's name).
-`consolidated_at` and `fold_attempts` are the worker's queue state: NULL
-means queued, the partial index `notes_queue_idx` makes the oldest queued
-note one cheap lookup. The worker's mark and attempt count name the
-`delivery_id` the fold read: a note delivered again while its first
-version is folded stays queued, its own attempts not counted against.
-`note_calls` holds, per delivery, every lane the
+`consolidated_at`, `fold_attempts`, `fold_failed_at` and `fold_failed` are
+the worker's queue state: both times NULL means queued, the partial index
+`notes_queue_idx` makes the oldest queued note one cheap lookup;
+`fold_failed_at` set is a note the call failed on, with its reason, off
+the queue until a run of its repository clears it. The worker's marks
+(folded, failed) and attempt count name the `delivery_id` the fold read: a
+note delivered again while its first version is folded stays queued, its
+own attempts not counted against. `note_calls` holds, per delivery, every lane the
 gateway reported for the round's note call plus the PR's round totals, as
 columns: the cache-hit rate and the cost per note are one query.
 
@@ -1433,12 +1469,22 @@ so the choice is not undone as a cleanup.
   component would be three areas. The shared directory of the bugfix's
   component files is computed once at ingest and does not depend on the
   model's wording.
-- **A gateway failure holds the worker; a call-specific failure marks the
+- **A gateway failure holds the worker; a call-specific failure fails the
   note.** A dead gateway would otherwise consume every queued note within
   minutes. The hold doubles up to ten minutes and the note keeps its
-  attempt count; after eight failures of one note it is given up so one
-  bad note cannot hold the queue forever. A 4xx or an off-schema answer is
-  about this note and is not retried: it would fail the same way.
+  attempt count; after eight failures of one note it is given up, as
+  failed, so one bad note cannot hold the queue forever and none is
+  consolidated unfolded. A 4xx or an off-schema answer is
+  about this note and would fail the same way at once: the note waits,
+  failed, for the next run of its repository, which rewrites the page it
+  failed on, and is tried then; marking it consolidated, as once, threw
+  the pull request's knowledge away for a shape the model got wrong.
+- **The merge is a patch, as every step's answer.** Asked for the whole
+  page, a model forgot statements, and the answer grew with the page (no
+  ceiling) until the output limit cut it; the project step was moved to a
+  patch for the same loss. The price is that a drop is now the model's
+  word unless the tree says otherwise, hence the tree check at the clone's
+  head.
 - **German, Swiss spelling, generic masculine.** The readers are German
   speaking; the spelling is enforced in code (`lang.SwissSS`) on every
   prose field because the model drifts to the sharp s. File paths are never
@@ -1599,9 +1645,9 @@ things a change must not undo by accident.
 
 ### The queue and the worker
 
-- The queue is `consolidated_at IS NULL`, oldest `received_at` first, then
-  the lowest PR id. One note is folded at a time; there is never a second
-  worker.
+- The queue is `consolidated_at IS NULL AND fold_failed_at IS NULL`, oldest
+  `received_at` first, then the lowest PR id. One note is folded at a
+  time; there is never a second worker.
 - The worker wakes on an accepted delivery and polls every thirty seconds;
   a wake that arrives while one is pending is the same wake.
 - Both current pages are read *before* the model call, and the repository
@@ -1611,16 +1657,23 @@ things a change must not undo by accident.
   - the model's answer off the schema, an answer cut by the model's output
     limit (`too_long`: the description asked for does not fit one call), a
     4xx from the gateway (context overflow, rejected format), a 2xx of the
-    wrong shape, a panic in the fold: specific to this call, the note is
-    marked consolidated with a log line and never retried (a baseline
-    step's panic fails its run, a sync's its repository, on the row);
+    wrong shape, a patch that leaves a first page without a summary, a
+    panic in the fold: specific to this call, the note leaves the queue as
+    failed with its reason and its attempt counted, and comes back when a
+    run of its repository ends done, until eight attempts in all (a
+    baseline step's panic fails its run, a sync's its repository, on the
+    row);
   - a timeout, a 5xx, a transport failure, a refused key, a rate limit, a
     proxy page where the answer should be: the gateway's, the worker holds
     (thirty seconds, doubling to ten minutes, or the rate limit's
     Retry-After when longer), the note keeps its place with its attempt
     counted, and is tried again after the hold. Any answer from the
     gateway, parsed or not, clears the hold. After eight gateway failures
-    of one note it is given up and marked.
+    of one note it is given up: failed with its reason, never consolidated.
+- A failed note goes back on the queue when a run of its repository ends
+  done, or a day after it failed, while under eight attempts; the
+  repository's patch refused fails the note before any write, the
+  project's refused after the repository's was written costs only itself.
 - A mark or a defer the store refuses pauses the drain until the next wake
   or poll rather than paying for the same fold again.
 - Every model call leaves an `llm_calls` row, whatever its outcome, with

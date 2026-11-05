@@ -13,9 +13,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
@@ -54,6 +56,14 @@ type fakeStore struct {
 	// fails the read.
 	repoCount map[string]int
 	countErr  error
+	// failed is the notes the call failed on, by key, with the reason;
+	// failErr fails the mark. requeued is every repository whose failed
+	// notes were put back; requeueErr fails that.
+	failed     map[string]string
+	failErr    error
+	requeued   []string
+	requeueErr error
+	agedCalls  int
 }
 
 func (f *fakeStore) SourceRepoCount(_ context.Context, key string) (int, error) {
@@ -112,6 +122,47 @@ func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, pr
 	return nil
 }
 
+// MarkFoldFailed records the failed note with its reason; RequeueFailed
+// clears the repository's failed notes under the bound and counts them.
+func (f *fakeStore) MarkFoldFailed(_ context.Context, project, repo string, prID int, delivery, reason string) (int, error) {
+	f.deliveries = append(f.deliveries, delivery)
+	if f.failErr != nil {
+		return 0, f.failErr
+	}
+	if f.failed == nil {
+		f.failed = map[string]string{}
+	}
+	k := pageKey(project, repo, strconv.Itoa(prID))
+	f.failed[k] = reason
+	if f.attempts == nil {
+		f.attempts = map[string]int{}
+	}
+	f.attempts[k]++
+	return f.attempts[k], nil
+}
+
+func (f *fakeStore) RequeueFailed(_ context.Context, project, repo string, maxAttempts int) (int, error) {
+	if f.requeueErr != nil {
+		return 0, f.requeueErr
+	}
+	n := 0
+	for k := range f.failed {
+		if strings.HasPrefix(k, pageKey(project, repo, "")) && f.attempts[k] < maxAttempts {
+			delete(f.failed, k)
+			n++
+		}
+	}
+	f.requeued = append(f.requeued, project+"/"+repo)
+	return n, nil
+}
+
+// RequeueFailedBefore counts its calls; the fake keeps no failure time,
+// so it requeues nothing.
+func (f *fakeStore) RequeueFailedBefore(context.Context, time.Time, int) (int, error) {
+	f.agedCalls++
+	return 0, f.requeueErr
+}
+
 func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int, delivery string) (int, error) {
 	f.deliveries = append(f.deliveries, delivery)
 	if f.deferErr != nil {
@@ -156,14 +207,14 @@ type fakeMerger struct {
 
 func (m *fakeMerger) Merge(_ context.Context, req inference.MergeRequest) inference.MergeResult {
 	m.prompts = append(m.prompts, req.Prompt)
-	res := m.result
-	res.Merge.Repository, res.Merge.Project = answered(res.Merge.Repository), answered(res.Merge.Project)
-	return res
+	return m.result
 }
 
-// A fixture writes a new statement as one without an id among the rest;
-// the fakes answer in the model's shape, the new ones split off into Added,
-// where the schema offers no id.
+// A fixture is written as a description: a summary ("" or blank keeps the
+// stored one, as a patch's null does), the statements with a new one as
+// one without an id among the rest, drops. The fakes answer in the model's
+// shape (inference.Patch), the new ones split off into Added, where the
+// schema offers no id.
 func split(list []inference.Statement) (edits, added []inference.Statement) {
 	for _, s := range list {
 		if s.ID == nil {
@@ -178,18 +229,24 @@ func split(list []inference.Statement) (edits, added []inference.Statement) {
 	return edits, added
 }
 
-func answered(d *inference.Description) *inference.Description {
-	if d == nil || d.Added != nil {
-		return d
+func answered(d *inference.Description) *inference.Patch {
+	if d == nil {
+		return nil
 	}
-	c := *d
-	c.Statements, c.Added = split(d.Statements)
-	return &c
+	p := inference.Patch{Statements: d.Statements, Added: d.Added, Drop: d.Drop}
+	if d.Added == nil {
+		p.Statements, p.Added = split(d.Statements)
+	}
+	if strings.TrimSpace(d.Summary) != "" {
+		s := d.Summary
+		p.Summary = &s
+	}
+	return &p
 }
 
 func okResult(repo, project *inference.Description) inference.MergeResult {
 	nano := int64(2_000_000)
-	return inference.MergeResult{Merge: inference.Merge{Repository: repo, Project: project}, Call: inference.Call{Outcome: inference.OutcomeOK,
+	return inference.MergeResult{Merge: inference.Merge{Repository: answered(repo), Project: answered(project)}, Call: inference.Call{Outcome: inference.OutcomeOK,
 		Cost: inference.CallCost{Model: "gpt-x", CallID: "call-9", InputTokens: 100, CachedTokens: 20, OutputTokens: 10, NanoUSD: &nano, Answered: true}}}
 }
 
@@ -249,17 +306,17 @@ func TestDrainBeats(t *testing.T) {
 }
 
 // A panic outside a fold's own recover (the source check) takes the note
-// it was on off the queue and ends the drain, the process up; the next
-// drain goes on behind it.
-func TestDrainPanicOutsideFoldMarksTheNote(t *testing.T) {
+// it was on off the queue as failed and ends the drain, the process up;
+// the next drain goes on behind it.
+func TestDrainPanicOutsideFoldFailsTheNote(t *testing.T) {
 	st := newFakeStore()
 	bad := queued("PLAT/bad#1")
 	bad.RepoSlug = "bad"
 	st.queue = []store.QueuedNote{bad}
 	w := newWorker(st, &fakeMerger{}).WithBaseline(Baseline{Store: panicSource{&runStore{fakeStore: st}, "bad"}})
 	w.drain(context.Background())
-	if len(st.marked) != 1 || st.marked[0] != pageKey("PLAT", "bad", "42") || st.deliveries[0] != bad.DeliveryID {
-		t.Errorf("marked = %v deliveries = %v, want the panicking note marked by its delivery", st.marked, st.deliveries)
+	if len(st.marked) != 0 || st.failed[pageKey("PLAT", "bad", "42")] != "panic: boom" || st.deliveries[0] != bad.DeliveryID {
+		t.Errorf("marked = %v failed = %v deliveries = %v, want the panicking note failed by its delivery", st.marked, st.failed, st.deliveries)
 	}
 }
 
@@ -269,15 +326,15 @@ func (panicMerger) Merge(context.Context, inference.MergeRequest) inference.Merg
 	panic("boom")
 }
 
-// A fold that panics is a failure of its note: marked, the drain goes on,
-// the process stays up.
-func TestFoldPanicMarksTheNote(t *testing.T) {
+// A fold that panics is a failure of its note: failed with the cause, the
+// drain goes on, the process stays up.
+func TestFoldPanicFailsTheNote(t *testing.T) {
 	st := newFakeStore()
 	if next := newWorker(st, panicMerger{}).Fold(context.Background(), queued("PLAT/files#42")); !next {
 		t.Errorf("Fold after a panic = false, want the drain to go on")
 	}
-	if len(st.marked) != 1 || len(st.revisions) != 0 {
-		t.Errorf("marked = %v, revisions = %d; want the note marked, no revision", st.marked, len(st.revisions))
+	if len(st.marked) != 0 || len(st.revisions) != 0 || st.failed[pageKey("PLAT", "files", "42")] != "panic: boom" {
+		t.Errorf("marked = %v, failed = %v, revisions = %d; want the note failed, no revision", st.marked, st.failed, len(st.revisions))
 	}
 }
 
@@ -454,8 +511,9 @@ func TestFoldAgentKinds(t *testing.T) {
 
 // New statements come in `added` and the code numbers them, whatever id an
 // answer slipped in; an edit must name an id, and one the page lacks is
-// invented: the rewrite is rejected, as before the split. A merge is the
-// whole page, so leaving such an edit out would delete what it meant.
+// invented. The answer is a patch: such an edit is left out, logged, the
+// statement it may have meant as stored, and the rest of the patch taken
+// (baseline.ApplyMerge).
 func TestFoldEditsAndAdded(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
@@ -471,22 +529,31 @@ func TestFoldEditsAndAdded(t *testing.T) {
 		t.Errorf("statements = %+v, want s1 kept and the new one numbered s2", got)
 	}
 
-	// An invented edit beside a valid one, or an id edited twice, still
-	// rejects the merge: the page stays.
+	// An invented edit beside a valid one, or an id edited twice: the bad
+	// items are left out and logged, the first edit of s1 taken, the page
+	// written.
 	st = newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
 		Statements: []inference.Statement{
 			{ID: str("s9"), Kind: "rule", Name: "Erfunden", Text: "Gibt es nicht."},
 			{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an, bis 10 MB.", Files: []string{"internal/files/upload.go"}},
 			{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Zweite Fassung.", Files: []string{"internal/files/upload.go"}},
 		},
 		Added: []inference.Statement{},
-	}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
-	if len(st.revisions) != 0 {
-		t.Errorf("bad edits: revision written %+v", st.revisions)
+	}, nil)})
+	var logs strings.Builder
+	w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	w.Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || len(st.revisions[0].Statements) != 1 || st.revisions[0].Statements[0].Text != "Nimmt Dateien an, bis 10 MB." {
+		t.Errorf("bad edits: revisions %+v, want the first edit of s1 alone", st.revisions)
+	}
+	if !strings.Contains(logs.String(), "edit left out: s9 (unknown id), s1 (id used twice)") {
+		t.Errorf("bad edits not logged:\n%s", logs.String())
 	}
 
+	// An edit without an id, or of an invented one, is left out: the
+	// statement it may have meant stays as stored, the summary is taken.
 	for name, d := range map[string]*inference.Description{
 		"edit without an id": {Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t"}}, Added: []inference.Statement{}},
 		"invented id":        {Summary: "s", Statements: []inference.Statement{{ID: str("s9"), Kind: "rule", Name: "n", Text: "t"}}, Added: []inference.Statement{}},
@@ -494,8 +561,9 @@ func TestFoldEditsAndAdded(t *testing.T) {
 		st := newFakeStore()
 		st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
 		newWorker(st, &fakeMerger{result: okResult(d, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
-		if len(st.revisions) != 0 {
-			t.Errorf("%s: revision written: %+v", name, st.revisions)
+		if len(st.revisions) != 1 || st.revisions[0].Summary != "s" || len(st.revisions[0].Statements) != 1 ||
+			st.revisions[0].Statements[0].Text != "Nimmt Dateien an." || len(st.revisions[0].Statements[0].Sources) != 1 {
+			t.Errorf("%s: revisions = %+v, want the summary taken and s1 as stored", name, st.revisions)
 		}
 	}
 
@@ -535,9 +603,102 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	}
 }
 
+// A drop is judged against the clone's tree at the note's merge commit: a
+// statement the code alone backs goes only when its files left the tree,
+// one a pull request taught on the model's word (a newer pull request
+// corrects an older one's fact). A statement the patch does not name
+// stays. Without a tree (the clone not fetched to the merge, the sources
+// off) every drop is the model's word.
+func TestFoldDropsJudgedByTheTree(t *testing.T) {
+	page := existingRepoPage()
+	page.Statements = append(page.Statements,
+		store.Statement{ID: "s2", Kind: "rule", Name: "Code", Text: "Aus dem Code.", Files: []string{"internal/files/limit.go"},
+			Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}},
+		store.Statement{ID: "s3", Kind: "rule", Name: "Weg", Text: "Datei weg.", Files: []string{"internal/files/old.go"},
+			Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}},
+		store.Statement{ID: "s4", Kind: "rule", Name: "Bleibt", Text: "Nicht genannt.", Files: []string{"internal/files/keep.go"},
+			Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}})
+	tree := []gitrepo.Entry{{Path: "internal/files/upload.go", Mode: "100644", Size: 1}, {Path: "internal/files/limit.go", Mode: "100644", Size: 1},
+		{Path: "internal/files/keep.go", Mode: "100644", Size: 1}}
+	drop := &inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{}, Added: []inference.Statement{}, Drop: []string{"s1", "s2", "s3"}}
+	q := queued("PLAT/files#42")
+	q.MergeCommit = "m42"
+	ids := func(rev store.NewRevision) []string {
+		var out []string
+		for _, s := range rev.Statements {
+			out = append(out, s.ID)
+		}
+		return out
+	}
+
+	// With the tree: s1 (PR-taught) and s3 (its file gone) go, s2 stays.
+	st := newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	rs := &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
+	code := &fakeCode{tree: tree, held: map[string]bool{"m42": true}}
+	w := newWorker(st, &fakeMerger{result: okResult(drop, nil)}).WithBaseline(Baseline{Store: rs, Code: code})
+	var logs strings.Builder
+	w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	w.Fold(context.Background(), q)
+	if len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s2", "s4"}) {
+		t.Fatalf("with the tree: revisions = %+v, want s2 and s4 kept", st.revisions)
+	}
+	if !strings.Contains(logs.String(), "drop left out: s2 (rests on code, its files still exist)") ||
+		!strings.Contains(logs.String(), `taught_by_pull_requests=[s1]`) {
+		t.Errorf("drops not logged:\n%s", logs.String())
+	}
+
+	// The clone not fetched to the merge commit: git has no tree there,
+	// every drop taken.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
+	code = &fakeCode{tree: tree, readErr: errors.New("git ls-tree: fatal: not a tree object")}
+	newWorker(st, &fakeMerger{result: okResult(drop, nil)}).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
+	if len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s4"}) {
+		t.Errorf("clone behind: revisions = %+v, want s4 alone", st.revisions)
+	}
+
+	// A busy clone: the same, and the call is made all the same.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
+	code = &fakeCode{tree: tree, held: map[string]bool{"m42": true}, readErr: ErrCloneBusy}
+	m := &fakeMerger{result: okResult(drop, nil)}
+	newWorker(st, m).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
+	if len(m.prompts) != 1 || len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s4"}) {
+		t.Errorf("clone busy: calls %d revisions = %+v, want s4 alone", len(m.prompts), st.revisions)
+	}
+
+	// The sources off: no tree either.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	newWorker(st, &fakeMerger{result: okResult(drop, nil)}).Fold(context.Background(), q)
+	if len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s4"}) {
+		t.Errorf("sources off: revisions = %+v, want s4 alone", st.revisions)
+	}
+
+	// An edit of a PR-taught statement may change its files freely; a
+	// project drop is the model's word, no tree.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	st.pages[pageKey(store.ScopeProject, "PLAT", "")] = store.Page{Scope: store.ScopeProject, ProjectKey: "PLAT", RevisionID: 7, Revision: 1, Summary: "Das Projekt.",
+		Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "Quer", Text: "Über Repositories.", Files: []string{"a.go"},
+			Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}}}}
+	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
+	code = &fakeCode{tree: tree, held: map[string]bool{"m42": true}}
+	newWorker(st, &fakeMerger{result: okResult(
+		&inference.Description{Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Zieht um.", Files: []string{"internal/files/new.go"}}}, Added: []inference.Statement{}},
+		&inference.Description{Statements: []inference.Statement{}, Added: []inference.Statement{}, Drop: []string{"s1"}},
+	)}).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
+	if len(st.revisions) != 2 || !slices.Equal(st.revisions[0].Statements[0].Files, []string{"internal/files/new.go"}) || len(st.revisions[1].Statements) != 0 {
+		t.Errorf("edit and project drop: revisions = %+v", st.revisions)
+	}
+}
+
 // An extension is a repository's change recipe: on the project page it is
-// refused like an unknown kind, the project rewrite rejected whole and the
-// repository's applied.
+// left out like an unknown kind, the rest of the project's patch taken and
+// the repository's applied.
 func TestFoldProjectExtensionRefused(t *testing.T) {
 	st := newFakeStore()
 	repo := &inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
@@ -550,10 +711,11 @@ func TestFoldProjectExtensionRefused(t *testing.T) {
 		project.Statements[0].Kind = kind
 		st.revisions = nil
 		newWorker(st, &fakeMerger{result: okResult(repo, project)}).Fold(context.Background(), queued("PLAT/files#42"))
-		for _, rev := range st.revisions {
-			if rev.Scope == store.ScopeProject {
-				t.Errorf("%s: project revision written: %+v", kind, rev)
-			}
+		if len(st.revisions) != 2 || st.revisions[0].Scope != store.ScopeRepository || len(st.revisions[0].Statements) != 1 {
+			t.Fatalf("%s: revisions = %+v, want the repository's with its extension and the project's", kind, st.revisions)
+		}
+		if rev := st.revisions[1]; rev.Scope != store.ScopeProject || rev.Summary != "Das Projekt." || len(rev.Statements) != 0 {
+			t.Errorf("%s: project revision = %+v, want the summary alone", kind, rev)
 		}
 	}
 	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason == "" {
@@ -682,17 +844,22 @@ func TestFoldKeptIDChangedAppendsPROnce(t *testing.T) {
 	}
 }
 
-func TestFoldRejections(t *testing.T) {
+// An item of the patch that breaks a rule costs only itself: an edit of an
+// unknown id, of a kind the page cannot hold, an empty one, is left out
+// and the page written with the rest; an empty summary keeps the stored
+// one. The note is folded and marked.
+func TestFoldItemsLeftOut(t *testing.T) {
 	cases := []struct {
 		name string
 		desc *inference.Description
+		text string
 	}{
-		{"unknown id", &inference.Description{Summary: "s", Statements: []inference.Statement{{ID: str("s9"), Kind: "rule", Name: "n", Text: "t"}}}},
-		{"unknown kind", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "opinion", Name: "n", Text: "t"}}}},
+		{"unknown id", &inference.Description{Summary: "s", Statements: []inference.Statement{{ID: str("s9"), Kind: "rule", Name: "n", Text: "t"}}}, "Nimmt Dateien an."},
+		{"unknown kind", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "opinion", Name: "n", Text: "t"}}}, "Nimmt Dateien an."},
 		{"id used twice", &inference.Description{Summary: "s", Statements: []inference.Statement{
-			{ID: str("s1"), Kind: "rule", Name: "n", Text: "t"}, {ID: str("s1"), Kind: "rule", Name: "m", Text: "u"}}}},
-		{"empty statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: " ", Text: "t"}}}},
-		{"empty summary", &inference.Description{Summary: "  ", Statements: nil}},
+			{ID: str("s1"), Kind: "rule", Name: "n", Text: "t"}, {ID: str("s1"), Kind: "rule", Name: "m", Text: "u"}}}, "t"},
+		{"empty statement", &inference.Description{Summary: "s", Statements: []inference.Statement{{Kind: "rule", Name: " ", Text: "t"}}}, "Nimmt Dateien an."},
+		{"empty summary", &inference.Description{Summary: "  ", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t"}}}, "Nimmt Dateien an."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -700,13 +867,39 @@ func TestFoldRejections(t *testing.T) {
 			st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
 			m := &fakeMerger{result: okResult(tc.desc, nil)}
 			newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
-			if len(st.revisions) != 0 {
-				t.Errorf("revisions = %+v, want the rewrite rejected", st.revisions)
+			if len(st.revisions) != 1 || st.revisions[0].Statements[0].Text != tc.text {
+				t.Fatalf("revisions = %+v, want one with s1 %q", st.revisions, tc.text)
 			}
-			if len(st.marked) != 1 {
-				t.Errorf("marked = %v, want the note marked anyway", st.marked)
+			if tc.name == "empty summary" && (st.revisions[0].Summary != "Der Dienst speichert Dateien." || len(st.revisions[0].Statements) != 2) {
+				t.Errorf("revision = %+v, want the stored summary and the new statement", st.revisions[0])
+			}
+			if len(st.marked) != 1 || len(st.failed) != 0 {
+				t.Errorf("marked = %v failed = %v, want the note marked", st.marked, st.failed)
 			}
 		})
+	}
+
+	// A first page the patch leaves without a summary cannot be written:
+	// the note fails, for after the repository's run, which writes one. The
+	// project's patch is not applied then: the retry folds the note once.
+	st := newFakeStore()
+	newWorker(st, &fakeMerger{result: okResult(
+		&inference.Description{Summary: " ", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t"}}},
+		&inference.Description{Summary: "Das Projekt.", Statements: []inference.Statement{}})}).
+		Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 0 || len(st.marked) != 0 || st.failed["PLAT|files|42"] != "repository patch refused: empty summary" {
+		t.Errorf("first page without a summary: revisions %+v marked %v failed %v", st.revisions, st.marked, st.failed)
+	}
+	// The project's patch refused after the repository's was written costs
+	// only itself: the note is folded, not failed, or the retry would carry
+	// it into the repository page twice.
+	st = newFakeStore()
+	newWorker(st, &fakeMerger{result: okResult(
+		&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t"}}},
+		&inference.Description{Summary: " ", Statements: []inference.Statement{{Kind: "rule", Name: "p", Text: "q"}}})}).
+		Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.revisions) != 1 || st.revisions[0].Scope != store.ScopeRepository || len(st.marked) != 1 || len(st.failed) != 0 {
+		t.Errorf("project refused after the repository: revisions %+v marked %v failed %v", st.revisions, st.marked, st.failed)
 	}
 }
 
@@ -786,14 +979,17 @@ func TestFoldProjectScope(t *testing.T) {
 // gate that fell through to apply() would show as a revision.
 func failed(outcome inference.Outcome, err error) inference.MergeResult {
 	return inference.MergeResult{Call: inference.Call{Outcome: outcome, Err: err},
-		Merge: inference.Merge{Repository: &inference.Description{Summary: "s", Statements: nil}}}
+		Merge: inference.Merge{Repository: answered(&inference.Description{Summary: "s", Statements: nil})}}
 }
 
-// A failure specific to the call (the model's answer off the schema, a
-// 4xx, a 2xx of the wrong shape) marks the note: no retry, no hold.
-func TestFoldCallSpecificFailureMarks(t *testing.T) {
+// A failure specific to the call (the model's answer off the schema, cut by
+// the output limit, a 4xx, a 2xx of the wrong shape) fails the note: off
+// the queue with its reason and the attempt counted, not marked, no hold;
+// the repository's next run queues it again, up to the bound.
+func TestFoldCallSpecificFailureFailsTheNote(t *testing.T) {
 	for name, res := range map[string]inference.MergeResult{
 		"unparseable":    failed(inference.OutcomeUnparseable, errors.New("boom")),
+		"too long":       failed(inference.OutcomeTooLong, errors.New("cut")),
 		"bad request":    failed(inference.OutcomeError, fmt.Errorf("wrapped: %w", llmwire.ErrBadRequest)),
 		"response shape": failed(inference.OutcomeError, fmt.Errorf("wrapped: %w", llmwire.ErrResponseShape)),
 	} {
@@ -804,13 +1000,50 @@ func TestFoldCallSpecificFailureMarks(t *testing.T) {
 		if next := w.Fold(context.Background(), queued("PLAT/files#42")); !next {
 			t.Errorf("%s: paused the drain", name)
 		}
-		if len(st.revisions) != 0 || len(st.marked) != 1 || len(st.attempts) != 0 || w.holding() || w.backoff != 0 {
-			t.Errorf("%s: revisions %d marked %v attempts %v holding %v; want marked, no retry, no hold",
-				name, len(st.revisions), st.marked, st.attempts, w.holding())
+		reason := st.failed["PLAT|files|42"]
+		if len(st.revisions) != 0 || len(st.marked) != 0 || st.attempts["PLAT|files|42"] != 1 || w.holding() || w.backoff != 0 ||
+			!strings.HasPrefix(reason, res.Outcome.String()+": ") {
+			t.Errorf("%s: revisions %d marked %v attempts %v holding %v failed %q; want failed with its reason, unmarked, no hold",
+				name, len(st.revisions), st.marked, st.attempts, w.holding(), reason)
 		}
 		if len(st.calls) != 1 || st.calls[0].Outcome != res.Outcome.String() {
 			t.Errorf("%s: calls = %+v, want one row with the outcome", name, st.calls)
 		}
+	}
+
+	// A failure mark the store refuses pauses the drain, like a mark.
+	st := newFakeStore()
+	st.failErr = errors.New("read-only")
+	if next := newWorker(st, &fakeMerger{result: failed(inference.OutcomeUnparseable, errors.New("boom"))}).Fold(context.Background(), queued("PLAT/files#42")); next {
+		t.Error("failure mark refused: the drain went on")
+	}
+
+	// A run of the repository puts the failed note back; at the bound it
+	// is given up and stays failed. Every drain asks for the aged ones.
+	st = newFakeStore()
+	w := newWorker(st, &fakeMerger{result: failed(inference.OutcomeUnparseable, errors.New("boom"))})
+	w.Fold(context.Background(), queued("PLAT/files#42"))
+	w.requeueFailed(context.Background(), "PLAT", "files")
+	if len(st.failed) != 0 || !slices.Equal(st.requeued, []string{"PLAT/files"}) {
+		t.Errorf("after a run: failed %v requeued %v, want the note back on the queue", st.failed, st.requeued)
+	}
+	w.drain(context.Background())
+	if st.agedCalls != 1 {
+		t.Errorf("aged requeue asked %d times in a drain, want once", st.agedCalls)
+	}
+	// A reason is cut to its bound.
+	cut := newFakeStore()
+	long := failed(inference.OutcomeError, fmt.Errorf("%w: %s", llmwire.ErrBadRequest, strings.Repeat("x", 1000)))
+	newWorker(cut, &fakeMerger{result: long}).Fold(context.Background(), queued("PLAT/files#42"))
+	if r := cut.failed["PLAT|files|42"]; utf8.RuneCountInString(r) != reasonMaxRunes || !strings.HasSuffix(r, "…") {
+		t.Errorf("long reason stored as %d runes, want %d with an ellipsis", utf8.RuneCountInString(r), reasonMaxRunes)
+	}
+	for i := 1; i < maxFoldAttempts; i++ {
+		w.Fold(context.Background(), queued("PLAT/files#42"))
+	}
+	w.requeueFailed(context.Background(), "PLAT", "files")
+	if len(st.failed) != 1 || st.attempts["PLAT|files|42"] != maxFoldAttempts {
+		t.Errorf("at the bound: failed %v attempts %v, want the note given up", st.failed, st.attempts)
 	}
 }
 
@@ -894,20 +1127,20 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 		t.Errorf("Status after a call got through = %+v, want no hold", s)
 	}
 
-	// Past maxFoldAttempts the note is given up, marked, with the rest
-	// of the queue untouched by it.
+	// Past maxFoldAttempts the note is given up: failed with its reason,
+	// never consolidated, the rest of the queue untouched by it.
 	st = newFakeStore()
 	m = &fakeMerger{result: failed(inference.OutcomeError, errors.New("down"))}
 	w = newWorker(st, m)
 	w.now = func() time.Time { return mergedAt }
 	for i := 1; i <= maxFoldAttempts; i++ {
 		w.clearHold()
-		if next := w.Fold(context.Background(), queued("PLAT/files#42")); next != (i == maxFoldAttempts) {
-			t.Errorf("attempt %d: next = %v", i, next)
+		if next := w.Fold(context.Background(), queued("PLAT/files#42")); next {
+			t.Errorf("attempt %d: next = %v, want the drain ended by the hold", i, next)
 		}
 	}
-	if len(st.marked) != 1 || st.attempts["PLAT|files|42"] != maxFoldAttempts || len(st.revisions) != 0 {
-		t.Errorf("after %d attempts: marked %v attempts %v revisions %d; want given up once", maxFoldAttempts, st.marked, st.attempts, len(st.revisions))
+	if len(st.marked) != 0 || st.attempts["PLAT|files|42"] != maxFoldAttempts+1 || len(st.revisions) != 0 || st.failed["PLAT|files|42"] != "error: down" {
+		t.Errorf("after %d attempts: marked %v attempts %v revisions %d failed %v; want given up as failed", maxFoldAttempts, st.marked, st.attempts, len(st.revisions), st.failed)
 	}
 	// Every defer and the mark named the delivery the fold read, so a note
 	// delivered again meanwhile is never counted against or taken off.
@@ -1092,7 +1325,9 @@ func TestFoldLongDescriptionsTaken(t *testing.T) {
 	if len(st.revisions) != 2 {
 		t.Fatalf("revisions = %+v, want both taken", st.revisions)
 	}
-	if want := 1 + 1 + 100000 + 2 + 20; st.revisions[0].Chars != want {
+	// The summary, the new statement's name and text, and the stored
+	// statement the patch did not name (Uploader, Nimmt Dateien an.).
+	if want := 1 + 1 + 100000 + 2 + 20 + 8 + 17; st.revisions[0].Chars != want {
 		t.Errorf("chars = %d, want the prose runes %d", st.revisions[0].Chars, want)
 	}
 }

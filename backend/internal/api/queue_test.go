@@ -24,6 +24,7 @@ type fakeQueueStore struct {
 	open       []store.BaselineRun
 	finished   []store.FinishedRun
 	folded     []store.FoldedNote
+	failed     []store.FailedNote
 	calls      map[int64][]store.RunCall
 	openRead   bool
 	callsAsked []int64
@@ -50,6 +51,9 @@ func (f *fakeQueueStore) FinishedRuns(context.Context, time.Time, int) ([]store.
 }
 func (f *fakeQueueStore) FoldedNotes(context.Context, time.Time, int) ([]store.FoldedNote, error) {
 	return f.folded, nil
+}
+func (f *fakeQueueStore) FailedNotes(context.Context, int) ([]store.FailedNote, error) {
+	return f.failed, nil
 }
 func (f *fakeQueueStore) QueueCount(_ context.Context, runs bool) (int, error) {
 	f.countRuns = runs
@@ -237,6 +241,23 @@ func TestQueue_Recent(t *testing.T) {
 	st.finished[0].Latest, st.finished[0].FailedInRow = true, 4
 	if out := getQueue(t, &QueueDeps{Store: st, Worker: fakeWorkerStatus{}, Sync: fakeSync{}}); out.Recent[0].RetryAt != nil {
 		t.Errorf("retries spent, a retry promised: %+v", out.Recent[0])
+	}
+}
+
+// The failed notes are listed apart from the queue, each with its reason
+// and whether it is given up at the bound.
+func TestQueue_FailedNotes(t *testing.T) {
+	st := &fakeQueueStore{failed: []store.FailedNote{
+		{ProjectKey: "pay", RepoSlug: "ledger", PRKey: "pay/ledger#9", PRTitle: "t", FailedAt: at(-10), Reason: "too_long", Attempts: 1},
+		{ProjectKey: "pay", RepoSlug: "ledger", PRKey: "pay/ledger#8", FailedAt: at(-20), Reason: "unparseable", Attempts: consolidate.MaxAttempts},
+	}}
+	out := getQueue(t, &QueueDeps{Store: st, Worker: fakeWorkerStatus{}, Sync: fakeSync{}})
+	if len(out.Failed) != 2 || out.Failed[0].PRKey != "pay/ledger#9" || out.Failed[0].Reason != "too_long" || out.Failed[0].GivenUp ||
+		out.Failed[0].Attempts != 1 || out.Failed[0].Title != "t" || !out.Failed[1].GivenUp {
+		t.Errorf("failed = %+v", out.Failed)
+	}
+	if out := getQueue(t, &QueueDeps{Store: &fakeQueueStore{}, Worker: fakeWorkerStatus{}}); out.Failed == nil || len(out.Failed) != 0 {
+		t.Errorf("failed with none = %#v, want an empty list", out.Failed)
 	}
 }
 

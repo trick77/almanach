@@ -37,8 +37,12 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   left out, logged, stored kept (user, 2026-11-01). New statements in id-less `added`; ids never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
-- One worker, serial, oldest first. Call-specific failure: note marked+logged. `gatewayClass`:
-  worker holds, note kept, ≤ `maxFoldAttempts`: none blocks queue forever. Failed mark pauses drain (else one paid call per lap).
+- One worker, serial, oldest first. Merge = patch (`ApplyMerge`), never whole page: forgotten
+  statement vanished, output limit cut big pages. Drop: PR-taught = model's word; code-backed only
+  with files gone from clone head holding merge commit, no tree = model's word. Call-specific
+  failure: note `fold_failed_at`+reason, off queue, back after repo's run done, ≤ `maxFoldAttempts`;
+  never consolidated (PR knowledge lost once). `gatewayClass`: worker holds, note kept, ≤
+  `maxFoldAttempts`: none blocks queue forever. Failed mark pauses drain (else one paid call per lap).
 - One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
   schema, no in-call retry.
 - Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.

@@ -49,6 +49,23 @@ type Applied struct {
 // statement as returned may not stand on the page ("" when it may). It
 // never refuses: what breaks a rule is left out and named.
 func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path string) bool, valid func(inference.Statement) string) Applied {
+	return apply(current, p, exists, valid, false)
+}
+
+// ApplyMerge applies a note's patch, a fold's. The rules turn around: a
+// pull request's note is the newest word on the code, so a statement an
+// earlier pull request taught is dropped or has its files changed on the
+// model's word, and a statement the code alone backs (a baseline run's) is
+// dropped only when the tree no longer has any of its files, exists the
+// clone's tree where it holds the note's merge commit. With no tree (nil:
+// the sources off, the clone behind the merge, busy or gone) every drop is
+// the model's word, as a whole-page rewrite's was. Edits never shed a file
+// here: the note may say the files moved.
+func ApplyMerge(current []store.Statement, p inference.Patch, exists func(path string) bool, valid func(inference.Statement) string) Applied {
+	return apply(current, p, exists, valid, true)
+}
+
+func apply(current []store.Statement, p inference.Patch, exists func(path string) bool, valid func(inference.Statement) string, merge bool) Applied {
 	byID := make(map[string]store.Statement, len(current))
 	for _, s := range current {
 		byID[s.ID] = s
@@ -77,7 +94,7 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 			bad = append(bad, id+" ("+why+"), kept as stored")
 			continue
 		}
-		if old := byID[id]; FromPR(old) {
+		if old := byID[id]; !merge && FromPR(old) {
 			if lost := shed(old.Files, st.Files, exists); lost != "" {
 				bad = append(bad, id+" (taught by a pull request, drops its file "+lost+" the tree still has)")
 				continue
@@ -111,8 +128,10 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 			badDrops = append(badDrops, id+" (an edit of it left out too, kept as stored)")
 		case confirmed[id]:
 			badDrops = append(badDrops, id+" (confirmed too, kept)")
-		case FromPR(s) && !gone(s.Files, exists):
+		case !merge && FromPR(s) && !gone(s.Files, exists):
 			badDrops = append(badDrops, id+" (taught by a pull request, its files still exist)")
+		case merge && exists != nil && !FromPR(s) && len(s.Files) > 0 && !gone(s.Files, exists):
+			badDrops = append(badDrops, id+" (rests on code, its files still exist)")
 		default:
 			dropped[id] = true
 		}
@@ -170,8 +189,11 @@ func FromPR(s store.Statement) bool {
 }
 
 // shed is the first old file an edit leaves out that the tree still has,
-// "" when it keeps them all.
+// "" when it keeps them all or there is no tree to ask.
 func shed(old, edited []string, exists func(string) bool) string {
+	if exists == nil {
+		return ""
+	}
 	kept := make(map[string]bool, len(edited))
 	for _, f := range edited {
 		kept[normPath(f)] = true
@@ -185,9 +207,10 @@ func shed(old, edited []string, exists func(string) bool) string {
 }
 
 // gone reports whether a statement's files have all left the tree. A
-// statement without files has nothing the code could show gone.
+// statement without files has nothing the code could show gone, and no
+// tree shows nothing gone.
 func gone(files []string, exists func(string) bool) bool {
-	if len(files) == 0 {
+	if len(files) == 0 || exists == nil {
 		return false
 	}
 	for _, f := range files {
