@@ -476,7 +476,7 @@ paths:
         collapsed, as the texts' are; one under two characters or past
         two hundred answers no pages. Past fifty pages the rest are counted in
         `more`. Link a hit as
-        `/projects/{project_key}[/repos/{repo_slug}]#description/{id}`.
+        `/projects/{project_key}[/repos/{repo_slug}]#description/statement-{id}`.
       operationId: search
       parameters:
         - name: q
