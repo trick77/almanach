@@ -77,11 +77,11 @@ export function NotePage({
 }
 
 /** taughtPath is a taught statement's deep link: its page's description
- *  tab, then its id. A project of one has no project page on the wire,
- *  so a repository scope here is always at the repository's path. */
-function taughtPath(t: Taught): string {
+ *  tab, then its id. A project of one has no project page on the wire;
+ *  its repository's page is the project's, at the project's path. */
+function taughtPath(t: Taught, single: boolean): string {
   const base =
-    t.scope === "project"
+    t.scope === "project" || single
       ? projectPath(t.project_key)
       : repoPath(t.project_key, t.repo_slug ?? "");
   return base + anchorHash("description", t.id);
@@ -146,14 +146,21 @@ function Body({ n }: { n: NoteDetail }) {
               <span className="w-[112px] text-[11px] font-medium tracking-[.1em] text-faint uppercase">
                 {kindLabel(t.kind, t.scope === "project")}
               </span>
-              <Link to={taughtPath(t)} className="text-ink-dim hover:text-ink">
+              <Link
+                to={taughtPath(t, n.single)}
+                className="text-ink-dim hover:text-ink"
+              >
                 {t.name}
               </Link>
-              <span className="text-muted">
-                {t.scope === "project"
-                  ? S.note.taughtProject(t.project_key)
-                  : t.repo_slug}
-              </span>
+              {/* The page: the project's, or the repository's by its
+                  slug; a project of one has the one page, unnamed. */}
+              {(t.scope === "project" || !n.single) && (
+                <span className="text-muted">
+                  {t.scope === "project"
+                    ? S.note.taughtProject(t.project_key)
+                    : t.repo_slug}
+                </span>
+              )}
             </li>
           ))}
         </ul>

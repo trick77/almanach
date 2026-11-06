@@ -357,9 +357,9 @@ export function useHashTab(
   }, [names, start]);
   const [at, setAt] = useState(read);
   useEffect(() => {
-    // The same address again (a canonical replace, a hashchange the page
-    // wrote itself) is no change: the state object stays, nothing
-    // re-renders.
+    // The same address again (a canonical replace's popstate, a
+    // hashchange the page wrote itself) is no change: the state object
+    // stays, landed as it was, nothing re-renders.
     const sync = () => setAt((prev) => same(prev, read()));
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
@@ -383,12 +383,14 @@ export function useHashTab(
     },
     [start],
   );
-  const setTarget = useCallback((id: string) => {
-    setAt((prev) => {
-      write(anchorHash(prev.tab, id));
-      return { tab: prev.tab, target: id, landed: false };
-    });
-  }, []);
+  const tab = at.tab;
+  const setTarget = useCallback(
+    (id: string) => {
+      write(anchorHash(tab, id));
+      setAt({ tab, target: id, landed: false });
+    },
+    [tab],
+  );
   return {
     tab: at.tab,
     setTab,
@@ -406,30 +408,56 @@ interface At {
   landed: boolean;
 }
 
+/** same keeps prev when the address names the same tab and target: how
+ *  they came (landed) is prev's to say, the address cannot tell. */
 function same(prev: At, next: At): At {
-  return prev.tab === next.tab &&
-    prev.target === next.target &&
-    prev.landed === next.landed
-    ? prev
-    : next;
+  return prev.tab === next.tab && prev.target === next.target ? prev : next;
 }
+
+/** settleMs is how long after a landing the page may still move under
+ *  the statement: content above it lands later (a repository's problem
+ *  areas from the project fetch, a map or a statement's diagram laid out
+ *  once elk has loaded) and pushes it down, so the jump is redone on
+ *  every change of the page in that time, unless the reader scrolled or
+ *  typed meanwhile: then the page is theirs. */
+const settleMs = 3000;
 
 /** useJumpTo scrolls the element a deep link names into view once it is
  *  on the page: the statements render after the fetch, so the effect runs
- *  on ready, not on mount, and again whenever a value in `later` changes:
- *  content that lands above the statements afterwards (a repository's
- *  problem areas from the project fetch) pushes them down, so the jump is
- *  redone when it comes. A reload on the link lands on it again. */
-export function useJumpTo(
-  landing: string,
-  ready: boolean,
-  later: readonly unknown[] = [],
-) {
-  const key = later.map(String).join("|");
+ *  on ready, not on mount; then again on each change of the page until it
+ *  has settled (settleMs). A reload on the link lands on it again. */
+export function useJumpTo(landing: string, ready: boolean) {
   useEffect(() => {
     if (landing === "" || !ready) return;
-    document.getElementById(landing)?.scrollIntoView();
-  }, [landing, ready, key]);
+    const el = document.getElementById(landing);
+    if (!el) return;
+    el.scrollIntoView();
+    let timer = 0;
+    const again = () => {
+      // Once per frame, however many mutations one layout makes.
+      if (timer !== 0) return;
+      timer = window.setTimeout(() => {
+        timer = 0;
+        el.scrollIntoView();
+      }, 0);
+    };
+    const observer = new MutationObserver(again);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+    const stop = () => {
+      observer.disconnect();
+      window.clearTimeout(timer);
+      for (const ev of taken) window.removeEventListener(ev, stop);
+      window.clearTimeout(settled);
+    };
+    const taken = ["wheel", "touchmove", "keydown"] as const;
+    for (const ev of taken) window.addEventListener(ev, stop);
+    const settled = window.setTimeout(stop, settleMs);
+    return stop;
+  }, [landing, ready]);
 }
 
 /** anchorHash is a statement's deep link on its page: the tab, then its

@@ -49,7 +49,7 @@ type Store interface {
 	Revisions(ctx context.Context, scope, project, repo string, limit int) ([]store.RevisionRow, error)
 	Notes(ctx context.Context, project, repo string, limit int) ([]store.NoteRow, error)
 	NoteByKey(ctx context.Context, project, repo string, prID int) (store.NoteDetail, bool, error)
-	Taught(ctx context.Context, prKey string, sourced bool) ([]store.TaughtRow, error)
+	Taught(ctx context.Context, project, prKey string, sourced bool) ([]store.TaughtRow, error)
 	Problems(ctx context.Context, project string, days int) ([]store.ProblemArea, error)
 	// Any name a project or repository ever had finds it; these give its
 	// current names, which a response carries so an old URL lands on the
@@ -749,8 +749,10 @@ type noteDetailBody struct {
 	ConsolidatedAt *time.Time      `json:"consolidated_at"`
 	Call           *noteCallBody   `json:"note_call"`
 	// Taught is the current statements the note is a source of: the
-	// repository page's, then the project's.
+	// repository page's, then the project's. Single says the project is
+	// one of one: the repository's page is the project's, at its path.
 	Taught []taughtBody `json:"taught"`
+	Single bool         `json:"single"`
 }
 
 // taughtBody is one statement a note taught, as the note page links it:
@@ -792,21 +794,22 @@ func (d Deps) note(w http.ResponseWriter, r *http.Request) {
 	// Only a folded note can have taught: the scan over every current
 	// page's statements is spared a queued or failed one.
 	if n.ConsolidatedAt != nil {
-		taught, err := d.Store.Taught(ctx, n.PRKey, d.Sources != nil)
+		taught, err := d.Store.Taught(ctx, n.ProjectKey, n.PRKey, d.Sources != nil)
 		if err != nil {
 			httpx.ServerError(w, r, err, "taught")
 			return
 		}
 		// A project of one has no project page: one written while it had
 		// more repositories stays in the store, not on the wire (see
-		// project).
-		alone, err := d.single(ctx, n.ProjectKey)
-		if err != nil {
-			httpx.ServerError(w, r, err, "project source")
-			return
+		// project); its repository's page is at the project's path.
+		if len(taught) > 0 {
+			if out.Single, err = d.single(ctx, n.ProjectKey); err != nil {
+				httpx.ServerError(w, r, err, "project source")
+				return
+			}
 		}
 		for _, t := range taught {
-			if alone && t.Scope == store.ScopeProject {
+			if out.Single && t.Scope == store.ScopeProject {
 				continue
 			}
 			out.Taught = append(out.Taught, taughtBody{Scope: t.Scope, ProjectKey: t.ProjectKey, RepoSlug: t.RepoSlug, ID: t.ID, Kind: t.Kind, Name: t.Name})

@@ -323,6 +323,9 @@ export interface NoteDetail extends NoteSummary {
   /** The current statements the note is a source of, the repository
    *  page's then the project's: where the PR's knowledge stands today. */
   taught: Taught[];
+  /** The project is one of one: its repository's page is the project's,
+   *  at the project's path. False whenever taught is empty. */
+  single: boolean;
 }
 
 export interface Taught {

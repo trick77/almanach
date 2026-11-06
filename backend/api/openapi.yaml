@@ -2713,7 +2713,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/NoteSummary"
         - type: object
-          required: [project_key, source_commit, bugfix, note, received_at, consolidated_at, note_call, taught]
+          required: [project_key, source_commit, bugfix, note, received_at, consolidated_at, note_call, taught, single]
           properties:
             project_key:
               type: string
@@ -2759,3 +2759,10 @@ components:
                 `/projects/{project_key}[/repos/{repo_slug}]#description/{id}`.
               items:
                 $ref: "#/components/schemas/Taught"
+            single:
+              type: boolean
+              description: |
+                The note's project is one of one: its repository's page is
+                the project's, served at `/projects/{project_key}`, so a
+                repository entry in `taught` links there. False whenever
+                `taught` is empty.

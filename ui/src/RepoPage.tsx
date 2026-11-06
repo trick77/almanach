@@ -137,11 +137,7 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const { data: project } = useFetch<ProjectDetail>(
     `projects/${encodeURIComponent(data.project_key)}`,
   );
-  // The problem areas land above the statements after the project
-  // fetch: a deep link jumps again once they are there.
-  useJumpTo(landing, tab === DESCRIPTION && data.description !== null, [
-    project !== null,
-  ]);
+  useJumpTo(landing, tab === DESCRIPTION && data.description !== null);
   const problems = (project?.problems ?? []).filter(
     (p) => p.repo_slug === data.slug,
   );

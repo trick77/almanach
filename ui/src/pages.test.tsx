@@ -261,6 +261,7 @@ const note: NoteDetail = {
     rounds_cost_usd: "0.040",
   },
   taught: [],
+  single: false,
 };
 
 describe("ProjectsPage", () => {
@@ -578,8 +579,9 @@ describe("ProjectPage", () => {
     // Each statement carries its own address; a click writes it in place
     // and copies it, the mark moves along.
     const links = within(desc).getAllByRole("link", {
-      name: "Link zur Aussage",
+      name: /^Link zur Aussage /,
     });
+    expect(links[0]).toHaveAccessibleName("Link zur Aussage Auftragsannahme");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
       "#description/s1",
       "#description/s2",
@@ -619,10 +621,19 @@ describe("ProjectPage", () => {
     });
     render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
     await screen.findByText("Auftragsannahme");
-    // Once on the statements, once more when the project detail (the
-    // problem areas above them) has landed.
-    await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(2));
-    expect(scrolled.mock.contexts[1]).toBe(document.getElementById("s1"));
+    // Once on the statements, again when the project detail (the problem
+    // areas above them) has landed and changed the page.
+    await waitFor(() =>
+      expect(scrolled.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
+    const s1 = document.getElementById("s1");
+    expect(scrolled.mock.contexts.every((c) => c === s1)).toBe(true);
+    // The reader scrolls: the page is theirs, a later change moves nothing.
+    const before = scrolled.mock.calls.length;
+    fireEvent.wheel(window);
+    document.body.appendChild(document.createElement("p"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(scrolled.mock.calls.length).toBe(before);
   });
 
   it("opens the description on a target it does not have, the page whole", async () => {
@@ -1658,6 +1669,34 @@ describe("NotePage", () => {
     // A project page's entity is a shared one, labelled so.
     expect(screen.getByText("Geteilte Entität")).toBeInTheDocument();
     expect(screen.getByText("Projekt PAY")).toBeInTheDocument();
+    expect(
+      screen.getByText("pay-api", { selector: "li span" }),
+    ).toBeInTheDocument();
+  });
+
+  it("links a project of one's statements to the project's path, unnamed", async () => {
+    serve({
+      "projects/PAY/repos/pay-api/notes/231": {
+        ...note,
+        consolidated_at: mergedAt,
+        single: true,
+        taught: [
+          {
+            scope: "repository",
+            project_key: "PAY",
+            repo_slug: "pay-api",
+            id: "s3",
+            kind: "rule",
+            name: "Grenze",
+          },
+        ],
+      },
+    });
+    render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
+    expect(
+      (await screen.findByText("Grenze")).closest("a")?.getAttribute("href"),
+    ).toBe("/projects/PAY#description/s3");
+    expect(screen.queryByText("pay-api", { selector: "li span" })).toBeNull();
   });
 
   it("says why nothing is taught: not folded yet, or nothing left", async () => {

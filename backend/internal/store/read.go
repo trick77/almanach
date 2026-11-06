@@ -435,23 +435,30 @@ type TaughtRow struct {
 	Name       string
 }
 
-// Taught lists the statements on current pages that carry the PR key
-// among their sources, the repository page's before the project's, each
-// page in its stored order: the note page's reverse provenance. Current
-// pages only; a statement dropped since is not taught any more. Only
-// pages the read routes serve: with sourced, the source repositories' (a
-// repository removed from the sources keeps its page but answers 404).
-// The key is matched in any case, as a name is.
-func (s *Store) Taught(ctx context.Context, prKey string, sourced bool) ([]TaughtRow, error) {
+// Taught lists the statements on the project's current pages that carry
+// the PR key among their sources, the repository page's before the
+// project's, each page in its stored order: the note page's reverse
+// provenance. The project's pages alone (a note teaches its own project),
+// current ones only: a statement dropped since is not taught any more.
+// Only pages the read routes serve: with sourced, a source project's and
+// its source repositories' (a repository removed from the sources keeps
+// its page but answers 404). The key is matched in any case, as a name
+// is; the project by any name it had.
+func (s *Store) Taught(ctx context.Context, project, prKey string, sourced bool) ([]TaughtRow, error) {
+	pid, ok, err := projectID(ctx, s.db, project)
+	if err != nil || !ok {
+		return []TaughtRow{}, err
+	}
 	//nolint:gosec // G202: constant fragments of this file, no value spliced in
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.scope, pj.key, COALESCE(rp.slug, ''), st.value ->> '$.id', st.value ->> '$.kind', st.value ->> '$.name'
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
-		  JOIN projects pj ON pj.id = p.project_id LEFT JOIN `+reposFrom(sourced)+` rp ON rp.id = p.repo_id,
+		  JOIN `+projectsFrom(sourced)+` pj ON pj.id = p.project_id
+		  LEFT JOIN `+reposFrom(sourced)+` rp ON rp.id = p.repo_id,
 		  json_each(r.statements) st
-		 WHERE (p.scope = 'project' OR rp.id IS NOT NULL)
+		 WHERE p.project_id = ? AND (p.scope = 'project' OR rp.id IS NOT NULL)
 		   AND EXISTS (SELECT 1 FROM json_each(st.value, '$.sources') src WHERE src.value ->> '$.pr_key' = ? COLLATE NOCASE)
-		 ORDER BY p.scope DESC, pj.key, rp.slug, st.key`, prKey)
+		 ORDER BY p.scope = 'project', rp.slug, st.key`, pid, prKey)
 	if err != nil {
 		return nil, err
 	}

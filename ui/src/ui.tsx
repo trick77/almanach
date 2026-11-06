@@ -534,21 +534,22 @@ export function Panel({
  *  clipboard and says so for a moment. A browser without the clipboard
  *  (no secure context) copies nothing and says nothing. */
 export function useCopied(): [boolean, (text: string) => void] {
-  const [done, setDone] = useState(false);
+  // A count, not a flag: every copy restarts the moment.
+  const [copies, setCopies] = useState(0);
   useEffect(() => {
-    if (!done) return;
-    const id = window.setTimeout(() => setDone(false), 1500);
+    if (copies === 0) return;
+    const id = window.setTimeout(() => setCopies(0), 1500);
     return () => window.clearTimeout(id);
-  }, [done]);
+  }, [copies]);
   const copy = useCallback((text: string) => {
     const clip = navigator.clipboard;
     if (!clip) return;
     clip.writeText(text).then(
-      () => setDone(true),
+      () => setCopies((n) => n + 1),
       () => {},
     );
   }, []);
-  return [done, copy];
+  return [copies > 0, copy];
 }
 
 /** CopyButton puts text on the clipboard and says "Kopiert" for a

@@ -165,9 +165,9 @@ func (f *fakeStore) NoteByKey(_ context.Context, project, repo string, prID int)
 	return d, ok, nil
 }
 
-func (f *fakeStore) Taught(_ context.Context, prKey string, sourced bool) ([]store.TaughtRow, error) {
+func (f *fakeStore) Taught(_ context.Context, project, prKey string, sourced bool) ([]store.TaughtRow, error) {
 	f.sourcedAsked = append(f.sourcedAsked, sourced)
-	return f.taught[prKey], nil
+	return f.taught[project+"|"+prKey], nil
 }
 
 func (f *fakeStore) Problems(_ context.Context, _ string, days int) ([]store.ProblemArea, error) {
@@ -689,7 +689,7 @@ func TestNote(t *testing.T) {
 	// (a queued note asks the store nothing); a project of one's project
 	// page stays off the wire, as on the project route, and with the
 	// sources on the store is asked for source repositories' pages.
-	st.taught["PLAT/files#42"] = []store.TaughtRow{
+	st.taught["PLAT|PLAT/files#42"] = []store.TaughtRow{
 		{Scope: store.ScopeRepository, ProjectKey: "PLAT", RepoSlug: "files", ID: "s3", Kind: "rule", Name: "Limit"},
 		{Scope: store.ScopeProject, ProjectKey: "PLAT", ID: "s1", Kind: "flow", Name: "Upload"},
 	}
@@ -705,15 +705,16 @@ func TestNote(t *testing.T) {
 		t.Errorf("Taught asked with sourced %v, want once, false without the sources", st.sourcedAsked)
 	}
 	if string(body["taught"]) != `[{"scope":"repository","project_key":"PLAT","repo_slug":"files","id":"s3","kind":"rule","name":"Limit"},`+
-		`{"scope":"project","project_key":"PLAT","id":"s1","kind":"flow","name":"Upload"}]` {
-		t.Errorf("taught = %s", body["taught"])
+		`{"scope":"project","project_key":"PLAT","id":"s1","kind":"flow","name":"Upload"}]` || string(body["single"]) != "false" {
+		t.Errorf("taught = %s single = %s", body["taught"], body["single"])
 	}
 	st.single = map[string]store.RepoRow{"PLAT": {Slug: "files"}}
 	h, _, _ = sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
 	st.sourcedAsked = nil
 	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
-	if string(body["taught"]) != `[{"scope":"repository","project_key":"PLAT","repo_slug":"files","id":"s3","kind":"rule","name":"Limit"}]` {
-		t.Errorf("taught of a project of one = %s", body["taught"])
+	if string(body["taught"]) != `[{"scope":"repository","project_key":"PLAT","repo_slug":"files","id":"s3","kind":"rule","name":"Limit"}]` ||
+		string(body["single"]) != "true" {
+		t.Errorf("taught of a project of one = %s single = %s", body["taught"], body["single"])
 	}
 	if len(st.sourcedAsked) != 1 || !st.sourcedAsked[0] {
 		t.Errorf("Taught asked with sourced %v, want true with the sources on", st.sourcedAsked)

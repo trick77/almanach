@@ -216,14 +216,23 @@ export function DescriptionView({
  *  open in a new tab as any, and a plain click on it picks the statement
  *  (onPick: the page writes the address in place, as a tab switch does,
  *  so back leaves the page) and copies the address, saying so for a
- *  moment. Shown on hover and focus, the kind's line stays quiet
- *  otherwise. */
-function AnchorLink({ hash, onPick }: { hash: string; onPick: () => void }) {
+ *  moment. Always there, quiet: a touch screen has no hover to show it
+ *  on. Named after its statement, so a screen reader's list of links
+ *  tells them apart. */
+function AnchorLink({
+  hash,
+  name,
+  onPick,
+}: {
+  hash: string;
+  name: string;
+  onPick: () => void;
+}) {
   const [done, copy] = useCopied();
   return (
     <a
       href={hash}
-      aria-label={S.copy.statementLink}
+      aria-label={S.copy.statementLink(plain(name))}
       title={S.copy.statementLinkHint}
       onClick={(e) => {
         if (!plainClick(e)) return;
@@ -232,7 +241,7 @@ function AnchorLink({ hash, onPick }: { hash: string; onPick: () => void }) {
         const { origin, pathname, search } = window.location;
         copy(origin + pathname + search + hash);
       }}
-      className="float-right font-mono text-[11px] text-faint opacity-0 hover:text-ink focus:opacity-100 group-hover:opacity-100"
+      className="float-right px-1 font-mono text-[11px] text-faint hover:text-ink"
     >
       {done ? S.copy.done : "#"}
     </a>
@@ -349,7 +358,11 @@ export function StatementBlock({
       }
     >
       {anchor !== undefined && (
-        <AnchorLink hash={anchor} onPick={() => onAnchor?.(s.id)} />
+        <AnchorLink
+          hash={anchor}
+          name={s.name}
+          onPick={() => onAnchor?.(s.id)}
+        />
       )}
       <div className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
         {kindLabel(s.kind, pageRepo === undefined)}
