@@ -1,5 +1,7 @@
 import { useEffect } from "react";
-import type { NoteDetail, NoteItem } from "./api";
+import type { NoteDetail, NoteItem, Taught } from "./api";
+import { DESCRIPTION, kindLabel } from "./Description";
+import { anchorHash } from "./Rail";
 import {
   causeLabel,
   changeLabel,
@@ -17,6 +19,8 @@ import {
   Crumbs,
   Empty,
   Failed,
+  Inline,
+  Link,
   Pill,
   Prose,
   Sep,
@@ -73,6 +77,17 @@ export function NotePage({
   );
 }
 
+/** taughtPath is a taught statement's deep link: its page's description
+ *  tab, then its id. A project of one has no project page on the wire;
+ *  its repository's page is the project's, at the project's path. */
+function taughtPath(t: Taught, single: boolean): string {
+  const base =
+    t.scope === "project" || single
+      ? projectPath(t.project_key)
+      : repoPath(t.project_key, t.repo_slug ?? "");
+  return base + anchorHash(DESCRIPTION, t.id);
+}
+
 const LISTS: {
   key: "components" | "rules" | "invariants" | "entities";
   label: string;
@@ -109,6 +124,48 @@ function Body({ n }: { n: NoteDetail }) {
 
       <div className={eyebrow}>{S.note.summary}</div>
       {summary ? <Summary text={summary} /> : <Empty>{S.note.noSummary}</Empty>}
+
+      <div className={eyebrow}>
+        {S.note.taught}
+        <span className="ml-2 font-normal tracking-normal normal-case text-faint">
+          {S.note.taughtHint}
+        </span>
+      </div>
+      {n.taught.length === 0 ? (
+        <Empty>
+          {n.consolidated_at === null
+            ? S.note.taughtPending
+            : S.note.taughtNone}
+        </Empty>
+      ) : (
+        <ul className="m-0 list-none p-0">
+          {n.taught.map((t) => (
+            <li
+              key={t.scope + "/" + (t.repo_slug ?? "") + "/" + t.id}
+              className="flex flex-wrap items-baseline gap-x-2 border-b border-border-soft py-1.5 text-[13.5px]"
+            >
+              <span className="w-[112px] text-[11px] font-medium tracking-[.1em] text-faint uppercase">
+                {kindLabel(t.kind, t.scope === "project")}
+              </span>
+              <Link
+                to={taughtPath(t, n.single)}
+                className="text-ink-dim hover:text-ink"
+              >
+                <Inline text={t.name} />
+              </Link>
+              {/* The page: the project's, or the repository's by its
+                  slug; a project of one has the one page, unnamed. */}
+              {(t.scope === "project" || !n.single) && (
+                <span className="text-muted">
+                  {t.scope === "project"
+                    ? S.note.taughtProject(t.project_key)
+                    : t.repo_slug}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {bugfix && (
         <>

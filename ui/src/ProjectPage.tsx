@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectDetail, SharedRepo } from "./api";
-import { DescriptionView, descriptionRail } from "./Description";
+import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import { CompactMap } from "./CompactMap";
 import { titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
@@ -13,16 +13,18 @@ import {
   Tabs,
   stickyCrumbs,
   useHashTab,
+  useJumpTo,
   type RailGroup,
 } from "./Rail";
 import { day, refName } from "./format";
-import { projectPath, repoPath } from "./routing";
+import { projectExportHref, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Crumbs,
   Empty,
+  ExportLine,
   Failed,
   Link,
   Sep,
@@ -48,7 +50,6 @@ import {
 /** The project page's tabs by their hash: the overview first, the hub's
  *  job; the description second. */
 const OVERVIEW = "overview";
-const DESCRIPTION = "description";
 const TABS = [OVERVIEW, DESCRIPTION];
 const tabLabel = (t: string) =>
   t === OVERVIEW ? S.tabs.overview : S.tabs.description;
@@ -98,7 +99,11 @@ function ProjectCrumbs({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useHashTab(TABS, OVERVIEW);
+  const { tab, setTab, target, setTarget, landing } = useHashTab(
+    TABS,
+    OVERVIEW,
+  );
+  useJumpTo(landing, tab === DESCRIPTION && data.description !== null);
   const [query, setQuery] = useState("");
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
@@ -206,6 +211,7 @@ function Body({ data }: { data: ProjectDetail }) {
         {S.projects.lastMerge}{" "}
         {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
+      <ExportLine href={projectExportHref(data.key)} />
 
       <Tabs
         tabs={[
@@ -228,6 +234,9 @@ function Body({ data }: { data: ProjectDetail }) {
             description={data.description}
             emptyHint={S.project.noDescriptionHint}
             query={query}
+            tab={DESCRIPTION}
+            target={target}
+            onTarget={setTarget}
           />
         )}
       </div>

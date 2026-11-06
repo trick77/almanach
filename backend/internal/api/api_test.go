@@ -41,6 +41,7 @@ type fakeStore struct {
 	revisions  []store.RevisionRow
 	notes      []store.NoteRow
 	details    map[string]store.NoteDetail
+	taught     map[string][]store.TaughtRow
 	problems   []store.ProblemArea
 	daysAsked  []int
 	problemErr error
@@ -105,7 +106,7 @@ func (f *fakeStore) SingleRepos(context.Context) (map[string]store.RepoRow, erro
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{accepted: true, teams: map[string]string{}, repos: map[string][]store.RepoRow{},
-		pages: map[string]store.Page{}, details: map[string]store.NoteDetail{}}
+		pages: map[string]store.Page{}, details: map[string]store.NoteDetail{}, taught: map[string][]store.TaughtRow{}}
 }
 
 func (f *fakeStore) Ingest(_ context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error) {
@@ -162,6 +163,11 @@ func (f *fakeStore) Notes(context.Context, string, string, int) ([]store.NoteRow
 func (f *fakeStore) NoteByKey(_ context.Context, project, repo string, prID int) (store.NoteDetail, bool, error) {
 	d, ok := f.details[project+"|"+repo+"|"+itoa(prID)]
 	return d, ok, nil
+}
+
+func (f *fakeStore) Taught(_ context.Context, project, repo string, prID int, sourced bool) ([]store.TaughtRow, error) {
+	f.sourcedAsked = append(f.sourcedAsked, sourced)
+	return f.taught[project+"|"+repo+"|"+itoa(prID)], nil
 }
 
 func (f *fakeStore) Problems(_ context.Context, _ string, days int) ([]store.ProblemArea, error) {
@@ -674,6 +680,47 @@ func TestNote(t *testing.T) {
 	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
 	if string(body["note_call"]) != "null" {
 		t.Errorf("note_call = %s, want null", body["note_call"])
+	}
+	if string(body["taught"]) != "[]" {
+		t.Errorf("taught = %s, want an empty list, never null", body["taught"])
+	}
+
+	// The statements the note taught, by page and id, folded or queued
+	// again (a re-delivery clears consolidated_at, the pages keep what
+	// the earlier fold taught); a project of one's project page stays off
+	// the wire, as on the project route, and with the sources on the store
+	// is asked for source repositories' pages.
+	st.taught["PLAT|files|42"] = []store.TaughtRow{
+		{Scope: store.ScopeRepository, ProjectKey: "PLAT", RepoSlug: "files", ID: "s3", Kind: "rule", Name: "Limit"},
+		{Scope: store.ScopeProject, ProjectKey: "PLAT", ID: "s1", Kind: "flow", Name: "Upload"},
+	}
+	const both = `[{"scope":"repository","project_key":"PLAT","repo_slug":"files","id":"s3","kind":"rule","name":"Limit"},` +
+		`{"scope":"project","project_key":"PLAT","id":"s1","kind":"flow","name":"Upload"}]`
+	st.sourcedAsked = nil
+	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
+	if string(body["taught"]) != both {
+		t.Errorf("taught of a queued note = %s, want what the pages carry", body["taught"])
+	}
+	d.ConsolidatedAt = &received
+	st.details["PLAT|files|42"] = d
+	st.sourcedAsked = nil
+	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
+	if len(st.sourcedAsked) != 1 || st.sourcedAsked[0] {
+		t.Errorf("Taught asked with sourced %v, want once, false without the sources", st.sourcedAsked)
+	}
+	if string(body["taught"]) != both || string(body["single"]) != "false" {
+		t.Errorf("taught = %s single = %s", body["taught"], body["single"])
+	}
+	st.single = map[string]store.RepoRow{"PLAT": {Slug: "files"}}
+	h, _, _ = sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	st.sourcedAsked = nil
+	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
+	if string(body["taught"]) != `[{"scope":"repository","project_key":"PLAT","repo_slug":"files","id":"s3","kind":"rule","name":"Limit"}]` ||
+		string(body["single"]) != "true" {
+		t.Errorf("taught of a project of one = %s single = %s", body["taught"], body["single"])
+	}
+	if len(st.sourcedAsked) != 1 || !st.sourcedAsked[0] {
+		t.Errorf("Taught asked with sourced %v, want true with the sources on", st.sourcedAsked)
 	}
 }
 

@@ -424,6 +424,64 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	return d, true, nil
 }
 
+// TaughtRow is one current statement a pull request's note is a source
+// of: where it stands, and enough to name and link it.
+type TaughtRow struct {
+	Scope      string
+	ProjectKey string
+	RepoSlug   string
+	ID         string
+	Kind       string
+	Name       string
+}
+
+// Taught lists the statements on the project's current pages that carry
+// the repository's PR among their sources, the repository page's before
+// the project's, each page in its stored order: the note page's reverse
+// provenance. The project's pages alone (a note teaches its own project),
+// current ones only: a statement dropped since is not taught any more.
+// Only pages the read routes serve: with sourced, a source project's and
+// its source repositories' (a repository removed from the sources keeps
+// its page but answers 404). A source names the PR by its key, which
+// embeds the names it had then: the PR is found under every name its
+// project and repository ever had, in any case, and under the note's own
+// key, so a rename and a re-delivery since leave the older credits found.
+func (s *Store) Taught(ctx context.Context, project, repo string, prID int, sourced bool) ([]TaughtRow, error) {
+	pid, rid, ok, err := scopeIDs(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return []TaughtRow{}, err
+	}
+	//nolint:gosec // G202: constant fragments of this file, no value spliced in
+	rows, err := s.db.QueryContext(ctx, `
+		WITH keys(k) AS (
+		  SELECT pn.key || '/' || rn.slug || '#' || ?
+		    FROM repo_names rn JOIN project_names pn ON pn.project_id = rn.project_id
+		   WHERE rn.repo_id = ?
+		  UNION SELECT pr_key FROM notes WHERE repo_id = ? AND pr_id = ?)
+		SELECT p.scope, pj.key, COALESCE(rp.slug, ''), st.value ->> '$.id', st.value ->> '$.kind', st.value ->> '$.name'
+		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
+		  JOIN `+projectsFrom(sourced)+` pj ON pj.id = p.project_id
+		  LEFT JOIN `+reposFrom(sourced)+` rp ON rp.id = p.repo_id,
+		  json_each(r.statements) st
+		 WHERE p.project_id = ? AND (p.scope = 'project' OR rp.id IS NOT NULL)
+		   AND EXISTS (SELECT 1 FROM json_each(st.value, '$.sources') src
+		                WHERE src.value ->> '$.pr_key' COLLATE NOCASE IN (SELECT k FROM keys))
+		 ORDER BY p.scope = 'project', rp.slug, st.key`, prID, rid, rid, prID, pid)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []TaughtRow{}
+	for rows.Next() {
+		var t TaughtRow
+		if err := rows.Scan(&t.Scope, &t.ProjectKey, &t.RepoSlug, &t.ID, &t.Kind, &t.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ProblemArea is one cluster of bugfixes: a repo and the directory the
 // fixes' components share, with the cause class seen most and the posted
 // findings on those PRs.

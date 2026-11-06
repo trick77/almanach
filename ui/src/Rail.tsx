@@ -327,21 +327,40 @@ export function Tabs({
  *  else: a shared link or a reload opens it. The start tab has no hash. A
  *  switch replaces the address, so back and forward leave the page rather
  *  than step through its tabs, and return to it on the tab it was left
- *  on. */
+ *  on. The hash may name a target after the tab (`#description/s12`, a
+ *  statement's deep link): target, "" for none, which a switch clears;
+ *  setTarget writes one in place, the page's own control. landing is the
+ *  target as the address brought it (a link opened, a reload, back), ""
+ *  for one the page set itself: what useJumpTo scrolls to, so a click on
+ *  a statement's control never moves the page under the reader. */
 export function useHashTab(
   tabs: readonly string[],
   start: string,
-): [string, (tab: string) => void] {
+): {
+  tab: string;
+  setTab: (tab: string) => void;
+  target: string;
+  setTarget: (id: string) => void;
+  landing: string;
+} {
   const names = tabs.join(" ");
-  const read = useCallback(() => {
+  const read = useCallback((): At => {
     // The tab names are plain words: a hash that is not one of them, a
-    // malformed escape included, is the start tab, never a crash.
+    // malformed escape included, is the start tab, never a crash. What
+    // follows the first slash is the target, kept only with a known tab.
     const h = window.location.hash.slice(1);
-    return names.split(" ").includes(h) ? h : start;
+    const cut = h.indexOf("/");
+    const tab = cut === -1 ? h : h.slice(0, cut);
+    if (!names.split(" ").includes(tab))
+      return { tab: start, target: "", landed: true };
+    return { tab, target: cut === -1 ? "" : h.slice(cut + 1), landed: true };
   }, [names, start]);
-  const [tab, setTab] = useState(read);
+  const [at, setAt] = useState(read);
   useEffect(() => {
-    const sync = () => setTab(read());
+    // The same address again (a canonical replace's popstate, a
+    // hashchange the page wrote itself) is no change: the state object
+    // stays, landed as it was, nothing re-renders.
+    const sync = () => setAt((prev) => same(prev, read()));
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
     return () => {
@@ -349,19 +368,105 @@ export function useHashTab(
       window.removeEventListener("popstate", sync);
     };
   }, [read]);
-  const set = useCallback(
+  const write = (hash: string) => {
+    const { pathname, search } = window.location;
+    window.history.replaceState(
+      window.history.state,
+      "",
+      pathname + search + hash,
+    );
+  };
+  const setTab = useCallback(
     (t: string) => {
-      const { pathname, search } = window.location;
-      window.history.replaceState(
-        window.history.state,
-        "",
-        pathname + search + (t === start ? "" : "#" + t),
-      );
-      setTab(t);
+      write(t === start ? "" : "#" + t);
+      setAt({ tab: t, target: "", landed: false });
     },
     [start],
   );
-  return [tab, set];
+  const tab = at.tab;
+  const setTarget = useCallback(
+    (id: string) => {
+      write(anchorHash(tab, id));
+      setAt({ tab, target: id, landed: false });
+    },
+    [tab],
+  );
+  return {
+    tab: at.tab,
+    setTab,
+    target: at.target,
+    setTarget,
+    landing: at.landed ? at.target : "",
+  };
+}
+
+/** At is where the address puts the page: its tab, the target after it,
+ *  and whether the address brought both (landed) or the page wrote them. */
+interface At {
+  tab: string;
+  target: string;
+  landed: boolean;
+}
+
+/** same keeps prev when the address names the same tab and target: how
+ *  they came (landed) is prev's to say, the address cannot tell. */
+function same(prev: At, next: At): At {
+  return prev.tab === next.tab && prev.target === next.target ? prev : next;
+}
+
+/** settleMs is how long after a landing the page may still move under
+ *  the statement: content above it lands later (a repository's problem
+ *  areas from the project fetch, a map or a statement's diagram laid out
+ *  once elk has loaded) and pushes it down, so the jump is redone on
+ *  every change of the page in that time, unless the reader scrolled,
+ *  clicked or typed meanwhile: then the page is theirs. */
+const settleMs = 3000;
+
+/** useJumpTo scrolls the element a deep link names into view once it is
+ *  on the page: the statements render after the fetch, so the effect runs
+ *  on ready, not on mount; then again on each change of the page until it
+ *  has settled (settleMs). A reload on the link lands on it again. */
+export function useJumpTo(landing: string, ready: boolean) {
+  useEffect(() => {
+    if (landing === "" || !ready) return;
+    const el = document.getElementById(landing);
+    if (!el) return;
+    el.scrollIntoView();
+    let timer = 0;
+    const again = () => {
+      // Once per frame, however many mutations one layout makes.
+      if (timer !== 0) return;
+      timer = window.setTimeout(() => {
+        timer = 0;
+        el.scrollIntoView();
+      }, 0);
+    };
+    const observer = new MutationObserver(again);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+    const stop = () => {
+      observer.disconnect();
+      window.clearTimeout(timer);
+      for (const ev of taken) window.removeEventListener(ev, stop);
+      window.clearTimeout(settled);
+    };
+    // pointerdown: a click (a rail entry, another statement's control)
+    // or a grab of the scrollbar moves the page too, and a rail jump's
+    // aria-current change is a mutation that would pull it back.
+    const taken = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+    for (const ev of taken) window.addEventListener(ev, stop);
+    const settled = window.setTimeout(stop, settleMs);
+    return stop;
+  }, [landing, ready]);
+}
+
+/** anchorHash is a statement's deep link on its page: the tab, then its
+ *  id (useHashTab). */
+export function anchorHash(tab: string, id: string): string {
+  return `#${tab}/${id}`;
 }
 
 function SearchIcon() {

@@ -70,6 +70,16 @@ export function repoPath(key: string, slug: string): string {
   return `${projectPath(key)}/repos/${encodeURIComponent(slug)}`;
 }
 
+/** The Markdown exports, the agent's interface: the API's own paths,
+ *  which a session opens as a browser tab does. */
+export function projectExportHref(key: string): string {
+  return `/api${projectPath(key)}.md`;
+}
+
+export function repoExportHref(key: string, slug: string): string {
+  return `/api${repoPath(key, slug)}.md`;
+}
+
 export function notePath(key: string, slug: string, pr: number): string {
   return `${repoPath(key, slug)}/notes/${pr}`;
 }
@@ -82,19 +92,27 @@ export function notePathFor(prKey: string): string | null {
   return notePath(m[1], m[2], Number(m[3]));
 }
 
-/** onNav is an in-app link's click handler: a plain click stays in the SPA,
- *  a modified one (new tab, new window) is left to the browser. */
+/** A click as the browser sees it: the modifiers and the button. */
+export interface Click {
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  button: number;
+  preventDefault: () => void;
+}
+
+/** plainClick says a link's click is the page's to handle: a modified one
+ *  (new tab, new window) or another button is left to the browser. */
+export function plainClick(e: Click): boolean {
+  return !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0);
+}
+
+/** onNav is an in-app link's click handler: a plain click stays in the
+ *  SPA. */
 export function onNav(path: string) {
-  return (e: {
-    metaKey: boolean;
-    ctrlKey: boolean;
-    shiftKey: boolean;
-    altKey: boolean;
-    button: number;
-    preventDefault: () => void;
-  }) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0)
-      return;
+  return (e: Click) => {
+    if (!plainClick(e)) return;
     e.preventDefault();
     navigateTo(path);
   };

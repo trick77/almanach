@@ -69,6 +69,8 @@ function serve(table: Record<string, unknown>) {
 afterEach(() => {
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
+  // jsdom has no scrollIntoView; a test that stubs one leaves none.
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
 });
 
 const mergedAt = new Date(2026, 9, 28, 12, 0).toISOString();
@@ -258,6 +260,8 @@ const note: NoteDetail = {
     rounds_output_tokens: 2400,
     rounds_cost_usd: "0.040",
   },
+  taught: [],
+  single: false,
 };
 
 describe("ProjectsPage", () => {
@@ -550,6 +554,135 @@ describe("ProjectPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Übersicht/ }));
     expect(window.location.hash).toBe("");
     expect(window.location.pathname).toBe("/projects/PAY");
+  });
+
+  it("opens the statement the address names, scrolled and set off, and copies its link", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    const written: string[] = [];
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: async (t: string) => void written.push(t) },
+    });
+    window.history.replaceState({}, "", "/projects/PAY#description/s2");
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    const s2 = within(desc).getByText("Grenze aus").closest("article");
+    expect(s2?.id).toBe("s2");
+    expect(s2?.dataset.targeted).toBe("true");
+    expect(scrolled.mock.contexts[0]).toBe(s2);
+    expect(
+      within(desc).getByText("Auftragsannahme").closest("article")?.dataset
+        .targeted,
+    ).toBeUndefined();
+    // Each statement carries its own address; a click writes it in place
+    // and copies it, the mark moves along.
+    const links = within(desc).getAllByRole("link", {
+      name: /^Link zur Aussage /,
+    });
+    expect(links[0]).toHaveAccessibleName("Link zur Aussage Auftragsannahme");
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "#description/s1",
+      "#description/s2",
+    ]);
+    fireEvent.click(links[0]);
+    expect(window.location.hash).toBe("#description/s1");
+    expect(written).toEqual([
+      "http://localhost:3000/projects/PAY#description/s1",
+    ]);
+    await waitFor(() => expect(links[0].textContent).toBe("Kopiert"));
+    expect(
+      within(desc).getByText("Auftragsannahme").closest("article")?.dataset
+        .targeted,
+    ).toBe("true");
+    // The page did not move under the click: only the address's own
+    // target is scrolled to.
+    expect(scrolled).toHaveBeenCalledTimes(1);
+    // A tab switch drops the target; the start tab has no hash.
+    fireEvent.click(screen.getByRole("tab", { name: /Übersicht/ }));
+    expect(window.location.hash).toBe("");
+  });
+
+  it("jumps again when the project's parts land above a repository's statements", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.replaceState(
+      {},
+      "",
+      "/projects/PAY/repos/pay-clearing#description/s1",
+    );
+    serve({
+      "projects/PAY/repos/pay-clearing": {
+        ...repo,
+        description: project.description,
+      },
+      "projects/PAY": project,
+    });
+    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    await screen.findByText("Auftragsannahme");
+    // Once on the statements, again when the project detail (the problem
+    // areas above them) has landed and changed the page.
+    await waitFor(() =>
+      expect(scrolled.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
+    const s1 = document.getElementById("s1");
+    expect(scrolled.mock.contexts.every((c) => c === s1)).toBe(true);
+    // The reader scrolls: the page is theirs, a later change moves nothing.
+    const before = scrolled.mock.calls.length;
+    fireEvent.wheel(window);
+    document.body.appendChild(document.createElement("p"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(scrolled.mock.calls.length).toBe(before);
+  });
+
+  it("hands the page to the reader on a click while it settles", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.replaceState({}, "", "/projects/PAY#description/s1");
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    await screen.findByText("Auftragsannahme");
+    await waitFor(() => expect(scrolled).toHaveBeenCalled());
+    // A click (a rail entry, the scrollbar) is the reader's: a change of
+    // the page after it, a rail's aria-current among them, moves nothing.
+    const before = scrolled.mock.calls.length;
+    fireEvent.pointerDown(window);
+    document.body.setAttribute("data-x", "1");
+    document.body.appendChild(document.createElement("p"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(scrolled.mock.calls.length).toBe(before);
+    document.body.removeAttribute("data-x");
+  });
+
+  it("opens the description on a target it does not have, the page whole", async () => {
+    window.history.replaceState({}, "", "/projects/PAY#description/s99");
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    expect(within(desc).getByText("Auftragsannahme")).toBeInTheDocument();
+    expect(desc.querySelector("[data-targeted]")).toBeNull();
+  });
+
+  it("offers the Markdown export and copies its address", async () => {
+    const written: string[] = [];
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: async (t: string) => void written.push(t) },
+    });
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    const open = await screen.findByRole("link", {
+      name: "Als Markdown öffnen",
+    });
+    expect(open.getAttribute("href")).toBe("/api/projects/PAY.md");
+    expect(open.getAttribute("target")).toBe("_blank");
+    fireEvent.click(screen.getByRole("button", { name: "URL kopieren" }));
+    expect(written).toEqual(["http://localhost:3000/api/projects/PAY.md"]);
+    expect(
+      await screen.findByRole("button", { name: "Kopiert" }),
+    ).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 
   it("opens the start tab on a hash it does not know, a broken one too", async () => {
@@ -1516,6 +1649,97 @@ describe("NotePage", () => {
     render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
     expect((await screen.findByText("- kein **Punkt**")).tagName).toBe("P");
   });
+  it("links the statements the note taught, by page and id", async () => {
+    serve({
+      "projects/PAY/repos/pay-api/notes/231": {
+        ...note,
+        consolidated_at: mergedAt,
+        taught: [
+          {
+            scope: "repository",
+            project_key: "PAY",
+            repo_slug: "pay-api",
+            id: "s3",
+            kind: "rule",
+            name: "Grenze aus `limit()`",
+          },
+          {
+            scope: "project",
+            project_key: "PAY",
+            id: "s1",
+            kind: "entity",
+            name: "Auftrag",
+          },
+        ],
+      },
+    });
+    render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
+    expect(await screen.findByText("Eingearbeitet in")).toBeInTheDocument();
+    // The name's inline markup renders as on the page: code, no backticks.
+    const code = screen.getByText("limit()");
+    expect(code.tagName).toBe("CODE");
+    expect(screen.queryByText(/`limit\(\)`/)).toBeNull();
+    expect(code.closest("a")?.getAttribute("href")).toBe(
+      "/projects/PAY/repos/pay-api#description/s3",
+    );
+    expect(screen.getByText("Regel")).toBeInTheDocument();
+    expect(screen.getByText("Auftrag").closest("a")?.getAttribute("href")).toBe(
+      "/projects/PAY#description/s1",
+    );
+    // A project page's entity is a shared one, labelled so.
+    expect(screen.getByText("Geteilte Entität")).toBeInTheDocument();
+    expect(screen.getByText("Projekt PAY")).toBeInTheDocument();
+    expect(
+      screen.getByText("pay-api", { selector: "li span" }),
+    ).toBeInTheDocument();
+  });
+
+  it("links a project of one's statements to the project's path, unnamed", async () => {
+    serve({
+      "projects/PAY/repos/pay-api/notes/231": {
+        ...note,
+        consolidated_at: mergedAt,
+        single: true,
+        taught: [
+          {
+            scope: "repository",
+            project_key: "PAY",
+            repo_slug: "pay-api",
+            id: "s3",
+            kind: "rule",
+            name: "Grenze",
+          },
+        ],
+      },
+    });
+    render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
+    expect(
+      (await screen.findByText("Grenze")).closest("a")?.getAttribute("href"),
+    ).toBe("/projects/PAY#description/s3");
+    expect(screen.queryByText("pay-api", { selector: "li span" })).toBeNull();
+  });
+
+  it("says why nothing is taught: not folded yet, or nothing left", async () => {
+    serve({ "projects/PAY/repos/pay-api/notes/231": note });
+    const { unmount } = render(
+      <NotePage projectKey="PAY" slug="pay-api" pr={231} />,
+    );
+    expect(
+      await screen.findByText("Die Notiz ist noch nicht eingearbeitet."),
+    ).toBeInTheDocument();
+    unmount();
+    serve({
+      "projects/PAY/repos/pay-api/notes/231": {
+        ...note,
+        consolidated_at: mergedAt,
+      },
+    });
+    render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
+    expect(
+      await screen.findByText(/Keine aktuelle Aussage nennt/),
+    ).toBeInTheDocument();
+  });
+
   it("says when noergler reported no call", async () => {
     serve({
       "projects/PAY/repos/pay-api/notes/231": {

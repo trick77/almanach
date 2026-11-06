@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { DependencyEnd, ProjectDetail, RepoDetail } from "./api";
 import { oddVersions } from "./DepsPage";
-import { DescriptionView, SourceChip, descriptionRail } from "./Description";
+import {
+  DESCRIPTION,
+  DescriptionView,
+  SourceChip,
+  descriptionRail,
+} from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
@@ -12,18 +17,25 @@ import {
   Tabs,
   stickyCrumbs,
   useHashTab,
+  useJumpTo,
   type RailGroup,
   type RailItem,
 } from "./Rail";
 import { RepoSwitcher } from "./RepoSwitcher";
 import { day, refName } from "./format";
-import { projectPath, repoPath } from "./routing";
+import {
+  projectExportHref,
+  projectPath,
+  repoExportHref,
+  repoPath,
+} from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Crumbs,
   Empty,
+  ExportLine,
   Failed,
   Link,
   Sep,
@@ -43,7 +55,6 @@ import {
 
 /** The repository page's tabs by their hash: the page is a leaf, its
  *  content first; notes and revisions are where it came from. */
-const DESCRIPTION = "description";
 const HISTORY = "history";
 const TABS = [DESCRIPTION, HISTORY];
 
@@ -120,13 +131,17 @@ function RepoCrumbs({
 
 function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useHashTab(TABS, DESCRIPTION);
+  const { tab, setTab, target, setTarget, landing } = useHashTab(
+    TABS,
+    DESCRIPTION,
+  );
   const [query, setQuery] = useState("");
   // The project, for its other repositories and this one's problem areas:
   // the project endpoint has both. Failing, the page goes without them.
   const { data: project } = useFetch<ProjectDetail>(
     `projects/${encodeURIComponent(data.project_key)}`,
   );
+  useJumpTo(landing, tab === DESCRIPTION && data.description !== null);
   const problems = (project?.problems ?? []).filter(
     (p) => p.repo_slug === data.slug,
   );
@@ -266,6 +281,13 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
         {S.projects.lastMerge}{" "}
         {lastMerge === null ? S.common.never : day(lastMerge)}
       </p>
+      <ExportLine
+        href={
+          single
+            ? projectExportHref(data.project_key)
+            : repoExportHref(data.project_key, data.slug)
+        }
+      />
 
       <Tabs
         tabs={[
@@ -290,6 +312,9 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             emptyHint={S.projects.firstDescription}
             pageRepo={data.slug}
             query={query}
+            tab={DESCRIPTION}
+            target={target}
+            onTarget={setTarget}
             lead={
               showMap && (
                 <section id={ids.map} className="scroll-mt-16">

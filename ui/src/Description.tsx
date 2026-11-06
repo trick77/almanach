@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import type { Description, Kind, Source, Statement } from "./api";
 import { Diagram } from "./Diagram";
 import { day, plain, shortSHA } from "./format";
-import type { RailItem } from "./Rail";
-import { notePathFor } from "./routing";
+import { anchorHash, type RailItem } from "./Rail";
+import { notePathFor, plainClick } from "./routing";
 import { S } from "./strings";
 import {
   Chip,
@@ -15,7 +15,13 @@ import {
   eyebrow,
   matchesQuery,
   mono,
+  useCopied,
 } from "./ui";
+
+/** DESCRIPTION is the description tab's hash on both pages, the first
+ *  part of a statement's deep link (anchorHash): a note page links into
+ *  it too. */
+export const DESCRIPTION = "description";
 
 /** kindLabel names one statement's kind, as a label over its name: the
  *  project page's entities are the shared ones and say so. A kind the UI
@@ -128,7 +134,10 @@ export function descriptionRail(
  *  whose slug its chips leave out; without it the page is a project's.
  *  query keeps the statements it matches and sets the matches off; the
  *  summary stays, marked. lead comes first (a map), afterSummary under
- *  the summary (a repository's problem areas). */
+ *  the summary (a repository's problem areas). tab is the tab the view
+ *  stands on, for each statement's own address (anchorHash); target the
+ *  statement the address names, set off; onTarget makes one the target,
+ *  the page writing its address. */
 export function DescriptionView({
   description,
   emptyHint,
@@ -136,6 +145,9 @@ export function DescriptionView({
   query = "",
   lead,
   afterSummary,
+  tab,
+  target = "",
+  onTarget,
 }: {
   description: Description | null;
   emptyHint: string;
@@ -143,6 +155,9 @@ export function DescriptionView({
   query?: string;
   lead?: ReactNode;
   afterSummary?: ReactNode;
+  tab?: string;
+  target?: string;
+  onTarget?: (id: string) => void;
 }) {
   if (description === null) {
     return (
@@ -191,11 +206,50 @@ export function DescriptionView({
               statement={s}
               pageRepo={pageRepo}
               query={query}
+              anchor={tab === undefined ? undefined : anchorHash(tab, s.id)}
+              targeted={s.id === target}
+              onAnchor={onTarget}
             />
           ))}
         </section>
       ))}
     </>
+  );
+}
+
+/** AnchorLink is a statement's own address: a link a reader can copy or
+ *  open in a new tab as any, and a plain click on it picks the statement
+ *  (onPick: the page writes the address in place, as a tab switch does,
+ *  so back leaves the page) and copies the address, saying so for a
+ *  moment. Always there, quiet: a touch screen has no hover to show it
+ *  on. Named after its statement, so a screen reader's list of links
+ *  tells them apart. */
+function AnchorLink({
+  hash,
+  name,
+  onPick,
+}: {
+  hash: string;
+  name: string;
+  onPick: () => void;
+}) {
+  const [done, copy] = useCopied();
+  return (
+    <a
+      href={hash}
+      aria-label={S.copy.statementLink(plain(name))}
+      title={S.copy.statementLinkHint}
+      onClick={(e) => {
+        if (!plainClick(e)) return;
+        e.preventDefault();
+        onPick();
+        const { origin, pathname, search } = window.location;
+        copy(origin + pathname + search + hash);
+      }}
+      className="float-right px-1 font-mono text-[11px] text-faint hover:text-ink"
+    >
+      {done ? S.copy.done : S.copy.statementAnchor}
+    </a>
   );
 }
 
@@ -279,18 +333,42 @@ function checkedNews(s: Statement): boolean {
   );
 }
 
-/** StatementBlock is one statement: documentation, not a line. */
+/** StatementBlock is one statement: documentation, not a line. Its id is
+ *  the statement's, the deep link's anchor; anchor is that link, shown as
+ *  a control beside the kind that makes the statement the target
+ *  (onAnchor, the page writing the address) and copies the link;
+ *  targeted sets the block off as the one the address names. */
 export function StatementBlock({
   statement: s,
   pageRepo,
   query = "",
+  anchor,
+  targeted = false,
+  onAnchor,
 }: {
   statement: Statement;
   pageRepo?: string;
   query?: string;
+  anchor?: string;
+  targeted?: boolean;
+  onAnchor?: (id: string) => void;
 }) {
   return (
-    <article className="border-t border-border-soft py-3 first-of-type:border-t-0">
+    <article
+      id={s.id}
+      data-targeted={targeted || undefined}
+      className={
+        "scroll-mt-16 border-t border-border-soft py-3 first-of-type:border-t-0 " +
+        (targeted ? "-mx-3 rounded-ui bg-active px-3" : "")
+      }
+    >
+      {anchor !== undefined && (
+        <AnchorLink
+          hash={anchor}
+          name={s.name}
+          onPick={() => onAnchor?.(s.id)}
+        />
+      )}
       <div className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
         {kindLabel(s.kind, pageRepo === undefined)}
       </div>
