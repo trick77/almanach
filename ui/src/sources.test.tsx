@@ -418,6 +418,12 @@ describe("readShare", () => {
     expect(S.baseline.readShare(readShare(10, 1_000_000))).toBe(
       "unter 1 % des Codes gelesen",
     );
+    expect(S.baseline.readShare(readShare(0, 1_000_000))).toBe(
+      "0 % des Codes gelesen",
+    );
+    expect(S.baseline.readShare(readShare(626_000, 1_000_000))).toBe(
+      "63 % des Codes gelesen",
+    );
   });
 });
 

@@ -1346,6 +1346,39 @@ func TestRun_ReconcilePlacesACutFileAnOldPlanNeverKnew(t *testing.T) {
 	if r := x.run(); r.ReadableBytes != 900 || r.ReadBytes != 600 {
 		t.Errorf("reconcile coverage = %d of %d, want the documented run's 600 of 900", r.ReadBytes, r.ReadableBytes)
 	}
+	if !p.Cuts {
+		t.Error("the reconcile's plan does not carry Cuts: the next would offer the file again")
+	}
+	// TRANSITIONAL(cut-files): Remove when every documented plan carries Cuts.
+	// A plan made knowing cut files left this one out on purpose: a quiet
+	// reconcile offers it no placing call.
+	y := newWorld(t, 16)
+	y.code.tree = append(y.code.tree, gitrepo.Entry{Path: "core/God.java", Mode: "100644", Size: baseline.FileMaxBytes + 1})
+	old.Cuts = true
+	raw, _ = json.Marshal(old)
+	y.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	y.queue(store.RunReconcile, older40)
+	y.w.drain(context.Background())
+	for _, c := range y.st.calls {
+		if c.Purpose == store.PurposeCatalogue {
+			t.Fatalf("a plan with Cuts asked a placing call: %+v", y.st.calls)
+		}
+	}
+}
+
+// Coverage counts a file once, a doc a subject holds too among them, and
+// no skipped or unread subject.
+func TestCoverage_DistinctFiles(t *testing.T) {
+	readme := baseline.File{Path: "README.md", Size: 20}
+	p := runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{
+		{Name: "Doku", Files: []baseline.File{readme, {Path: "docs/a.md", Size: 5}}},
+		{Name: "Kern", Files: []baseline.File{{Path: "core/a.go", Size: 30}, {Path: "docs/a.md", Size: 5}}},
+		{Name: "Weg", Files: []baseline.File{{Path: "gone/x.go", Size: 100}}},
+		{Name: "Spaeter", Files: []baseline.File{{Path: "later/y.go", Size: 100}}},
+	}, Skipped: []string{"Weg"}}, Read: []string{"Doku", "Kern", "Weg"}, Docs: []baseline.File{readme}}
+	if got := coverage(p); got != 20+5+30 {
+		t.Errorf("coverage = %d, want 55", got)
+	}
 }
 
 func firstLines(s string, n int) string {

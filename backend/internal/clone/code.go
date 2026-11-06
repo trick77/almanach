@@ -123,8 +123,9 @@ func (c *Code) CommitTime(ctx context.Context, key, slug, sha string) (time.Time
 }
 
 // ReadFiles reads files at sha through one batch reader. A file the plan
-// marks Cut is read as its first FileMaxBytes; one over FileMaxBytes not
-// so marked, gone or binary is left out; a broken reader is an error.
+// marks Cut is read as its first FileMaxBytes to a line's end; one over
+// FileMaxBytes not so marked, a head with no line, gone or binary is left
+// out; a broken reader is an error.
 // Every body passes redact.File: this is the one place code is read for a
 // model, so a credential value never leaves the machine.
 func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []baseline.File) (map[string][]byte, error) {
@@ -141,13 +142,15 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 		for _, f := range files {
 			var body []byte
 			var err error
+			lineless := false
 			if f.Cut {
 				// A file over the cap: its head, the plan says so, cut at a
 				// line's end so the redaction sees whole lines: a credential
 				// cut in two under a neutral key matches no shape.
 				body, err = r.ReadHead(sha, f.Path, baseline.FileMaxBytes)
-				if nl := bytes.LastIndexByte(body, '\n'); nl > 0 {
-					body = body[:nl+1]
+				if len(body) >= baseline.FileMaxBytes {
+					nl := bytes.LastIndexByte(body, '\n')
+					lineless, body = nl < 0, body[:nl+1]
 				}
 			} else {
 				body, err = r.ReadFile(sha, f.Path, baseline.FileMaxBytes)
@@ -160,8 +163,10 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 			if errors.Is(err, gitrepo.ErrReaderBroken) || errors.Is(err, gitrepo.ErrBadSHA) {
 				return err
 			}
-			// Too large, gone at this commit, not a file, or binary: left out.
-			if err != nil || baseline.Binary(body) {
+			// Too large, gone at this commit, not a file, or binary: left out;
+			// so is a head with no line to cut at (minified, one-line data),
+			// which no whole line would leave for the redaction.
+			if err != nil || lineless || baseline.Binary(body) {
 				continue
 			}
 			body, ok := redact.File(f.Path, body)

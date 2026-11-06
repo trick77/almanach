@@ -151,8 +151,8 @@ func TestListing_FilesThenDirectories(t *testing.T) {
 	}
 	big := Listing(many)
 	// Neither svc/'s own files nor handlers/ fit laid out: svc/ is opened,
-	// its own files one line, handlers/ one line.
-	want := "README.md\t9\nsvc/\t4000 files directly\t8000 bytes\nsvc/handlers/\t4000 files\t4000 bytes\n"
+	// its own files one svc/* line, handlers/ one line.
+	want := "README.md\t9\nsvc/*\t4000 files\t8000 bytes\nsvc/handlers/\t4000 files\t4000 bytes\n"
 	if big != want {
 		t.Fatalf("big listing = %q\nwant %q", big, want)
 	}
@@ -173,21 +173,20 @@ func TestListing_OpensWhereTheFilesAre(t *testing.T) {
 			files = append(files, File{Path: fmt.Sprintf("%s/F%d.java", dir, i), Size: 1})
 		}
 	}
-	add("src/main/java/com/acme/billing", ListMaxEntries-100)
+	add("src/main/java/com/acme/billing", ListMaxEntries+100)
 	add("src/main/java/com/acme/billing/model", 60)
 	add("src/main/java/com/acme/auth", 20)
 	add("src/test/java/com/acme", 300)
 	files = append(files, File{Path: "pom.xml", Size: 5}, File{Path: "README.md", Size: 5})
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	got := Listing(files)
-	lines := strings.Split(strings.TrimSpace(got), "\n")
-	if len(lines) > ListMaxEntries {
-		t.Fatalf("%d lines, over the limit", len(lines))
+	if n := lineCount(got); n > ListMaxEntries {
+		t.Fatalf("%d lines, over the limit", n)
 	}
 	for _, want := range []string{
 		"README.md\t5", "pom.xml\t5",
 		// billing is too wide to lay out: its own files one line, its subpackage laid out.
-		"src/main/java/com/acme/billing/\t3900 files directly\t3900 bytes",
+		"src/main/java/com/acme/billing/*\t4100 files\t4100 bytes",
 		"src/main/java/com/acme/billing/model/F0.java\t1",
 		// auth fits whole.
 		"src/main/java/com/acme/auth/F19.java\t1",
@@ -202,15 +201,69 @@ func TestListing_OpensWhereTheFilesAre(t *testing.T) {
 		t.Errorf("listing lays billing out, or folds java/:\n%s", firstLines(got, 12))
 	}
 	// A flat repository of more files than the limit at its root: the
-	// root's own files are one line, never over the limit.
+	// root's own files are one line.
 	var flat []File
 	for i := 0; i < ListMaxEntries+10; i++ {
 		flat = append(flat, File{Path: fmt.Sprintf("f%d.txt", i), Size: 1})
 	}
-	if got := Listing(flat); got != fmt.Sprintf("./\t%d files directly\t%d bytes\n", ListMaxEntries+10, ListMaxEntries+10) {
+	if got := Listing(flat); got != fmt.Sprintf("*\t%d files\t%d bytes\n", ListMaxEntries+10, ListMaxEntries+10) {
 		t.Errorf("flat listing = %q", firstLines(got, 3))
 	}
 }
+
+// The moves go by the files they touch, not by the directory they sit in:
+// a pile of files at the root never crowds out the code beside it, and a
+// big directory's own files go before small leaves.
+func TestListing_TheMostFilesFirst(t *testing.T) {
+	var clutter []File
+	for i := 0; i < 3990; i++ {
+		clutter = append(clutter, fl(fmt.Sprintf("c%04d.yaml", i), 1))
+	}
+	for p := 0; p < 30; p++ {
+		for i := 0; i < 200; i++ {
+			clutter = append(clutter, fl(fmt.Sprintf("src/p%02d/F%d.java", p, i), 1))
+		}
+	}
+	sort.Slice(clutter, func(i, j int) bool { return clutter[i].Path < clutter[j].Path })
+	got := Listing(clutter)
+	if n := lineCount(got); n > ListMaxEntries || !strings.HasPrefix(got, "*\t3990 files\t3990 bytes\n") ||
+		!strings.Contains(got, "src/p00/F0.java\t1\n") || strings.Contains(got, "src/\t") {
+		t.Errorf("root clutter, %d lines:\n%s", n, firstLines(got, 6))
+	}
+	var leaves []File
+	for i := 0; i < 1500; i++ {
+		leaves = append(leaves, fl(fmt.Sprintf("big/F%d.go", i), 1))
+	}
+	for i := 0; i < 10; i++ {
+		leaves = append(leaves, fl(fmt.Sprintf("big/sub/F%d.go", i), 1))
+	}
+	for d := 0; d < 30; d++ {
+		for i := 0; i < 100; i++ {
+			leaves = append(leaves, fl(fmt.Sprintf("l%02d/F%d.go", d, i), 1))
+		}
+	}
+	sort.Slice(leaves, func(i, j int) bool { return leaves[i].Path < leaves[j].Path })
+	got = Listing(leaves)
+	if n := lineCount(got); n > ListMaxEntries || !strings.Contains(got, "big/F0.go\t1\n") || !strings.Contains(got, "big/sub/F0.go\t1\n") {
+		t.Errorf("big directory beside leaves, %d lines:\n%s", n, firstLines(got, 6))
+	}
+}
+
+// A listing's `dir/*` names the files right under the directory, the
+// root's `*` those at the root; `dir/` all of it, as before.
+func TestBuildPlan_DirectFiles(t *testing.T) {
+	files := []File{fl("a.go", 1), fl("x/b.go", 2), fl("x/y/c.go", 3)}
+	for path, want := range map[string]string{
+		"*": "S:a.go", "./*": "S:a.go", "/*": "S:a.go", "x/*": "S:x/b.go", "x/": "S:x/b.go,x/y/c.go", "x*": "",
+	} {
+		got := strings.Join(names(BuildPlan([]inference.Subject{subject("S", path)}, files, 3)), " ")
+		if got != want {
+			t.Errorf("%q = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func lineCount(s string) int { return strings.Count(s, "\n") }
 
 func firstLines(s string, n int) string {
 	lines := strings.Split(s, "\n")

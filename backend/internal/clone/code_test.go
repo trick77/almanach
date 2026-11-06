@@ -481,6 +481,8 @@ func TestCode_ReadsAClone(t *testing.T) {
 	write("application.yaml", "db:\n  host: db\n  password: s3cr3t-invented\n")
 	write("secret.yaml", "apiVersion: v1\nkind: Secret\ndata:\n  x: eQ==\n")
 	write("leak.go", "package main\n\nconst t = \"ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\"\n") // ship:allow-secret: invented fixture
+	// One line over the cap: no line's end to cut its head at.
+	write("min.js", strings.Repeat("a", baseline.FileMaxBytes+100))
 	third := commit()
 	// Where the poller keeps tools/cli: its folder named by ids.
 	run(t, root, "clone", "-q", "--bare", work, filepath.Join(root, projectSeg(idOf("tools")), repoSeg(idOf("tools/cli"))))
@@ -526,6 +528,10 @@ func TestCode_ReadsAClone(t *testing.T) {
 	if b := head["big.go"]; len(b) > baseline.FileMaxBytes || len(b) < baseline.FileMaxBytes-10 ||
 		!strings.HasPrefix(string(b), "package big\n") || !strings.HasSuffix(string(b), "// x\n") {
 		t.Fatalf("cut read = %d bytes, want the first %d to a line's end", len(b), baseline.FileMaxBytes)
+	}
+	// A head with no line in it: left out, never sent cut mid-line.
+	if minified, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{{Path: "min.js", Size: baseline.FileMaxBytes, Cut: true}}); err != nil || len(minified) != 0 {
+		t.Fatalf("line-less head = %d files %v, want left out", len(minified), err)
 	}
 	secrets, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{{Path: "application.yaml"}, {Path: "secret.yaml"}, {Path: "leak.go"}, {Path: "main.go"}})
 	if err != nil {

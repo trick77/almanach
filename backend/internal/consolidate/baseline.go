@@ -125,9 +125,14 @@ type runPlan struct {
 	// once when the plan is made (keptCalls); nil on a plan from before,
 	// which keeps one.
 	Kept *int `json:"kept,omitempty"`
-	// DocsBytes is what the overview step read of the docs, once folded:
-	// the run's coverage (ReadBytes) counts it with the subjects.
-	DocsBytes int64 `json:"docs_bytes,omitempty"`
+	// Docs is what the overview step read, once folded: the run's coverage
+	// (ReadBytes) counts it with the subjects, a doc a subject holds too
+	// once.
+	Docs []baseline.File `json:"docs,omitempty"`
+	// Cuts: the plan was made knowing files over the cap are read as their
+	// heads, so a cut file in none of its subjects was left out on purpose.
+	// TRANSITIONAL(cut-files): Remove when every documented plan carries it.
+	Cuts bool `json:"cuts,omitempty"`
 	// ProjectMap and RepoMap are a refused map asked again by the next
 	// step, the system map's and the repository's: one call a step, so a
 	// restart resumes the asking, never pays for what came before.
@@ -564,7 +569,7 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 		return fmt.Errorf("the catalogue failed: %s", res.Outcome)
 	}
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
-	plan := runPlan{Plan: p, Overview: true, CommittedAt: at}
+	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true}
 	for _, s := range p.Subjects {
 		plan.Read = append(plan.Read, s.Name)
 	}
@@ -606,8 +611,10 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	// placed like new ones, not lost until they change again.
 	unplaced = append(unplaced, evicted(old.Plan, merged, files)...)
 	unplaced = append(unplaced, stillReadable(old.Unplaced, files, unplaced)...)
-	unplaced = append(unplaced, newlyReadable(old, merged, files, unplaced)...)
-	plan := runPlan{}
+	if !old.Cuts {
+		unplaced = append(unplaced, newlyReadable(old, merged, files, unplaced)...)
+	}
+	plan := runPlan{Cuts: true}
 	if len(unplaced) > 0 && r.Calls < w.base.Limits.MaxCalls {
 		placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
 			"Place each: name an existing subject to add it there, or a new subject. Existing subjects:\n\n" + subjectList(old.Plan)
@@ -862,7 +869,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		return w.skipPart(ctx, r, &plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
 	}
 	if overview {
-		plan.DocsBytes = size
+		plan.Docs = read
 	}
 	res.Patch.Statements, res.Patch.Added = w.asNew(ctx, "baseline: "+name, page.Statements, res.Patch.Statements, res.Patch.Added)
 	// A step shown no problem area had no evidence for a new pitfall.
@@ -1265,15 +1272,16 @@ func (p *runPlan) skipAt(i int, code baseline.Skip) {
 	p.SkipSubject(name, code)
 }
 
-// newlyReadable is the cut files the documented run's plan knows nothing
-// of: in no subject, not among its unplaced, not placed now. A file over
-// the cap was unreadable before it was read as its head
-// (baseline.File.Cut), so a repository documented before that has such
-// files in neither list; unchanged, they are in no diff, and a reconcile
-// would never place them. Cut files only: a whole file a full run's
-// model left out of every subject it left out on purpose, and offering
-// it again would cost a quiet reconcile a placing call each time. A cut
-// file is offered once: what the placing leaves out lands in Unplaced.
+// newlyReadable is the cut files a documented plan from before cut files
+// (no runPlan.Cuts) knows nothing of: in no subject, not among its
+// unplaced, not placed now. A file over the cap was unreadable before it
+// was read as its head (baseline.File.Cut), so such a plan has those files
+// in neither list; unchanged, they are in no diff, and a reconcile would
+// never place them. Cut files only: a whole file a full run's model left
+// out of every subject it left out on purpose. Asked of the first
+// reconcile after only: its plan carries Cuts, and a cut file left out
+// then is like any other.
+// TRANSITIONAL(cut-files): Remove when every documented plan carries Cuts.
 func newlyReadable(old runPlan, merged baseline.Plan, files, already []baseline.File) []baseline.File {
 	known := map[string]bool{}
 	for _, s := range old.Subjects {
@@ -2447,7 +2455,8 @@ func (w *Worker) markDone(ctx context.Context, r *store.BaselineRun, plan runPla
 
 // coverage is the distinct file content a run's folded parts read: every
 // file of a subject read and not skipped, once however many subjects hold
-// it, and the docs the overview folded. The share of the tree the page
+// it, and the docs the overview folded, a doc a subject holds too counted
+// once. The share of the tree the page
 // rests on; the budget's count (Bytes) is another figure, every call's
 // input, failed ones too.
 func coverage(plan runPlan) int64 {
@@ -2461,18 +2470,21 @@ func coverage(plan runPlan) int64 {
 	}
 	seen := map[string]bool{}
 	var n int64
-	for _, s := range plan.Subjects {
-		if !read[s.Name] || skipped[s.Name] {
-			continue
-		}
-		for _, f := range s.Files {
+	count := func(files []baseline.File) {
+		for _, f := range files {
 			if !seen[f.Path] {
 				seen[f.Path] = true
 				n += f.Size
 			}
 		}
 	}
-	return n + plan.DocsBytes
+	count(plan.Docs)
+	for _, s := range plan.Subjects {
+		if read[s.Name] && !skipped[s.Name] {
+			count(s.Files)
+		}
+	}
+	return n
 }
 
 // finish ends a run done and saves it; the repository's failed notes go

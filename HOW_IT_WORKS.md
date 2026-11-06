@@ -826,15 +826,17 @@ resumes after a restart. The run pins the clone's head when it starts.
    out, since the one class a repository turns on is as often as not such
    a file, up to 2 MB, past which it is data and refused by its size as
    before; the head is cut at a line's end, so the redaction sees whole
-   lines. A reconcile places the cut files a plan from before knows
-   nothing of (`newlyReadable`), since unchanged they are in no diff;
-   offered once, what the placing leaves out lands in `unplaced`. A whole
-   file the full run's model left out of every subject is not offered
-   again: it left it out on purpose, and a quiet reconcile must make no
-   call. What the
+   lines, and a head with no line in it (minified, one-line data) is left
+   out. The first reconcile of a plan from before cut files (no `cuts` on
+   it) places the cut files it knows nothing of (`newlyReadable`), since
+   unchanged they are in no diff; its own plan carries `cuts`, so a cut
+   file left out then is like any other. A file a plan made knowing cut
+   files left out of every subject is not offered again: the model left
+   it out on purpose, and a quiet reconcile must make no call. What the
    tree offers is kept on a full run (`readable_bytes`) beside the distinct
    files its folded parts read (`read_bytes`: a file once however many
-   subjects hold it, a skipped part not at all; `bytes` stays the budget's
+   subjects hold it, a doc the overview read too, a skipped part not at
+   all; `bytes` stays the budget's
    count of every call's input), a reconcile carrying the documented run's
    pair, and the source page shows the share: twelve subjects of a large
    repository once read a tenth and the page said nothing of it. A full
@@ -843,9 +845,12 @@ resumes after a restart. The run pins the clone's head when it starts.
    repository's subjects (a flow, a feature, a part) with their paths,
    from the listing and the docs. Over 4000 files the listing is the tree
    folded to fit: a directory is one line with its file count and bytes
-   until it is opened, and the tree is opened where the files are, the
-   directory holding the most first, a part too wide to lay out shown with
-   its subdirectories and its own files as one line (`baseline.Listing`).
+   until it is opened, and the tree is opened where the files are: of the
+   moves on the listing (a directory opened, an open one's own files laid
+   out) the one touching the most files first, so a pile of files at the
+   root never crowds out the code beside it, and a part too wide to lay out
+   is shown with its subdirectories and its own files as one `dir/*` line,
+   which the model may name back for those files alone (`baseline.Listing`).
    It was once folded to two levels whatever the shape, and a Maven
    repository, all of it under `src/main/java`, became one line the model
    could only name whole, filled in path order to the step's cap. Code holds

@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"container/heap"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -250,7 +251,10 @@ func (p Plan) find(name string) int {
 // tree was once folded to two levels whatever its shape, and a Maven or
 // Gradle repository, all of it under src/main/java, became one line the
 // model could only name whole. A directory is named with a trailing slash,
-// the way the model may name it back.
+// the way the model may name it back; the files right under an opened one,
+// as one line, `dir/*` (the root's `*`), which resolve takes for those files
+// alone. The root's subdirectories are always shown, so a root of more than
+// ListMaxEntries directories runs over: nothing is dropped for size.
 func Listing(files []File) string {
 	var b strings.Builder
 	if len(files) <= ListMaxEntries {
@@ -277,7 +281,6 @@ func fileLine(f File) string {
 // subdirectories, and how it is shown (how).
 type treeNode struct {
 	path     string // "" for the root, else with a trailing slash
-	parent   *treeNode
 	direct   []File
 	children []*treeNode
 	files    int   // files under it, direct and deeper
@@ -314,7 +317,7 @@ func buildTree(files []File) *treeNode {
 			dir += part + "/"
 			n := nodes[dir]
 			if n == nil {
-				n = &treeNode{path: dir, parent: parent}
+				n = &treeNode{path: dir}
 				nodes[dir] = n
 				parent.children = append(parent.children, n)
 			}
@@ -346,68 +349,78 @@ func (n *treeNode) entries() int {
 }
 
 // fold opens the tree where the files are until the listing holds limit
-// lines: of every directory that can be shown one step further (a folded
-// one opened, an open one's direct files laid out), the one holding the
-// most files goes first, skipped when it does not fit, so the big parts
-// are opened before the small and a part too wide to lay out still shows
-// its subdirectories. The root starts open, its own files laid out when
-// they fit like any directory's.
+// lines. A move shows a directory one step further: a folded one opened
+// (a leaf straight to its files), an open one's direct files laid out. Of
+// the moves on the listing, the one touching the most files goes first
+// (an opening the files under the directory, a laying out its direct
+// files), skipped when it does not fit, so the big parts are opened before
+// the small, a pile of files at the root never crowds out the code
+// directory beside it, and a part too wide to lay out still shows its
+// subdirectories. A move never frees a line, so one skipped never fits
+// later. The root starts open.
 func (n *treeNode) fold(limit int) {
 	n.how = open
 	count := n.entries()
-	// Every directory, by the files under it, most first, the root among
-	// them; a folded leaf opens straight to flat (opening it would change
-	// no line).
-	all := []*treeNode{n}
-	var collect func(*treeNode)
-	collect = func(d *treeNode) {
+	q := &moves{}
+	// An opened directory offers its direct files and its subdirectories.
+	offer := func(d *treeNode) {
+		if d.how == open && len(d.direct) > 0 {
+			heap.Push(q, move{d, len(d.direct), true})
+		}
 		for _, c := range d.children {
-			all = append(all, c)
-			collect(c)
+			heap.Push(q, move{c, c.files, false})
 		}
 	}
-	collect(n)
-	sort.SliceStable(all, func(i, j int) bool { return all[i].files > all[j].files })
-	for progress := true; progress; {
-		progress = false
-		for _, d := range all {
-			if d.how == flat {
-				continue
-			}
-			// A directory shows only under an open parent.
-			if !d.shown() {
-				continue
-			}
-			next := open
-			if d.how == open || len(d.children) == 0 {
-				next = flat
-			}
-			before, was := d.entries(), d.how
-			d.how = next
-			cost := d.entries() - before
-			if count+cost > limit {
-				d.how = was
-				continue
-			}
-			count += cost
-			progress = true
+	offer(n)
+	for q.Len() > 0 {
+		m := heap.Pop(q).(move)
+		d := m.dir
+		before, was := d.entries(), d.how
+		d.how = open
+		if m.layout || len(d.children) == 0 {
+			d.how = flat
+		}
+		cost := d.entries() - before
+		if count+cost > limit {
+			d.how = was
+			continue
+		}
+		count += cost
+		if !m.layout {
+			offer(d)
 		}
 	}
 }
 
-// shown reports whether a directory's own line is on the listing: every
-// ancestor open or flat.
-func (n *treeNode) shown() bool {
-	for p := n.parent; p != nil; p = p.parent {
-		if p.how == folded {
-			return false
-		}
+// move is one step of fold: dir opened, or with layout its direct files
+// laid out; files is what it touches.
+type move struct {
+	dir    *treeNode
+	files  int
+	layout bool
+}
+
+// moves is fold's queue, the most files first, then by path.
+type moves []move
+
+func (q moves) Len() int { return len(q) }
+func (q moves) Less(i, j int) bool {
+	if q[i].files != q[j].files {
+		return q[i].files > q[j].files
 	}
-	return true
+	return q[i].dir.path < q[j].dir.path
+}
+func (q moves) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
+func (q *moves) Push(x any)   { *q = append(*q, x.(move)) }
+func (q *moves) Pop() any {
+	old := *q
+	m := old[len(old)-1]
+	*q = old[:len(old)-1]
+	return m
 }
 
 // write lays the tree out: at an open or flat directory its direct files
-// (each, or as one line), then its subdirectories, in path order; a folded
+// (each, or as one `dir/*` line), then its subdirectories, in path order; a folded
 // one as one line.
 func (n *treeNode) write(b *strings.Builder) {
 	if n.how == folded {
@@ -423,11 +436,7 @@ func (n *treeNode) write(b *strings.Builder) {
 		for _, f := range n.direct {
 			bytes += f.Size
 		}
-		name := n.path
-		if name == "" {
-			name = "./"
-		}
-		fmt.Fprintf(b, "%s\t%d files directly\t%d bytes\n", name, len(n.direct), bytes)
+		fmt.Fprintf(b, "%s*\t%d files\t%d bytes\n", n.path, len(n.direct), bytes)
 	}
 	for _, c := range n.children {
 		c.write(b)
@@ -458,15 +467,23 @@ func newIndex(files []File) index {
 
 // resolve turns one path the model named into readable files: the file
 // itself, or every readable file under it when it names a directory (with
-// or without the trailing slash). A path naming nothing readable resolves
-// to nothing: the model inventing one, or one the filter refused.
+// or without the trailing slash), or only the files right under it when it
+// is the listing's `dir/*` (the root's `*`, `./*` or `/*`). A path naming
+// nothing readable resolves to nothing: the model inventing one, or one
+// the filter refused.
 func (ix index) resolve(p string) []File {
 	p = strings.TrimSpace(p)
 	if f, ok := ix.byPath[p]; ok {
 		return []File{f}
 	}
+	direct := strings.HasSuffix(p, "*")
 	prefix := strings.TrimSuffix(p, "/") + "/"
-	if prefix == "/" {
+	if direct {
+		prefix = strings.TrimPrefix(strings.TrimPrefix(strings.TrimSuffix(p, "*"), "./"), "/")
+		if prefix != "" && !strings.HasSuffix(prefix, "/") {
+			return nil
+		}
+	} else if prefix == "/" {
 		return nil
 	}
 	start := sort.Search(len(ix.sorted), func(i int) bool { return ix.sorted[i].Path >= prefix })
@@ -474,6 +491,9 @@ func (ix index) resolve(p string) []File {
 	for _, f := range ix.sorted[start:] {
 		if !strings.HasPrefix(f.Path, prefix) {
 			break
+		}
+		if direct && strings.Contains(f.Path[len(prefix):], "/") {
+			continue
 		}
 		out = append(out, f)
 	}

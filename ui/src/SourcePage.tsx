@@ -935,12 +935,12 @@ function baselineState(b: Baseline): { label: string; tone: Tone } {
   }
 }
 
-/** readShare is the percent of the readable code a run read, 0 to 100; a
- *  few bytes of a large tree round to 0, which the copy words as under
- *  one. */
+/** readShare is the percent of the readable code a run read, 0 to 100,
+ *  unrounded: the copy rounds it, and words a few bytes of a large tree,
+ *  above 0 but under one, as under one. */
 export function readShare(read: number, readable: number): number {
   if (readable <= 0) return 0;
-  return Math.min(100, Math.round((100 * read) / readable));
+  return Math.min(100, (100 * read) / readable);
 }
 
 /** BaselineCell is a repository's description state: the newest run, the
