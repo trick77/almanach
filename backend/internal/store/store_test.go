@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,6 +40,163 @@ func storeAt(t *testing.T, path string, extra ...string) *Store {
 	}
 	t.Cleanup(s.Close)
 	return s
+}
+
+// Backup writes a consistent, compacted copy that opens as a database of
+// its own with every row, while the original stays open and a writer
+// holds its lock; it refuses the database itself and a file that exists,
+// and leaves no part file behind.
+func TestBackup(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("PRJ", "svc", 2))
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "copy.db")
+	// A writer mid-transaction on the same file: the copy is a reader's
+	// view and waits on nothing.
+	writer := storeAt(t, s.path, "_pragma=busy_timeout(50)")
+	tx, err := writer.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE notes SET pr_title = 'uncommitted'`); err != nil {
+		t.Fatal(err)
+	}
+	size, err := s.Backup(ctx, dest)
+	if err != nil || size <= 0 {
+		t.Fatalf("Backup under a writer = %d, %v", size, err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if parts, _ := filepath.Glob(filepath.Join(dir, "*.part")); len(parts) != 0 {
+		t.Errorf("part files left behind: %v", parts)
+	}
+	// No sidecars beside the copy (checked before anything opens it: an
+	// open in WAL mode makes them).
+	for _, p := range []string{dest + "-wal", dest + "-shm"} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s written beside the copy", p)
+		}
+	}
+	// The copy stands on its own: migrated, every committed note there,
+	// nothing uncommitted, writable.
+	c := storeAt(t, dest)
+	if n := count(t, c, "notes", "pr_title = 'uncommitted'"); n != 0 {
+		t.Errorf("the copy holds %d uncommitted rows", n)
+	}
+	if err := c.SchemaCurrent(ctx); err != nil {
+		t.Errorf("copy's schema: %v", err)
+	}
+	if n := count(t, c, "notes", ""); n != 2 {
+		t.Errorf("copy's notes = %d, want 2", n)
+	}
+	ingest(t, c, noteFor("PRJ", "svc", 3))
+	if n := count(t, s, "notes", ""); n != 2 {
+		t.Errorf("original's notes after a write to the copy = %d, want 2", n)
+	}
+	// Refusals: the file exists; the database itself, by any spelling, and
+	// its sidecars, there or not.
+	if _, err := s.Backup(ctx, dest); err == nil || !strings.Contains(err.Error(), "exists") {
+		t.Errorf("Backup onto an existing file = %v, want refused", err)
+	}
+	for _, same := range []string{s.path, filepath.Join(filepath.Dir(s.path), ".", filepath.Base(s.path)), s.path + "-wal", s.path + "-shm", s.path + "-journal"} {
+		if _, err := s.Backup(ctx, same); err == nil || !strings.Contains(err.Error(), "database itself") {
+			t.Errorf("Backup onto %s = %v, want refused", same, err)
+		}
+	}
+	// A folder that does not exist fails cleanly, nothing left.
+	if _, err := s.Backup(ctx, filepath.Join(dir, "nope", "copy.db")); err == nil {
+		t.Error("Backup into a missing folder succeeded")
+	}
+	// A part file that is not empty is refused by SQLite itself: the copy
+	// fails, the placeholder is taken away, nothing under the name.
+	full := filepath.Join(dir, "full.db.part")
+	if err := os.WriteFile(full, []byte("not empty"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.backupInto(ctx, full, filepath.Join(dir, "full.db")); err == nil {
+		t.Error("backupInto filled a part file that was not empty")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "full.db")); err == nil {
+		t.Error("full.db there after a failed copy")
+	}
+	// The database through a symlinked folder is still the database.
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Dir(s.path), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Backup(ctx, filepath.Join(link, filepath.Base(s.path)+"-wal")); err == nil || !strings.Contains(err.Error(), "database itself") {
+		t.Errorf("Backup onto a sidecar through a symlink = %v, want refused", err)
+	}
+	// A sidecar that is not there, spelled in another case: on a
+	// case-insensitive file system it is the sidecar.
+	if _, err := s.Backup(ctx, strings.ToUpper(s.path)+"-JOURNAL"); err == nil || !strings.Contains(err.Error(), "database itself") {
+		t.Errorf("Backup onto the journal in another case = %v, want refused", err)
+	}
+	// A cancelled context (Ctrl-C, SIGTERM) fails the copy and takes the
+	// placeholder and the part file away.
+	done, cancel := context.WithCancel(ctx)
+	cancel()
+	gone := filepath.Join(dir, "cancelled.db")
+	if _, err := s.Backup(done, gone); err == nil {
+		t.Error("Backup with a cancelled context succeeded")
+	}
+	if _, err := os.Stat(gone); err == nil {
+		t.Error("cancelled.db there after a cancelled copy")
+	}
+	if parts, _ := filepath.Glob(filepath.Join(dir, "cancelled.db.*.part")); len(parts) != 0 {
+		t.Errorf("part files left after a cancelled copy: %v", parts)
+	}
+}
+
+// OpenExisting opens a migrated database and refuses a path that names no
+// file (never creating it) and an empty database, as one a mistyped path
+// once made.
+func TestOpenExisting(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	dir := t.TempDir()
+	if _, err := OpenExisting(ctx, filepath.Join(dir, "nope.db"), s.log); err == nil {
+		t.Error("OpenExisting opened a file that is not there")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "nope.db")); err == nil {
+		t.Error("OpenExisting created the file")
+	}
+	empty := emptyStore(t)
+	if _, err := empty.db.ExecContext(ctx, `CREATE TABLE t (x)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExisting(ctx, empty.path, s.log); err == nil || !strings.Contains(err.Error(), "no migration applied") {
+		t.Errorf("OpenExisting of an unmigrated database = %v, want refused", err)
+	}
+	again, err := OpenExisting(ctx, s.path, s.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again.Close()
+}
+
+// Optimize runs on every idle connection of a pool with a history and
+// says so; with a context already done it fails as one log line.
+func TestOptimize(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	var buf strings.Builder
+	s.log = slog.New(slog.NewTextHandler(&buf, nil))
+	if !s.Optimize(ctx) {
+		t.Errorf("Optimize on a live pool failed: %s", buf.String())
+	}
+	done, cancel := context.WithCancel(ctx)
+	cancel()
+	if s.Optimize(done) {
+		t.Error("Optimize with a cancelled context reported success")
+	}
+	if n := strings.Count(buf.String(), "SQLite optimize failed"); n != 1 {
+		t.Errorf("optimize warnings = %d, want 1: %s", n, buf.String())
+	}
 }
 
 // The startup gate: an unmigrated database names what is pending, a

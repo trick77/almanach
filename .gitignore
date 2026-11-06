@@ -10,9 +10,12 @@ team-keys.json
 /bin/
 
 # The database (.env.example's BACKEND_DB_PATH, compose's ./data) and
-# compose's clones
+# compose's clones; a database or a backup written anywhere else
 /data/
 /repos/
+*.db
+*.db-wal
+*.db-shm
 
 # The prompt eval's pages
 /.prompt-eval/

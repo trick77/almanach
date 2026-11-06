@@ -1286,9 +1286,36 @@ the epoch: stored pages change as before.
   files. Both check first that the file's folder exists and takes a file.
 - The database is one file (with its `-wal` and `-shm` beside it) on a
   host folder of its own, apart from the clones: the clones can be wiped
-  and refilled from the forge, the database cannot, and a backup is its
-  folder. A local disk on one node (ReadWriteOnce), never a shared
-  filesystem: SQLite in WAL needs POSIX locks of one host. One replica.
+  and refilled from the forge, the database cannot. A local disk on one
+  node (ReadWriteOnce), never a shared filesystem: SQLite in WAL needs
+  POSIX locks of one host. One replica.
+- `almanach backup <file>` is the backup: `VACUUM INTO` writes one
+  transaction's view of every table, compacted, as a database of its own
+  (no `-wal`, no `-shm`), while `serve` runs on. The target is taken
+  first, empty and exclusively (a second backup to the name is refused
+  at once); the copy is written to a `.part` file of its own name beside
+  it, fsynced (`VACUUM INTO` never syncs its output), renamed over the
+  placeholder, and the folder synced: never a half database under the
+  name. A failure, Ctrl-C or SIGTERM takes both files away; a kill or
+  crash mid-copy leaves the empty placeholder, which the next run
+  refuses as existing, and the `.part` beside it, to delete by hand. The
+  database itself, sidecars included (any case: APFS), is refused as a
+  target, and so is a `BACKEND_DB_PATH` that names no file (the driver
+  would create an empty one and the copy of it read as success) or a
+  database with no migration applied (one a mistyped path once made).
+  Copying the folder by hand under live writes is not consistent: the
+  file and its WAL are two moments. Needs `BACKEND_DB_PATH` alone; in
+  compose, `docker compose run --rm migrate backup /data/almanach-$(date +%F).db`
+  writes into the data folder (the migrate service has the volume and
+  nothing else; the folder is uid 65532, mode 700, so the copy leaves
+  the host with `sudo cp`). A copy on the database's own disk guards
+  against nothing that takes the disk, and each one is the database's
+  size again: move it off the host, then delete it there; nothing
+  rotates them. On shutdown `serve` runs `PRAGMA optimize`
+  on each pooled connection, SQLite's refresh of the planner's
+  statistics from what that connection queried, kept in the file;
+  `backup` and `migrate` do not, it may ANALYZE under the write lock a
+  running `serve` needs.
 - `/healthz` is liveness, `/readyz` asks the database and the room on its
   disk (64 MB free at least: SQLite answers a ping from a full disk, and
   every write after a paid call then fails). Both answer loopback
@@ -1354,8 +1381,9 @@ the epoch: stored pages change as before.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
   asked to stop and finishes the fold in flight, up to a grace of the call
-  timeout plus fifteen seconds; only then does the pool close. Size the
-  pod's termination grace above that sum plus the HTTP drain.
+  timeout plus fifteen seconds; then `PRAGMA optimize` on each open
+  connection, five seconds at most; only then does the pool close. Size
+  the pod's termination grace above that sum plus the HTTP drain.
 
 ## 6. Package layout
 
@@ -2042,8 +2070,8 @@ baseline step's patch never is: its bad items are left out one by one (see
   seconds. A gateway that
   is unreachable or answers 5xx is a warning; a refused key, a 4xx, a body
   that is not a listing, or an alias missing from it is a fault.
-- `serve` never migrates; `migrate` needs only `BACKEND_DB_PATH`. A schema
-  behind the binary refuses to start.
+- `serve` never migrates; `migrate` and `backup` need only
+  `BACKEND_DB_PATH`. A schema behind the binary refuses to start.
 - `/healthz` and `/readyz` answer a loopback caller without forwarding
   headers only; through a router they are 404 by design.
 - In oidc mode the issuer (as written: https, http only on loopback), client

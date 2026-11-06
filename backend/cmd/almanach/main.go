@@ -2,6 +2,7 @@
 //
 //	almanach serve        run the service (default)
 //	almanach migrate      apply pending database migrations and exit
+//	almanach backup FILE  write a consistent copy of the database to FILE and exit
 //	almanach version      print the version and exit
 //	almanach -healthcheck probe /healthz, exit 0 on a 2xx (liveness: the container healthcheck)
 //	almanach -readycheck  probe /readyz, exit 0 on a 2xx (readiness: the database answers, its disk has room)
@@ -52,6 +53,8 @@ func main() {
 		err = withLog(serve)
 	case "migrate":
 		err = withLog(migrate)
+	case "backup":
+		err = withLog(backup)
 	case "version":
 		fmt.Println(version.String())
 	case "-healthcheck":
@@ -70,7 +73,11 @@ func main() {
 	}
 }
 
-const usage = "usage: almanach [serve|migrate|version|-healthcheck|-readycheck]"
+const usage = "usage: almanach [serve|migrate|backup <file>|version|-healthcheck|-readycheck]"
+
+// optimizeGrace bounds PRAGMA optimize at shutdown: an ANALYZE of a few
+// tables, seconds at most; the stop grace counts it.
+const optimizeGrace = 5 * time.Second
 
 // withLog sets up logging before anything logs, names the build, then runs.
 // An unknown BACKEND_LOG_LEVEL still fails startup: logging starts at info so the
@@ -145,26 +152,38 @@ func writableDir(env, dir string) error {
 }
 
 // openDB opens the database file after proving its folder takes the file
-// and its -wal and -shm beside it.
-func openDB(ctx context.Context, path string, log *slog.Logger) (*store.Store, error) {
+// and its -wal and -shm beside it. With existing set, a path that names
+// no Almanach database is refused (store.OpenExisting): the driver would
+// create an empty one there and a backup of it would read as success.
+func openDB(ctx context.Context, path string, log *slog.Logger, existing bool) (*store.Store, error) {
 	if err := writableDir("BACKEND_DB_PATH", filepath.Dir(path)); err != nil {
 		return nil, err
 	}
+	if existing {
+		return store.OpenExisting(ctx, path, log)
+	}
 	return store.Open(ctx, path, log)
+}
+
+// openFromEnv is the database of a command that needs BACKEND_DB_PATH and
+// nothing else (migrate, backup), after the log level gate every command
+// runs.
+func openFromEnv(ctx context.Context, log *slog.Logger, existing bool) (*store.Store, error) {
+	if _, err := logging.ParseLevel(os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
+		return nil, fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
+	}
+	path := strings.TrimSpace(os.Getenv("BACKEND_DB_PATH"))
+	if path == "" {
+		return nil, errors.New("environment variable BACKEND_DB_PATH is not set")
+	}
+	return openDB(ctx, path, log, existing)
 }
 
 // migrate applies pending migrations and exits: the init container's job.
 // Only BACKEND_DB_PATH is needed.
 func migrate(log *slog.Logger) error {
-	if _, err := logging.ParseLevel(os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
-		return fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
-	}
-	path := strings.TrimSpace(os.Getenv("BACKEND_DB_PATH"))
-	if path == "" {
-		return errors.New("environment variable BACKEND_DB_PATH is not set")
-	}
 	ctx := context.Background()
-	db, err := openDB(ctx, path, log)
+	db, err := openFromEnv(ctx, log, false)
 	if err != nil {
 		return err
 	}
@@ -173,6 +192,33 @@ func migrate(log *slog.Logger) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	log.Info("migrations up to date")
+	return nil
+}
+
+// backup writes a consistent copy of the database to the file named on
+// the command line and exits, while serve may run on: the way to back
+// the database up, a copy of its folder under live writes being none.
+// Only BACKEND_DB_PATH is needed, and it must name a file that exists.
+func backup(log *slog.Logger) error {
+	if len(os.Args) != 3 || strings.TrimSpace(os.Args[2]) == "" {
+		return errors.New("backup: one argument, the file to write, e.g. almanach backup /data/almanach-2026-11-06.db")
+	}
+	dest := os.Args[2]
+	// Ctrl-C or a stop of the container cancels VACUUM INTO, and Backup
+	// takes its placeholder and part file away; only a kill leaves them.
+	ctx, stop := run.Context(context.Background())
+	defer stop()
+	db, err := openFromEnv(ctx, log, true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	start := time.Now()
+	size, err := db.Backup(ctx, dest)
+	if err != nil {
+		return err
+	}
+	log.Info("backup written", "file", dest, "bytes", size, "took", time.Since(start).Round(time.Millisecond).String())
 	return nil
 }
 
@@ -192,7 +238,7 @@ func serve(log *slog.Logger) error {
 	// Every check runs before the abort so the log names all the failures
 	// at once rather than one per restart. serve never migrates.
 	var checks []string
-	db, err := openDB(ctx, app.DBPath, log)
+	db, err := openDB(ctx, app.DBPath, log, false)
 	if err == nil {
 		defer db.Close()
 		err = db.SchemaCurrent(ctx)
@@ -336,6 +382,12 @@ func serve(log *slog.Logger) error {
 		poller.Stop()
 	}
 	worker.Stop(inference.CallTimeout + 15*time.Second)
+	// The planner's statistics, refreshed on the way out: ctx is done by
+	// now, so a bound of its own, inside the stop grace (compose's
+	// stop_grace_period, sized for the drain, the worker's grace and this).
+	octx, cancel := context.WithTimeout(context.Background(), optimizeGrace)
+	db.Optimize(octx)
+	cancel()
 	if runErr != nil {
 		return runErr
 	}

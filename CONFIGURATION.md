@@ -136,9 +136,10 @@ and the variable reads `/conf/ca.pem`.
 then `up -d`. In a checkout, `up -d --build` builds it instead. Needs
 Docker Compose 2.24.4 or later.
 
-The stop grace is 11 minutes: the worker waits up to the call timeout
-plus 15 s for a paid call in flight before it cuts it off, and Docker's
-default 10 s would kill it.
+The stop grace is 11 minutes: the HTTP drain (15 s), then the worker
+waits up to the call timeout plus 15 s for a paid call in flight before
+it cuts it off, then 5 s for the planner's refresh (`PRAGMA optimize`);
+Docker's default 10 s would kill the call.
 
 ## Commands
 
@@ -146,6 +147,7 @@ default 10 s would kill it.
 | --- | --- |
 | `almanach serve` | Run the service. Refuses a schema that is behind. |
 | `almanach migrate` | Apply pending migrations to `BACKEND_DB_PATH` and exit. |
+| `almanach backup <file>` | Write a consistent copy of `BACKEND_DB_PATH` to the file (`VACUUM INTO`, while `serve` runs on) and exit. The file must not exist. |
 | `almanach version` | Print the version. |
 | `almanach -healthcheck` | Probe `/healthz` on loopback, exit 0 on a 2xx. |
 | `almanach -readycheck` | Probe `/readyz`: the database answers and its disk has 64 MB free. |
