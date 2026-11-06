@@ -239,40 +239,6 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Note.Team = team
-	// The bearer is the team, and a project belongs to the team whose
-	// notes name it: a note from another team for it is refused, unless
-	// the team-keys file lists the project for the sender (the operator's
-	// word: a repository that changed hands, two teams on one project).
-	// Otherwise any team's token, or anything holding one, would write
-	// into every team's pages, and the prompts read note text as data.
-	owner, err := d.Store.ProjectTeam(ctx, in.Note.ProjectKey)
-	if err != nil {
-		d.Log.ErrorContext(ctx, "webhook_owner_check_failed", "webhook_source", "noergler", "team", team,
-			"delivery_id", in.DeliveryID, logging.Err(err))
-		httpx.WriteError(w, http.StatusInternalServerError, "owner check failed")
-		return
-	}
-	if owner != "" && owner != team {
-		allowed, reloadErr := d.Keys.Allowed(team, in.Note.ProjectKey)
-		if reloadErr != nil {
-			d.Log.WarnContext(ctx, "team keys reload failed, last good table in use", logging.Err(reloadErr))
-		}
-		if !allowed {
-			outcome, code, body := "ignored", http.StatusAccepted, acceptedBody{Status: "ignored"}
-			if d.TeamClaims == config.TeamClaimsEnforce {
-				outcome, code = "refused", http.StatusForbidden
-			}
-			d.Log.WarnContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
-				"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "project", in.Note.ProjectKey, "owner", owner,
-				"reason", "project owned by another team")
-			if code == http.StatusForbidden {
-				httpx.WriteError(w, code, "project "+in.Note.ProjectKey+" belongs to another team")
-				return
-			}
-			httpx.WriteJSON(w, code, body)
-			return
-		}
-	}
 	// With the sources on, a repository exists for Almanach once it is a
 	// source repository: the baseline is its starting point and only the
 	// deltas after it are folded. A note for any other is answered and
@@ -295,8 +261,41 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	delivery := store.Delivery{ID: in.DeliveryID, Team: team, EventType: in.EventType, Payload: raw}
+	// The bearer is the team, and a project belongs to the first team
+	// whose note named it: a note from another team for it is refused
+	// (enforce: a 403, inside the ingest transaction, so a first claim and
+	// a refusal never race and a re-delivery dedups first) or stored with
+	// a warning naming team, project and owner (log, the rollout's grace:
+	// nothing lost, the log says who writes where). Unless the team-keys
+	// file lists the project for the sender, the operator's word for a
+	// repository that changed hands or two teams on one project. Without
+	// the gate any team's token, or anything holding one, would write
+	// into every team's pages, and the prompts read note text as data.
+	listed, reloadErr := d.Keys.Allowed(team, in.Note.ProjectKey)
+	if reloadErr != nil {
+		d.Log.WarnContext(ctx, "team keys reload failed, last good table in use", logging.Err(reloadErr))
+	}
+	enforce := d.TeamClaims == config.TeamClaimsEnforce
+	delivery := store.Delivery{ID: in.DeliveryID, Team: team, EventType: in.EventType, Payload: raw, Shared: listed || !enforce}
+	var owner string
+	if !enforce && !listed {
+		// For the warning alone: the owner as it stood before the write.
+		if owner, err = d.Store.ProjectTeam(ctx, in.Note.ProjectKey); err != nil {
+			d.Log.ErrorContext(ctx, "webhook_owner_check_failed", "webhook_source", "noergler", "team", team,
+				"delivery_id", in.DeliveryID, logging.Err(err))
+			httpx.WriteError(w, http.StatusInternalServerError, "owner check failed")
+			return
+		}
+	}
 	accepted, err := d.Store.Ingest(ctx, delivery, in.Note, in.Call, in.Claims)
+	var owned *store.OwnedError
+	if errors.As(err, &owned) {
+		d.Log.WarnContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", "refused", "team", team,
+			"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "project", in.Note.ProjectKey, "owner", owned.Owner,
+			"reason", "project owned by another team")
+		httpx.WriteError(w, http.StatusForbidden, "project "+in.Note.ProjectKey+" belongs to another team")
+		return
+	}
 	if err != nil {
 		// Never swallowed: the sender keeps the note pending and sends it
 		// again on its next merge.
@@ -309,8 +308,14 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	if !accepted {
 		outcome = "deduped"
 	}
-	d.Log.InfoContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
-		"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind)
+	if accepted && owner != "" && owner != team {
+		d.Log.WarnContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
+			"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind,
+			"project", in.Note.ProjectKey, "owner", owner, "reason", "project owned by another team, stored under log mode")
+	} else {
+		d.Log.InfoContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
+			"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind)
+	}
 	if accepted && d.Worker != nil {
 		d.Worker.Wake()
 	}

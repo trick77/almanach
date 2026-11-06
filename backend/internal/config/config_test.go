@@ -321,8 +321,8 @@ func TestNoneModeRefusesOIDCVariables(t *testing.T) {
 	}
 }
 
-// The team-claims gate starts in log mode, takes enforce in any case, and
-// refuses anything else by name.
+// The team-claims gate starts in log mode, takes enforce, and refuses
+// anything else by name.
 func TestTeamClaims(t *testing.T) {
 	app, err := Load(lookup(minimal()))
 	if err != nil || app.TeamClaims != TeamClaimsLog {

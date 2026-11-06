@@ -153,6 +153,15 @@ paths:
                 $ref: "#/components/schemas/Accepted"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            The project belongs to another team and `BACKEND_TEAM_CLAIMS` is
+            `enforce`; nothing is stored. The team-keys file may list the
+            project for the sender.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "413":
           description: Body over one megabyte.
           content:
@@ -1839,7 +1848,11 @@ components:
         status:
           type: string
           enum: [accepted, deduped, ignored]
-          description: ignored is a note for a repository that is no source repository, with the sources on; nothing is stored.
+          description: >-
+            ignored is a note for a repository that is no source repository,
+            with the sources on; nothing is stored. A note for a project
+            another team owns is accepted under `BACKEND_TEAM_CLAIMS=log`
+            (stored, a warning logged) and a 403 under `enforce`.
 
     Money:
       type: [string, "null"]

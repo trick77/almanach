@@ -38,16 +38,17 @@ const (
 )
 
 // TeamClaims is what the webhook does with a note for a project another
-// team's notes own, unless the team-keys file lists the project for the
-// sender.
+// team owns, unless the team-keys file lists the project for the sender.
 type TeamClaims string
 
 const (
-	// TeamClaimsLog answers 202 ignored and logs: the note is not stored,
-	// noergler marks it sent. The grace a rollout starts with, so a team
-	// whose repositories changed hands goes quiet in the log, not red.
+	// TeamClaimsLog stores the note and warns, naming team, project and
+	// owner: the grace a rollout starts with, nothing lost, the log
+	// saying who writes where, so the keys file can be filled in before
+	// enforce.
 	TeamClaimsLog TeamClaims = "log"
-	// TeamClaimsEnforce answers 403: the sender sees the refusal.
+	// TeamClaimsEnforce refuses it with a 403, stored nowhere: the
+	// sender sees the refusal.
 	TeamClaimsEnforce TeamClaims = "enforce"
 )
 
@@ -236,7 +237,7 @@ func Load(lookup func(string) string) (*App, error) {
 		TeamKeysPath:    r.Required("BACKEND_TEAM_KEYS_PATH"),
 		Addr:            r.String("BACKEND_ADDR", DefaultAddr),
 		AuthMode:        AuthMode(strings.ToLower(r.Enum("BACKEND_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthOIDC)))),
-		TeamClaims:      TeamClaims(strings.ToLower(r.Enum("BACKEND_TEAM_CLAIMS", string(TeamClaimsLog), string(TeamClaimsLog), string(TeamClaimsEnforce)))),
+		TeamClaims:      TeamClaims(r.Enum("BACKEND_TEAM_CLAIMS", string(TeamClaimsLog), string(TeamClaimsLog), string(TeamClaimsEnforce))),
 		Model:           r.Required("BACKEND_MODEL"),
 		ReasoningEffort: r.String("BACKEND_MODEL_REASONING_EFFORT", ""),
 		Limits: Limits{

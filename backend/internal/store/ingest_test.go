@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -55,6 +56,61 @@ func TestIngest_WritesEverything(t *testing.T) {
 	}
 	if n := count(t, s, "note_calls", "delivery_id = 'd-PRJ-svc-1' AND pr_id = 1 AND rounds = 2 AND warnings = '[\"w1\"]'"); n != 1 {
 		t.Errorf("note_calls row = %d, want 1", n)
+	}
+}
+
+// A project belongs to the first team whose note named it, in any case
+// of the key: another team's note is refused inside the transaction with
+// nothing written, unless the delivery is shared, which stores it and
+// leaves the owner as it was; a re-delivery dedups before the owner is
+// looked at.
+func TestIngest_ProjectOwnedByFirstTeam(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	first := noteFor("PRJ", "svc", 1)
+	ingest(t, s, first)
+	if team, err := s.ProjectTeam(ctx, "prj"); err != nil || team != "alpha" {
+		t.Fatalf("ProjectTeam(prj) = %q, %v; want alpha in any case", team, err)
+	}
+	other := noteFor("prj", "svc", 2)
+	other.Team = "beta"
+	var owned *OwnedError
+	if ok, err := s.Ingest(ctx, deliveryFor(other), other, callFor(other), nil); ok || !errors.As(err, &owned) || owned.Owner != "alpha" {
+		t.Fatalf("another team's note = %v, %v; want *OwnedError{alpha}", ok, err)
+	}
+	if n := count(t, s, "deliveries", ""); n != 1 {
+		t.Errorf("deliveries after the refusal = %d, want 1: nothing written", n)
+	}
+	if n := count(t, s, "teams", "slug = 'beta'"); n != 0 {
+		t.Errorf("the refused team was registered")
+	}
+	d := deliveryFor(other)
+	d.Shared = true
+	if ok, err := s.Ingest(ctx, d, other, callFor(other), nil); err != nil || !ok {
+		t.Fatalf("shared note = %v, %v; want stored", ok, err)
+	}
+	if team, err := s.ProjectTeam(ctx, "PRJ"); err != nil || team != "alpha" {
+		t.Errorf("owner after a shared note = %q, %v; want still alpha", team, err)
+	}
+	// Re-delivered later by its own team, the project's owner meanwhile
+	// no concern: the delivery id dedups first.
+	d.Shared = false
+	if ok, err := s.Ingest(ctx, d, other, callFor(other), nil); err != nil || ok {
+		t.Errorf("re-delivery = %v, %v; want deduped, no refusal", ok, err)
+	}
+	// A project a source registered, no note yet, is nobody's: the first
+	// note's team takes it.
+	if err := s.CreateSource(ctx, staticSource("NEW")); err != nil {
+		t.Fatal(err)
+	}
+	if team, err := s.ProjectTeam(ctx, "NEW"); err != nil || team != "" {
+		t.Errorf("ProjectTeam of a sourced project = %q, %v; want none", team, err)
+	}
+	fresh := noteFor("NEW", "lib", 1)
+	fresh.Team = "beta"
+	ingest(t, s, fresh)
+	if team, err := s.ProjectTeam(ctx, "NEW"); err != nil || team != "beta" {
+		t.Errorf("ProjectTeam after the first note = %q, %v; want beta", team, err)
 	}
 }
 

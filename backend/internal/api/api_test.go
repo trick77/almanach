@@ -132,6 +132,10 @@ func (f *fakeStore) Ingest(_ context.Context, d store.Delivery, n store.Note, ca
 	if f.ingestErr != nil {
 		return false, f.ingestErr
 	}
+	// The owner rule as the store keeps it: refused unless shared.
+	if owner := f.owners[n.ProjectKey]; owner != "" && owner != n.Team && !d.Shared {
+		return false, &store.OwnedError{Owner: owner}
+	}
 	f.deliveries = append(f.deliveries, d)
 	f.stored = append(f.stored, n)
 	f.calls = append(f.calls, call)
@@ -396,29 +400,25 @@ func TestWebhook(t *testing.T) {
 		}
 	})
 	t.Run("another team's project", func(t *testing.T) {
-		// PLAT belongs to platform's notes: billing's note for it is
-		// ignored and logged (log, the default), a 403 under enforce,
-		// stored in neither case; the team-keys file may let it in; the
-		// owner itself and an unowned project pass.
+		// PLAT belongs to platform: billing's note for it is stored with a
+		// warning under log (the default, the delivery shared), a 403
+		// under enforce (the store refuses it, the delivery not shared);
+		// the team-keys file lists it in under enforce; the owner itself
+		// passes as any note.
 		st := newFakeStore()
 		st.owners = map[string]string{"PLAT": "platform"}
 		w := &fakeWaker{}
 		h := handler(t, st, w, config.AuthNone)
 		code, body := do(t, h, "POST", "/webhooks/noergler", "tok-billing", validPayload(7), nil)
-		if code != 202 || field(t, body, "status") != "ignored" || len(st.stored) != 0 || w.wakes != 0 {
-			t.Errorf("log mode: %d %v stored %d wakes %d; want 202 ignored, nothing stored", code, body, len(st.stored), w.wakes)
+		if code != 202 || field(t, body, "status") != "accepted" || len(st.stored) != 1 || !st.deliveries[0].Shared || w.wakes != 1 {
+			t.Errorf("log mode: %d %v stored %d wakes %d; want 202 accepted, stored shared", code, body, len(st.stored), w.wakes)
 		}
 		if code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(7), nil); code != 202 || field(t, body, "status") != "accepted" {
 			t.Errorf("owner: %d %v", code, body)
 		}
-		st.owners = map[string]string{}
-		if code, body := do(t, h, "POST", "/webhooks/noergler", "tok-billing", validPayload(8), nil); code != 202 || field(t, body, "status") != "accepted" {
-			t.Errorf("unowned project: %d %v", code, body)
-		}
-		st.owners = map[string]string{"PLAT": "platform"}
 		st.ownerErr = errors.New("db down")
 		if code, _ := do(t, h, "POST", "/webhooks/noergler", "tok-billing", validPayload(7), nil); code != 500 {
-			t.Errorf("owner check failure = %d, want 500", code)
+			t.Errorf("owner read failure under log = %d, want 500", code)
 		}
 		st.ownerErr = nil
 
@@ -427,10 +427,19 @@ func TestWebhook(t *testing.T) {
 		if code != 403 || !strings.Contains(field(t, body, "error"), "PLAT") || len(st.stored) != 2 {
 			t.Errorf("enforce: %d %v stored %d; want 403 naming the project, nothing more stored", code, body, len(st.stored))
 		}
-		// Listed for billing in the keys file: in, under enforce too.
+		// The owner's own note needs no owner read under enforce.
+		st.ownerErr = errors.New("db down")
+		if code, body := do(t, enforce, "POST", "/webhooks/noergler", "tok-platform", validPayload(8), nil); code != 202 || field(t, body, "status") != "accepted" ||
+			st.deliveries[len(st.deliveries)-1].Shared {
+			t.Errorf("owner under enforce: %d %v, want accepted without a shared delivery", code, body)
+		}
+		st.ownerErr = nil
+		// Listed for billing in the keys file: in, under enforce too, the
+		// delivery shared.
 		listed := handlerWith(t, st, w, config.AuthNone, config.TeamClaimsEnforce,
 			keysFrom(t, `{"platform": "tok-platform", "billing": {"token": "tok-billing", "projects": ["plat"]}}`))
-		if code, body := do(t, listed, "POST", "/webhooks/noergler", "tok-billing", validPayload(9), nil); code != 202 || field(t, body, "status") != "accepted" {
+		if code, body := do(t, listed, "POST", "/webhooks/noergler", "tok-billing", validPayload(9), nil); code != 202 || field(t, body, "status") != "accepted" ||
+			!st.deliveries[len(st.deliveries)-1].Shared {
 			t.Errorf("listed project: %d %v", code, body)
 		}
 	})

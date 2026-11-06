@@ -14,7 +14,19 @@ type Delivery struct {
 	Team      string
 	EventType string
 	Payload   json.RawMessage
+	// Shared lets the note into a project another team owns: the sender
+	// is listed for it in the team-keys file, or the gate is in log mode.
+	// Without it such a note is refused with an *OwnedError inside the
+	// transaction, so a first claim and a refusal never race.
+	Shared bool
 }
+
+// OwnedError is a note refused for a project another team owns.
+type OwnedError struct {
+	Owner string
+}
+
+func (e *OwnedError) Error() string { return "project owned by team " + e.Owner }
 
 // Claim is one row of a team's ownership; RepoSlug empty is the whole
 // project.
@@ -110,15 +122,24 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 		ON CONFLICT (slug) DO UPDATE SET last_seen = EXCLUDED.last_seen`, n.Team, now); err != nil {
 		return false, err
 	}
-	// A project follows the team that last sent for it: a repo that changed
-	// hands moves its project's team with it, as noergler's PR rows follow.
-	// A name no project or repository ever had registers a new one; an old
-	// name lands on the row that had it.
+	// A project belongs to the first team whose note names it, and keeps
+	// it: a note from another team is refused here, under the
+	// transaction's lock, unless the delivery is Shared (the team-keys
+	// file lists the project for the sender; a handover is a listing, not
+	// a transfer). A name no project or repository ever had registers a
+	// new one; an old name lands on the row that had it.
 	pid, err := ensureProject(ctx, tx, n.ProjectKey)
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE projects SET team = ?2, first_seen = COALESCE(first_seen, ?3), last_seen = ?3 WHERE id = ?1`,
+	var owner sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT team FROM projects WHERE id = ?`, pid).Scan(&owner); err != nil {
+		return false, err
+	}
+	if owner.Valid && owner.String != "" && owner.String != n.Team && !d.Shared {
+		return false, &OwnedError{Owner: owner.String}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET team = COALESCE(team, ?2), first_seen = COALESCE(first_seen, ?3), last_seen = ?3 WHERE id = ?1`,
 		pid, n.Team, now); err != nil {
 		return false, err
 	}

@@ -223,11 +223,12 @@ func (s *Store) ProjectExists(ctx context.Context, key string, sourced bool) (st
 	return team, err == nil, err
 }
 
-// ProjectTeam is the team a project belongs to, by any name it had: the
-// team whose note last named it, "" for a project no note has named (one
-// a source registered) or none at all. The webhook's gate reads it.
+// ProjectTeam is the team a project belongs to, by any name it had in any
+// case (as Ingest finds it): the team whose note first named it, "" for a
+// project no note has named (one a source registered) or none at all.
+// The webhook's log line reads it.
 func (s *Store) ProjectTeam(ctx context.Context, key string) (string, error) {
-	pid, ok, err := projectID(ctx, s.db, key)
+	pid, ok, err := projectIDAnyCase(ctx, s.db, key)
 	if err != nil || !ok {
 		return "", err
 	}

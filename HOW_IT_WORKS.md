@@ -128,25 +128,28 @@ Everything lands in one transaction:
 A persist failure is a 500. noergler keeps the note pending and sends it
 again on the team's next merge.
 
-The bearer is the team, and a project belongs to the team whose note
-last named it (`projects.team`). A note from another team for it is
-refused: answered 202 `ignored` with a warning line naming team, project
-and owner under `BACKEND_TEAM_CLAIMS=log` (the default, a rollout's
-grace: noergler marks the note sent and the log says who wrote where),
-a 403 under `enforce`. Unless the team-keys file lists the project for
-the sender, the operator's word for a repository that changed hands or
-two teams on one project. Without the gate any team's token, or anything
-holding one, would write into every team's pages, and the prompts read
-note text as data. A project no note has named yet (one a source
-registered) is nobody's: the first note's team takes it.
+The bearer is the team, and a project belongs to the first team whose
+note named it (`projects.team`, set once, never moved by a note; a
+project a source registered is nobody's until then). A note from another
+team for it: under `BACKEND_TEAM_CLAIMS=log` (the default) it is stored
+as any note and the `webhook_processed` line is a warning naming team,
+project and owner, a rollout's grace that loses nothing and says who
+writes where; under `enforce` it is refused with a 403, inside the
+ingest transaction, so a first claim and a refusal never race and a
+re-delivery dedups before the owner is looked at. Unless the team-keys
+file lists the project for the sender, the operator's word for a
+repository that changed hands or two teams on one project; a listing
+shares, it does not transfer. Without the gate any team's token, or
+anything holding one, would write into every team's pages, and the
+prompts read note text as data.
 
 The handler logs one `webhook_processed` line for every request it read
 with the outcome (`accepted`, `deduped`, `ignored`, `refused`, `invalid`)
 and the delivery id, then pokes the worker. The exceptions log their own
 line instead: a request without a known bearer is a 401 on the access
 log only, a delivery the database refused is a `webhook_persist_failed`
-error line with the 500, an owner check the database refused a
-`webhook_owner_check_failed` one.
+error line with the 500, an owner read the database refused (log mode's
+warning needs it) a `webhook_owner_check_failed` one.
 
 ## 3. The consolidation worker
 
@@ -1777,7 +1780,8 @@ things a change must not undo by accident.
   the delivery id when one could be built. A request without a known bearer
   is a 401 on the access log only; a delivery the database refused logs
   `webhook_persist_failed` instead, a failed source check
-  `webhook_source_check_failed`, each with the 500, so the sender keeps
+  `webhook_source_check_failed`, a failed owner read
+  `webhook_owner_check_failed`, each with the 500, so the sender keeps
   the note pending. Count the lines together for a per-request total.
 - **With the sources on, the source is the starting point.** A note whose
   `(project_key, repo_slug)` is no source repository is answered 202

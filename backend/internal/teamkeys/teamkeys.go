@@ -82,9 +82,7 @@ func (k *Keys) Teams() []string {
 func (k *Keys) Lookup(token string) (team string, reloadErr error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if st, err := os.Stat(k.path); err == nil && !st.ModTime().Equal(k.mod) {
-		reloadErr = k.reload()
-	}
+	reloadErr = k.refresh()
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return "", reloadErr
@@ -105,9 +103,7 @@ func (k *Keys) Lookup(token string) (team string, reloadErr error) {
 func (k *Keys) Allowed(team, project string) (allowed bool, reloadErr error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if st, err := os.Stat(k.path); err == nil && !st.ModTime().Equal(k.mod) {
-		reloadErr = k.reload()
-	}
+	reloadErr = k.refresh()
 	want := strings.ToLower(strings.TrimSpace(project))
 	for _, p := range k.projects[team] {
 		if p == want {
@@ -115,6 +111,15 @@ func (k *Keys) Allowed(team, project string) (allowed bool, reloadErr error) {
 		}
 	}
 	return false, reloadErr
+}
+
+// refresh re-reads the file when its mtime moved; the caller holds the
+// lock. A failed reload keeps the last good table and is returned.
+func (k *Keys) refresh() error {
+	if st, err := os.Stat(k.path); err == nil && !st.ModTime().Equal(k.mod) {
+		return k.reload()
+	}
+	return nil
 }
 
 // reload reads the file into the table; the caller holds the lock. A
