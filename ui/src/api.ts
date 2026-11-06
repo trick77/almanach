@@ -239,6 +239,38 @@ export interface SharedRepo {
   used_by: RepoRef[];
 }
 
+/** GET /api/search?q=: the pages whose text holds the phrase, grouped by
+ *  page in the store's order. Mirrors api/search.go. */
+export interface SearchResult {
+  query: string;
+  pages: SearchPage[];
+  /** Pages that matched beyond the fifty answered. */
+  more: number;
+}
+
+export interface SearchPage {
+  scope: "repository" | "project";
+  project_key: string;
+  repo_slug?: string;
+  /** The project is one of one: the page is at the project's path. */
+  single: boolean;
+  /** The summary's snippet around its first hit; absent for no hit. */
+  summary?: string;
+  statements: SearchHit[];
+}
+
+export interface SearchHit {
+  id: string;
+  kind: Kind;
+  name: string;
+  area: string;
+  /** The text around the first hit; "" when only name, area or a file
+   *  matched. */
+  snippet: string;
+  /** The first file that matched, given when the text did not. */
+  file?: string;
+}
+
 /** What a use is for: main at runtime, managed a version pin (a BOM, a
  *  platform, a parent POM), dev a build or check tool, test tests only,
  *  indirect a go.mod's dependency of a dependency. */

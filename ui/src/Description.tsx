@@ -13,6 +13,7 @@ import {
   Marked,
   Summary,
   eyebrow,
+  kindLabelStyle,
   matchesQuery,
   mono,
   useCopied,
@@ -39,6 +40,10 @@ export const summaryId = "summary";
 /** areaId is an area's chapter, by the area's place among the page's
  *  areas (areaNames), so a search leaves it where it was. */
 export const areaId = (i: number) => `area-${i}`;
+/** statementId is a statement's block, its deep link's target and a search
+ *  hit's: the bare id (`s12`), which no section id ("summary", "area-N")
+ *  meets. */
+export const statementId = (id: string) => id;
 
 const areaOf = (s: Statement) => s.area ?? "";
 
@@ -369,7 +374,7 @@ export function StatementBlock({
           onPick={() => onAnchor?.(s.id)}
         />
       )}
-      <div className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
+      <div className={kindLabelStyle}>
         {kindLabel(s.kind, pageRepo === undefined)}
       </div>
       <h4 className="font-semibold text-ink">

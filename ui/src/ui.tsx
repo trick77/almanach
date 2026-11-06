@@ -42,6 +42,9 @@ export const lede = "mt-1 mb-6 text-[14.5px] text-muted " + measure;
 export const eyebrow =
   "mt-7 mb-2.5 text-[11px] font-medium tracking-[.12em] text-faint uppercase";
 export const mono = "font-mono text-[12.5px]";
+/** kindLabelStyle is a statement's kind over or beside its name. */
+export const kindLabelStyle =
+  "text-[11px] font-medium tracking-[.1em] text-faint uppercase";
 
 /** Sep is the dot between the clauses of a meta line. An element with
  *  margins, not a string with spaces: a Unicode space is a fraction of the

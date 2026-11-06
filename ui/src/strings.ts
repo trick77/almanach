@@ -40,6 +40,23 @@ export const S = {
       n === 1 ? "1 Aufruf ohne Preis" : `${n} Aufrufe ohne Preis`,
     calls: (n: number) => (n === 1 ? "1 Aufruf" : `${n} Aufrufe`),
   },
+  search: {
+    title: "Suche",
+    box: "Wiki durchsuchen",
+    placeholder: "Suchen",
+    failed: "Die Suche konnte nicht ausgeführt werden.",
+    tooShort: "Mindestens zwei Zeichen.",
+    tooLong: (n: number) => `Höchstens ${n} Zeichen, die Suche kürzer fassen.`,
+    quoted: (q: string) => `«${q}»`,
+    none: (q: string) => `Keine Treffer für «${q}».`,
+    hits: (n: number, pages: number) =>
+      `${n === 1 ? "1 Treffer" : `${n} Treffer`} auf ${pages === 1 ? "einer Seite" : `${pages} Seiten`}`,
+    more: (n: number) =>
+      n === 1
+        ? "Und 1 weitere Seite, die Suche enger fassen."
+        : `Und ${n} weitere Seiten, die Suche enger fassen.`,
+    project: (key: string) => `Projekt ${key}`,
+  },
   deps: {
     title: "Abhängigkeiten",
     failed: "Die Abhängigkeiten konnten nicht geladen werden.",

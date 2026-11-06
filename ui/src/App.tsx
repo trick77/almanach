@@ -7,13 +7,16 @@ import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { QueuePage } from "./QueuePage";
 import { RepoPage } from "./RepoPage";
+import { SearchPage } from "./SearchPage";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import {
   costsPath,
   depsPath,
+  navigateTo,
   queuePath,
   routeFromPath,
+  searchFor,
   sourcesPath,
   type Route,
 } from "./routing";
@@ -61,13 +64,13 @@ export default function App() {
  *  on the right is the reader's name and the sign-out, in oidc mode only:
  *  in none there is nobody to name. */
 function Shell({ me }: { me: Me }) {
-  const [route, setRoute] = useState<Route>(() =>
-    routeFromPath(window.location.pathname),
-  );
+  const here = () =>
+    routeFromPath(window.location.pathname, window.location.search);
+  const [route, setRoute] = useState<Route>(here);
   const [signOutFailed, setSignOutFailed] = useState(false);
 
   useEffect(() => {
-    const onPop = () => setRoute(routeFromPath(window.location.pathname));
+    const onPop = () => setRoute(here());
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -127,6 +130,7 @@ function Shell({ me }: { me: Me }) {
             route.page !== "queue" &&
               route.page !== "deps" &&
               route.page !== "costs" &&
+              route.page !== "search" &&
               !inSources,
           )}
           {sourcesOn && nav(S.nav.deps, depsPath, route.page === "deps")}
@@ -134,6 +138,7 @@ function Shell({ me }: { me: Me }) {
           {nav(S.nav.queue, queuePath, route.page === "queue", queued)}
           {nav(S.nav.costs, costsPath, route.page === "costs")}
         </nav>
+        <SearchBox key={route.page === "search" ? route.q : ""} route={route} />
         <span
           className="flex items-center gap-3 text-[13px] text-muted"
           data-slot="reader"
@@ -166,6 +171,7 @@ function Shell({ me }: { me: Me }) {
         {route.page === "queue" && <QueuePage />}
         {route.page === "deps" && <DepsPage />}
         {route.page === "costs" && <CostsPage />}
+        {route.page === "search" && <SearchPage q={route.q} />}
         {route.page === "source" && (
           <SourcePage key={route.key} projectKey={route.key} />
         )}
@@ -189,5 +195,33 @@ function Shell({ me }: { me: Me }) {
         )}
       </main>
     </div>
+  );
+}
+
+/** SearchBox is the header's search over the whole wiki: a phrase
+ *  submitted goes to the search page, which holds it in its address. On
+ *  that page the box shows the phrase searched (the key above remounts
+ *  it per phrase, so back and forward refill it). The rail's "/" is the
+ *  page's own search and stays the rail's. */
+function SearchBox({ route }: { route: Route }) {
+  const [q, setQ] = useState(route.page === "search" ? route.q : "");
+  return (
+    <form
+      role="search"
+      className="min-w-0 shrink"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (q.trim() !== "") navigateTo(searchFor(q.trim()));
+      }}
+    >
+      <input
+        type="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={S.search.placeholder}
+        aria-label={S.search.box}
+        className="h-[32px] w-full max-w-[110px] rounded-ui-sm border border-border bg-bg px-2.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-elevated-border focus:bg-active sm:max-w-[180px] lg:max-w-[240px]"
+      />
+    </form>
   );
 }

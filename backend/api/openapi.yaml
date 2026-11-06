@@ -459,6 +459,41 @@ paths:
         "401":
           $ref: "#/components/responses/SignInRequired"
 
+  /api/search:
+    get:
+      tags: [wiki]
+      summary: The pages whose text holds a phrase
+      description: >-
+        One phrase, case folded the Unicode way, over every served page's
+        summary and statements (name, text, area, files), matched in the
+        server, nothing indexed. A page is answered with the statements
+        that matched in its order and a snippet of the text around the
+        first hit (the summary's as `summary`, a statement's as
+        `snippet`; empty when only its name, area or a file matched). The
+        pages come in the store's order, a project's page before its
+        repositories'; a project of one has no project page here and its
+        repository's page says `single`. The phrase's spaces are
+        collapsed, as the texts' are; one under two characters or past
+        two hundred answers no pages. Past fifty pages the rest are counted in
+        `more`. Link a hit as
+        `/projects/{project_key}[/repos/{repo_slug}]#description/{id}`.
+      operationId: search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The hits, grouped by page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+
   /api/sources:
     get:
       tags: [sources]
@@ -2596,6 +2631,64 @@ components:
           type: string
         slug:
           type: string
+
+    SearchResult:
+      type: object
+      required: [query, pages, more]
+      properties:
+        query:
+          type: string
+          description: The phrase as searched, trimmed.
+        pages:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchPage"
+        more:
+          type: integer
+          description: Pages that matched beyond the fifty answered.
+
+    SearchPage:
+      type: object
+      required: [scope, project_key, single, statements]
+      properties:
+        scope:
+          type: string
+          enum: [repository, project]
+        project_key:
+          type: string
+        repo_slug:
+          type: string
+          description: Absent on a project page.
+        single:
+          type: boolean
+          description: The project is one of one; the page is at `/projects/{project_key}`.
+        summary:
+          type: string
+          description: The summary's snippet around its first hit; absent when the summary did not match.
+        statements:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+
+    SearchHit:
+      type: object
+      required: [id, kind, name, area, snippet]
+      properties:
+        id:
+          type: string
+          description: The statement's id on its page, the `#description/{id}` anchor.
+        kind:
+          type: string
+        name:
+          type: string
+        area:
+          type: string
+        snippet:
+          type: string
+          description: The text around the first hit; empty when only the name, area or a file matched.
+        file:
+          type: string
+          description: The first file that matched, given when the text did not.
 
     Dependencies:
       type: object

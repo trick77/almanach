@@ -6,6 +6,7 @@ import {
   replaceTo,
   repoPath,
   routeFromPath,
+  searchFor,
   sourcePath,
 } from "./routing";
 
@@ -34,6 +35,15 @@ describe("routeFromPath", () => {
     expect(routeFromPath("/dependencies/x")).toEqual({ page: "projects" });
     expect(routeFromPath("/costs")).toEqual({ page: "costs" });
     expect(routeFromPath("/costs/x")).toEqual({ page: "projects" });
+    // The search page carries its phrase in the query string, decoded;
+    // none is an empty phrase.
+    expect(routeFromPath("/search", "?q=Geb%C3%BChren%20limit")).toEqual({
+      page: "search",
+      q: "Gebühren limit",
+    });
+    expect(routeFromPath("/search")).toEqual({ page: "search", q: "" });
+    expect(routeFromPath("/search/x")).toEqual({ page: "projects" });
+    expect(searchFor("Gebühren limit")).toBe("/search?q=Geb%C3%BChren%20limit");
     expect(routeFromPath("/sources/~jan")).toEqual({
       page: "source",
       key: "~jan",
