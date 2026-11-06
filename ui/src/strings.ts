@@ -87,6 +87,15 @@ export const S = {
     never: "nie",
     sep: "·",
   },
+  // The ways out of a page: its Markdown export for an agent, a
+  // statement's own address for a colleague.
+  copy: {
+    openMarkdown: "Als Markdown öffnen",
+    url: "URL kopieren",
+    done: "Kopiert",
+    statementLink: "Link zur Aussage",
+    statementLinkHint: "Adresse dieser Aussage kopieren",
+  },
   projects: {
     title: "Projekte",
     lede: "Was Almanach über jedes Projekt weiss: pro Repository und pro Projekt eine Beschreibung, aus dem Code gelesen und mit den Notizen gemergter Pull Requests fortgeschrieben, nie von Hand.",
@@ -313,6 +322,12 @@ export const S = {
     summary: "Zusammenfassung",
     noSummary:
       "Die Notiz hat keine Zusammenfassung: der PR hat nichts über das System gelehrt.",
+    taught: "Eingearbeitet in",
+    taughtHint: "die aktuellen Aussagen, die diesen Pull Request nennen",
+    taughtPending: "Die Notiz ist noch nicht eingearbeitet.",
+    taughtNone:
+      "Keine aktuelle Aussage nennt diesen Pull Request: die Notiz hat nichts gelehrt, oder was sie lehrte, wurde seither ersetzt.",
+    taughtProject: (key: string) => `Projekt ${key}`,
     bugfix: "Bugfix",
     symptom: "Symptom",
     cause: "Ursache",

@@ -2659,6 +2659,27 @@ components:
                 items:
                   $ref: "#/components/schemas/RepoRef"
 
+    Taught:
+      type: object
+      required: [scope, project_key, id, kind, name]
+      properties:
+        scope:
+          type: string
+          enum: [repository, project]
+        project_key:
+          type: string
+          description: The page's current project key.
+        repo_slug:
+          type: string
+          description: The page's current repository slug; absent on a project page.
+        id:
+          type: string
+          description: The statement's id on its page, the `#description/{id}` anchor.
+        kind:
+          type: string
+        name:
+          type: string
+
     NoteCallSummary:
       type: object
       required: [outcome, note_status, input_tokens, cache_read_tokens, output_tokens, rounds, rounds_input_tokens, rounds_output_tokens]
@@ -2724,3 +2745,15 @@ components:
               oneOf:
                 - $ref: "#/components/schemas/NoteCallSummary"
                 - type: "null"
+            taught:
+              type: array
+              description: |
+                The current statements the note is a source of, the
+                repository page's then the project's, each in its page's
+                order: where the pull request's knowledge stands today. A
+                statement dropped since is not listed; a project of one has
+                no project page here either. Empty when the note is not
+                folded yet or taught nothing. Links as
+                `/projects/{project_key}[/repos/{repo_slug}]#description/{id}`.
+              items:
+                $ref: "#/components/schemas/Taught"

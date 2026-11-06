@@ -3,6 +3,9 @@
 // where there is behaviour or a shape worth a name.
 import {
   Fragment,
+  useCallback,
+  useEffect,
+  useState,
   type ComponentPropsWithoutRef,
   type CSSProperties,
   type MouseEvent,
@@ -524,6 +527,64 @@ export function Panel({
     >
       {children}
     </div>
+  );
+}
+
+/** useCopied is a copy control's feedback: copied() puts text on the
+ *  clipboard and says so for a moment. A browser without the clipboard
+ *  (no secure context) copies nothing and says nothing. */
+export function useCopied(): [boolean, (text: string) => void] {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!done) return;
+    const id = window.setTimeout(() => setDone(false), 1500);
+    return () => window.clearTimeout(id);
+  }, [done]);
+  const copy = useCallback((text: string) => {
+    const clip = navigator.clipboard;
+    if (!clip) return;
+    clip.writeText(text).then(
+      () => setDone(true),
+      () => {},
+    );
+  }, []);
+  return [done, copy];
+}
+
+/** CopyButton puts text on the clipboard and says "Kopiert" for a
+ *  moment: a plain text control, the page's tone. */
+export function CopyButton({
+  text,
+  label,
+  className = "",
+}: {
+  text: string;
+  label: string;
+  className?: string;
+}) {
+  const [done, copy] = useCopied();
+  return (
+    <button
+      type="button"
+      onClick={() => copy(text)}
+      className={"hover:text-ink " + className}
+    >
+      {done ? S.copy.done : label}
+    </button>
+  );
+}
+
+/** ExportLine is a page's way out to its Markdown export, the agent's
+ *  interface: open it, or copy its address for one. */
+export function ExportLine({ href }: { href: string }) {
+  const url = window.location.origin + href;
+  return (
+    <p className="mt-1 flex flex-wrap gap-x-3 text-[12.5px] text-muted">
+      <a href={href} target="_blank" rel="noopener" className="hover:text-ink">
+        {S.copy.openMarkdown}
+      </a>
+      <CopyButton text={url} label={S.copy.url} />
+    </p>
   );
 }
 

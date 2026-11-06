@@ -424,6 +424,46 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	return d, true, nil
 }
 
+// TaughtRow is one current statement a pull request's note is a source
+// of: where it stands, and enough to name and link it.
+type TaughtRow struct {
+	Scope      string
+	ProjectKey string
+	RepoSlug   string
+	ID         string
+	Kind       string
+	Name       string
+}
+
+// Taught lists the statements on current pages that carry the PR key
+// among their sources, the repository page's before the project's, each
+// page in its stored order: the note page's reverse provenance. Current
+// pages only; a statement dropped since is not taught any more. The key
+// is matched in any case, as a name is.
+func (s *Store) Taught(ctx context.Context, prKey string) ([]TaughtRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.scope, pj.key, COALESCE(rp.slug, ''), st.value ->> '$.id', st.value ->> '$.kind', st.value ->> '$.name'
+		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
+		  JOIN projects pj ON pj.id = p.project_id LEFT JOIN repos rp ON rp.id = p.repo_id,
+		  json_each(r.statements) st
+		 WHERE EXISTS (SELECT 1 FROM json_each(st.value, '$.sources') src WHERE src.value ->> '$.pr_key' = ? COLLATE NOCASE)
+		 ORDER BY p.scope DESC, pj.key, rp.slug, st.key`, prKey)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []TaughtRow{}
+	for rows.Next() {
+		var t TaughtRow
+		if err := rows.Scan(&t.Scope, &t.ProjectKey, &t.RepoSlug, &t.ID, &t.Kind, &t.Name); err != nil {
+			return nil, err
+		}
+		t.Name = redact.Text(t.Name)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ProblemArea is one cluster of bugfixes: a repo and the directory the
 // fixes' components share, with the cause class seen most and the posted
 // findings on those PRs.

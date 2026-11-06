@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { Description, Kind, Source, Statement } from "./api";
 import { Diagram } from "./Diagram";
 import { day, plain, shortSHA } from "./format";
-import type { RailItem } from "./Rail";
+import { anchorHash, type RailItem } from "./Rail";
 import { notePathFor } from "./routing";
 import { S } from "./strings";
 import {
@@ -15,6 +15,7 @@ import {
   eyebrow,
   matchesQuery,
   mono,
+  useCopied,
 } from "./ui";
 
 /** kindLabel names one statement's kind, as a label over its name: the
@@ -128,7 +129,9 @@ export function descriptionRail(
  *  whose slug its chips leave out; without it the page is a project's.
  *  query keeps the statements it matches and sets the matches off; the
  *  summary stays, marked. lead comes first (a map), afterSummary under
- *  the summary (a repository's problem areas). */
+ *  the summary (a repository's problem areas). tab is the tab the view
+ *  stands on, for each statement's own address (anchorHash); target the
+ *  statement the address names, set off. */
 export function DescriptionView({
   description,
   emptyHint,
@@ -136,6 +139,8 @@ export function DescriptionView({
   query = "",
   lead,
   afterSummary,
+  tab,
+  target = "",
 }: {
   description: Description | null;
   emptyHint: string;
@@ -143,6 +148,8 @@ export function DescriptionView({
   query?: string;
   lead?: ReactNode;
   afterSummary?: ReactNode;
+  tab?: string;
+  target?: string;
 }) {
   if (description === null) {
     return (
@@ -191,11 +198,45 @@ export function DescriptionView({
               statement={s}
               pageRepo={pageRepo}
               query={query}
+              anchor={tab === undefined ? undefined : anchorHash(tab, s.id)}
+              targeted={s.id === target}
             />
           ))}
         </section>
       ))}
     </>
+  );
+}
+
+/** AnchorLink is a statement's own address: a link a reader can copy or
+ *  open in a new tab as any, and a click on it writes the address in
+ *  place (replaced, as a tab switch is: back leaves the page) and copies
+ *  it, saying so for a moment. Shown on hover and focus, the kind's
+ *  line stays quiet otherwise. */
+function AnchorLink({ hash }: { hash: string }) {
+  const [done, copy] = useCopied();
+  return (
+    <a
+      href={hash}
+      aria-label={S.copy.statementLink}
+      title={S.copy.statementLinkHint}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        const { pathname, search } = window.location;
+        window.history.replaceState(
+          window.history.state,
+          "",
+          pathname + search + hash,
+        );
+        // replaceState tells nobody: the page reads the hash on this.
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+        copy(window.location.href);
+      }}
+      className="float-right font-mono text-[11px] text-faint opacity-0 hover:text-ink focus:opacity-100 group-hover:opacity-100"
+    >
+      {done ? S.copy.done : "#"}
+    </a>
   );
 }
 
@@ -279,18 +320,33 @@ function checkedNews(s: Statement): boolean {
   );
 }
 
-/** StatementBlock is one statement: documentation, not a line. */
+/** StatementBlock is one statement: documentation, not a line. Its id is
+ *  the statement's, the deep link's anchor; anchor is that link, shown as
+ *  a control beside the kind that writes the address and copies it;
+ *  targeted sets the block off as the one the address names. */
 export function StatementBlock({
   statement: s,
   pageRepo,
   query = "",
+  anchor,
+  targeted = false,
 }: {
   statement: Statement;
   pageRepo?: string;
   query?: string;
+  anchor?: string;
+  targeted?: boolean;
 }) {
   return (
-    <article className="border-t border-border-soft py-3 first-of-type:border-t-0">
+    <article
+      id={s.id}
+      data-targeted={targeted || undefined}
+      className={
+        "group scroll-mt-16 border-t border-border-soft py-3 first-of-type:border-t-0 " +
+        (targeted ? "-mx-3 rounded-ui bg-active px-3" : "")
+      }
+    >
+      {anchor !== undefined && <AnchorLink hash={anchor} />}
       <div className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
         {kindLabel(s.kind, pageRepo === undefined)}
       </div>

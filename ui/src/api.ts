@@ -320,6 +320,19 @@ export interface NoteDetail extends NoteSummary {
   received_at: string;
   consolidated_at: string | null;
   note_call: NoteCall | null;
+  /** The current statements the note is a source of, the repository
+   *  page's then the project's: where the PR's knowledge stands today. */
+  taught: Taught[];
+}
+
+export interface Taught {
+  scope: "repository" | "project";
+  /** The page's current names; repo_slug absent on a project page. */
+  project_key: string;
+  repo_slug?: string;
+  id: string;
+  kind: Kind;
+  name: string;
 }
 
 // The sources: what Almanach clones itself. Mirrors api/sources.go.

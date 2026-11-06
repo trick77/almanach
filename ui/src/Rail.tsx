@@ -327,21 +327,27 @@ export function Tabs({
  *  else: a shared link or a reload opens it. The start tab has no hash. A
  *  switch replaces the address, so back and forward leave the page rather
  *  than step through its tabs, and return to it on the tab it was left
- *  on. */
+ *  on. The hash may name a target after the tab (`#description/s12`, a
+ *  statement's deep link): the third value, "" for none, which a switch
+ *  clears. */
 export function useHashTab(
   tabs: readonly string[],
   start: string,
-): [string, (tab: string) => void] {
+): [string, (tab: string) => void, string] {
   const names = tabs.join(" ");
   const read = useCallback(() => {
     // The tab names are plain words: a hash that is not one of them, a
-    // malformed escape included, is the start tab, never a crash.
+    // malformed escape included, is the start tab, never a crash. What
+    // follows the first slash is the target, kept only with a known tab.
     const h = window.location.hash.slice(1);
-    return names.split(" ").includes(h) ? h : start;
+    const cut = h.indexOf("/");
+    const tab = cut === -1 ? h : h.slice(0, cut);
+    if (!names.split(" ").includes(tab)) return { tab: start, target: "" };
+    return { tab, target: cut === -1 ? "" : h.slice(cut + 1) };
   }, [names, start]);
-  const [tab, setTab] = useState(read);
+  const [at, setAt] = useState(read);
   useEffect(() => {
-    const sync = () => setTab(read());
+    const sync = () => setAt(read());
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
     return () => {
@@ -357,11 +363,28 @@ export function useHashTab(
         "",
         pathname + search + (t === start ? "" : "#" + t),
       );
-      setTab(t);
+      setAt({ tab: t, target: "" });
     },
     [start],
   );
-  return [tab, set];
+  return [at.tab, set, at.target];
+}
+
+/** useJumpTo scrolls the element a deep link names into view once it is
+ *  on the page: the statements render after the fetch, so the effect runs
+ *  on ready, not on mount. Once per target: a reload on the link lands
+ *  on it again. */
+export function useJumpTo(target: string, ready: boolean) {
+  useEffect(() => {
+    if (target === "" || !ready) return;
+    document.getElementById(target)?.scrollIntoView();
+  }, [target, ready]);
+}
+
+/** anchorHash is a statement's deep link on its page: the tab, then its
+ *  id (useHashTab). */
+export function anchorHash(tab: string, id: string): string {
+  return `#${tab}/${id}`;
 }
 
 function SearchIcon() {

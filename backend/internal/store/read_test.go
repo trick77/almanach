@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -224,6 +225,54 @@ func TestNotes_ByProjectAndRepo(t *testing.T) {
 	ns, err = s.Notes(ctx, "PRJ", "", 1)
 	if err != nil || len(ns) != 1 || ns[0].PRID != 3 {
 		t.Errorf("Notes(PRJ, limit 1) = %+v, %v; want PR 3", ns, err)
+	}
+}
+
+// Taught finds a PR's statements on the current pages only, the
+// repository's before the project's, the key in any case; a statement a
+// later revision dropped, or a page another PR wrote whole, teaches
+// nothing of it.
+func TestTaught(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("PRJ", "svc", 9))
+	src := func(pr string) []Source { return []Source{{PRKey: pr, TicketKey: "ABC-1", MergedAt: mergedBase}} }
+	repoRev := NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "r", SourcePR: "PRJ/svc#1",
+		Statements: []Statement{
+			{ID: "s1", Kind: "component", Name: "Files", Text: "t", Sources: src("PRJ/svc#1")},
+			{ID: "s2", Kind: "rule", Name: "Limit", Text: "t", Sources: src("PRJ/svc#9")},
+			{ID: "s3", Kind: "pitfall", Name: "Retry", Text: "t", Sources: append(src("PRJ/svc#9"), src("prj/SVC#1")...)},
+		}}
+	if _, err := s.InsertRevision(ctx, repoRev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeProject, ProjectKey: "PRJ", Summary: "p", SourcePR: "PRJ/svc#1",
+		Statements: []Statement{{ID: "s1", Kind: "flow", Name: "Upload", Text: "t", Sources: src("PRJ/svc#1")}}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Taught(ctx, "PRJ/svc#1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TaughtRow{
+		{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", ID: "s1", Kind: "component", Name: "Files"},
+		{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", ID: "s3", Kind: "pitfall", Name: "Retry"},
+		{Scope: ScopeProject, ProjectKey: "PRJ", ID: "s1", Kind: "flow", Name: "Upload"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("Taught = %+v\nwant %+v", got, want)
+	}
+	// Revision 2 drops s1: only the current page counts.
+	repoRev.Statements = repoRev.Statements[1:]
+	if _, err := s.InsertRevision(ctx, repoRev); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Taught(ctx, "PRJ/svc#1"); err != nil || len(got) != 2 || got[0].ID != "s3" || got[1].Scope != ScopeProject {
+		t.Errorf("Taught after the drop = %+v, %v", got, err)
+	}
+	if got, err := s.Taught(ctx, "PRJ/svc#7"); err != nil || len(got) != 0 {
+		t.Errorf("Taught of a PR no statement names = %+v, %v; want none, not nil", got, err)
 	}
 }
 

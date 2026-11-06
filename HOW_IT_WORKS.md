@@ -299,8 +299,12 @@ themselves go oldest first, one to its end before the next begins.
   notes.
 - `/api/projects/{key}/repos/{slug}`: the repository description, its
   revisions, its notes.
-- `/api/projects/{key}/repos/{slug}/notes/{pr}`: one note with its facts
-  and the recorded note call (tokens, cache hits, cost, rounds).
+- `/api/projects/{key}/repos/{slug}/notes/{pr}`: one note with its facts,
+  the recorded note call (tokens, cache hits, cost, rounds) and `taught`,
+  the current statements that carry its PR key among their sources (the
+  repository page's, then the project's): where the pull request's
+  knowledge stands today, one query over the current revisions'
+  statements with `json_each`. A statement dropped since is not listed.
 - `/api/projects/{key}/problems?days=90`: the problem areas of the window.
 - `/api/projects/{key}.md` and `/api/projects/{key}/repos/{slug}.md`: a
   page as Markdown, for a coding agent (below).
@@ -1839,7 +1843,13 @@ baseline step's patch never is: its bad items are left out one by one (see
   Beschreibung (its map, the summary, its own problem areas, the
   statements), its content, then Verlauf (notes, revisions). The hash
   holds the tab (`#description`, `#history`, none for the start tab),
-  replaced on a switch, never pushed. The rail lists both tabs'
+  replaced on a switch, never pushed, and after a slash a statement's id
+  (`#description/s12`, the statement's deep link): the page opens on that
+  tab, scrolls to the statement once it is rendered and sets it off. Each
+  statement carries its own address as a control beside its kind, shown
+  on hover; a click writes it in place and copies it. A note page links
+  the statements it taught by these addresses; both page heads link the
+  page's Markdown export and copy its address. The rail lists both tabs'
   sections, the kind being read with its areas; its search filters this
   page's description (names, texts, files) in the browser. It never
   lists the project's repositories or a repository's dependencies: with

@@ -13,16 +13,18 @@ import {
   Tabs,
   stickyCrumbs,
   useHashTab,
+  useJumpTo,
   type RailGroup,
 } from "./Rail";
 import { day, refName } from "./format";
-import { projectPath, repoPath } from "./routing";
+import { projectExportHref, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Crumbs,
   Empty,
+  ExportLine,
   Failed,
   Link,
   Sep,
@@ -98,7 +100,8 @@ function ProjectCrumbs({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useHashTab(TABS, OVERVIEW);
+  const [tab, setTab, target] = useHashTab(TABS, OVERVIEW);
+  useJumpTo(target, tab === DESCRIPTION && data.description !== null);
   const [query, setQuery] = useState("");
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
@@ -206,6 +209,7 @@ function Body({ data }: { data: ProjectDetail }) {
         {S.projects.lastMerge}{" "}
         {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
+      <ExportLine href={projectExportHref(data.key)} />
 
       <Tabs
         tabs={[
@@ -228,6 +232,8 @@ function Body({ data }: { data: ProjectDetail }) {
             description={data.description}
             emptyHint={S.project.noDescriptionHint}
             query={query}
+            tab={DESCRIPTION}
+            target={target}
           />
         )}
       </div>

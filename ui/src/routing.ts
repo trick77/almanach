@@ -70,6 +70,16 @@ export function repoPath(key: string, slug: string): string {
   return `${projectPath(key)}/repos/${encodeURIComponent(slug)}`;
 }
 
+/** The Markdown exports, the agent's interface: the API's own paths,
+ *  which a session opens as a browser tab does. */
+export function projectExportHref(key: string): string {
+  return `/api${projectPath(key)}.md`;
+}
+
+export function repoExportHref(key: string, slug: string): string {
+  return `/api${repoPath(key, slug)}.md`;
+}
+
 export function notePath(key: string, slug: string, pr: number): string {
   return `${repoPath(key, slug)}/notes/${pr}`;
 }

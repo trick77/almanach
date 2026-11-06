@@ -12,18 +12,25 @@ import {
   Tabs,
   stickyCrumbs,
   useHashTab,
+  useJumpTo,
   type RailGroup,
   type RailItem,
 } from "./Rail";
 import { RepoSwitcher } from "./RepoSwitcher";
 import { day, refName } from "./format";
-import { projectPath, repoPath } from "./routing";
+import {
+  projectExportHref,
+  projectPath,
+  repoExportHref,
+  repoPath,
+} from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
 import { useFetch } from "./useFetch";
 import {
   Crumbs,
   Empty,
+  ExportLine,
   Failed,
   Link,
   Sep,
@@ -120,7 +127,8 @@ function RepoCrumbs({
 
 function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useHashTab(TABS, DESCRIPTION);
+  const [tab, setTab, target] = useHashTab(TABS, DESCRIPTION);
+  useJumpTo(target, tab === DESCRIPTION && data.description !== null);
   const [query, setQuery] = useState("");
   // The project, for its other repositories and this one's problem areas:
   // the project endpoint has both. Failing, the page goes without them.
@@ -266,6 +274,13 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
         {S.projects.lastMerge}{" "}
         {lastMerge === null ? S.common.never : day(lastMerge)}
       </p>
+      <ExportLine
+        href={
+          single
+            ? projectExportHref(data.project_key)
+            : repoExportHref(data.project_key, data.slug)
+        }
+      />
 
       <Tabs
         tabs={[
@@ -290,6 +305,8 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             emptyHint={S.projects.firstDescription}
             pageRepo={data.slug}
             query={query}
+            tab={DESCRIPTION}
+            target={target}
             lead={
               showMap && (
                 <section id={ids.map} className="scroll-mt-16">
