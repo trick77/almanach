@@ -100,8 +100,11 @@ function ProjectCrumbs({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [tab, setTab, target] = useHashTab(TABS, OVERVIEW);
-  useJumpTo(target, tab === DESCRIPTION && data.description !== null);
+  const { tab, setTab, target, setTarget, landing } = useHashTab(
+    TABS,
+    OVERVIEW,
+  );
+  useJumpTo(landing, tab === DESCRIPTION && data.description !== null);
   const [query, setQuery] = useState("");
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
@@ -234,6 +237,7 @@ function Body({ data }: { data: ProjectDetail }) {
             query={query}
             tab={DESCRIPTION}
             target={target}
+            onTarget={setTarget}
           />
         )}
       </div>

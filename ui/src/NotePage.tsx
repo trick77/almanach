@@ -140,7 +140,7 @@ function Body({ n }: { n: NoteDetail }) {
         <ul className="m-0 list-none p-0">
           {n.taught.map((t) => (
             <li
-              key={t.scope + "/" + t.id}
+              key={t.scope + "/" + (t.repo_slug ?? "") + "/" + t.id}
               className="flex flex-wrap items-baseline gap-x-2 border-b border-border-soft py-1.5 text-[13.5px]"
             >
               <span className="w-[112px] text-[11px] font-medium tracking-[.1em] text-faint uppercase">

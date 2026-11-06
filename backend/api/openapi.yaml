@@ -2713,7 +2713,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/NoteSummary"
         - type: object
-          required: [project_key, source_commit, bugfix, note, received_at, consolidated_at, note_call]
+          required: [project_key, source_commit, bugfix, note, received_at, consolidated_at, note_call, taught]
           properties:
             project_key:
               type: string
@@ -2752,8 +2752,10 @@ components:
                 repository page's then the project's, each in its page's
                 order: where the pull request's knowledge stands today. A
                 statement dropped since is not listed; a project of one has
-                no project page here either. Empty when the note is not
-                folded yet or taught nothing. Links as
+                no project page here either, and with the sources on only
+                source repositories' pages count, as on the repository
+                route. Empty when the note is not folded yet (the pages are
+                not read then) or taught nothing. Links as
                 `/projects/{project_key}[/repos/{repo_slug}]#description/{id}`.
               items:
                 $ref: "#/components/schemas/Taught"

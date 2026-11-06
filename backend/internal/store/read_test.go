@@ -251,7 +251,7 @@ func TestTaught(t *testing.T) {
 		Statements: []Statement{{ID: "s1", Kind: "flow", Name: "Upload", Text: "t", Sources: src("PRJ/svc#1")}}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Taught(ctx, "PRJ/svc#1")
+	got, err := s.Taught(ctx, "PRJ/svc#1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,11 +268,25 @@ func TestTaught(t *testing.T) {
 	if _, err := s.InsertRevision(ctx, repoRev); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Taught(ctx, "PRJ/svc#1"); err != nil || len(got) != 2 || got[0].ID != "s3" || got[1].Scope != ScopeProject {
+	if got, err := s.Taught(ctx, "PRJ/svc#1", false); err != nil || len(got) != 2 || got[0].ID != "s3" || got[1].Scope != ScopeProject {
 		t.Errorf("Taught after the drop = %+v, %v", got, err)
 	}
-	if got, err := s.Taught(ctx, "PRJ/svc#7"); err != nil || len(got) != 0 {
+	if got, err := s.Taught(ctx, "PRJ/svc#7", false); err != nil || len(got) != 0 {
 		t.Errorf("Taught of a PR no statement names = %+v, %v; want none, not nil", got, err)
+	}
+	// With the sources on, a repository that is no source has no page on
+	// the wire: its statements are not taught either; the project's stay.
+	if got, err := s.Taught(ctx, "PRJ/svc#1", true); err != nil || len(got) != 1 || got[0].Scope != ScopeProject {
+		t.Errorf("Taught sourced, svc no source = %+v, %v; want the project's alone", got, err)
+	}
+	if err := s.CreateSource(ctx, staticSource("PRJ")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddSourceRepo(ctx, SourceRepo{ProjectKey: "PRJ", Slug: "svc", CloneURL: "https://example.invalid/svc.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Taught(ctx, "PRJ/svc#1", true); err != nil || len(got) != 2 || got[0].RepoSlug != "svc" {
+		t.Errorf("Taught sourced, svc a source = %+v, %v; want both", got, err)
 	}
 }
 

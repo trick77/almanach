@@ -69,6 +69,8 @@ function serve(table: Record<string, unknown>) {
 afterEach(() => {
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
+  // jsdom has no scrollIntoView; a test that stubs one leaves none.
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
 });
 
 const mergedAt = new Date(2026, 9, 28, 12, 0).toISOString();
@@ -592,11 +594,35 @@ describe("ProjectPage", () => {
       within(desc).getByText("Auftragsannahme").closest("article")?.dataset
         .targeted,
     ).toBe("true");
+    // The page did not move under the click: only the address's own
+    // target is scrolled to.
+    expect(scrolled).toHaveBeenCalledTimes(1);
     // A tab switch drops the target; the start tab has no hash.
     fireEvent.click(screen.getByRole("tab", { name: /Übersicht/ }));
     expect(window.location.hash).toBe("");
-    delete (Element.prototype as Partial<Element>).scrollIntoView;
-    vi.unstubAllGlobals();
+  });
+
+  it("jumps again when the project's parts land above a repository's statements", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.replaceState(
+      {},
+      "",
+      "/projects/PAY/repos/pay-clearing#description/s1",
+    );
+    serve({
+      "projects/PAY/repos/pay-clearing": {
+        ...repo,
+        description: project.description,
+      },
+      "projects/PAY": project,
+    });
+    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    await screen.findByText("Auftragsannahme");
+    // Once on the statements, once more when the project detail (the
+    // problem areas above them) has landed.
+    await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(2));
+    expect(scrolled.mock.contexts[1]).toBe(document.getElementById("s1"));
   });
 
   it("opens the description on a target it does not have, the page whole", async () => {

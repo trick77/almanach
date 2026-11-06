@@ -165,7 +165,8 @@ func (f *fakeStore) NoteByKey(_ context.Context, project, repo string, prID int)
 	return d, ok, nil
 }
 
-func (f *fakeStore) Taught(_ context.Context, prKey string) ([]store.TaughtRow, error) {
+func (f *fakeStore) Taught(_ context.Context, prKey string, sourced bool) ([]store.TaughtRow, error) {
+	f.sourcedAsked = append(f.sourcedAsked, sourced)
 	return f.taught[prKey], nil
 }
 
@@ -684,22 +685,38 @@ func TestNote(t *testing.T) {
 		t.Errorf("taught = %s, want an empty list, never null", body["taught"])
 	}
 
-	// The statements the note taught, by page and id; a project of one's
-	// project page stays off the wire, as on the project route.
+	// The statements the note taught, by page and id, once it is folded
+	// (a queued note asks the store nothing); a project of one's project
+	// page stays off the wire, as on the project route, and with the
+	// sources on the store is asked for source repositories' pages.
 	st.taught["PLAT/files#42"] = []store.TaughtRow{
 		{Scope: store.ScopeRepository, ProjectKey: "PLAT", RepoSlug: "files", ID: "s3", Kind: "rule", Name: "Limit"},
 		{Scope: store.ScopeProject, ProjectKey: "PLAT", ID: "s1", Kind: "flow", Name: "Upload"},
 	}
+	st.sourcedAsked = nil
 	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
+	if string(body["taught"]) != "[]" || len(st.sourcedAsked) != 0 {
+		t.Errorf("taught of a queued note = %s, store asked %v; want none, unasked", body["taught"], st.sourcedAsked)
+	}
+	d.ConsolidatedAt = &received
+	st.details["PLAT|files|42"] = d
+	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
+	if len(st.sourcedAsked) != 1 || st.sourcedAsked[0] {
+		t.Errorf("Taught asked with sourced %v, want once, false without the sources", st.sourcedAsked)
+	}
 	if string(body["taught"]) != `[{"scope":"repository","project_key":"PLAT","repo_slug":"files","id":"s3","kind":"rule","name":"Limit"},`+
 		`{"scope":"project","project_key":"PLAT","id":"s1","kind":"flow","name":"Upload"}]` {
 		t.Errorf("taught = %s", body["taught"])
 	}
 	st.single = map[string]store.RepoRow{"PLAT": {Slug: "files"}}
 	h, _, _ = sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	st.sourcedAsked = nil
 	_, body = do(t, h, "GET", "/api/projects/PLAT/repos/files/notes/42", "", "", nil)
 	if string(body["taught"]) != `[{"scope":"repository","project_key":"PLAT","repo_slug":"files","id":"s3","kind":"rule","name":"Limit"}]` {
 		t.Errorf("taught of a project of one = %s", body["taught"])
+	}
+	if len(st.sourcedAsked) != 1 || !st.sourcedAsked[0] {
+		t.Errorf("Taught asked with sourced %v, want true with the sources on", st.sourcedAsked)
 	}
 }
 

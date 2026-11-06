@@ -127,14 +127,21 @@ function RepoCrumbs({
 
 function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [tab, setTab, target] = useHashTab(TABS, DESCRIPTION);
-  useJumpTo(target, tab === DESCRIPTION && data.description !== null);
+  const { tab, setTab, target, setTarget, landing } = useHashTab(
+    TABS,
+    DESCRIPTION,
+  );
   const [query, setQuery] = useState("");
   // The project, for its other repositories and this one's problem areas:
   // the project endpoint has both. Failing, the page goes without them.
   const { data: project } = useFetch<ProjectDetail>(
     `projects/${encodeURIComponent(data.project_key)}`,
   );
+  // The problem areas land above the statements after the project
+  // fetch: a deep link jumps again once they are there.
+  useJumpTo(landing, tab === DESCRIPTION && data.description !== null, [
+    project !== null,
+  ]);
   const problems = (project?.problems ?? []).filter(
     (p) => p.repo_slug === data.slug,
   );
@@ -307,6 +314,7 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             query={query}
             tab={DESCRIPTION}
             target={target}
+            onTarget={setTarget}
             lead={
               showMap && (
                 <section id={ids.map} className="scroll-mt-16">

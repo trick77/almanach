@@ -3,7 +3,7 @@ import type { Description, Kind, Source, Statement } from "./api";
 import { Diagram } from "./Diagram";
 import { day, plain, shortSHA } from "./format";
 import { anchorHash, type RailItem } from "./Rail";
-import { notePathFor } from "./routing";
+import { notePathFor, plainClick } from "./routing";
 import { S } from "./strings";
 import {
   Chip,
@@ -131,7 +131,8 @@ export function descriptionRail(
  *  summary stays, marked. lead comes first (a map), afterSummary under
  *  the summary (a repository's problem areas). tab is the tab the view
  *  stands on, for each statement's own address (anchorHash); target the
- *  statement the address names, set off. */
+ *  statement the address names, set off; onTarget makes one the target,
+ *  the page writing its address. */
 export function DescriptionView({
   description,
   emptyHint,
@@ -141,6 +142,7 @@ export function DescriptionView({
   afterSummary,
   tab,
   target = "",
+  onTarget,
 }: {
   description: Description | null;
   emptyHint: string;
@@ -150,6 +152,7 @@ export function DescriptionView({
   afterSummary?: ReactNode;
   tab?: string;
   target?: string;
+  onTarget?: (id: string) => void;
 }) {
   if (description === null) {
     return (
@@ -200,6 +203,7 @@ export function DescriptionView({
               query={query}
               anchor={tab === undefined ? undefined : anchorHash(tab, s.id)}
               targeted={s.id === target}
+              onAnchor={onTarget}
             />
           ))}
         </section>
@@ -209,11 +213,12 @@ export function DescriptionView({
 }
 
 /** AnchorLink is a statement's own address: a link a reader can copy or
- *  open in a new tab as any, and a click on it writes the address in
- *  place (replaced, as a tab switch is: back leaves the page) and copies
- *  it, saying so for a moment. Shown on hover and focus, the kind's
- *  line stays quiet otherwise. */
-function AnchorLink({ hash }: { hash: string }) {
+ *  open in a new tab as any, and a plain click on it picks the statement
+ *  (onPick: the page writes the address in place, as a tab switch does,
+ *  so back leaves the page) and copies the address, saying so for a
+ *  moment. Shown on hover and focus, the kind's line stays quiet
+ *  otherwise. */
+function AnchorLink({ hash, onPick }: { hash: string; onPick: () => void }) {
   const [done, copy] = useCopied();
   return (
     <a
@@ -221,17 +226,11 @@ function AnchorLink({ hash }: { hash: string }) {
       aria-label={S.copy.statementLink}
       title={S.copy.statementLinkHint}
       onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        if (!plainClick(e)) return;
         e.preventDefault();
-        const { pathname, search } = window.location;
-        window.history.replaceState(
-          window.history.state,
-          "",
-          pathname + search + hash,
-        );
-        // replaceState tells nobody: the page reads the hash on this.
-        window.dispatchEvent(new HashChangeEvent("hashchange"));
-        copy(window.location.href);
+        onPick();
+        const { origin, pathname, search } = window.location;
+        copy(origin + pathname + search + hash);
       }}
       className="float-right font-mono text-[11px] text-faint opacity-0 hover:text-ink focus:opacity-100 group-hover:opacity-100"
     >
@@ -322,7 +321,8 @@ function checkedNews(s: Statement): boolean {
 
 /** StatementBlock is one statement: documentation, not a line. Its id is
  *  the statement's, the deep link's anchor; anchor is that link, shown as
- *  a control beside the kind that writes the address and copies it;
+ *  a control beside the kind that makes the statement the target
+ *  (onAnchor, the page writing the address) and copies the link;
  *  targeted sets the block off as the one the address names. */
 export function StatementBlock({
   statement: s,
@@ -330,12 +330,14 @@ export function StatementBlock({
   query = "",
   anchor,
   targeted = false,
+  onAnchor,
 }: {
   statement: Statement;
   pageRepo?: string;
   query?: string;
   anchor?: string;
   targeted?: boolean;
+  onAnchor?: (id: string) => void;
 }) {
   return (
     <article
@@ -346,7 +348,9 @@ export function StatementBlock({
         (targeted ? "-mx-3 rounded-ui bg-active px-3" : "")
       }
     >
-      {anchor !== undefined && <AnchorLink hash={anchor} />}
+      {anchor !== undefined && (
+        <AnchorLink hash={anchor} onPick={() => onAnchor?.(s.id)} />
+      )}
       <div className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
         {kindLabel(s.kind, pageRepo === undefined)}
       </div>
