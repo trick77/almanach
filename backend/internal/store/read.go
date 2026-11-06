@@ -482,16 +482,36 @@ func (s *Store) Taught(ctx context.Context, project, repo string, prID int, sour
 	return out, rows.Err()
 }
 
-// CurrentPages is every current page the read routes serve, with its
-// summary and statements, for the search: with sourced, the source
-// projects' and their source repositories' (projectsFrom, reposFrom), as
-// the project and repository routes gate. By project key, a project's
-// page before its repositories', those by slug. No maps: the search reads
-// text.
-func (s *Store) CurrentPages(ctx context.Context, sourced bool) ([]Page, error) {
+// PageText is a current page's words, the search's read: its names and
+// summary, each statement's words alone (no sources, no diagram, which
+// a search neither reads nor shows).
+type PageText struct {
+	Scope      string
+	ProjectKey string
+	RepoSlug   string
+	Summary    string
+	Statements []StatementText
+}
+
+// StatementText is a statement as the search reads it.
+type StatementText struct {
+	ID    string   `json:"id"`
+	Kind  string   `json:"kind"`
+	Name  string   `json:"name"`
+	Text  string   `json:"text"`
+	Area  string   `json:"area"`
+	Files []string `json:"files"`
+}
+
+// CurrentPages is every current page the read routes serve, its words,
+// for the search: with sourced, the source projects' and their source
+// repositories' (projectsFrom, reposFrom), as the project and repository
+// routes gate. By project key, a project's page before its
+// repositories', those by slug.
+func (s *Store) CurrentPages(ctx context.Context, sourced bool) ([]PageText, error) {
 	//nolint:gosec // G202: constant fragments of this file, no value spliced in
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.scope, pj.key, COALESCE(rp.slug, ''), r.id, r.revision, r.summary, r.statements
+		SELECT p.scope, pj.key, COALESCE(rp.slug, ''), r.summary, r.statements
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
 		  JOIN `+projectsFrom(sourced)+` pj ON pj.id = p.project_id
 		  LEFT JOIN `+reposFrom(sourced)+` rp ON rp.id = p.repo_id
@@ -501,18 +521,18 @@ func (s *Store) CurrentPages(ctx context.Context, sourced bool) ([]Page, error) 
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := []Page{}
+	out := []PageText{}
 	for rows.Next() {
-		var p Page
+		var p PageText
 		var statements []byte
-		if err := rows.Scan(&p.Scope, &p.ProjectKey, &p.RepoSlug, &p.RevisionID, &p.Revision, &p.Summary, &statements); err != nil {
+		if err := rows.Scan(&p.Scope, &p.ProjectKey, &p.RepoSlug, &p.Summary, &statements); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(statements, &p.Statements); err != nil {
 			return nil, err
 		}
 		if p.Statements == nil {
-			p.Statements = []Statement{}
+			p.Statements = []StatementText{}
 		}
 		out = append(out, p)
 	}

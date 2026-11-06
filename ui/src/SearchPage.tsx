@@ -14,6 +14,7 @@ import {
   eyebrow,
   h2,
   lede,
+  mono,
   page,
 } from "./ui";
 
@@ -42,7 +43,7 @@ export function SearchPage({ q }: { q: string }) {
             </span>
           )}
         </h2>
-        {phrase.length < minChars ? (
+        {[...phrase].length < minChars ? (
           <p className={lede}>{S.search.tooShort}</p>
         ) : (
           <Results phrase={phrase} />
@@ -128,6 +129,7 @@ function PageHits({ p, query }: { p: Hit; query: string }) {
             title={s.name}
             area={s.area}
             snippet={s.snippet}
+            file={s.file}
             query={query}
           />
         ))}
@@ -144,6 +146,7 @@ function Row({
   title,
   area,
   snippet,
+  file,
   query,
 }: {
   to: string;
@@ -151,6 +154,8 @@ function Row({
   title: string;
   area?: string;
   snippet: string;
+  /** The file that matched, shown where the snippet would be. */
+  file?: string;
   query: string;
 }) {
   return (
@@ -173,6 +178,11 @@ function Row({
       {snippet !== "" && (
         <p className="mt-0.5 max-w-[75ch] font-serif text-[15px] leading-[1.5] text-ink-dim">
           <Marked text={snippet} query={query} />
+        </p>
+      )}
+      {file !== undefined && (
+        <p className={"mt-0.5 text-muted " + mono}>
+          <Marked text={file} query={query} />
         </p>
       )}
     </li>

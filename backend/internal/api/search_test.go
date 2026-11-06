@@ -12,17 +12,17 @@ import (
 	"github.com/trick77/almanach/internal/store"
 )
 
-func searchPages() []store.Page {
-	return []store.Page{
+func searchPages() []store.PageText {
+	return []store.PageText{
 		{Scope: store.ScopeProject, ProjectKey: "PAY", Summary: "Das Projekt Payments.\n\nEin Auftrag durchläuft Zustände.",
-			Statements: []store.Statement{{ID: "s1", Kind: "flow", Name: "Upload", Text: "Vom Auftrag zur Datei.", Area: "Aufträge"}}},
+			Statements: []store.StatementText{{ID: "s1", Kind: "flow", Name: "Upload", Text: "Vom Auftrag zur Datei.", Area: "Aufträge"}}},
 		{Scope: store.ScopeRepository, ProjectKey: "PAY", RepoSlug: "pay-api", Summary: "Der Zahlungsdienst.",
-			Statements: []store.Statement{
+			Statements: []store.StatementText{
 				{ID: "s1", Kind: "component", Name: "Auftragsannahme", Text: "#### Eingang\n\nNimmt **Aufträge** an, jeden Auftrag einzeln.\n\n- Der Mandant kommt aus der Kopfzeile.", Files: []string{"internal/orders/intake.go"}, Area: "Aufträge"},
 				{ID: "s2", Kind: "rule", Name: "Gebühren", Text: "Die kleinere Grenze gilt.", Files: []string{"internal/fees/limit.go"}},
 			}},
 		{Scope: store.ScopeRepository, ProjectKey: "ALPHA", RepoSlug: "lib", Summary: "Eine Bibliothek.",
-			Statements: []store.Statement{{ID: "s1", Kind: "entity", Name: "Datei", Text: "Eine Datei im Eingang."}}},
+			Statements: []store.StatementText{{ID: "s1", Kind: "entity", Name: "Datei", Text: "Eine Datei im Eingang."}}},
 	}
 }
 
@@ -83,8 +83,21 @@ func TestSearch(t *testing.T) {
 	if err := json.Unmarshal(body["pages"], &pages); err != nil {
 		t.Fatal(err)
 	}
-	if len(pages) != 1 || len(pages[0].Statements) != 1 || pages[0].Statements[0].ID != "s2" {
+	if len(pages) != 1 || len(pages[0].Statements) != 1 || pages[0].Statements[0].ID != "s2" || pages[0].Statements[0].File != "internal/fees/limit.go" {
 		t.Errorf("file search = %+v", pages)
+	}
+	// Two spaces in the phrase find the text with one; the query is
+	// answered collapsed. A phrase past the bound answers nothing.
+	_, body = do(t, h, http.MethodGet, "/api/search?q=Auftrag%20%20zur", "", "", nil)
+	if err := json.Unmarshal(body["pages"], &pages); err != nil {
+		t.Fatal(err)
+	}
+	if field(t, body, "query") != "Auftrag zur" || len(pages) != 1 || pages[0].Statements[0].Snippet != "Vom Auftrag zur Datei." {
+		t.Errorf("collapsed phrase = %q %+v", body["query"], pages)
+	}
+	_, body = do(t, h, http.MethodGet, "/api/search?q="+strings.Repeat("a", searchMaxRunes+1), "", "", nil)
+	if string(body["pages"]) != "[]" {
+		t.Errorf("phrase past the bound = %s", body["pages"])
 	}
 	_, body = do(t, h, http.MethodGet, "/api/search?q=nirgends", "", "", nil)
 	if string(body["pages"]) != "[]" {
@@ -120,7 +133,7 @@ func TestSearch_SourcesAndBound(t *testing.T) {
 	st.single = nil
 	st.allPages = nil
 	for i := 0; i < searchMaxPages+3; i++ {
-		st.allPages = append(st.allPages, store.Page{Scope: store.ScopeRepository, ProjectKey: "P", RepoSlug: fmt.Sprintf("r%03d", i), Summary: "Treffer hier."})
+		st.allPages = append(st.allPages, store.PageText{Scope: store.ScopeRepository, ProjectKey: "P", RepoSlug: fmt.Sprintf("r%03d", i), Summary: "Treffer hier."})
 	}
 	_, body = do(t, h, http.MethodGet, "/api/search?q=treffer", "", "", nil)
 	if err := json.Unmarshal(body["pages"], &pages); err != nil {
@@ -134,20 +147,32 @@ func TestSearch_SourcesAndBound(t *testing.T) {
 // A snippet is the plain text around the first hit, bounded, cut at the
 // ends only with an ellipsis for what is left out.
 func TestSnippet(t *testing.T) {
+	q := func(s string) phrase { return phrase{raw: s, low: strings.ToLower(s)} }
 	long := strings.Repeat("Wort ", 60) + "Treffer " + strings.Repeat("Wort ", 60)
-	s, ok := snippet(long, "treffer")
+	s, ok := snippet(long, q("treffer"))
 	if !ok || !strings.HasPrefix(s, "… ") || !strings.HasSuffix(s, " …") || !strings.Contains(s, "Treffer") || len([]rune(s)) > snippetRunes+4 {
 		t.Errorf("long snippet = %q (%d runes)", s, len([]rune(s)))
 	}
-	if s, ok := snippet("Kurz und gut.", "gut"); !ok || s != "Kurz und gut." {
+	if s, ok := snippet("Kurz und gut.", q("gut")); !ok || s != "Kurz und gut." {
 		t.Errorf("short snippet = %q %v", s, ok)
 	}
-	if s, ok := snippet("Nichts.", "x"); ok || s != "" {
+	if s, ok := snippet("Nichts.", q("x")); ok || s != "" {
 		t.Errorf("no hit = %q %v", s, ok)
 	}
 	// The hit itself is never cut: at the text's end it is still whole.
-	s, ok = snippet(strings.Repeat("Wort ", 60)+"Schlussläufer", "schlussläufer")
+	s, ok = snippet(strings.Repeat("Wort ", 60)+"Schlussläufer", q("schlussläufer"))
 	if !ok || !strings.HasSuffix(s, "Schlussläufer") {
 		t.Errorf("hit at the end = %q", s)
+	}
+	// A rune whose lower case is longer in bytes (Ⱥ, 2 bytes, to ⱥ, 3)
+	// before the hit: the offset is counted in runes of the folded text,
+	// so the window still holds the hit, and nothing panics.
+	s, ok = snippet(strings.Repeat("Ⱥ", 10)+" Treffer", q("treffer"))
+	if !ok || s != strings.Repeat("Ⱥ", 10)+" Treffer" {
+		t.Errorf("snippet after a growing rune = %q %v", s, ok)
+	}
+	s, ok = snippet(strings.Repeat("K", 10)+" Treffer", q("treffer"))
+	if !ok || !strings.HasSuffix(s, " Treffer") {
+		t.Errorf("snippet after a shrinking rune = %q %v", s, ok)
 	}
 }

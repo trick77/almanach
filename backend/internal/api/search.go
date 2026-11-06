@@ -17,8 +17,12 @@ import (
 // in step with the current revisions, nothing stored.
 
 // searchMinRunes is the shortest phrase searched: one letter would mark
-// every page.
-const searchMinRunes = 2
+// every page. searchMaxRunes is the longest: a phrase past it is nobody's
+// question, and every text would be folded against it.
+const (
+	searchMinRunes = 2
+	searchMaxRunes = 200
+)
 
 // searchMaxPages bounds the pages answered; the rest are counted (more).
 const searchMaxPages = 50
@@ -47,25 +51,34 @@ type searchPageBody struct {
 }
 
 // searchHitBody is one statement that matched: enough to name and link
-// it, and a snippet of where it matched (the name alone when only the
-// name, an area or a file did).
+// it, and where it matched: a snippet of its text, or the file that did
+// when the text did not (the name and the area the page shows anyway).
 type searchHitBody struct {
 	ID      string `json:"id"`
 	Kind    string `json:"kind"`
 	Name    string `json:"name"`
 	Area    string `json:"area"`
 	Snippet string `json:"snippet"`
+	File    string `json:"file,omitempty"`
+}
+
+// phrase is the search's phrase as typed, its spaces collapsed, and
+// folded once for every text to be matched against.
+type phrase struct {
+	raw, low string
 }
 
 // search answers GET /api/search?q=: the pages whose text holds the
-// phrase, case folded. A phrase under searchMinRunes answers no pages,
-// not an error: the box is typed into.
+// phrase, case folded. A phrase under searchMinRunes, or past
+// searchMaxRunes, answers no pages, not an error: the box is typed into.
 func (d Deps) search(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	// Spaces collapsed, as the texts' are on the way to a snippet: a
+	// pasted phrase with two spaces finds the text with one.
+	q := strings.Join(strings.Fields(r.URL.Query().Get("q")), " ")
 	out := searchBody{Query: q, Pages: []searchPageBody{}}
-	if utf8.RuneCountInString(q) < searchMinRunes {
+	if n := utf8.RuneCountInString(q); n < searchMinRunes || n > searchMaxRunes {
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
 	}
@@ -76,19 +89,18 @@ func (d Deps) search(w http.ResponseWriter, r *http.Request) {
 	}
 	// A project of one has no project page on the wire, and its
 	// repository's page is at the project's path.
-	single := map[string]store.RepoRow{}
-	if d.Sources != nil {
-		if single, err = d.Store.SingleRepos(ctx); err != nil {
-			httpx.ServerError(w, r, err, "repos")
-			return
-		}
+	single, err := d.singles(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "repos")
+		return
 	}
-	for _, p := range pages {
-		_, alone := single[p.ProjectKey]
-		if alone && p.Scope == store.ScopeProject {
+	p := phrase{raw: q, low: strings.ToLower(q)}
+	for _, page := range pages {
+		_, alone := single[page.ProjectKey]
+		if alone && page.Scope == store.ScopeProject {
 			continue
 		}
-		hit, ok := searchPage(p, q)
+		hit, ok := searchPage(page, p)
 		if !ok {
 			continue
 		}
@@ -103,7 +115,7 @@ func (d Deps) search(w http.ResponseWriter, r *http.Request) {
 }
 
 // searchPage is a page's hits for the phrase, ok false for none.
-func searchPage(p store.Page, q string) (searchPageBody, bool) {
+func searchPage(p store.PageText, q phrase) (searchPageBody, bool) {
 	out := searchPageBody{Scope: p.Scope, ProjectKey: p.ProjectKey, RepoSlug: p.RepoSlug, Statements: []searchHitBody{}}
 	if s, ok := snippet(p.Summary, q); ok {
 		out.Summary = s
@@ -113,8 +125,10 @@ func searchPage(p store.Page, q string) (searchPageBody, bool) {
 		switch text, ok := snippet(s.Text, q); {
 		case ok:
 			hit.Snippet = text
-		case contains(s.Name, q), contains(s.Area, q), containsAny(s.Files, q):
-			// The name alone: the page shows name, area and files anyway.
+		case contains(s.Name, q), contains(s.Area, q):
+			// The name alone: the page shows name and area anyway.
+		case firstFile(s.Files, q) != "":
+			hit.File = firstFile(s.Files, q)
 		default:
 			continue
 		}
@@ -128,14 +142,13 @@ func searchPage(p store.Page, q string) (searchPageBody, bool) {
 // cut at the text's ends only, an ellipsis for what is left out. The
 // layout (headings, items, bolds) is dropped first: a search box shows
 // words.
-func snippet(text, q string) (string, bool) {
+func snippet(text string, q phrase) (string, bool) {
 	plain := strings.Join(strings.Fields(markup.Plain(text)), " ")
-	at := index(plain, q)
-	if at < 0 {
+	hit := runeIndex(plain, q)
+	if hit < 0 {
 		return "", false
 	}
 	runes := []rune(plain)
-	hit := utf8.RuneCountInString(plain[:at])
 	start := max(hit-snippetRunes/3, 0)
 	end := min(start+snippetRunes, len(runes))
 	s := string(runes[start:end])
@@ -148,23 +161,28 @@ func snippet(text, q string) (string, bool) {
 	return s, true
 }
 
-// index is the byte offset of the phrase in text, case folded the Unicode
-// way (strings.ToLower, not SQLite's ASCII lower), -1 for none. The
-// folded text keeps its byte lengths for the letters that matter here,
-// so the offset holds for the original's; a letter whose case changes
-// its length (rare, outside German) shifts a snippet's window, never
-// its hit.
-func index(text, q string) int {
-	return strings.Index(strings.ToLower(text), strings.ToLower(q))
+// runeIndex is the rune offset of the phrase's first hit in text, case
+// folded the Unicode way (strings.ToLower, not SQLite's ASCII lower), -1
+// for none. Counted in the folded text: ToLower maps rune to rune, so
+// the rune offset holds for the original where a byte offset would not
+// (a rune whose lower case is longer or shorter in bytes).
+func runeIndex(text string, q phrase) int {
+	low := strings.ToLower(text)
+	at := strings.Index(low, q.low)
+	if at < 0 {
+		return -1
+	}
+	return utf8.RuneCountInString(low[:at])
 }
 
-func contains(text, q string) bool { return index(text, q) >= 0 }
+func contains(text string, q phrase) bool { return strings.Contains(strings.ToLower(text), q.low) }
 
-func containsAny(texts []string, q string) bool {
-	for _, t := range texts {
-		if contains(t, q) {
-			return true
+// firstFile is the first file the phrase matches, "" for none.
+func firstFile(files []string, q phrase) string {
+	for _, f := range files {
+		if contains(f, q) {
+			return f
 		}
 	}
-	return false
+	return ""
 }

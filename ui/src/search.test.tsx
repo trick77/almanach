@@ -59,6 +59,14 @@ const result: SearchResult = {
           snippet: "",
         },
         {
+          id: "s3",
+          kind: "rule",
+          name: "Grenze",
+          area: "",
+          snippet: "",
+          file: "internal/auftrag/limit.go",
+        },
+        {
           id: "s2",
           kind: "entity",
           name: "Auftrag",
@@ -75,7 +83,7 @@ describe("SearchPage", () => {
     const calls = serve({ "search?q=auftrag": result });
     render(<SearchPage q=" auftrag " />);
     expect(
-      await screen.findByText("4 Treffer auf 2 Seiten"),
+      await screen.findByText("5 Treffer auf 2 Seiten"),
     ).toBeInTheDocument();
     expect(calls).toEqual(["/api/search?q=auftrag"]);
     expect(document.title).toContain("Suche");
@@ -94,6 +102,7 @@ describe("SearchPage", () => {
       "/projects/PAY#description/s1",
       "/projects/PAY/repos/pay-api",
       "/projects/PAY/repos/pay-api#description/s1",
+      "/projects/PAY/repos/pay-api#description/s3",
       "/projects/PAY/repos/pay-api#description/s2",
     ]);
     // The phrase is marked in the snippet, in the name and in the area; a
@@ -106,6 +115,12 @@ describe("SearchPage", () => {
     expect(screen.getByText("Entität")).toBeInTheDocument();
     const row = screen.getByText("sannahme").closest("li");
     expect(within(row!).queryByRole("paragraph")).toBeNull();
+    // A hit by file alone shows the file, the phrase marked in it.
+    const byFile = screen.getByText("Grenze").closest("li");
+    expect(within(byFile!).getByText(/limit\.go/)).toBeInTheDocument();
+    expect(
+      within(byFile!).getByText("auftrag", { selector: "mark" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/weitere Seite/)).toBeNull();
   });
 
@@ -119,7 +134,7 @@ describe("SearchPage", () => {
     });
     render(<SearchPage q="auftrag" />);
     expect(
-      await screen.findByText("2 Treffer auf einer Seite"),
+      await screen.findByText("3 Treffer auf einer Seite"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Projekt PAY").closest("a")?.getAttribute("href"),

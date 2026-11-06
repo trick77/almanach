@@ -46,7 +46,7 @@ type Store interface {
 	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
 	RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
-	CurrentPages(ctx context.Context, sourced bool) ([]store.Page, error)
+	CurrentPages(ctx context.Context, sourced bool) ([]store.PageText, error)
 	Revisions(ctx context.Context, scope, project, repo string, limit int) ([]store.RevisionRow, error)
 	Notes(ctx context.Context, project, repo string, limit int) ([]store.NoteRow, error)
 	NoteByKey(ctx context.Context, project, repo string, prID int) (store.NoteDetail, bool, error)
@@ -319,13 +319,10 @@ func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "projects")
 		return
 	}
-	// A project of one is the sources' notion: with them off there are none.
-	single := map[string]store.RepoRow{}
-	if d.Sources != nil {
-		if single, err = d.Store.SingleRepos(ctx); err != nil {
-			httpx.ServerError(w, r, err, "repos")
-			return
-		}
+	single, err := d.singles(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "repos")
+		return
 	}
 	out := projectsBody{Projects: make([]projectBody, 0, len(rows))}
 	for _, p := range rows {
@@ -423,6 +420,15 @@ type repoBody struct {
 // single reports whether a project is a project of one: its source holds
 // one repository, and the sources are on. With them off there are no
 // sources, and every project keeps its page.
+// singles is every project of one by key, with its repository: the
+// sources' notion, so with them off there are none.
+func (d Deps) singles(ctx context.Context) (map[string]store.RepoRow, error) {
+	if d.Sources == nil {
+		return map[string]store.RepoRow{}, nil
+	}
+	return d.Store.SingleRepos(ctx)
+}
+
 func (d Deps) single(ctx context.Context, key string) (bool, error) {
 	if d.Sources == nil {
 		return false, nil

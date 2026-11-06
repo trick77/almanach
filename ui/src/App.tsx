@@ -207,7 +207,7 @@ function SearchBox({ route }: { route: Route }) {
   return (
     <form
       role="search"
-      className="hidden sm:block"
+      className="min-w-0 shrink"
       onSubmit={(e) => {
         e.preventDefault();
         if (q.trim() !== "") navigateTo(searchFor(q.trim()));
@@ -219,7 +219,7 @@ function SearchBox({ route }: { route: Route }) {
         onChange={(e) => setQ(e.target.value)}
         placeholder={S.search.placeholder}
         aria-label={S.search.box}
-        className="h-[32px] w-[180px] rounded-ui-sm border border-border bg-bg px-2.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-elevated-border focus:bg-active lg:w-[240px]"
+        className="h-[32px] w-full max-w-[110px] rounded-ui-sm border border-border bg-bg px-2.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-elevated-border focus:bg-active sm:max-w-[180px] lg:max-w-[240px]"
       />
     </form>
   );

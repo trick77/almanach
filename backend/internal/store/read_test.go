@@ -374,11 +374,14 @@ func TestCurrentPages(t *testing.T) {
 	}
 	var got []string
 	for _, p := range pages {
-		got = append(got, p.Scope+" "+p.ProjectKey+"/"+p.RepoSlug+" r"+itoa(int64(p.Revision))+" "+p.Summary+" "+itoa(int64(len(p.Statements))))
+		got = append(got, p.Scope+" "+p.ProjectKey+"/"+p.RepoSlug+" "+p.Summary+" "+itoa(int64(len(p.Statements))))
 	}
-	want := []string{"repository ALPHA/lib r1 lib 1", "project PRJ/ r1 prj 1", "repository PRJ/api r1 api 0", "repository PRJ/svc r2 svc 2"}
+	want := []string{"repository ALPHA/lib lib 1", "project PRJ/ prj 1", "repository PRJ/api api 0", "repository PRJ/svc svc 2"}
 	if !slices.Equal(got, want) {
 		t.Errorf("CurrentPages = %q\nwant %q", got, want)
+	}
+	if st := pages[3].Statements[1]; st.ID != "s2" || st.Kind != "rule" || st.Name != "N s2" || st.Text != "t" {
+		t.Errorf("statement words = %+v", st)
 	}
 	// Sources on: PRJ a source with svc alone; ALPHA no source.
 	if err := s.CreateSource(ctx, staticSource("PRJ")); err != nil {

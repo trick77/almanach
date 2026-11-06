@@ -267,6 +267,8 @@ export interface SearchHit {
   /** The text around the first hit; "" when only name, area or a file
    *  matched. */
   snippet: string;
+  /** The first file that matched, given when the text did not. */
+  file?: string;
 }
 
 /** What a use is for: main at runtime, managed a version pin (a BOM, a
