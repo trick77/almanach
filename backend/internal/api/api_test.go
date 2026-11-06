@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -52,8 +53,10 @@ type fakeStore struct {
 	daysAsked     []int
 	problemErr    error
 
-	sourceRepos  map[string]bool
-	sourceErr    error
+	sourceRepos map[string]bool
+	sourceErr   error
+	// owners is each project's owning team by key, for Ingest's rule.
+	owners       map[string]string
 	sourcedAsked []bool
 
 	renamed map[string]string
@@ -121,15 +124,25 @@ func newFakeStore() *fakeStore {
 		revisionPages: map[string]store.Page{}}
 }
 
-func (f *fakeStore) Ingest(_ context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error) {
+func (f *fakeStore) Ingest(_ context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (store.Ingested, error) {
 	if f.ingestErr != nil {
-		return false, f.ingestErr
+		return store.Ingested{}, f.ingestErr
+	}
+	// The owner rule as the store keeps it, names in any case: refused
+	// unless listed or under grace, the owner reported under grace alone.
+	got := store.Ingested{Accepted: f.accepted}
+	if owner := f.owners[n.ProjectKey]; owner != "" && owner != n.Team &&
+		!slices.ContainsFunc(d.Listed, func(k string) bool { return strings.EqualFold(k, n.ProjectKey) }) {
+		if !d.Grace {
+			return store.Ingested{}, &store.OwnedError{Owner: owner}
+		}
+		got.Owner = owner
 	}
 	f.deliveries = append(f.deliveries, d)
 	f.stored = append(f.stored, n)
 	f.calls = append(f.calls, call)
 	f.claims = append(f.claims, claims)
-	return f.accepted, nil
+	return got, nil
 }
 
 func (f *fakeStore) Projects(_ context.Context, sourced bool) ([]store.ProjectRow, error) {
@@ -222,8 +235,14 @@ func (w *fakeWaker) Wake() { w.wakes++ }
 
 func keysFile(t *testing.T) *teamkeys.Keys {
 	t.Helper()
+	return keysFrom(t, `{"platform": "tok-platform", "billing": "tok-billing"}`)
+}
+
+// keysFrom is a team-keys table loaded from the given file content.
+func keysFrom(t *testing.T, content string) *teamkeys.Keys {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "keys.json")
-	if err := os.WriteFile(path, []byte(`{"platform": "tok-platform", "billing": "tok-billing"}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	k, err := teamkeys.Load(path)
@@ -235,9 +254,15 @@ func keysFile(t *testing.T) *teamkeys.Keys {
 
 func handler(t *testing.T, st *fakeStore, w *fakeWaker, mode config.AuthMode) http.Handler {
 	t.Helper()
+	return handlerWith(t, st, w, mode, config.TeamClaimsLog, keysFile(t))
+}
+
+// handlerWith is handler with the team-claims mode and the keys given.
+func handlerWith(t *testing.T, st *fakeStore, w *fakeWaker, mode config.AuthMode, claims config.TeamClaims, keys *teamkeys.Keys) http.Handler {
+	t.Helper()
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httpapi.New(func(context.Context) error { return nil }, discard)
-	Register(srv, Deps{Store: st, Keys: keysFile(t), Worker: w, AuthMode: mode, ProblemWindow: 90, Log: discard})
+	Register(srv, Deps{Store: st, Keys: keys, Worker: w, AuthMode: mode, TeamClaims: claims, ProblemWindow: 90, Log: discard})
 	return srv.Handler()
 }
 
@@ -374,6 +399,42 @@ func TestWebhook(t *testing.T) {
 		}
 		if st.stored[0].Team != "billing" {
 			t.Errorf("Team = %q", st.stored[0].Team)
+		}
+	})
+	t.Run("another team's project", func(t *testing.T) {
+		// PLAT belongs to platform: billing's note for it is stored under
+		// log (the default, the delivery under grace), a 403 under enforce
+		// (the store refuses it, no grace); the team-keys file's listing
+		// goes to the store with the delivery and lets it in under enforce
+		// too; the owner itself passes as any note.
+		st := newFakeStore()
+		st.owners = map[string]string{"PLAT": "platform"}
+		w := &fakeWaker{}
+		h := handler(t, st, w, config.AuthNone)
+		code, body := do(t, h, "POST", "/webhooks/noergler", "tok-billing", validPayload(7), nil)
+		if code != 202 || field(t, body, "status") != "accepted" || len(st.stored) != 1 || !st.deliveries[0].Grace || w.wakes != 1 {
+			t.Errorf("log mode: %d %v stored %d wakes %d; want 202 accepted, stored under grace", code, body, len(st.stored), w.wakes)
+		}
+		if code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(7), nil); code != 202 || field(t, body, "status") != "accepted" {
+			t.Errorf("owner: %d %v", code, body)
+		}
+
+		enforce := handlerWith(t, st, w, config.AuthNone, config.TeamClaimsEnforce, keysFile(t))
+		code, body = do(t, enforce, "POST", "/webhooks/noergler", "tok-billing", validPayload(7), nil)
+		if code != 403 || !strings.Contains(field(t, body, "error"), "PLAT") || len(st.stored) != 2 {
+			t.Errorf("enforce: %d %v stored %d; want 403 naming the project, nothing more stored", code, body, len(st.stored))
+		}
+		if code, body := do(t, enforce, "POST", "/webhooks/noergler", "tok-platform", validPayload(8), nil); code != 202 || field(t, body, "status") != "accepted" ||
+			st.deliveries[len(st.deliveries)-1].Grace {
+			t.Errorf("owner under enforce: %d %v, want accepted without grace", code, body)
+		}
+		// Listed for billing in the keys file, in another case: in under
+		// enforce too, the listing handed to the store as the file has it.
+		listed := handlerWith(t, st, w, config.AuthNone, config.TeamClaimsEnforce,
+			keysFrom(t, `{"platform": "tok-platform", "billing": {"token": "tok-billing", "projects": ["plat"]}}`))
+		if code, body := do(t, listed, "POST", "/webhooks/noergler", "tok-billing", validPayload(9), nil); code != 202 || field(t, body, "status") != "accepted" ||
+			!slices.Equal(st.deliveries[len(st.deliveries)-1].Listed, []string{"plat"}) {
+			t.Errorf("listed project: %d %v %+v", code, body, st.deliveries[len(st.deliveries)-1])
 		}
 	})
 	t.Run("500 persist failed", func(t *testing.T) {

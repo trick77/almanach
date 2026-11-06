@@ -128,12 +128,32 @@ Everything lands in one transaction:
 A persist failure is a 500. noergler keeps the note pending and sends it
 again on the team's next merge.
 
+The bearer is the team, and a project belongs to the first team whose
+note named it (`projects.team`, set once, never moved by a note; a
+project a source registered is nobody's until then). A note from another
+team for it: under `BACKEND_TEAM_CLAIMS=log` (the default) it is stored
+as any note and the `webhook_processed` line is a warning naming team,
+project and owner, a rollout's grace that loses nothing and says who
+writes where; under `enforce` it is refused with a 403, inside the
+ingest transaction, so a first claim and a refusal never race and a
+re-delivery dedups before the owner is looked at. A refused note leaves
+no row; noergler keeps it pending, as after any answer but a 2xx, and
+sends it again on the team's next merge, so it lands once the operator
+lists the project. Unless the team-keys file lists the project for the
+sender, the operator's word for a repository that changed hands or two
+teams on one project. The listing is resolved inside the transaction to
+the project, by any name it had in any case, so a rename keeps it; a
+listing shares, it does not transfer, and a listed team's note never
+claims a project nobody owns yet. Without the gate any team's token, or
+anything holding one, would write into every team's pages, and the
+prompts read note text as data.
+
 The handler logs one `webhook_processed` line for every request it read
-with the outcome (`accepted`, `deduped`, `invalid`) and the delivery id,
-then pokes the worker. The two exceptions log their own line instead: a
-request without a known bearer is a 401 on the access log only, and a
-delivery the database refused is a `webhook_persist_failed` error line
-with the 500.
+with the outcome (`accepted`, `deduped`, `ignored`, `refused`, `invalid`)
+and the delivery id, then pokes the worker. The exceptions log their own
+line instead: a request without a known bearer is a 401 on the access
+log only, a delivery the database refused is a `webhook_persist_failed`
+error line with the 500.
 
 ## 3. The consolidation worker
 
@@ -1760,7 +1780,7 @@ things a change must not undo by accident.
   refused, which is how the note can grow without a release here. A body
   over one megabyte is 413.
 - **One `webhook_processed` line for every request that was read**, with
-  the outcome (`accepted`, `deduped`, `ignored`, `invalid`), the team and
+  the outcome (`accepted`, `deduped`, `ignored`, `refused`, `invalid`), the team and
   the delivery id when one could be built. A request without a known bearer
   is a 401 on the access log only; a delivery the database refused logs
   `webhook_persist_failed` instead, a failed source check

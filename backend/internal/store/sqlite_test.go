@@ -32,8 +32,8 @@ func TestWriters_SecondWaitsAndBothLand(t *testing.T) {
 	second := noteFor("PRJ", "svc", 2)
 	done := make(chan error, 1)
 	go func() {
-		ok, err := s.Ingest(ctx, deliveryFor(second), second, callFor(second), nil)
-		if err == nil && !ok {
+		got, err := s.Ingest(ctx, deliveryFor(second), second, callFor(second), nil)
+		if err == nil && !got.Accepted {
 			err = errors.New("not accepted")
 		}
 		done <- err
@@ -73,9 +73,9 @@ func TestWriters_BusyTimeoutIsAnErrorAndWritesNothing(t *testing.T) {
 
 	n := noteFor("PRJ", "svc", 1)
 	start := time.Now()
-	ok, err := impatient.Ingest(ctx, deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: "PRJ"}})
-	if !IsBusy(err) || ok {
-		t.Fatalf("Ingest under a held lock = %v, %v; want a busy error", ok, err)
+	got, err := impatient.Ingest(ctx, deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: "PRJ"}})
+	if !IsBusy(err) || got.Accepted {
+		t.Fatalf("Ingest under a held lock = %+v, %v; want a busy error", got, err)
 	}
 	if waited := time.Since(start); waited < 40*time.Millisecond {
 		t.Errorf("gave up after %s, want the busy timeout waited out", waited)

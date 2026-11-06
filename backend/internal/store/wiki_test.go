@@ -87,8 +87,8 @@ func TestMarkConsolidated_RedeliveredDuringFoldStaysQueued(t *testing.T) {
 	again.PRTitle = "merged again"
 	d := deliveryFor(n)
 	d.ID = "d-second"
-	if ok, err := s.Ingest(ctx, d, again, callFor(again), nil); err != nil || !ok {
-		t.Fatalf("second ingest: ok=%v err=%v", ok, err)
+	if got, err := s.Ingest(ctx, d, again, callFor(again), nil); err != nil || !got.Accepted {
+		t.Fatalf("second ingest: %+v err=%v", got, err)
 	}
 	if n, err := s.DeferFold(ctx, "PRJ", "svc", 1, first.DeliveryID); err != nil || n != 0 {
 		t.Fatalf("DeferFold of the replaced note = %d, %v; want 0, nil", n, err)
@@ -183,8 +183,8 @@ func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
 	again := noteFor("PRJ", "svc", 1)
 	d := deliveryFor(again)
 	d.ID += "-again"
-	if ok, err := s.Ingest(ctx, d, again, nil, nil); err != nil || !ok {
-		t.Fatalf("redelivery: ok=%v err=%v", ok, err)
+	if got, err := s.Ingest(ctx, d, again, nil, nil); err != nil || !got.Accepted {
+		t.Fatalf("redelivery: %+v err=%v", got, err)
 	}
 	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
 		t.Fatalf("FailedNotes after a redelivery = %+v, %v", failed, err)

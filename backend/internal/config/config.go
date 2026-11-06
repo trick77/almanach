@@ -37,6 +37,21 @@ const (
 	AuthOIDC AuthMode = "oidc"
 )
 
+// TeamClaims is what the webhook does with a note for a project another
+// team owns, unless the team-keys file lists the project for the sender.
+type TeamClaims string
+
+const (
+	// TeamClaimsLog stores the note and warns, naming team, project and
+	// owner: the grace a rollout starts with, nothing lost, the log
+	// saying who writes where, so the keys file can be filled in before
+	// enforce.
+	TeamClaimsLog TeamClaims = "log"
+	// TeamClaimsEnforce refuses it with a 403, stored nowhere: the
+	// sender sees the refusal.
+	TeamClaimsEnforce TeamClaims = "enforce"
+)
+
 // OIDC is the sign-in, all of it required in oidc mode and refused in
 // none, where it would look active and change nothing.
 type OIDC struct {
@@ -193,8 +208,9 @@ type App struct {
 	DBPath       string
 	TeamKeysPath string
 	// Addr is host:port serve listens on.
-	Addr     string
-	AuthMode AuthMode
+	Addr       string
+	AuthMode   AuthMode
+	TeamClaims TeamClaims
 	// OIDC is set in oidc mode only.
 	OIDC OIDC
 	// Model is an llmwire profile id; the gateway host, key and aliases are
@@ -221,6 +237,7 @@ func Load(lookup func(string) string) (*App, error) {
 		TeamKeysPath:    r.Required("BACKEND_TEAM_KEYS_PATH"),
 		Addr:            r.String("BACKEND_ADDR", DefaultAddr),
 		AuthMode:        AuthMode(strings.ToLower(r.Enum("BACKEND_AUTH_MODE", string(AuthNone), string(AuthNone), string(AuthOIDC)))),
+		TeamClaims:      TeamClaims(r.Enum("BACKEND_TEAM_CLAIMS", string(TeamClaimsLog), string(TeamClaimsLog), string(TeamClaimsEnforce))),
 		Model:           r.Required("BACKEND_MODEL"),
 		ReasoningEffort: r.String("BACKEND_MODEL_REASONING_EFFORT", ""),
 		Limits: Limits{
@@ -506,7 +523,7 @@ func (a *App) Summary() string {
 	if a.AuthMode == AuthOIDC {
 		mode = fmt.Sprintf("{oidc issuer %s, client %s}", a.OIDC.Issuer, a.OIDC.ClientID)
 	}
-	return fmt.Sprintf("addr=%s auth=%s model=%s effort=%q limits={diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s metrics_token=%v",
-		a.Addr, mode, a.Model, a.ReasoningEffort,
+	return fmt.Sprintf("addr=%s auth=%s team_claims=%s model=%s effort=%q limits={diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s metrics_token=%v",
+		a.Addr, mode, a.TeamClaims, a.Model, a.ReasoningEffort,
 		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources, a.MetricsToken != "")
 }

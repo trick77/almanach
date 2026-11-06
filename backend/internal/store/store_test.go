@@ -311,11 +311,11 @@ func i64(v int64) *int64 { return &v }
 // ingest writes a note with its delivery and call under one repo claim.
 func ingest(t *testing.T, s *Store, n Note) {
 	t.Helper()
-	ok, err := s.Ingest(context.Background(), deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: n.ProjectKey, RepoSlug: n.RepoSlug}})
+	got, err := s.Ingest(context.Background(), deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: n.ProjectKey, RepoSlug: n.RepoSlug}})
 	if err != nil {
 		t.Fatalf("ingest %s: %v", n.PRKey, err)
 	}
-	if !ok {
+	if !got.Accepted {
 		t.Fatalf("ingest %s: not accepted", n.PRKey)
 	}
 }

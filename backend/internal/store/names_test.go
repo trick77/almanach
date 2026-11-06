@@ -248,9 +248,9 @@ func TestRegistration_CaseVariantsAndClaims(t *testing.T) {
 	ctx := context.Background()
 	ingest(t, s, noteFor("ACME", "svc", 1))
 	n := noteFor("acme", "SVC", 2)
-	ok, err := s.Ingest(ctx, deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: "OTHER", RepoSlug: "x"}, {ProjectKey: "OTHER"}})
-	if err != nil || !ok {
-		t.Fatalf("ingest: %v %v", ok, err)
+	ingested, err := s.Ingest(ctx, deliveryFor(n), n, callFor(n), []Claim{{ProjectKey: "OTHER", RepoSlug: "x"}, {ProjectKey: "OTHER"}})
+	if err != nil || !ingested.Accepted {
+		t.Fatalf("ingest: %+v %v", ingested, err)
 	}
 	if got := count(t, s, "projects", ""); got != 1 {
 		t.Errorf("projects = %d, want 1 (acme is ACME, a claim registers nothing)", got)

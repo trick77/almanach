@@ -479,8 +479,8 @@ func TestNoteByKey(t *testing.T) {
 
 	// Without a call the detail has none.
 	plain := noteFor("PRJ", "svc", 5)
-	if ok, err := s.Ingest(ctx, deliveryFor(plain), plain, nil, nil); err != nil || !ok {
-		t.Fatalf("ingest without call: ok=%v err=%v", ok, err)
+	if got, err := s.Ingest(ctx, deliveryFor(plain), plain, nil, nil); err != nil || !got.Accepted {
+		t.Fatalf("ingest without call: %+v err=%v", got, err)
 	}
 	d, ok, err = s.NoteByKey(ctx, "PRJ", "svc", 5)
 	if err != nil || !ok || d.Call != nil {
