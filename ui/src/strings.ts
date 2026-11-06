@@ -24,12 +24,13 @@ export const S = {
   costs: {
     title: "Kosten",
     failed: "Die Kosten konnten nicht geladen werden.",
-    lede: "Was die eigenen Modellaufrufe von Almanach kosten, nach Monat (UTC) und Projekt: die Notizen (ein Aufruf pro gemergtem Pull Request) getrennt von den Läufen (jeder Aufruf, der den Code liest). Nur das eigene Hauptbuch; was noergler für seine Reviews zahlt, steht auf den Notizen.",
+    lede: "Was die eigenen Modellaufrufe von Almanach kosten, nach Monat (UTC) und Projekt: die Notizen (ein Aufruf pro gemergtem Pull Request) getrennt von den Läufen (jeder andere Aufruf: ein Repository lesen oder seine Seiten neu fassen). Nur das eigene Hauptbuch; was noergler für seine Reviews zahlt, steht auf den Notizen.",
     empty: "Noch kein Modellaufruf.",
     tiles: {
-      today: "Heute ausgegeben",
+      today: "Heute ausgegeben (UTC)",
       budget: "Tagesbudget",
-      noBudget: "Kein Budget gesetzt (BACKEND_DAILY_BUDGET_USD)",
+      noBudget:
+        "Kein Budget gesetzt (BACKEND_DAILY_BUDGET_USD, nur mit Quellen: es hält die Läufe)",
       budgetNote: (spent: string, budget: string) =>
         `${spent} von ${budget}; ausgeschöpft, warten die Läufe bis zum nächsten Tag (UTC), die Notizen nicht`,
     },

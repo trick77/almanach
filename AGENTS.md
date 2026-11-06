@@ -43,9 +43,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   pauses drain (else one paid call per lap).
 - One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
   schema, no in-call retry.
-- Money: nano-USD INTEGER, no float (`config.ParseUSD` reads the budget). `llm_calls` (own),
-  `note_calls` (noergler's) never summed. Daily budget holds runs only, never notes; priced calls
-  only. Reconcile ≥ 24h, sync ≥ 1m (0 = off): paid reads.
+- Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.
+  Daily budget holds runs, never notes.
 - SQLite: `serve` never migrates; never edit applied migration (0001 squashed once, DB dropped,
   2026-11-01). Probes exec.
 - oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,

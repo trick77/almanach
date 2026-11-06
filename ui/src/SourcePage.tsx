@@ -157,7 +157,13 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   if (gone(removing)) setRemoving(null);
   if (gone(renaming)) setRenaming(null);
   if (gone(deactivating)) setDeactivating(null);
-  if (gone(fullOf)) setFullOf(null);
+  // A run the poll found open asks nothing more: its Yes would be refused.
+  if (
+    gone(fullOf) ||
+    (fullOf !== null &&
+      runOpen(data.repos.find((r) => r.slug === fullOf)?.baseline ?? null))
+  )
+    setFullOf(null);
   if (rowError !== null && gone(rowError.slug)) setRowError(null);
 
   // Every action clears both alerts, the page's and a row's: a later success

@@ -493,6 +493,40 @@ describe("SourcePage baseline", () => {
     );
   });
 
+  it("closes the full run's question once the row's run is open", async () => {
+    const [cli] = detail.repos;
+    if (!cli?.baseline) throw new Error("fixture");
+    let shown: SourceDetail = detail;
+    const queued: SourceDetail = {
+      ...detail,
+      repos: [
+        { ...cli, baseline: { ...cli.baseline, state: "queued" } },
+        ...detail.repos.slice(1),
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if ((init?.method ?? "GET") === "GET") {
+          return { ok: true, status: 200, json: async () => shown };
+        }
+        shown = queued;
+        return { ok: true, status: 202, text: async () => "{}" };
+      }),
+    );
+    render(<SourcePage projectKey="werkzeuge" />);
+    const row = (await screen.findByText("acme-cli")).closest("tr");
+    if (!row) throw new Error("row");
+    fireEvent.click(within(row).getByText(S.baseline.actions.full));
+    expect(screen.getByText(S.baseline.yesFull)).toBeInTheDocument();
+    // The row's sync answers, and the reload finds a run queued (the
+    // poller's): the full run would be refused.
+    fireEvent.click(within(row).getByText(S.sources.repoActions.sync));
+    await waitFor(() =>
+      expect(screen.queryByText(S.baseline.yesFull)).not.toBeInTheDocument(),
+    );
+  });
+
   it("shows a run under way, a partial and a failed one", async () => {
     const run = detail.repos[0]?.baseline;
     if (!run) throw new Error("fixture");
