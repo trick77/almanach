@@ -1,6 +1,7 @@
 package clone
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -121,10 +122,14 @@ func (c *Code) CommitTime(ctx context.Context, key, slug, sha string) (time.Time
 	return at, err
 }
 
-// ReadFiles reads files at sha through one batch reader. A file over
-// FileMaxBytes, gone or binary is left out; a broken reader is an error.
-// Every body passes redact.File: this is the one place code is read for a
-// model, so a credential value never leaves the machine.
+// ReadFiles reads files at sha through one batch reader. A file the plan
+// marks Cut is read whole, within CutMaxBytes, and handed on as its first
+// FileMaxBytes to a line's end; one over FileMaxBytes not so marked, a
+// head with no line, gone or binary is left out; a broken reader is an
+// error. Every body passes redact.File, a cut one whole before the cut:
+// this is the one place code is read for a model, so a credential value
+// never leaves the machine, and a Secret manifest whose `kind: Secret`
+// sits past the head is still known for one.
 func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []baseline.File) (map[string][]byte, error) {
 	out := make(map[string][]byte, len(files))
 	err := c.locked(ctx, key, slug, func(dir string) error {
@@ -137,7 +142,11 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 		}
 		defer func() { _ = r.Close() }()
 		for _, f := range files {
-			body, err := r.ReadFile(sha, f.Path, baseline.FileMaxBytes)
+			limit := int64(baseline.FileMaxBytes)
+			if f.Cut {
+				limit = baseline.CutMaxBytes
+			}
+			body, err := r.ReadFile(sha, f.Path, limit)
 			// A step cut off, or a reader that broke, is no file left out:
 			// a patch written from code it never saw must not follow.
 			if ctx.Err() != nil {
@@ -154,6 +163,15 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 			if !ok {
 				c.p.Log.InfoContext(ctx, "baseline: Secret manifest or Terraform state left out", "project", key, "repo", slug, "path", f.Path)
 				continue
+			}
+			// The head of a large file, cut at a line's end; one with no line
+			// in it (minified, one-line data) tells a reader nothing.
+			if f.Cut && len(body) > baseline.FileMaxBytes {
+				nl := bytes.LastIndexByte(body[:baseline.FileMaxBytes], '\n')
+				if nl < 0 {
+					continue
+				}
+				body = body[:nl+1]
 			}
 			out[f.Path] = body
 		}

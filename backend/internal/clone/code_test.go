@@ -473,12 +473,18 @@ func TestCode_ReadsAClone(t *testing.T) {
 	write("blob.bin", "a\x00b")
 	first := commit()
 	write("main.go", "package main // two\n")
+	// A file over the cap: read as its head when the plan says so.
+	write("big.go", "package big\n"+strings.Repeat("// x\n", baseline.FileMaxBytes/5+10))
 	second := commit()
 	// Credentials, all invented: a config value, a Secret manifest, a token
 	// committed into source.
 	write("application.yaml", "db:\n  host: db\n  password: s3cr3t-invented\n")
 	write("secret.yaml", "apiVersion: v1\nkind: Secret\ndata:\n  x: eQ==\n")
 	write("leak.go", "package main\n\nconst t = \"ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\"\n") // ship:allow-secret: invented fixture
+	// One line over the cap: no line's end to cut its head at.
+	write("min.js", strings.Repeat("a", baseline.FileMaxBytes+100))
+	// A Secret over the cap in kubectl's key order: its kind past the head.
+	write("bundle.yaml", "apiVersion: v1\ndata:\n"+strings.Repeat("  k: dmFsdWU=\n", baseline.FileMaxBytes/14+10)+"kind: Secret\n")
 	third := commit()
 	// Where the poller keeps tools/cli: its folder named by ids.
 	run(t, root, "clone", "-q", "--bare", work, filepath.Join(root, projectSeg(idOf("tools")), repoSeg(idOf("tools/cli"))))
@@ -492,11 +498,11 @@ func TestCode_ReadsAClone(t *testing.T) {
 	ctx := context.Background()
 
 	tree, err := code.Tree(ctx, "tools", "cli", second)
-	if err != nil || len(tree) != 2 {
+	if err != nil || len(tree) != 3 {
 		t.Fatalf("Tree = %+v %v", tree, err)
 	}
 	diff, err := code.Diff(ctx, "tools", "cli", first, second)
-	if err != nil || len(diff) != 1 || diff[0].Path != "main.go" {
+	if err != nil || len(diff) != 2 || diff[0].Path != "big.go" || diff[1].Path != "main.go" {
 		t.Fatalf("Diff = %+v %v", diff, err)
 	}
 	if ok, err := code.Contains(ctx, "tools", "cli", first, second); err != nil || !ok {
@@ -508,12 +514,29 @@ func TestCode_ReadsAClone(t *testing.T) {
 	if at, err := code.CommitTime(ctx, "tools", "cli", second); err != nil || at.IsZero() {
 		t.Errorf("CommitTime = %v %v", at, err)
 	}
-	bodies, err := code.ReadFiles(ctx, "tools", "cli", second, []baseline.File{{Path: "main.go"}, {Path: "blob.bin"}, {Path: "gone.go"}})
+	bodies, err := code.ReadFiles(ctx, "tools", "cli", second, []baseline.File{{Path: "main.go"}, {Path: "blob.bin"}, {Path: "gone.go"}, {Path: "big.go"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// big.go not marked cut is over the cap: left out, as before.
 	if !reflect.DeepEqual(bodies, map[string][]byte{"main.go": []byte("package main // two\n")}) {
 		t.Fatalf("ReadFiles = %q", bodies)
+	}
+	head, err := code.ReadFiles(ctx, "tools", "cli", second, []baseline.File{{Path: "big.go", Size: baseline.FileMaxBytes, Cut: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The head, cut at a line's end just under the cap.
+	if b := head["big.go"]; len(b) > baseline.FileMaxBytes || len(b) < baseline.FileMaxBytes-10 ||
+		!strings.HasPrefix(string(b), "package big\n") || !strings.HasSuffix(string(b), "// x\n") {
+		t.Fatalf("cut read = %d bytes, want the first %d to a line's end", len(b), baseline.FileMaxBytes)
+	}
+	// A head with no line in it, and a Secret whose kind sits past the
+	// head: left out, the redaction having seen the whole file.
+	if cut, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{
+		{Path: "min.js", Size: baseline.FileMaxBytes, Cut: true}, {Path: "bundle.yaml", Size: baseline.FileMaxBytes, Cut: true},
+	}); err != nil || len(cut) != 0 {
+		t.Fatalf("line-less head, Secret past the head = %d files %v, want both left out", len(cut), err)
 	}
 	secrets, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{{Path: "application.yaml"}, {Path: "secret.yaml"}, {Path: "leak.go"}, {Path: "main.go"}})
 	if err != nil {

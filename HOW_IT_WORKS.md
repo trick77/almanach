@@ -820,11 +820,40 @@ what the worker interleaves with notes, holds after a gateway failure and
 resumes after a restart. The run pins the clone's head when it starts.
 
 1. *Catalogue.* The tree at the commit (`ls-tree`, modes and sizes), held
-   to what a run may read: regular files, within 100 kB, not vendored,
-   built, locked, binary or generated. A full run asks the catalogue model
+   to what a run may read: regular files, not vendored, built, locked,
+   binary or generated; one over 100 kB is read as its first 100 kB
+   (`File.Cut`, the listing and the step's file marker say so), never left
+   out, since the one class a repository turns on is as often as not such
+   a file, up to 2 MB, past which it is data and refused by its size as
+   before; the file is read and redacted whole, so a Secret manifest whose
+   `kind` sits past the head is still left out, then cut at a line's end,
+   and a head with no line in it (minified, one-line data) is left out. The first reconcile of a plan from before cut files (no `cuts` on
+   it) places the cut files it knows nothing of (`newlyReadable`), since
+   unchanged they are in no diff; its own plan carries `cuts`, so a cut
+   file left out then is like any other. A file a plan made knowing cut
+   files left out of every subject is not offered again: the model left
+   it out on purpose, and a quiet reconcile must make no call. What the
+   tree offers is kept on a full run (`readable_bytes`) beside the distinct
+   files its folded parts read (`read_bytes`: a file once however many
+   subjects hold it, a doc the overview read too, a skipped part not at
+   all; `bytes` stays the budget's
+   count of every call's input), a reconcile carrying the documented run's
+   pair, and the source page shows the share: twelve subjects of a large
+   repository once read a tenth and the page said nothing of it. A full
+   run asks the catalogue model
    (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
-   from the listing (directories over 4000 files) and the docs. Code holds
+   from the listing and the docs. Over 4000 files the listing is the tree
+   folded to fit: a directory is one line with its file count and bytes
+   until it is opened, and the tree is opened where the files are: of the
+   moves on the listing (a directory opened, an open one's own files laid
+   out) the one touching the most files first, so a pile of files at the
+   root never crowds out the code beside it, and a part too wide to lay out
+   is shown with its subdirectories and its own files as one `dir/*` line,
+   which the model may name back for those files alone (`baseline.Listing`).
+   It was once folded to two levels whatever the shape, and a Maven
+   repository, all of it under `src/main/java`, became one line the model
+   could only name whole, filled in path order to the step's cap. Code holds
    the answer to the tree: invented paths dropped, directories expanded,
    each subject within 240 kB, at most `BACKEND_BASELINE_MAX_CALLS` less
    four (the catalogue, the overview, the project, the repository map). A

@@ -935,6 +935,14 @@ function baselineState(b: Baseline): { label: string; tone: Tone } {
   }
 }
 
+/** readShare is the percent of the readable code a run read, 0 to 100,
+ *  unrounded: the copy rounds it, and words a few bytes of a large tree,
+ *  above 0 but under one, as under one. */
+export function readShare(read: number, readable: number): number {
+  if (readable <= 0) return 0;
+  return Math.min(100, (100 * read) / readable);
+}
+
 /** BaselineCell is a repository's description state: the newest run, the
  *  commit last documented, what the run cost, when it ended. */
 function BaselineCell({ b }: { b: Baseline | null }) {
@@ -960,6 +968,9 @@ function BaselineCell({ b }: { b: Baseline | null }) {
     // The parts, each once; a run from before they were named has its count.
     b.state === "done" && b.skipped > 0
       ? S.baseline.skipped(b.skipped_parts.length || b.skipped)
+      : "",
+    b.state === "done" && b.readable_bytes > 0
+      ? S.baseline.readShare(readShare(b.read_bytes, b.readable_bytes))
       : "",
   ].filter((s) => s !== "");
   return (

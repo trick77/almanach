@@ -18,9 +18,17 @@ import (
 // Budgets of a run that are code's, not configuration: they follow from the
 // model's context, not from the operator's purse.
 const (
-	// FileMaxBytes: a file over it is refused by its size, never read. Larger
-	// is generated, vendored or data.
+	// FileMaxBytes: what a step reads of one file at most; a larger one is
+	// read as its head (File.Cut), up to CutMaxBytes. Larger is often
+	// generated, vendored or data, which the name filters catch; and when
+	// it is the one class the repository turns on, its head is better than
+	// nothing.
 	FileMaxBytes = 100_000
+	// CutMaxBytes: a file over it is no source at all (a dump, a database,
+	// a dataset the name filters missed) and is refused by its size before
+	// a byte is read, as every large file once was: a head is cut from the
+	// whole file, read and redacted first.
+	CutMaxBytes = 2_000_000
 	// StepMaxBytes is the file content one step shows the model: about 70k
 	// tokens, which with a full page beside it fits a 128k context.
 	StepMaxBytes = 240_000
@@ -43,14 +51,20 @@ const (
 	SiblingsMaxBytes = 8_000
 	// CatalogueDocsBytes is what the catalogue step reads of the docs.
 	CatalogueDocsBytes = 60_000
-	// ListMaxEntries: over it the catalogue sees directories, not files.
+	// ListMaxEntries: over it the catalogue sees the tree folded to that
+	// many lines, opened where the files are (Listing).
 	ListMaxEntries = 4000
 )
 
-// File is a path at the run's commit and its size.
+// File is a path at the run's commit and the bytes of it a step reads: the
+// whole file, or, Cut, its first FileMaxBytes (Size is then FileMaxBytes).
+// A file over the cap was once left out whole, and the god class at the
+// centre of a repository is exactly such a file: its head says what it is,
+// its tail seldom more.
 type File struct {
 	Path string `json:"path"`
 	Size int64  `json:"size"`
+	Cut  bool   `json:"cut,omitempty"`
 }
 
 // blockedDirs are directory names whose content is someone else's code or
@@ -117,21 +131,32 @@ func Blocked(p string) bool {
 }
 
 // Readable reports whether a tree entry is a file a run may read: a regular
-// or executable blob, not empty, within FileMaxBytes, not Blocked.
+// or executable blob, not empty, within CutMaxBytes, not Blocked. One over
+// FileMaxBytes is read as its head (Cut).
 func Readable(e gitrepo.Entry) bool {
-	return !e.Deleted && gitrepo.Indexable(e.Mode) && e.Size > 0 && e.Size <= FileMaxBytes && !Blocked(e.Path)
+	return !e.Deleted && gitrepo.Indexable(e.Mode) && e.Size > 0 && e.Size <= CutMaxBytes && !Blocked(e.Path)
 }
 
-// Files is the readable part of a tree, by path.
+// Files is the readable part of a tree, by path, a file over FileMaxBytes
+// as the head of it.
 func Files(entries []gitrepo.Entry) []File {
 	out := []File{}
 	for _, e := range entries {
 		if Readable(e) {
-			out = append(out, File{Path: e.Path, Size: e.Size})
+			out = append(out, FileOf(e))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// FileOf is a readable entry as a step reads it: whole within FileMaxBytes,
+// else its first FileMaxBytes, Cut.
+func FileOf(e gitrepo.Entry) File {
+	if e.Size > FileMaxBytes {
+		return File{Path: e.Path, Size: FileMaxBytes, Cut: true}
+	}
+	return File{Path: e.Path, Size: e.Size}
 }
 
 // Exists is a tree as a lookup a statement's files are checked against:

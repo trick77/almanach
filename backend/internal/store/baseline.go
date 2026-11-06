@@ -70,11 +70,17 @@ type BaselineRun struct {
 	Attempts   int
 	Calls      int
 	Bytes      int64
-	Skipped    int
-	Error      string
-	QueuedAt   time.Time
-	StartedAt  *time.Time
-	FinishedAt *time.Time
+	// ReadableBytes is what a full run could have read, the tree's readable
+	// files at its commit; ReadBytes the distinct files its folded parts
+	// read. Bytes is the budget's count, every call's input. A reconcile
+	// carries the documented run's pair.
+	ReadableBytes int64
+	ReadBytes     int64
+	Skipped       int
+	Error         string
+	QueuedAt      time.Time
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
 	// Epoch is the prompts.Epoch a full or restyle run ran under, the
 	// worker's to set when it starts one; 0 on any other run. A full run
 	// done with one restyles its repository's page (RestyleDue).
@@ -96,13 +102,14 @@ const runsFrom = `baseline_runs b JOIN repos r ON r.id = b.repo_id JOIN projects
 // them. "commit" is quoted: a keyword in SQLite, a column name here.
 const runColumns = `b.id AS id, p.key AS project_key, r.slug AS slug, b.mode AS mode, b.trigger AS trigger,
 	b.base_commit AS base_commit, b."commit" AS "commit", b.state AS state, b.step AS step, b.steps AS steps,
-	b.plan AS plan, b.attempts AS attempts, b.calls AS calls, b.bytes AS bytes, b.skipped AS skipped,
-	b.error AS error, b.queued_at AS queued_at, b.started_at AS started_at, b.finished_at AS finished_at,
-	b.epoch AS epoch, b.repo_id AS repo_id, r.project_id AS project_id`
+	b.plan AS plan, b.attempts AS attempts, b.calls AS calls, b.bytes AS bytes, b.readable_bytes AS readable_bytes,
+	b.read_bytes AS read_bytes, b.skipped AS skipped, b.error AS error, b.queued_at AS queued_at, b.started_at AS started_at,
+	b.finished_at AS finished_at, b.epoch AS epoch, b.repo_id AS repo_id, r.project_id AS project_id`
 
 // lColumns is runColumns of a subquery aliased l, in the same order.
 const lColumns = `l.id, l.project_key, l.slug, l.mode, l.trigger, l.base_commit, l."commit", l.state, l.step, l.steps, l.plan,
-	l.attempts, l.calls, l.bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at, l.epoch, l.repo_id, l.project_id`
+	l.attempts, l.calls, l.bytes, l.readable_bytes, l.read_bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at, l.epoch,
+	l.repo_id, l.project_id`
 
 // readsRepo holds a run row b to the runs that read its repository: never a
 // departure (no reading) nor a restyle (the page alone). The poller's
@@ -120,7 +127,7 @@ func scanRun(row scanner, extra ...any) (BaselineRun, error) {
 	var r BaselineRun
 	var plan []byte
 	dest := append([]any{&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
-		&r.Attempts, &r.Calls, &r.Bytes, &r.Skipped, &r.Error, timeAt(&r.QueuedAt), timeOrNil(&r.StartedAt), timeOrNil(&r.FinishedAt),
+		&r.Attempts, &r.Calls, &r.Bytes, &r.ReadableBytes, &r.ReadBytes, &r.Skipped, &r.Error, timeAt(&r.QueuedAt), timeOrNil(&r.StartedAt), timeOrNil(&r.FinishedAt),
 		&r.Epoch, &r.RepoID, &r.ProjectID}, extra...)
 	err := row.Scan(dest...)
 	if len(plan) > 0 {
@@ -268,10 +275,10 @@ type execer interface {
 // statements as they were: still due.
 func saveRun(ctx context.Context, db execer, r BaselineRun) (bool, error) {
 	n, err := affected(db.ExecContext(ctx, `
-		UPDATE baseline_runs SET state = ?, step = ?, steps = ?, plan = ?, attempts = ?, calls = ?, bytes = ?,
-		       skipped = ?, error = ?, started_at = ?, finished_at = ?, "commit" = ?, mode = ?, epoch = ?
+		UPDATE baseline_runs SET state = ?, step = ?, steps = ?, plan = ?, attempts = ?, calls = ?, bytes = ?, readable_bytes = ?,
+		       read_bytes = ?, skipped = ?, error = ?, started_at = ?, finished_at = ?, "commit" = ?, mode = ?, epoch = ?
 		 WHERE id = ? AND state NOT IN ('done', 'failed')`,
-		r.State, r.Step, r.Steps, jsonOrNull(r.Plan), r.Attempts, r.Calls, r.Bytes, r.Skipped, r.Error,
+		r.State, r.Step, r.Steps, jsonOrNull(r.Plan), r.Attempts, r.Calls, r.Bytes, r.ReadableBytes, r.ReadBytes, r.Skipped, r.Error,
 		stampOrNull(r.StartedAt), stampOrNull(r.FinishedAt), r.Commit, r.Mode, r.Epoch, r.ID))
 	if err != nil || n != 1 {
 		return false, err

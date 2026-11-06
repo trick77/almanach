@@ -618,6 +618,12 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	if r.Bytes != 5+20+30+40 {
 		t.Errorf("bytes = %d, want the docs and both subjects", r.Bytes)
 	}
+	// What it could have read: the tree's readable files (go.sum is none),
+	// and what its folded parts read, once each, for the share the page
+	// shows.
+	if r.ReadableBytes != 20+30+40 || r.ReadBytes != 20+30+40 {
+		t.Errorf("readable %d, read %d; want the readable tree and the docs and subjects once", r.ReadableBytes, r.ReadBytes)
+	}
 	p := x.plan(t)
 	if !p.Overview || !reflect.DeepEqual(p.Read, []string{"Anmeldung", "Abrechnung"}) || !p.SummaryChanged {
 		t.Errorf("plan = %+v", p)
@@ -1309,6 +1315,83 @@ func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
 	if len(p.Unplaced) != 0 || len(p.Subjects) != 2 || p.Subjects[1].Name != "B" || !reflect.DeepEqual(p.Read, []string{"B"}) || !strings.Contains(y.models.prompts[0], "billing/run.go") {
 		t.Fatalf("second reconcile plan = %+v", p)
 	}
+}
+
+// A file over the cap in a repository documented before files were cut is
+// in no subject and among no unplaced, and unchanged it is in no diff: the
+// reconcile places it all the same, read as its head.
+func TestRun_ReconcilePlacesACutFileAnOldPlanNeverKnew(t *testing.T) {
+	x := newWorld(t, 16)
+	x.code.tree = append(x.code.tree, gitrepo.Entry{Path: "core/God.java", Mode: "100644", Size: baseline.FileMaxBytes + 1})
+	x.code.bodies["core/God.java"] = "class God {}"
+	old := runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 30}, {Path: "README.md", Size: 20}, {Path: "billing/run.go", Size: 40}}}}}}
+	raw, _ := json.Marshal(old)
+	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone, ReadableBytes: 900, ReadBytes: 600}
+	x.queue(store.RunReconcile, older40)
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "Kern", Purpose: "p", Paths: []string{"core/God.java"}}}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "component", "Gott", "Alles.", "core/God.java")}}}}
+	x.w.drain(context.Background())
+	p := x.plan(t)
+	if len(p.Subjects) != 2 || p.Subjects[1].Name != "Kern" || !p.Subjects[1].Files[0].Cut || !reflect.DeepEqual(p.Read, []string{"Kern"}) {
+		t.Fatalf("plan = %+v, want the cut file placed and read", p)
+	}
+	if !strings.Contains(x.models.prompts[0], "core/God.java\t100000\thead only") {
+		t.Errorf("placing listing lacks the cut file:\n%s", firstLines(x.models.prompts[0], 30))
+	}
+	if !strings.Contains(x.models.prompts[1], "<<<FILE core/God.java (the first 12 bytes of a larger file)>>>") {
+		t.Errorf("describe prompt lacks the cut marker")
+	}
+	// A reconcile carries the documented run's coverage: the page's is the
+	// last full read's.
+	if r := x.run(); r.ReadableBytes != 900 || r.ReadBytes != 600 {
+		t.Errorf("reconcile coverage = %d of %d, want the documented run's 600 of 900", r.ReadBytes, r.ReadableBytes)
+	}
+	if !p.Cuts {
+		t.Error("the reconcile's plan does not carry Cuts: the next would offer the file again")
+	}
+	// TRANSITIONAL(cut-files): Remove when every documented plan carries Cuts.
+	// A plan made knowing cut files left this one out on purpose: a quiet
+	// reconcile offers it no placing call.
+	y := newWorld(t, 16)
+	y.code.tree = append(y.code.tree, gitrepo.Entry{Path: "core/God.java", Mode: "100644", Size: baseline.FileMaxBytes + 1})
+	old.Cuts = true
+	raw, _ = json.Marshal(old)
+	y.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	y.queue(store.RunReconcile, older40)
+	y.w.drain(context.Background())
+	for _, c := range y.st.calls {
+		if c.Purpose == store.PurposeCatalogue {
+			t.Fatalf("a plan with Cuts asked a placing call: %+v", y.st.calls)
+		}
+	}
+}
+
+// Coverage counts a file once, a doc a subject holds too among them, and
+// no skipped or unread subject.
+func TestCoverage_DistinctFiles(t *testing.T) {
+	readme := baseline.File{Path: "README.md", Size: 20}
+	p := runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{
+		{Name: "Doku", Files: []baseline.File{readme, {Path: "docs/a.md", Size: 5}}},
+		{Name: "Kern", Files: []baseline.File{{Path: "core/a.go", Size: 30}, {Path: "docs/a.md", Size: 5}}},
+		{Name: "Weg", Files: []baseline.File{{Path: "gone/x.go", Size: 100}}},
+		{Name: "Spaeter", Files: []baseline.File{{Path: "later/y.go", Size: 100}}},
+	}, Skipped: []string{"Weg"}}, Read: []string{"Doku", "Kern", "Weg"}, Docs: []baseline.File{readme, {Path: "docs/b.md", Size: 7}}}
+	if got := coverage(p); got != 20+5+30+7 {
+		t.Errorf("coverage = %d, want 62", got)
+	}
+	// An overview whose patch the fold refused read its docs for nothing.
+	p.SkipStep(baseline.PartOverview, baseline.SkipFailed)
+	if got := coverage(p); got != 20+5+30 {
+		t.Errorf("coverage, overview skipped = %d, want 55", got)
+	}
+}
+
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Whether a PR's statement is newer than the read commit. A merge commit

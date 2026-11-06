@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"container/heap"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -244,48 +245,199 @@ func (p Plan) find(name string) int {
 }
 
 // Listing is the tree as the catalogue model sees it: every readable file
-// with its size, or, over ListMaxEntries, the files at the root and the
-// directories two levels deep with their file counts and bytes. A
-// directory is named with a trailing slash, the way the model may name it
-// back.
+// with its size (a cut one marked) when they fit ListMaxEntries, else the
+// tree folded to fit: a directory is one line with its file count and bytes
+// until it is opened, and opened where the files are. Over the entries the
+// tree was once folded to two levels whatever its shape, and a Maven or
+// Gradle repository, all of it under src/main/java, became one line the
+// model could only name whole. A directory is named with a trailing slash,
+// the way the model may name it back; the files right under an opened one,
+// as one line, `dir/*` (the root's `*`), which resolve takes for those files
+// alone. The root's subdirectories are always shown, so a root of more than
+// ListMaxEntries directories runs over: nothing is dropped for size.
 func Listing(files []File) string {
 	var b strings.Builder
 	if len(files) <= ListMaxEntries {
 		for _, f := range files {
-			fmt.Fprintf(&b, "%s\t%d\n", f.Path, f.Size)
+			b.WriteString(fileLine(f))
 		}
 		return b.String()
 	}
-	type dir struct {
-		files int
-		bytes int64
+	root := buildTree(files)
+	root.fold(ListMaxEntries)
+	root.write(&b)
+	return b.String()
+}
+
+// fileLine is one file of the listing, a cut one said to be.
+func fileLine(f File) string {
+	if f.Cut {
+		return fmt.Sprintf("%s\t%d\thead only\n", f.Path, f.Size)
 	}
-	dirs := map[string]*dir{}
-	var keys []string
+	return fmt.Sprintf("%s\t%d\n", f.Path, f.Size)
+}
+
+// treeNode is a directory of the listing: its direct files, its
+// subdirectories, and how it is shown (how).
+type treeNode struct {
+	path     string // "" for the root, else with a trailing slash
+	direct   []File
+	children []*treeNode
+	files    int   // files under it, direct and deeper
+	bytes    int64 // their bytes
+	how      fold
+}
+
+// fold is how a directory is shown: one line for all of it; open, its
+// subdirectories listed and its direct files one line; flat, its direct
+// files each on a line.
+type fold int8
+
+const (
+	folded fold = iota
+	open
+	flat
+)
+
+// buildTree is the files as a tree of directories, each child list in path
+// order (the files sorted first: a reconcile's unplaced come in diff
+// order), the root open.
+func buildTree(files []File) *treeNode {
+	files = inPathOrder(files)
+	root := &treeNode{how: open}
+	nodes := map[string]*treeNode{"": root}
 	for _, f := range files {
+		dir := ""
+		parent := root
 		parts := strings.Split(f.Path, "/")
-		if len(parts) == 1 {
-			fmt.Fprintf(&b, "%s\t%d\n", f.Path, f.Size)
+		for _, part := range parts[:len(parts)-1] {
+			dir += part + "/"
+			n := nodes[dir]
+			if n == nil {
+				n = &treeNode{path: dir}
+				nodes[dir] = n
+				parent.children = append(parent.children, n)
+			}
+			n.files++
+			n.bytes += f.Size
+			parent = n
+		}
+		parent.direct = append(parent.direct, f)
+		root.files++
+		root.bytes += f.Size
+	}
+	return root
+}
+
+// entries is the lines a node takes as it is shown.
+func (n *treeNode) entries() int {
+	switch n.how {
+	case folded:
+		return 1
+	case open:
+		c := len(n.children)
+		if len(n.direct) > 0 {
+			c++
+		}
+		return c
+	default:
+		return len(n.direct) + len(n.children)
+	}
+}
+
+// fold opens the tree where the files are until the listing holds limit
+// lines. A move shows a directory one step further: a folded one opened
+// (a leaf straight to its files), an open one's direct files laid out. Of
+// the moves on the listing, the one touching the most files goes first
+// (an opening the files under the directory, a laying out its direct
+// files), skipped when it does not fit, so the big parts are opened before
+// the small, a pile of files at the root never crowds out the code
+// directory beside it, and a part too wide to lay out still shows its
+// subdirectories. A move never frees a line, so one skipped never fits
+// later. The root starts open.
+func (n *treeNode) fold(limit int) {
+	n.how = open
+	count := n.entries()
+	q := &moves{}
+	// An opened directory offers its direct files and its subdirectories.
+	offer := func(d *treeNode) {
+		if d.how == open && len(d.direct) > 0 {
+			heap.Push(q, move{d, len(d.direct), true})
+		}
+		for _, c := range d.children {
+			heap.Push(q, move{c, c.files, false})
+		}
+	}
+	offer(n)
+	for q.Len() > 0 {
+		m := heap.Pop(q).(move)
+		d := m.dir
+		before, was := d.entries(), d.how
+		d.how = open
+		if m.layout || len(d.children) == 0 {
+			d.how = flat
+		}
+		cost := d.entries() - before
+		if count+cost > limit {
+			d.how = was
 			continue
 		}
-		key := parts[0] + "/"
-		if len(parts) > 2 {
-			key = parts[0] + "/" + parts[1] + "/"
+		count += cost
+		if !m.layout {
+			offer(d)
 		}
-		d := dirs[key]
-		if d == nil {
-			d = &dir{}
-			dirs[key] = d
-			keys = append(keys, key)
+	}
+}
+
+// move is one step of fold: dir opened, or with layout its direct files
+// laid out; files is what it touches.
+type move struct {
+	dir    *treeNode
+	files  int
+	layout bool
+}
+
+// moves is fold's queue, the most files first, then by path.
+type moves []move
+
+func (q moves) Len() int { return len(q) }
+func (q moves) Less(i, j int) bool {
+	if q[i].files != q[j].files {
+		return q[i].files > q[j].files
+	}
+	return q[i].dir.path < q[j].dir.path
+}
+func (q moves) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
+func (q *moves) Push(x any)   { *q = append(*q, x.(move)) }
+func (q *moves) Pop() any {
+	old := *q
+	m := old[len(old)-1]
+	*q = old[:len(old)-1]
+	return m
+}
+
+// write lays the tree out: at an open or flat directory its direct files
+// (each, or as one `dir/*` line), then its subdirectories, in path order; a folded
+// one as one line.
+func (n *treeNode) write(b *strings.Builder) {
+	if n.how == folded {
+		fmt.Fprintf(b, "%s\t%d files\t%d bytes\n", n.path, n.files, n.bytes)
+		return
+	}
+	if n.how == flat {
+		for _, f := range n.direct {
+			b.WriteString(fileLine(f))
 		}
-		d.files++
-		d.bytes += f.Size
+	} else if len(n.direct) > 0 {
+		var bytes int64
+		for _, f := range n.direct {
+			bytes += f.Size
+		}
+		fmt.Fprintf(b, "%s*\t%d files\t%d bytes\n", n.path, len(n.direct), bytes)
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&b, "%s\t%d files\t%d bytes\n", k, dirs[k].files, dirs[k].bytes)
+	for _, c := range n.children {
+		c.write(b)
 	}
-	return b.String()
 }
 
 // index is the readable files by path and in path order, for resolving the
@@ -298,29 +450,44 @@ type index struct {
 // newIndex takes the files as Files returns them, in path order; another
 // order is sorted on a copy.
 func newIndex(files []File) index {
-	ix := index{byPath: make(map[string]File, len(files)), sorted: files}
+	ix := index{byPath: make(map[string]File, len(files)), sorted: inPathOrder(files)}
 	for _, f := range files {
 		ix.byPath[f.Path] = f
-	}
-	byPath := func(i, j int) bool { return ix.sorted[i].Path < ix.sorted[j].Path }
-	if !sort.SliceIsSorted(ix.sorted, byPath) {
-		ix.sorted = append([]File(nil), files...)
-		sort.Slice(ix.sorted, byPath)
 	}
 	return ix
 }
 
+// inPathOrder is files in path order: themselves when they are, else a
+// sorted copy, the caller's slice untouched.
+func inPathOrder(files []File) []File {
+	byPath := func(i, j int) bool { return files[i].Path < files[j].Path }
+	if sort.SliceIsSorted(files, byPath) {
+		return files
+	}
+	out := append([]File(nil), files...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
 // resolve turns one path the model named into readable files: the file
 // itself, or every readable file under it when it names a directory (with
-// or without the trailing slash). A path naming nothing readable resolves
-// to nothing: the model inventing one, or one the filter refused.
+// or without the trailing slash), or only the files right under it when it
+// is the listing's `dir/*` (the root's `*`, `./*` or `/*`). A path naming
+// nothing readable resolves to nothing: the model inventing one, or one
+// the filter refused.
 func (ix index) resolve(p string) []File {
 	p = strings.TrimSpace(p)
 	if f, ok := ix.byPath[p]; ok {
 		return []File{f}
 	}
+	direct := strings.HasSuffix(p, "*")
 	prefix := strings.TrimSuffix(p, "/") + "/"
-	if prefix == "/" {
+	if direct {
+		prefix = strings.TrimPrefix(strings.TrimPrefix(strings.TrimSuffix(p, "*"), "./"), "/")
+		if prefix != "" && !strings.HasSuffix(prefix, "/") {
+			return nil
+		}
+	} else if prefix == "/" {
 		return nil
 	}
 	start := sort.Search(len(ix.sorted), func(i int) bool { return ix.sorted[i].Path >= prefix })
@@ -328,6 +495,9 @@ func (ix index) resolve(p string) []File {
 	for _, f := range ix.sorted[start:] {
 		if !strings.HasPrefix(f.Path, prefix) {
 			break
+		}
+		if direct && strings.Contains(f.Path[len(prefix):], "/") {
+			continue
 		}
 		out = append(out, f)
 	}

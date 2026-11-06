@@ -87,12 +87,12 @@ func TestSaveRun_KeepsTheMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, _, _ := s.RunByID(ctx, id)
-	r.Mode, r.State = RunFull, RunCataloguing
+	r.Mode, r.State, r.ReadableBytes, r.ReadBytes = RunFull, RunCataloguing, 123_456, 65_000
 	if ok, err := s.SaveRun(ctx, r); err != nil || !ok {
 		t.Fatalf("SaveRun: %v %v", ok, err)
 	}
-	if got, _, _ := s.RunByID(ctx, id); got.Mode != RunFull {
-		t.Fatalf("mode = %s, want full saved", got.Mode)
+	if got, _, _ := s.RunByID(ctx, id); got.Mode != RunFull || got.ReadableBytes != 123_456 || got.ReadBytes != 65_000 {
+		t.Fatalf("saved = mode %s, readable %d, read %d; want full, 123456, 65000", got.Mode, got.ReadableBytes, got.ReadBytes)
 	}
 }
 

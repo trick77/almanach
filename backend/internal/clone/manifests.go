@@ -96,8 +96,11 @@ func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.
 		}
 		return nil
 	}
+	// A manifest is parsed whole: one over FileMaxBytes, which a step would
+	// read as its head, is not streamed out of git only to be refused.
+	whole := func(e gitrepo.Entry) bool { return baseline.Readable(e) && e.Size <= baseline.FileMaxBytes }
 	for _, e := range entries {
-		if baseline.Readable(e) && manifest.Is(e.Path) {
+		if whole(e) && manifest.Is(e.Path) {
 			if err := read(e); err != nil {
 				return manifest.Read{}, err
 			}
@@ -110,7 +113,7 @@ func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.
 	byDir := map[string][]gitrepo.Entry{}
 	var dirs []string
 	for _, e := range entries {
-		if baseline.Readable(e) {
+		if whole(e) {
 			d := path.Dir(e.Path)
 			if _, ok := byDir[d]; !ok && d != "." {
 				dirs = append(dirs, d)
