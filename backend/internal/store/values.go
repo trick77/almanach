@@ -76,6 +76,18 @@ func IsBusy(err error) bool {
 	return errors.Is(err, sqlite3.BUSY) || errors.Is(err, sqlite3.LOCKED)
 }
 
+// ErrFull is the error a write meets on a full disk: IsRefused reports it.
+var ErrFull error = sqlite3.FULL
+
+// IsRefused reports a write the database's file refused, whatever was
+// written: a full disk (an ENOSPC surfaces as FULL or an IOERR), a
+// read-only or vanished file. Temporary like a busy one, but its own: a
+// constraint or a value that does not decode is the write's content.
+func IsRefused(err error) bool {
+	return errors.Is(err, sqlite3.FULL) || errors.Is(err, sqlite3.READONLY) ||
+		errors.Is(err, sqlite3.IOERR) || errors.Is(err, sqlite3.CANTOPEN)
+}
+
 // jsonText is a JSON value as bound: text, never a blob, which json_valid
 // and the JSON functions would not read as JSON.
 func jsonText(b []byte) string { return string(b) }

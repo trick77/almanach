@@ -286,11 +286,7 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 		// A busy database is held off like a gateway: no next drain at
 		// once, into the same wait. Any other refusal holds longer each
 		// time: the step before the save was a paid call.
-		if store.IsBusy(err) {
-			w.hold(ctx, HoldBusy, 0)
-		} else {
-			w.holdWrite(ctx, err)
-		}
+		w.holdStore(ctx, err)
 		return errStop
 	}
 	w.writeOK()
@@ -305,12 +301,19 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 // gateway failure: the worker holds, the attempt is counted, and the step
 // is taken again after the hold (nothing of it was written); past
 // maxFoldAttempts in a row it fails the run, as it stood before the step
-// (prev). Any other failure pauses the drain, longer each time (holdWrite):
-// the step's call was paid, and the next poll would pay it again.
+// (prev). A write the file refused (store.IsRefused: a full disk) holds
+// the worker, longer each time (holdWrite): the step's call was paid, and
+// the next poll would pay it again. Anything else (a constraint) is the
+// step's content and would fail the same way at every retry: it fails the
+// run, as it stood before the step.
 func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.BaselineRun, name string, err error) error {
-	if !store.IsBusy(err) {
+	if store.IsRefused(err) {
 		w.holdWrite(ctx, err)
 		return errStop
+	}
+	if !store.IsBusy(err) {
+		*r = prev
+		return fmt.Errorf("%s step not written: %w", name, err)
 	}
 	w.hold(ctx, HoldBusy, 0)
 	if w.busyRun != r.ID {
@@ -420,9 +423,9 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 		BaselineRunID: &runID, Step: step, Outcome: res.Outcome.String(), Model: res.Cost.Model, InputTokens: res.Cost.InputTokens,
 		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
 	}); err != nil {
-		// The first write after the paid call: refused, the step goes on
-		// under the write hold.
-		w.holdWrite(ctx, fmt.Errorf("call row: %w", err))
+		// No hold here: the gateway's answer below would clear it. On a
+		// full disk the step's write or the save after it holds.
+		w.log.ErrorContext(ctx, "baseline: call row failed", logging.Err(err))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s call %s (%s)", purpose, res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res); gateway {
@@ -914,7 +917,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 		Chars: chars, SourceKind: store.FromBaseline, SourceCommit: r.Commit, BaselineRunID: &runID,
 	}, *r)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: revision write failed, drain paused", logging.Err(err))
+		w.log.WarnContext(ctx, "baseline: revision write failed", logging.Err(err))
 		return w.stepBusy(ctx, r, prev, name, err)
 	}
 	w.stepWritten()
@@ -1434,7 +1437,7 @@ func (w *Worker) writeProject(ctx context.Context, r *store.BaselineRun, plan ru
 	}
 	n, ok, err := w.base.Store.ApplyBaselineStep(ctx, *rev, *r)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: project revision write failed, drain paused", logging.Err(err))
+		w.log.WarnContext(ctx, "baseline: project revision write failed", logging.Err(err))
 		return w.stepBusy(ctx, r, prev, "project", err)
 	}
 	w.stepWritten()
@@ -2269,8 +2272,9 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		if err == nil || errors.Is(err, errStop) {
 			return err
 		}
-		// The attempts are spent: the map is optional, the run ends done
-		// without it, the basis stale for the next run.
+		// The attempts are spent, or the write fails for its content: the
+		// map is optional, the run ends done without it, the basis stale
+		// for the next run.
 		w.log.WarnContext(ctx, at+" skipped: "+err.Error()+", the stored one kept")
 		return w.finish(ctx, r, plan)
 	}

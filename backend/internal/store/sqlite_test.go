@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"sort"
@@ -316,6 +317,21 @@ func TestIsBusy(t *testing.T) {
 	for _, err := range []error{nil, errors.New("disk full"), sqlite3.CONSTRAINT_CHECK} {
 		if IsBusy(err) {
 			t.Errorf("IsBusy(%v) = true", err)
+		}
+	}
+}
+
+// IsRefused knows a full disk, a read-only or vanished file, wrapped or
+// extended, and neither a busy database nor the write's content.
+func TestIsRefused(t *testing.T) {
+	for _, err := range []error{ErrFull, sqlite3.IOERR_WRITE, sqlite3.READONLY_DBMOVED, sqlite3.CANTOPEN, fmt.Errorf("insert: %w", sqlite3.FULL)} {
+		if !IsRefused(err) {
+			t.Errorf("IsRefused(%v) = false", err)
+		}
+	}
+	for _, err := range []error{nil, errors.New("disk full"), ErrBusy, sqlite3.CONSTRAINT_CHECK} {
+		if IsRefused(err) {
+			t.Errorf("IsRefused(%v) = true", err)
 		}
 	}
 }

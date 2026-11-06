@@ -181,7 +181,7 @@ func (w *Worker) writeRestyle(ctx context.Context, r *store.BaselineRun, plan ru
 	}
 	n, ok, err := w.base.Store.ApplyRestyle(ctx, *r, scope, epoch, out)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: restyle write failed, drain paused", logging.Err(err))
+		w.log.WarnContext(ctx, "baseline: restyle write failed", logging.Err(err))
 		return w.stepBusy(ctx, r, prev, "restyle", err)
 	}
 	w.stepWritten()
