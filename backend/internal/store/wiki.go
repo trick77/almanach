@@ -93,7 +93,10 @@ type Page struct {
 	SourceKind   string
 	SourcePR     string
 	SourceCommit string
-	UpdatedAt    time.Time
+	// BatchPRKeys is every pull request the revision's fold took, in merge
+	// order, SourcePR the first; nil for a fold of one note, or a run's.
+	BatchPRKeys []string
+	UpdatedAt   time.Time
 	// Map is a project page's system map, nil on a repository page and on
 	// a project page no baseline project step has drawn yet.
 	Map *diagram.Diagram
@@ -176,34 +179,31 @@ type QueuedNote struct {
 	DeliveryID string
 }
 
-// NextQueued is the oldest note not yet consolidated nor failed, ok false
-// when none. A note of a repository whose baseline run has started waits
+// queuedColumns are a queued note's columns as scanQueued reads them. The
+// names are the current ones: a note delivered under a name the repository
+// has since left behind folds into the same page.
+const queuedColumns = `p.key, r.slug, n.pr_id, n.team, n.pr_key, n.pr_title, n.ticket_key, n.jira_issue_type, n.change_kind,
+	n.bugfix, n.bugfix_area, n.bugfix_component, n.note, n.reviewed_commit, n.source_commit, n.merge_commit,
+	n.merged_at, n.run_id, n.model_label, n.issues_posted, n.suggestions_posted, n.received_at, n.delivery_id`
+
+// queuedFrom is the queue: the notes neither consolidated nor failed, with
+// their names. A note of a repository whose baseline run has started waits
 // for the run: the run pins its commit when it starts, and no step may read
 // a page holding facts newer than that commit. A run still queued holds
 // nothing; a long queue of runs must not hold the notes for hours.
-func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
+const queuedFrom = `notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
+	WHERE n.consolidated_at IS NULL AND n.fold_failed_at IS NULL
+	  AND NOT EXISTS (` + startedRunOfNote + `)`
+
+func scanQueued(row interface{ Scan(...any) error }) (QueuedNote, error) {
 	var q QueuedNote
 	var bugfix, note []byte
 	var ticket, issueType, kind, area, comp, reviewed, merge, model *string
 	var runID *int64
-	// The names are the current ones: a note delivered under a name the
-	// repository has since left behind folds into the same page.
-	err := s.db.QueryRowContext(ctx, `
-		SELECT p.key, r.slug, n.pr_id, n.team, n.pr_key, n.pr_title, n.ticket_key, n.jira_issue_type, n.change_kind,
-		       n.bugfix, n.bugfix_area, n.bugfix_component, n.note, n.reviewed_commit, n.source_commit, n.merge_commit,
-		       n.merged_at, n.run_id, n.model_label, n.issues_posted, n.suggestions_posted, n.received_at, n.delivery_id
-		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
-		 WHERE n.consolidated_at IS NULL AND n.fold_failed_at IS NULL
-		   AND NOT EXISTS (`+startedRunOfNote+`)
-		 ORDER BY n.received_at, n.pr_id LIMIT 1`).Scan(
-		&q.ProjectKey, &q.RepoSlug, &q.PRID, &q.Team, &q.PRKey, &q.PRTitle, &ticket, &issueType, &kind,
+	if err := row.Scan(&q.ProjectKey, &q.RepoSlug, &q.PRID, &q.Team, &q.PRKey, &q.PRTitle, &ticket, &issueType, &kind,
 		&bugfix, &area, &comp, &note, &reviewed, &q.SourceCommit, &merge, timeAt(&q.MergedAt),
-		&runID, &model, &q.IssuesPosted, &q.Suggestions, timeAt(&q.ReceivedAt), &q.DeliveryID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return QueuedNote{}, false, nil
-	}
-	if err != nil {
-		return QueuedNote{}, false, err
+		&runID, &model, &q.IssuesPosted, &q.Suggestions, timeAt(&q.ReceivedAt), &q.DeliveryID); err != nil {
+		return QueuedNote{}, err
 	}
 	q.TicketKey, q.IssueType, q.ChangeKind = deref(ticket), deref(issueType), deref(kind)
 	q.BugfixArea, q.BugfixComponent, q.ReviewedCommit, q.MergeCommit, q.ModelLabel = deref(area), deref(comp), deref(reviewed), deref(merge), deref(model)
@@ -211,7 +211,52 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 	if runID != nil {
 		q.RunID = *runID
 	}
+	return q, nil
+}
+
+// NextQueued is the oldest note on the queue received at or before
+// dueBefore, ok false when none. The oldest note of all is its
+// repository's oldest too, so a repository is due once its oldest note
+// is: the worker passes now less BACKEND_FOLD_DELAY, and a repository's
+// notes wait for the delay from the first of them, not from each.
+func (s *Store) NextQueued(ctx context.Context, dueBefore time.Time) (QueuedNote, bool, error) {
+	q, err := scanQueued(s.db.QueryRowContext(ctx, `SELECT `+queuedColumns+` FROM `+queuedFrom+`
+		   AND n.received_at <= ?
+		 ORDER BY n.received_at, n.pr_id LIMIT 1`, stamp(dueBefore)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return QueuedNote{}, false, nil
+	}
+	if err != nil {
+		return QueuedNote{}, false, err
+	}
 	return q, true, nil
+}
+
+// QueuedBatch is every note on the queue of one repository, in the order
+// their pull requests were merged (received, for one without a merge
+// time): what one fold takes together. The worker cuts it to what one call
+// may show (FoldBatchBytes); the rest stays queued for the next fold.
+func (s *Store) QueuedBatch(ctx context.Context, project, repo string) ([]QueuedNote, error) {
+	rid, ok, err := repoID(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+queuedColumns+` FROM `+queuedFrom+`
+		   AND n.repo_id = ?
+		 ORDER BY COALESCE(n.merged_at, n.received_at), n.received_at, n.pr_id`, rid)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []QueuedNote
+	for rows.Next() {
+		q, err := scanQueued(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
 }
 
 // NextStatementID is one past the highest s<n> id any revision of the page
@@ -343,16 +388,16 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 		return Page{}, false, err
 	}
 	p := Page{Scope: scope}
-	var statements, drawn, repoDrawn []byte
+	var statements, drawn, repoDrawn, batch []byte
 	err = s.db.QueryRowContext(ctx, `
 		SELECT pj.key, COALESCE(rp.slug, ''), r.id, r.revision, r.summary, r.statements, r.source_kind,
 		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), p.updated_at, r.map,
-		       r.repo_map, COALESCE(r.repo_map_basis, ''), COALESCE(r.shape, '')
+		       r.repo_map, COALESCE(r.repo_map_basis, ''), COALESCE(r.shape, ''), r.batch_pr_keys
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
 		  JOIN projects pj ON pj.id = p.project_id LEFT JOIN repos rp ON rp.id = p.repo_id
 		 WHERE p.scope = ? AND p.project_id = ? AND p.repo_id = ?`, scope, pid, rid).Scan(
 		&p.ProjectKey, &p.RepoSlug, &p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR,
-		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &repoDrawn, &p.RepoMapBasis, &p.Shape)
+		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &repoDrawn, &p.RepoMapBasis, &p.Shape, &batch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Page{}, false, nil
 	}
@@ -360,6 +405,9 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 		return Page{}, false, err
 	}
 	if err := json.Unmarshal(statements, &p.Statements); err != nil {
+		return Page{}, false, err
+	}
+	if p.BatchPRKeys, err = keysOf(batch); err != nil {
 		return Page{}, false, err
 	}
 	if p.Statements == nil {
@@ -387,14 +435,15 @@ func (s *Store) Revision(ctx context.Context, scope, project, repo string, n int
 		return Page{}, false, err
 	}
 	p := Page{Scope: scope}
-	var statements, drawn []byte
+	var statements, drawn, batch []byte
 	err = s.db.QueryRowContext(ctx, `
 		SELECT pj.key, COALESCE(rp.slug, ''), r.id, r.revision, r.summary, r.statements, r.source_kind,
-		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), r.created_at, r.map, COALESCE(r.shape, '')
+		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), r.created_at, r.map, COALESCE(r.shape, ''),
+		       r.batch_pr_keys
 		  FROM revisions r JOIN projects pj ON pj.id = r.project_id LEFT JOIN repos rp ON rp.id = r.repo_id
 		 WHERE r.scope = ? AND r.project_id = ? AND COALESCE(r.repo_id, 0) = ? AND r.revision = ?`, scope, pid, rid, n).Scan(
 		&p.ProjectKey, &p.RepoSlug, &p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR,
-		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &p.Shape)
+		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &p.Shape, &batch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Page{}, false, nil
 	}
@@ -402,6 +451,9 @@ func (s *Store) Revision(ctx context.Context, scope, project, repo string, n int
 		return Page{}, false, err
 	}
 	if err := json.Unmarshal(statements, &p.Statements); err != nil {
+		return Page{}, false, err
+	}
+	if p.BatchPRKeys, err = keysOf(batch); err != nil {
 		return Page{}, false, err
 	}
 	if p.Statements == nil {
@@ -443,6 +495,9 @@ type NewRevision struct {
 	// reads it, so a writer that judges nothing (a note's fold, a map, a
 	// departure) never resets it. Ignored on a repository revision.
 	Shape string
+	// BatchPRKeys is every pull request a fold of several notes took, in
+	// merge order, SourcePR the first; nil for one.
+	BatchPRKeys []string
 }
 
 // InsertRevision writes the next revision of a page and repoints the page
@@ -486,6 +541,10 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 			return 0, err
 		}
 	}
+	batch, err := batchKeys(rev.BatchPRKeys)
+	if err != nil {
+		return 0, err
+	}
 	now := nowStamp()
 	var id int64
 	var n int
@@ -498,7 +557,7 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO revisions (scope, project_id, repo_id, revision, summary, statements, chars,
 		                       source_kind, source_pr_key, source_commit, llm_call_id, baseline_run_id, map,
-		                       repo_map, repo_map_basis, created_at, shape)
+		                       repo_map, repo_map_basis, created_at, shape, batch_pr_keys)
 		VALUES (?1, ?2, ?3,
 		    (SELECT COALESCE(MAX(revision), 0) + 1 FROM revisions
 		      WHERE scope = ?1 AND project_id = ?2 AND COALESCE(repo_id, 0) = ?4),
@@ -510,10 +569,11 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 		    ?14,
 		    CASE WHEN ?1 = 'project' THEN COALESCE(NULLIF(?15, ''),
 		        (SELECT r.shape FROM pages p JOIN revisions r ON r.id = p.current_revision_id
-		          WHERE p.scope = 'project' AND p.project_id = ?2 AND p.repo_id = 0)) END)
+		          WHERE p.scope = 'project' AND p.project_id = ?2 AND p.repo_id = 0)) END,
+		    ?16)
 		RETURNING id, revision`,
 		rev.Scope, pid, repo, rid, rev.Summary, statements, rev.Chars,
-		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn, now, rev.Shape).Scan(&id, &n)
+		fromKind(rev.SourceKind), rev.SourcePR, rev.SourceCommit, rev.LLMCallID, rev.BaselineRunID, drawn, now, rev.Shape, batch).Scan(&id, &n)
 	if err != nil {
 		return 0, err
 	}
@@ -523,6 +583,18 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev NewRevision) (int, erro
 		return 0, err
 	}
 	return n, nil
+}
+
+// keysOf reads a stored batch_pr_keys column; NULL is nil.
+func keysOf(raw []byte) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	var keys []string
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 // diagramOf reads a stored diagram column; NULL is nil.
@@ -590,6 +662,18 @@ type LLMCall struct {
 	OutputTokens int64
 	CostNanoUSD  *int64
 	CallID       string
+	// BatchPRKeys is every pull request a merge folded together, in merge
+	// order, SourcePR the first; nil for a fold of one note.
+	BatchPRKeys []string
+}
+
+// batchKeys is a fold's PR keys as stored: a JSON array for two or more,
+// NULL for one or none.
+func batchKeys(keys []string) (any, error) {
+	if len(keys) < 2 {
+		return nil, nil
+	}
+	return jsonOf(keys)
 }
 
 // InsertLLMCall records one model call and returns its id.
@@ -598,8 +682,12 @@ func (s *Store) InsertLLMCall(ctx context.Context, c LLMCall) (int64, error) {
 	if purpose == "" {
 		purpose = PurposeMerge
 	}
+	batch, err := batchKeys(c.BatchPRKeys)
+	if err != nil {
+		return 0, err
+	}
 	var id int64
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		pid, err := ensureProject(ctx, tx, c.ProjectKey)
 		if err != nil {
 			return err
@@ -610,11 +698,12 @@ func (s *Store) InsertLLMCall(ctx context.Context, c LLMCall) (int64, error) {
 		}
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO llm_calls (repo_id, source_kind, source_pr_key, source_commit, purpose, baseline_run_id, step,
-			                       outcome, model, input_tokens, cached_tokens, output_tokens, cost_nano_usd, call_id, created_at)
-			VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?)
+			                       outcome, model, input_tokens, cached_tokens, output_tokens, cost_nano_usd, call_id, created_at,
+			                       batch_pr_keys)
+			VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?)
 			RETURNING id`,
 			rid, fromKind(c.SourceKind), c.SourcePR, c.SourceCommit, purpose, c.BaselineRunID, c.Step,
-			c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, nowStamp()).Scan(&id)
+			c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, nowStamp(), batch).Scan(&id)
 	})
 	return id, err
 }

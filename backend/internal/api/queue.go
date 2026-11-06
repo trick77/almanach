@@ -104,6 +104,12 @@ type queueItemBody struct {
 	ReceivedAt *time.Time `json:"received_at,omitempty"`
 	// HeldBy is the run of its repository the note waits for.
 	HeldBy int64 `json:"held_by,omitempty"`
+	// DueAt is when the note's repository is folded, set while it waits for
+	// the fold delay (BACKEND_FOLD_DELAY).
+	DueAt *time.Time `json:"due_at,omitempty"`
+	// Batch is how many notes the fold in flight takes, on the current item
+	// when more than one.
+	Batch int `json:"batch,omitempty"`
 	// A run's.
 	Run *queueRunBody `json:"run,omitempty"`
 	// Attempts is the gateway failures counted against it so far.
@@ -177,6 +183,9 @@ type recentBody struct {
 	PRKey   string `json:"pr_key,omitempty"`
 	Title   string `json:"title,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
+	// Batch is how many notes the note's merge call folded when more than
+	// one: CostUSD is then the whole call's, shared with the others.
+	Batch int `json:"batch,omitempty"`
 	// A run's.
 	RunID   int64  `json:"run_id,omitempty"`
 	State   string `json:"state,omitempty"`
@@ -237,14 +246,20 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 	}
 
 	// The worker's order, its own (consolidate.QueueOrder).
-	order := consolidate.QueueOrder(notes, runs)
+	order := consolidate.QueueOrder(notes, runs, st.FoldDelay, q.now())
 	queued := order.Queued
-	var free, held []queueItemBody
+	var free, held, waiting []queueItemBody
 	for _, n := range order.Free {
 		free = append(free, noteItem(n))
 	}
 	for _, n := range order.Held {
 		held = append(held, noteItem(n))
+	}
+	for _, n := range order.Waiting {
+		it := noteItem(n.PendingNote)
+		due := n.Due
+		it.DueAt = &due
+		waiting = append(waiting, it)
 	}
 	var startedItem *queueItemBody
 	if order.Started != nil {
@@ -259,19 +274,31 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 	if b := st.Busy; b != nil {
 		switch b.Kind {
 		case consolidate.KindNote:
-			for i, it := range free {
-				if it.PRKey == b.PRKey && it.Project == b.ProjectKey && it.Repo == b.RepoSlug {
+			// The fold's first note is the current item, its others taken
+			// off the list: they are in flight with it, not next.
+			inFold := map[string]bool{b.PRKey: true}
+			for _, k := range b.PRKeys {
+				inFold[k] = true
+			}
+			kept := free[:0]
+			for _, it := range free {
+				switch {
+				case it.Project != b.ProjectKey || it.Repo != b.RepoSlug || !inFold[it.PRKey]:
+					kept = append(kept, it)
+				case it.PRKey == b.PRKey:
 					cur := it
 					out.Current = &cur
-					free = append(free[:i], free[i+1:]...)
-					break
 				}
 			}
+			free = kept
 			// Folded between the status and the read of the notes: still
 			// the work in flight a moment ago, named by what the status
 			// knows of it.
 			if out.Current == nil {
 				out.Current = &queueItemBody{Kind: consolidate.KindNote, Project: b.ProjectKey, Repo: b.RepoSlug, PRKey: b.PRKey}
+			}
+			if len(b.PRKeys) > 1 {
+				out.Current.Batch = len(b.PRKeys)
 			}
 		case consolidate.KindRun:
 			if startedItem != nil && startedItem.Run.ID == b.RunID {
@@ -329,6 +356,7 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 		}
 		out.Next = append(out.Next, it)
 	}
+	out.Next = append(out.Next, waiting...)
 
 	// Why the next item waits: a hold stops everything; a run step that
 	// waits for its clone or git says so on that run.
@@ -470,8 +498,12 @@ func (q *QueueDeps) recent(ctx context.Context, since time.Time) ([]recentBody, 
 		return nil, err
 	}
 	for _, n := range notes {
-		out = append(out, recentBody{Kind: consolidate.KindNote, At: n.ConsolidatedAt, Project: n.ProjectKey, Repo: n.RepoSlug,
-			PRKey: n.PRKey, Title: n.PRTitle, Outcome: n.Outcome, CostUSD: usd(n.CostNanoUSD)})
+		rb := recentBody{Kind: consolidate.KindNote, At: n.ConsolidatedAt, Project: n.ProjectKey, Repo: n.RepoSlug,
+			PRKey: n.PRKey, Title: n.PRTitle, Outcome: n.Outcome, CostUSD: usd(n.CostNanoUSD)}
+		if n.Batch > 1 {
+			rb.Batch = n.Batch
+		}
+		out = append(out, rb)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
 	if len(out) > recentMax {

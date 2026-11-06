@@ -197,6 +197,12 @@ const (
 	MinSyncInterval = time.Minute
 )
 
+// DefaultFoldDelay is a day: the documentation may lag the code by one
+// (user, 2026-11-06), and a repository's day of pull requests then costs
+// one merge call, its page and the prompt read once, not one call each; a
+// burst of notes delivered by mistake folds in a few calls, not hundreds.
+const DefaultFoldDelay = 24 * time.Hour
+
 // minBaselineCalls is a run with no subject: catalogue, overview, project.
 // The repository map's call is kept only from four (best effort below).
 const minBaselineCalls = 3
@@ -218,10 +224,14 @@ type App struct {
 	Model           string
 	ReasoningEffort string
 	Limits          Limits
-	ProblemWindow   int
-	Sources         Sources
-	Baseline        Baseline
-	LogLevel        string
+	// FoldDelay is how long a repository's notes wait, from the first of
+	// them, before one call folds them all (BACKEND_FOLD_DELAY); zero folds
+	// each note on its own as it comes.
+	FoldDelay     time.Duration
+	ProblemWindow int
+	Sources       Sources
+	Baseline      Baseline
+	LogLevel      string
 	// MetricsToken is BACKEND_METRICS_TOKEN: a bearer that opens /metrics
 	// from anywhere; "" leaves it to a loopback caller. No team's bearer
 	// opens it: the metrics carry every project's spend.
@@ -245,6 +255,7 @@ func Load(lookup func(string) string) (*App, error) {
 			DiagramMaxEdges: positive(r, "BACKEND_DIAGRAM_MAX_EDGES", 20),
 			MaxDiagrams:     nonNegative(r, "BACKEND_DIAGRAM_MAX_PER_PAGE", 6),
 		},
+		FoldDelay:     r.Duration("BACKEND_FOLD_DELAY", DefaultFoldDelay),
 		ProblemWindow: positive(r, "BACKEND_PROBLEM_WINDOW_DAYS", 90),
 		Sources: Sources{
 			ReposDir:      r.String("BACKEND_REPOS_DIR", ""),
@@ -303,6 +314,9 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if why := badAddr(app.Addr); why != "" {
 		r.Fail("BACKEND_ADDR: %s, got %q", why, app.Addr)
+	}
+	if app.FoldDelay < 0 {
+		r.Fail("BACKEND_FOLD_DELAY: must not be negative, 0 folds each note as it comes, got %s", app.FoldDelay)
 	}
 	if app.Sources.SyncInterval < 0 {
 		r.Fail("BACKEND_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)

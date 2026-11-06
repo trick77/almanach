@@ -321,25 +321,25 @@ func TestNextQueued_WaitsForTheRepositorysStartedRun(t *testing.T) {
 	ingest(t, s, noteFor("PRJ", "svc", 1))
 	sourceRepo(t, s, "PRJ", "svc")
 	r := enqueue(t, s, "PRJ", "svc")
-	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 1 {
+	if q, ok, err := s.NextQueued(ctx, anyTime); err != nil || !ok || q.PRID != 1 {
 		t.Fatalf("queued run: pr=%d ok=%v err=%v, want the note handed out", q.PRID, ok, err)
 	}
 	r.State = RunCataloguing
 	if ok, err := s.SaveRun(ctx, r); err != nil || !ok {
 		t.Fatalf("SaveRun: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := s.NextQueued(ctx); err != nil || ok {
+	if _, ok, err := s.NextQueued(ctx, anyTime); err != nil || ok {
 		t.Fatalf("started run: ok=%v err=%v, want the note held", ok, err)
 	}
 	ingest(t, s, noteFor("PRJ", "other", 2))
-	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 2 {
+	if q, ok, err := s.NextQueued(ctx, anyTime); err != nil || !ok || q.PRID != 2 {
 		t.Fatalf("other repository: pr=%d ok=%v err=%v, want 2", q.PRID, ok, err)
 	}
 	if err := s.MarkConsolidated(ctx, "PRJ", "other", 2, "d-PRJ-other-2"); err != nil {
 		t.Fatal(err)
 	}
 	finish(t, s, r, RunDone)
-	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 1 {
+	if q, ok, err := s.NextQueued(ctx, anyTime); err != nil || !ok || q.PRID != 1 {
 		t.Fatalf("run done: pr=%d ok=%v err=%v, want 1", q.PRID, ok, err)
 	}
 }

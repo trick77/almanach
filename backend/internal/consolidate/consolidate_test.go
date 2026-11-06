@@ -36,8 +36,16 @@ var (
 type fakeStore struct {
 	queue    []store.QueuedNote
 	queueErr error
-	markErr  error
-	deferErr error
+	// popped is the note NextQueued took last, the first of QueuedBatch's
+	// answer; batchErr fails QueuedBatch.
+	popped   store.QueuedNote
+	batchErr error
+	// repoProblems is the repository's problem areas a fold of bugfix
+	// notes reads; repoProblemsErr fails the read.
+	repoProblems    []store.RepoProblem
+	repoProblemsErr error
+	markErr         error
+	deferErr        error
 	// deferReplaced answers a defer as for a note delivered again.
 	deferReplaced bool
 	attempts      map[string]int
@@ -115,17 +123,42 @@ func newFakeStore() *fakeStore {
 
 func pageKey(scope, project, repo string) string { return scope + "|" + project + "|" + repo }
 
-func (f *fakeStore) NextQueued(context.Context) (store.QueuedNote, bool, error) {
+func (f *fakeStore) NextQueued(_ context.Context, dueBefore time.Time) (store.QueuedNote, bool, error) {
 	f.nextQueuedN++
 	if f.queueErr != nil {
 		return store.QueuedNote{}, false, f.queueErr
 	}
-	if len(f.queue) == 0 {
+	if len(f.queue) == 0 || f.queue[0].ReceivedAt.After(dueBefore) {
 		return store.QueuedNote{}, false, nil
 	}
 	q := f.queue[0]
 	f.queue = f.queue[1:]
+	f.popped = q
 	return q, true, nil
+}
+
+// QueuedBatch is the note NextQueued last took and every queued note of
+// its repository, in merge order, all taken off the fake's queue.
+func (f *fakeStore) QueuedBatch(_ context.Context, project, repo string) ([]store.QueuedNote, error) {
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
+	out := []store.QueuedNote{f.popped}
+	rest := f.queue[:0]
+	for _, q := range f.queue {
+		if q.ProjectKey == project && q.RepoSlug == repo {
+			out = append(out, q)
+		} else {
+			rest = append(rest, q)
+		}
+	}
+	f.queue = rest
+	slices.SortStableFunc(out, func(a, b store.QueuedNote) int { return a.MergedAt.Compare(b.MergedAt) })
+	return out, nil
+}
+
+func (f *fakeStore) RepoProblems(context.Context, string, string, time.Time) ([]store.RepoProblem, error) {
+	return f.repoProblems, f.repoProblemsErr
 }
 
 func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, prID int, delivery string) error {
@@ -843,14 +876,14 @@ func TestFoldProjectExtensionRefused(t *testing.T) {
 			t.Errorf("%s: project revision = %+v, want the summary alone", kind, rev)
 		}
 	}
-	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason == "" {
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, only(store.Source{}), 1, limitsOf(limits)); reason == "" {
 		t.Error("attach took an unknown kind on the project page")
 	}
 	project.Statements[0].Kind = "extension"
-	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); !strings.Contains(reason, "extension not on a project page") {
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, only(store.Source{}), 1, limitsOf(limits)); !strings.Contains(reason, "extension not on a project page") {
 		t.Errorf("reason = %q", reason)
 	}
-	if _, _, reason := attach(store.ScopeRepository, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason != "" {
+	if _, _, reason := attach(store.ScopeRepository, nil, project.Statements, only(store.Source{}), 1, limitsOf(limits)); reason != "" {
 		t.Errorf("repository extension refused: %q", reason)
 	}
 }
@@ -873,12 +906,12 @@ func TestValidFor_StoredStatementsNeverHeld(t *testing.T) {
 	}
 	legacy := []store.Statement{{ID: "s1", Kind: "extension", Name: "Alt", Text: "Von früher.", Checked: "old"}}
 	out, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Von früher."}},
-		store.Source{PRKey: "x"}, 2, limitsOf(limits))
+		only(store.Source{PRKey: "x"}), 2, limitsOf(limits))
 	if reason != "" || len(out) != 1 || out[0].Checked != "old" {
 		t.Fatalf("stored legacy kind: out %+v, reason %q; want it kept as is", out, reason)
 	}
 	if _, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Geändert."}},
-		store.Source{PRKey: "x"}, 2, limitsOf(limits)); reason == "" {
+		only(store.Source{PRKey: "x"}), 2, limitsOf(limits)); reason == "" {
 		t.Error("a merge took a changed statement of a kind its page cannot hold")
 	}
 }
@@ -898,7 +931,7 @@ func TestAttach_AreaIsNoText(t *testing.T) {
 		{ID: str("s2"), Kind: "rule", Name: "Liste", Text: "Paginiert.", Area: "Abfrage"},
 		{ID: str("s3"), Kind: "rule", Name: "Datei", Text: "XLSX.", Area: "Export"},
 		{Kind: "rule", Name: "Filter", Text: "Nach Status.", Area: "abfrage"},
-	}, store.Source{PRKey: "PRJ/svc#2"}, 4, limitsOf(limits))
+	}, only(store.Source{PRKey: "PRJ/svc#2"}), 4, limitsOf(limits))
 	if reason != "" {
 		t.Fatal(reason)
 	}
@@ -1458,14 +1491,14 @@ func TestRender(t *testing.T) {
 	q.Body = json.RawMessage(`{"components":[{"name":"x"}]}`)
 	empty := store.Page{}
 	out := render(prompts.Merge, q, existingRepoPage(), empty, limits)
-	for _, ph := range []string{"{repo}", "{project}", "{pr_key}", "{ticket_key}", "{change_kind}", "{repo_max_statements}",
-		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}", "{note}",
+	for _, ph := range []string{"{repo}", "{project}", "{note_count}", "{notes}", "{problems}", "{repo_max_statements}",
+		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}",
 		"{diagram_rules}", "{diagram_max_nodes}", "{diagram_max_edges}", "{max_diagrams}"} {
 		if strings.Contains(out, ph) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
 	}
-	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown",
+	for _, want := range []string{"`files`", "`PLAT`", "### PR PLAT/files#42 (ticket none, kind unknown, merged 2026-10-20)", "(1 note)", noProblems,
 		"Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram",
 		// A PR-taught statement is marked, the prompt naming the mark: a
@@ -1803,7 +1836,7 @@ func TestDrainOldestFirst(t *testing.T) {
 	if len(m.prompts) != 3 {
 		t.Fatalf("folded %d notes, want 3", len(m.prompts))
 	}
-	for i, want := range []string{"PR PLAT/files#1,", "PR PLAT/files#2,", "PR PLAT/files#3,"} {
+	for i, want := range []string{"PR PLAT/files#1 (", "PR PLAT/files#2 (", "PR PLAT/files#3 ("} {
 		if !strings.Contains(m.prompts[i], want) {
 			t.Errorf("fold %d prompt lacks %q", i, want)
 		}

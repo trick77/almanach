@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -183,6 +184,48 @@ func TestQueue_TheWorkersOrder(t *testing.T) {
 	// The queued run has made no call: its calls are never read.
 	if len(st.callsAsked) != 1 || st.callsAsked[0] != 41 {
 		t.Errorf("calls read for runs %v, want 41 alone", st.callsAsked)
+	}
+}
+
+// Under the fold delay a repository whose oldest note has not waited the
+// delay comes last, each of its notes with when it is folded; a fold of
+// several notes in flight is the current item with its size, its other
+// notes off the list. A folded note of a batch shows its size beside the
+// whole call's cost.
+func TestQueue_FoldDelay(t *testing.T) {
+	st := &fakeQueueStore{
+		notes: []store.PendingNote{
+			pending("ledger", "pay/ledger#1", -26*60, 0), pending("ledger", "pay/ledger#2", -60, 0), pending("ledger", "pay/ledger#3", -10, 0),
+			pending("billing", "pay/billing#7", -60, 0),
+		},
+		open:   []store.BaselineRun{queuedRun(42, "checkout", -30)},
+		folded: []store.FoldedNote{{ProjectKey: "pay", RepoSlug: "web", PRKey: "pay/web#4", ConsolidatedAt: at(-45), Outcome: "ok", Batch: 3}},
+	}
+	busy := consolidate.Busy{Kind: consolidate.KindNote, ProjectKey: "pay", RepoSlug: "ledger", PRKey: "pay/ledger#1",
+		PRKeys: []string{"pay/ledger#1", "pay/ledger#2"}, Since: at(0)}
+	out := getQueue(t, &QueueDeps{Store: st, Sync: fakeSync{},
+		Worker: fakeWorkerStatus{consolidate.Status{Busy: &busy, FoldDelay: 24 * time.Hour}}})
+	if c := out.Current; c == nil || c.PRKey != "pay/ledger#1" || c.Batch != 2 {
+		t.Fatalf("current = %+v, want ledger#1 folding two notes", out.Current)
+	}
+	var order []string
+	for _, it := range out.Next {
+		key := it.PRKey
+		if it.Run != nil {
+			key = it.Repo
+		}
+		if it.DueAt != nil {
+			key += "@" + it.DueAt.Sub(queueNow).String()
+		}
+		order = append(order, key)
+	}
+	// ledger#3 arrived after the fold took its batch: next, due already.
+	want := []string{"pay/ledger#3", "checkout", "pay/billing#7@23h0m0s"}
+	if !slices.Equal(order, want) {
+		t.Errorf("next = %v, want %v", order, want)
+	}
+	if len(out.Recent) != 1 || out.Recent[0].Batch != 3 {
+		t.Errorf("recent = %+v, want the note's batch of 3", out.Recent)
 	}
 }
 

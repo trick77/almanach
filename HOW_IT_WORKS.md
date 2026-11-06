@@ -163,9 +163,48 @@ without a second delivery. Serial on purpose: two folds of the same project
 would each rewrite the project description from a base the other is
 replacing.
 
+**Once a day per repository.** A repository's notes wait until its oldest
+has waited `BACKEND_FOLD_DELAY` (a day by default; `0` folds each note on
+its own as it comes), and then one fold takes all of them: one call, the
+page and the prompt read once, one revision per page. The documentation
+may lag the code by a day (user, 2026-11-06); a note per call paid the
+page, the prompt and the reasoning again for every pull request, and a
+burst of notes delivered by mistake (hundreds for one repository) cost a
+call each. The worker asks the store for the oldest note received before
+now less the delay (`NextQueued`): the oldest note of all is its
+repository's oldest too, so its repository is due, and `QueuedBatch` reads
+every queued note of it in merge order, as many as fit in 240 kB of note
+text (`FoldBatchBytes`, the most a baseline step shows of a repository's
+files); the rest stay queued, due at once, and fold next. A note over the
+bound folds alone, as before. Nothing is dropped for size. The queue page
+lists a waiting repository's notes last, each with when it is folded, and
+a fold in flight with how many notes it takes.
+
+Nothing is lost to the batch. Every note reaches the model whole, under a
+heading with its PR key, ticket, kind and merge day, in merge order; where
+two disagree the later holds. Each edit and new statement names the pull
+requests that taught it (`from_prs`), and the code credits exactly those,
+each with its own ticket, merge time and commit: provenance stays the
+code's to write, the model only picks among the notes the fold took (user,
+2026-11-06). An item naming none, or a PR the fold does not hold, is left
+out and logged like any item that breaks a rule. Crediting every PR of the
+fold to every changed statement was rejected: on a day of ten pull
+requests each statement would cite ten, and a pitfall every PR but its
+fix. The call's row and each revision keep every PR of the fold
+(`batch_pr_keys`), the first in `source_pr_key` as every single-note
+reader expects; the queue page shows a folded note the call's whole cost
+and how many notes shared it. The notes' rows are untouched: the problem
+areas and the dashboard count them as before.
+
 A fold reads the current repository and project descriptions, renders the
 merge prompt (`backend/internal/prompts/almanach_merge.txt`, compiled in)
-and makes one `Chat` call with a strict JSON schema. The model returns, for
+and makes one `Chat` call with a strict JSON schema. Beside the notes the
+prompt shows the problem areas of the fold's bugfix notes: each area's
+bugfix notes in this fold and its history (`RepoProblems`: the count, the
+cause seen most, the newest fixes), as a baseline subject step sees it.
+Two fixes of one area in one day become one pitfall citing both, where
+two folds each saw one fix alone; a new pitfall stands only on a bugfix
+note among its `from_prs`. The model returns, for
 each description, either `null` (no change) or a patch, as a baseline step
 does: `summary`, written whole or `null` to keep it; `statements`, the
 edits alone, each with its `id` (the schema requires the string); `added`,
@@ -186,8 +225,9 @@ The answer is then held to rules the model cannot bend:
 
 - Spelling: the sharp s becomes `ss` on every prose field, never on file paths.
 - Provenance: a kept id takes its sources from the current page and gains
-  this pull request only when its text or name changed; a new statement
-  starts with this pull request, numbered past every id the page's history
+  this pull request (in a fold of several, those its `from_prs` named) only
+  when its text or name changed; a new statement starts with them,
+  numbered past every id the page's history
   ever used, so an id dropped in one fold never names another fact later.
   An item that breaks a rule costs only itself (`baseline.ApplyMerge`): an
   edit of an id the page does not have, or of one an earlier edit took, a
@@ -244,7 +284,12 @@ it is given up and stays failed, so one note that always fails costs eight
 calls, not one a run. The queue page lists the failed notes with their
 reasons; a note delivered again starts afresh. Before, such a note was
 marked consolidated with a log line, and what its pull request taught was
-gone.
+gone. A fold of several notes the answer fails is not failed whole: each
+half is folded on its own, the first half first, down to a single note,
+which fails as above. One note that breaks the answer costs that note
+alone, and a large batch is halved at most log2 of its size times rather
+than falling back to a call per note at once. A gateway failure keeps
+every note of the fold queued, each with its attempt counted.
 
 A failure of the gateway as a whole is different: a timeout, a 5xx or
 transport failure, a refused key, a rate limit, a proxy page where the
@@ -1611,7 +1656,8 @@ kind, name, text, files, the sources code attached and its diagram, if
 any), a project revision's system `map` as JSON, the serialized
 size, what produced it (`source_kind`: the PR whose note it was, or the
 baseline run's commit, exactly one of `source_pr_key` and `source_commit`
-set) and the call behind it. A statement's source carries the same kind;
+set; a fold of several notes the first PR, and every PR in
+`batch_pr_keys`, as its call's row) and the call behind it. A statement's source carries the same kind;
 a source stored before baselines has none and is a PR. The
 check `(scope = 'project') = (repo_slug IS NULL)` keeps the two scopes
 honest. `pages` is the current pointer per page: one row, one
@@ -1855,8 +1901,14 @@ things a change must not undo by accident.
 ### The queue and the worker
 
 - The queue is `consolidated_at IS NULL AND fold_failed_at IS NULL`, oldest
-  `received_at` first, then the lowest PR id. One note is folded at a
-  time; there is never a second worker.
+  `received_at` first, then the lowest PR id. One fold at a time, a
+  repository's notes together once its oldest has waited
+  `BACKEND_FOLD_DELAY`, in merge order, at most 240 kB of notes a call;
+  there is never a second worker.
+- A fold of several notes credits each edit and new statement with the
+  pull requests it names, of the fold's; one naming none or another is
+  left out. A new pitfall needs a bugfix note among them. The call's row
+  and the revisions keep every PR of the fold (`batch_pr_keys`).
 - The worker wakes on an accepted delivery and polls every thirty seconds;
   a wake that arrives while one is pending is the same wake.
 - Both current pages are read *before* the model call, and the repository

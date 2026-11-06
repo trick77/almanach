@@ -328,6 +328,31 @@ export function SourceChip({
   );
 }
 
+/** RevisionSources is what wrote a revision: its run's commit, its note's
+ *  PR, or every PR a fold of several notes took, a chip each. */
+export function RevisionSources({
+  kind,
+  prKey,
+  prKeys,
+  commit,
+}: {
+  kind?: "pr" | "baseline";
+  prKey: string;
+  prKeys?: string[];
+  commit?: string;
+}) {
+  if (kind !== "baseline" && prKeys && prKeys.length > 1) {
+    return (
+      <span className="inline-flex flex-wrap gap-1">
+        {prKeys.map((k) => (
+          <SourceChip key={k} source={{ kind: "pr", pr_key: k }} />
+        ))}
+      </span>
+    );
+  }
+  return <SourceChip source={{ kind, pr_key: prKey, commit }} />;
+}
+
 /** checkedNews reports whether a statement's checked commit says more than
  *  its sources: a run that wrote the statement at that commit already
  *  shows it as a Basis chip. */

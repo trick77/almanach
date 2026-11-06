@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { duration, QueuePage } from "./QueuePage";
 import type { Me, Queue, QueueItem, QueueRun, RunStep } from "./api";
+import { dayTime } from "./format";
 import { S } from "./strings";
 
 function serve(table: Record<string, unknown>) {
@@ -439,6 +440,39 @@ describe("QueuePage", () => {
     expect(
       within(items[0]).getByText(/^erzeugt oder pusht seit/),
     ).toBeInTheDocument();
+  });
+
+  it("shows a fold of several notes, when a waiting repository folds and a shared cost", async () => {
+    const due = iso(5 * 60);
+    serve({
+      queue: queue({
+        current: { ...note(812), since: iso(-1), batch: 3 },
+        next: [note(900, { repo: "billing", due_at: due })],
+        recent: [
+          {
+            kind: "note",
+            at: iso(-30),
+            project: "pay",
+            repo: "web",
+            pr_key: "pay/web#4",
+            outcome: "ok",
+            cost_usd: "0.120",
+            batch: 3,
+          },
+        ],
+      }),
+    });
+    render(<QueuePage />);
+    const items = await screen.findAllByTestId("queue-item");
+    const inLine = (s: string) =>
+      new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    expect(
+      within(items[0]).getByText(inLine(S.queue.batch(3))),
+    ).toBeInTheDocument();
+    expect(
+      within(items[1]).getByText(inLine(S.queue.dueAt(dayTime(due)))),
+    ).toBeInTheDocument();
+    expect(screen.getByText(S.queue.shared(3))).toBeInTheDocument();
   });
 
   it("counts what it does not list", async () => {

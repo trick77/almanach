@@ -2,6 +2,7 @@ package consolidate
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/trick77/almanach/internal/inference"
@@ -54,10 +55,12 @@ type Busy struct {
 	Kind       string
 	ProjectKey string
 	RepoSlug   string
-	// PRKey is a note's; RunID a run's.
-	PRKey string
-	RunID int64
-	Since time.Time
+	// PRKey is a note's, the first of a fold's; PRKeys every note the fold
+	// takes. RunID a run's.
+	PRKey  string
+	PRKeys []string
+	RunID  int64
+	Since  time.Time
 }
 
 // Wait is a run step that will be taken again at the next drain.
@@ -76,15 +79,18 @@ type Status struct {
 	Wait      *Wait
 	// Poll is how often the loop looks on its own.
 	Poll time.Duration
+	// FoldDelay is how long a repository's notes wait from its oldest.
+	FoldDelay time.Duration
 }
 
 // Status is a copy of what the worker is doing.
 func (w *Worker) Status() Status {
 	w.smu.Lock()
 	defer w.smu.Unlock()
-	s := Status{Poll: w.poll, HoldCause: w.holdCause}
+	s := Status{Poll: w.poll, FoldDelay: w.foldDelay, HoldCause: w.holdCause}
 	if w.busy != nil {
 		b := *w.busy
+		b.PRKeys = slices.Clone(b.PRKeys)
 		s.Busy = &b
 	}
 	if w.waiting != nil {
@@ -141,26 +147,49 @@ func (w *Worker) setHold(until time.Time, cause string) {
 // Order is the queue as drain takes it: every note it may fold, oldest
 // first (NextQueued); the started run's next step (NextRun takes a started
 // run before a queued one); the notes waiting for that run, free once it
-// is over; the queued runs, oldest first. Kept beside drain: a change to
-// what drain takes first changes this too.
+// is over; the queued runs, oldest first; last the notes whose repository
+// is not due yet (the fold delay), soonest first, each with Due set. Kept
+// beside drain: a change to what drain takes first changes this too.
 type Order struct {
 	Free    []store.PendingNote
 	Started *store.BaselineRun
 	Held    []store.PendingNote
 	Queued  []store.BaselineRun
+	Waiting []PendingDue
+}
+
+// PendingDue is a note whose repository waits for the fold delay, and
+// when it is due: its repository's oldest note's arrival plus the delay.
+type PendingDue struct {
+	store.PendingNote
+	Due time.Time
 }
 
 // QueueOrder lays notes (PendingNotes' order) and open runs (OpenRuns'
-// order) out as drain takes them.
-func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun) Order {
+// order) out as drain takes them, delay the fold delay at now: a note
+// waits until its repository's oldest has waited the delay (NextQueued).
+func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun, delay time.Duration, now time.Time) Order {
 	var o Order
+	// The notes come oldest first: a repository's first is its oldest.
+	oldest := map[string]time.Time{}
 	for _, n := range notes {
-		if n.HeldBy != 0 {
+		k := n.ProjectKey + "/" + n.RepoSlug
+		if _, ok := oldest[k]; !ok {
+			oldest[k] = n.ReceivedAt
+		}
+	}
+	for _, n := range notes {
+		due := oldest[n.ProjectKey+"/"+n.RepoSlug].Add(delay)
+		switch {
+		case delay > 0 && due.After(now):
+			o.Waiting = append(o.Waiting, PendingDue{PendingNote: n, Due: due})
+		case n.HeldBy != 0:
 			o.Held = append(o.Held, n)
-		} else {
+		default:
 			o.Free = append(o.Free, n)
 		}
 	}
+	slices.SortStableFunc(o.Waiting, func(a, b PendingDue) int { return a.Due.Compare(b.Due) })
 	for i := range runs {
 		switch {
 		case runs[i].State == store.RunQueued:

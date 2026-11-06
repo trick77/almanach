@@ -414,10 +414,22 @@ function NoteMeta({ item, now }: { item: QueueItem; now: number }) {
           {kind}
         </>
       )}
+      {item.batch && (
+        <>
+          <Sep />
+          {S.queue.batch(item.batch)}
+        </>
+      )}
       {item.since && (
         <>
           <Sep />
           {S.queue.callRunning(since(item.since, now))}
+        </>
+      )}
+      {item.due_at && (
+        <>
+          <Sep />
+          {S.queue.dueAt(dayTime(item.due_at))}
         </>
       )}
       {item.attempts > 0 && (
@@ -645,7 +657,14 @@ function Recent({ rows }: { rows: QueueRecent[] }) {
               <td className={td}>
                 <RecentResult r={r} />
               </td>
-              <td className={tdNum}>{r.cost_usd ? money(r.cost_usd) : "–"}</td>
+              <td className={tdNum}>
+                {r.cost_usd ? money(r.cost_usd) : "–"}
+                {r.batch && r.cost_usd && (
+                  <span className="block text-[11.5px] text-faint">
+                    {S.queue.shared(r.batch)}
+                  </span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
