@@ -301,21 +301,24 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 // gateway failure: the worker holds, the attempt is counted, and the step
 // is taken again after the hold (nothing of it was written); past
 // maxFoldAttempts in a row it fails the run, as it stood before the step
-// (prev). A write the file refused (store.IsRefused: a full disk) holds
-// the worker, longer each time (holdWrite): the step's call was paid, and
-// the next poll would pay it again. Anything else (a constraint) is the
-// step's content and would fail the same way at every retry: it fails the
-// run, as it stood before the step.
+// (prev). A write the file refused (store.IsRefused: a full disk) is
+// counted the same, under the write hold, longer each time (holdWrite):
+// the step's call was paid, and without the count every hold's end would
+// pay it again. Anything else (a constraint) is the step's content and
+// would fail the same way at every retry: it fails the run at once.
 func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.BaselineRun, name string, err error) error {
-	if store.IsRefused(err) {
-		w.holdWrite(ctx, err)
-		return errStop
-	}
-	if !store.IsBusy(err) {
+	busy := store.IsBusy(err)
+	if !busy && !store.IsRefused(err) {
 		*r = prev
 		return fmt.Errorf("%s step not written: %w", name, err)
 	}
-	w.hold(ctx, HoldBusy, 0)
+	why := "database busy"
+	if busy {
+		w.hold(ctx, HoldBusy, 0)
+	} else {
+		why = "write refused"
+		w.holdWrite(ctx, err)
+	}
 	if w.busyRun != r.ID {
 		w.busyRun, w.busyWrites = r.ID, 0
 	}
@@ -324,11 +327,25 @@ func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.
 		n := w.busyWrites
 		w.busyRun, w.busyWrites = 0, 0
 		*r = prev
-		return fmt.Errorf("%s step given up after %d busy database writes: %w", name, n, err)
+		return fmt.Errorf("%s step given up after %d busy or refused database writes: %w", name, n, err)
 	}
-	w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s step not written: database busy, attempt %d of %d, kept for after the hold",
-		name, w.busyWrites, maxFoldAttempts), logging.Err(err))
+	w.log.WarnContext(ctx, fmt.Sprintf("baseline: %s step not written: %s, attempt %d of %d, kept for after the hold",
+		name, why, w.busyWrites, maxFoldAttempts), logging.Err(err))
 	return errStop
+}
+
+// runWritable is the write a run held by a refused write takes before its
+// step's paid call: its progress saved as it stands. Refused again, the
+// worker holds again and pays nothing.
+func (w *Worker) runWritable(ctx context.Context, r store.BaselineRun) bool {
+	if w.writeBackoff == 0 {
+		return true
+	}
+	if _, err := w.base.Store.SaveRun(ctx, r); err != nil {
+		w.holdStore(ctx, err)
+		return false
+	}
+	return true
 }
 
 // stepWritten forgets the busy writes, and the write hold's backoff, once

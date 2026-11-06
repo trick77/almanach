@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"syscall"
 
 	"github.com/trick77/ship/kit/httpx"
 )
@@ -64,11 +63,10 @@ const MinFreeBytes = 64 << 20
 // least minFree bytes free.
 func DiskFree(dir string, minFree uint64) func(context.Context) error {
 	return func(context.Context) error {
-		var st syscall.Statfs_t
-		if err := syscall.Statfs(dir, &st); err != nil {
+		free, err := freeBytes(dir)
+		if err != nil {
 			return fmt.Errorf("statfs %s: %w", dir, err)
 		}
-		free := freeBytes(&st)
 		if free < minFree {
 			return fmt.Errorf("%s: %d bytes free, under %d", dir, free, minFree)
 		}

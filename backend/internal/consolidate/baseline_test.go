@@ -983,8 +983,23 @@ func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
 		y.w.retryAt = time.Time{}
 		y.w.drain(context.Background())
 	}
-	if r := y.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "busy database writes") || r.Step != 0 {
+	if r := y.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "busy or refused database writes") || r.Step != 0 {
 		t.Fatalf("busy %d times: %+v, want the run failed at its step", maxFoldAttempts, r)
+	}
+
+	// A step write the file refuses is counted the same, under the write
+	// hold: every hold's end would pay the step again.
+	z := newWorld(t, 16)
+	z.queue(store.RunFull, "")
+	z.models.catalogue = subjects
+	z.st.applyErr = store.ErrFull
+	for i := 0; i < maxFoldAttempts; i++ {
+		z.models.patches = []inference.PatchResult{patch}
+		z.w.retryAt = time.Time{}
+		z.w.drain(context.Background())
+	}
+	if r := z.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "busy or refused database writes") {
+		t.Fatalf("refused %d times: %+v, want the run failed", maxFoldAttempts, r)
 	}
 }
 
