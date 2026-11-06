@@ -80,12 +80,13 @@ func (c *Client) WithTimeout(d time.Duration) *Client {
 	return c
 }
 
-// lowSpeed is git's own stall guard on every remote command: a connection
-// carrying nothing at all for five minutes is cut, so one the other side
-// forgot does not sit out the whole timeout. Nothing, not slowly: with
-// --quiet a server preparing a large pack sends only its keep-alive
-// packets, a few bytes every five seconds, for minutes, and a rate floor
-// cut a first clone of every big repository.
+// lowSpeed is git's own stall guard, on every command (http.* touches only
+// the ones that reach a remote): a connection carrying nothing at all for
+// five minutes is cut, so one the other side forgot does not sit out the
+// whole timeout. Nothing, not slowly: with --quiet a server preparing a
+// large pack sends only its keep-alive packets, a few bytes every five
+// seconds, for minutes, and a rate floor cut a first clone of every big
+// repository.
 var lowSpeed = []string{"-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=300"}
 
 // errTimeout is the cause of a remote command the client's timeout cut,
@@ -244,17 +245,18 @@ func (c *Client) Fetch(ctx context.Context, dir, cloneURL string, a Access) erro
 }
 
 // remote is run for a command that reaches a remote: under the client's
-// timeout and git's stall guard. A deadline that fires says so, where a
-// killed child would say "signal: killed".
+// timeout. A deadline that fires says so and names the setting, where a
+// terminated child would say "signal: terminated": a clone that honestly
+// needs longer is cut, and redone from nothing, every cycle.
 func (c *Client) remote(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeoutCause(ctx, c.timeout, errTimeout)
 		defer cancel()
 	}
-	out, err := c.run(ctx, dir, extra, append(append([]string{}, lowSpeed...), args...)...)
+	out, err := c.run(ctx, dir, extra, args...)
 	if err != nil && errors.Is(context.Cause(ctx), errTimeout) {
-		return out, fmt.Errorf("no answer within %s: %w", c.timeout, err)
+		return out, fmt.Errorf("cut after %s (BACKEND_GIT_TIMEOUT): %w", c.timeout, err)
 	}
 	return out, err
 }
@@ -321,8 +323,7 @@ func DirSize(dir string) int64 {
 // no prompting, the CA file, and extra for the remote's auth. stderr is
 // redacted before it reaches an error, since git quotes the remote it
 // failed against; the header keeps credentials out of it, the redaction is
-// the belt to that brace. args may start with -c pairs (lowSpeed); the
-// error names the first word that is a command.
+// the belt to that brace.
 func (c *Client) run(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
 	out, err := c.runIn(ctx, dir, nil, extra, args...)
 	return string(out), err
@@ -335,21 +336,9 @@ func (c *Client) runIn(ctx context.Context, dir string, stdin io.Reader, extra [
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.Bytes(), fmt.Errorf("git %s: %w: %s", verb(args), err, strings.TrimSpace(Redact(stderr.String())))
+		return stdout.Bytes(), fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(Redact(stderr.String())))
 	}
 	return stdout.Bytes(), nil
-}
-
-// verb is the git command among args, past any -c pair.
-func verb(args []string) string {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-c" {
-			i++
-			continue
-		}
-		return args[i]
-	}
-	return ""
 }
 
 // readable tells "the thing asked for is absent" from "the clone cannot be
@@ -366,7 +355,8 @@ func (c *Client) readable(ctx context.Context, dir string) error {
 // started. core.quotePath is off for every command: by default git C-quotes
 // any path with a non-ASCII byte, and the quoted form is no path.
 func (c *Client) command(ctx context.Context, dir string, extra []string, args ...string) *exec.Cmd {
-	full := append([]string{"-c", "safe.directory=" + dir, "-c", "core.quotePath=false"}, args...)
+	full := append([]string{"-c", "safe.directory=" + dir, "-c", "core.quotePath=false"}, lowSpeed...)
+	full = append(full, args...)
 	cmd := exec.CommandContext(ctx, c.git, full...) //nolint:gosec // argv, no shell; paths come from validated segments
 	cmd.Dir = dir
 	cmd.WaitDelay = waitDelay
@@ -377,13 +367,24 @@ func (c *Client) command(ctx context.Context, dir string, extra []string, args .
 	// so git removes its tmp_pack_* and lock files; a stale lock would fail
 	// every later fetch while the marker kept the clone from being redone.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.Cancel = func() error { return terminateGroup(cmd.Process.Pid) }
 	cmd.Env = append(childEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL="+c.protocols)
 	if c.caFile != "" {
 		cmd.Env = append(cmd.Env, "GIT_SSL_CAINFO="+c.caFile)
 	}
 	cmd.Env = append(cmd.Env, extra...)
 	return cmd
+}
+
+// terminateGroup sends SIGTERM to the process group pgid. A group already
+// gone is os.ErrProcessDone, as exec's own cancel says it: any other error
+// fails a command that exited 0 just as the deadline fired.
+func terminateGroup(pgid int) error {
+	err := syscall.Kill(-pgid, syscall.SIGTERM)
+	if errors.Is(err, syscall.ESRCH) {
+		return os.ErrProcessDone
+	}
+	return err
 }
 
 // envPassed is what of the process environment git and its helpers get:

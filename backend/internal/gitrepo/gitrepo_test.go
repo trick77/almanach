@@ -252,7 +252,8 @@ func TestCommand_EnvironmentAllowlisted(t *testing.T) {
 }
 
 // A remote that never answers is cut by the client's timeout, the error
-// saying so; git's stall guard rides on every remote command.
+// saying so and naming the setting; git's stall guard rides on every
+// command.
 func TestRemote_TimesOut(t *testing.T) {
 	c := client(t).WithTimeout(500 * time.Millisecond)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -275,7 +276,7 @@ func TestRemote_TimesOut(t *testing.T) {
 	}
 	start := time.Now()
 	_, err = c.DefaultBranch(context.Background(), "http://"+ln.Addr().String()+"/x.git", Access{})
-	if err == nil || !strings.Contains(err.Error(), "no answer within 500ms") || strings.Count(err.Error(), "ls-remote") != 1 {
+	if err == nil || !strings.Contains(err.Error(), "cut after 500ms (BACKEND_GIT_TIMEOUT)") || strings.Count(err.Error(), "ls-remote") != 1 {
 		t.Fatalf("ls-remote against a silent remote: err = %v, want the timeout named once", err)
 	}
 	// The whole process group is terminated at the deadline: git-remote-http
@@ -286,14 +287,25 @@ func TestRemote_TimesOut(t *testing.T) {
 	// A caller's own deadline is not the client's timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if _, err := c.WithTimeout(time.Hour).DefaultBranch(ctx, "http://"+ln.Addr().String()+"/x.git", Access{}); err == nil || strings.Contains(err.Error(), "no answer within") {
+	if _, err := c.WithTimeout(time.Hour).DefaultBranch(ctx, "http://"+ln.Addr().String()+"/x.git", Access{}); err == nil || strings.Contains(err.Error(), "BACKEND_GIT_TIMEOUT") {
 		t.Errorf("caller's deadline: err = %v, want no claim of the client's timeout", err)
 	}
-	if cmd := c.command(context.Background(), c.root, nil, append(lowSpeed, "fetch")...); !strings.Contains(strings.Join(cmd.Args, " "), "http.lowSpeedLimit=1 ") {
-		t.Errorf("remote args lack the stall guard: %v", cmd.Args)
+	args := strings.Join(c.command(context.Background(), c.root, nil, "fetch").Args, " ")
+	if !strings.Contains(args, "-c http.lowSpeedLimit=1 -c http.lowSpeedTime=300 fetch") {
+		t.Errorf("git args lack the stall guard before the command: %s", args)
 	}
-	if verb([]string{"-c", "a=b", "fetch", "x"}) != "fetch" || verb(nil) != "" {
-		t.Error("verb does not skip -c pairs")
+}
+
+// A group gone by the time the deadline fires is os.ErrProcessDone, which
+// exec ignores, not an error that fails a command that exited 0.
+func TestTerminateGroup_GoneIsDone(t *testing.T) {
+	c := client(t)
+	cmd := c.command(context.Background(), c.root, nil, "--version")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := terminateGroup(cmd.Process.Pid); !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("terminateGroup of a reaped group = %v, want os.ErrProcessDone", err)
 	}
 }
 
