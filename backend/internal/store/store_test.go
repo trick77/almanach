@@ -3,10 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -60,14 +58,16 @@ func TestBackup(t *testing.T) {
 	if err != nil || size <= 0 {
 		t.Fatalf("Backup = %d, %v", size, err)
 	}
-	if _, err := os.Stat(dest + ".part"); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("part file left behind: %v", err)
+	if parts, _ := filepath.Glob(filepath.Join(dir, "*.part")); len(parts) != 0 {
+		t.Errorf("part files left behind: %v", parts)
 	}
 	for _, p := range []string{dest + "-wal", dest + "-shm"} {
 		if _, err := os.Stat(p); err == nil {
 			t.Errorf("%s written beside the copy", p)
 		}
 	}
+	// The planner's refresh on the original: no error, the copy untouched.
+	s.Optimize(ctx)
 	// The copy stands on its own: migrated, every note there, writable.
 	c := storeAt(t, dest)
 	if err := c.SchemaCurrent(ctx); err != nil {
@@ -80,11 +80,12 @@ func TestBackup(t *testing.T) {
 	if n := count(t, s, "notes", ""); n != 2 {
 		t.Errorf("original's notes after a write to the copy = %d, want 2", n)
 	}
-	// Refusals: the file exists; the database itself, by any spelling.
+	// Refusals: the file exists; the database itself, by any spelling, and
+	// its sidecars, there or not.
 	if _, err := s.Backup(ctx, dest); err == nil || !strings.Contains(err.Error(), "exists") {
 		t.Errorf("Backup onto an existing file = %v, want refused", err)
 	}
-	for _, same := range []string{s.path, filepath.Join(filepath.Dir(s.path), ".", filepath.Base(s.path))} {
+	for _, same := range []string{s.path, filepath.Join(filepath.Dir(s.path), ".", filepath.Base(s.path)), s.path + "-wal", s.path + "-shm", s.path + "-journal"} {
 		if _, err := s.Backup(ctx, same); err == nil || !strings.Contains(err.Error(), "database itself") {
 			t.Errorf("Backup onto %s = %v, want refused", same, err)
 		}
@@ -93,6 +94,40 @@ func TestBackup(t *testing.T) {
 	if _, err := s.Backup(ctx, filepath.Join(dir, "nope", "copy.db")); err == nil {
 		t.Error("Backup into a missing folder succeeded")
 	}
+	// A file that appears while the copy is written is never overwritten:
+	// the link refuses, the part is removed.
+	late := filepath.Join(dir, "late.db")
+	if err := os.WriteFile(late, []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	part, err := os.CreateTemp(dir, "late.db.*.part")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = part.Close()
+	if _, err := s.backupInto(ctx, part.Name(), late); err == nil {
+		t.Error("backupInto overwrote a file that appeared meanwhile")
+	}
+	_ = os.Remove(part.Name())
+	if b, _ := os.ReadFile(late); string(b) != "mine" {
+		t.Errorf("late.db = %q, want untouched", b)
+	}
+	// A part file that is not empty is refused by SQLite itself: the copy
+	// fails, nothing is linked.
+	full := filepath.Join(dir, "full.db.part")
+	if err := os.WriteFile(full, []byte("not empty"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.backupInto(ctx, full, filepath.Join(dir, "full.db")); err == nil {
+		t.Error("backupInto filled a part file that was not empty")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "full.db")); err == nil {
+		t.Error("full.db linked after a failed copy")
+	}
+	// Optimize with a context already done: a log line, no panic.
+	done, cancel := context.WithCancel(ctx)
+	cancel()
+	s.Optimize(done)
 }
 
 func TestSchemaCurrent_FailsUntilMigrated(t *testing.T) {

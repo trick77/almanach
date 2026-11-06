@@ -2,6 +2,7 @@
 //
 //	almanach serve        run the service (default)
 //	almanach migrate      apply pending database migrations and exit
+//	almanach backup FILE  write a consistent copy of the database to FILE and exit
 //	almanach version      print the version and exit
 //	almanach -healthcheck probe /healthz, exit 0 on a 2xx (liveness: the container healthcheck)
 //	almanach -readycheck  probe /readyz, exit 0 on a 2xx (readiness: the database answers, its disk has room)
@@ -155,18 +156,32 @@ func openDB(ctx context.Context, path string, log *slog.Logger) (*store.Store, e
 	return store.Open(ctx, path, log)
 }
 
-// migrate applies pending migrations and exits: the init container's job.
-// Only BACKEND_DB_PATH is needed.
-func migrate(log *slog.Logger) error {
+// openFromEnv is the database of a command that needs BACKEND_DB_PATH and
+// nothing else (migrate, backup), after the log level gate every command
+// runs. With existing set, a path that names no file is refused: the
+// driver would create an empty database there and a backup of it would
+// read as success.
+func openFromEnv(ctx context.Context, log *slog.Logger, existing bool) (*store.Store, error) {
 	if _, err := logging.ParseLevel(os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
-		return fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
+		return nil, fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
 	}
 	path := strings.TrimSpace(os.Getenv("BACKEND_DB_PATH"))
 	if path == "" {
-		return errors.New("environment variable BACKEND_DB_PATH is not set")
+		return nil, errors.New("environment variable BACKEND_DB_PATH is not set")
 	}
+	if existing {
+		if _, err := os.Stat(path); err != nil { //nolint:gosec // the operator's configured path, by design
+			return nil, fmt.Errorf("BACKEND_DB_PATH: %w", err)
+		}
+	}
+	return openDB(ctx, path, log)
+}
+
+// migrate applies pending migrations and exits: the init container's job.
+// Only BACKEND_DB_PATH is needed.
+func migrate(log *slog.Logger) error {
 	ctx := context.Background()
-	db, err := openDB(ctx, path, log)
+	db, err := openFromEnv(ctx, log, false)
 	if err != nil {
 		return err
 	}
@@ -181,18 +196,14 @@ func migrate(log *slog.Logger) error {
 // backup writes a consistent copy of the database to the file named on
 // the command line and exits, while serve may run on: the way to back
 // the database up, a copy of its folder under live writes being none.
-// Only BACKEND_DB_PATH is needed.
+// Only BACKEND_DB_PATH is needed, and it must name a file that exists.
 func backup(log *slog.Logger) error {
 	if len(os.Args) != 3 || strings.TrimSpace(os.Args[2]) == "" {
 		return errors.New("backup: one argument, the file to write, e.g. almanach backup /data/almanach-2026-11-06.db")
 	}
 	dest := os.Args[2]
-	path := strings.TrimSpace(os.Getenv("BACKEND_DB_PATH"))
-	if path == "" {
-		return errors.New("environment variable BACKEND_DB_PATH is not set")
-	}
 	ctx := context.Background()
-	db, err := openDB(ctx, path, log)
+	db, err := openFromEnv(ctx, log, true)
 	if err != nil {
 		return err
 	}
@@ -366,6 +377,11 @@ func serve(log *slog.Logger) error {
 		poller.Stop()
 	}
 	worker.Stop(inference.CallTimeout + 15*time.Second)
+	// The planner's statistics, refreshed on the way out: ctx is done by
+	// now, so a bound of its own.
+	octx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	db.Optimize(octx)
+	cancel()
 	if runErr != nil {
 		return runErr
 	}

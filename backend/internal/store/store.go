@@ -79,50 +79,106 @@ func open(ctx context.Context, path string, log *slog.Logger, extra ...string) (
 	return &Store{db: db, path: path, log: log}, nil
 }
 
-// Close releases the database, after PRAGMA optimize: SQLite's chance to
-// refresh the planner's statistics from what the run queried, cheap on
-// the way out and kept in the file for the next run. A failure there is
-// a log line, never a reason not to close.
+// Close releases the database.
 func (s *Store) Close() {
-	if _, err := s.db.ExecContext(context.Background(), `PRAGMA optimize`); err != nil {
-		s.log.Warn("SQLite optimize on close failed", "err", err.Error())
-	}
 	_ = s.db.Close()
 	s.log.Info("SQLite database closed")
+}
+
+// Optimize runs PRAGMA optimize on every pooled connection: SQLite's
+// refresh of the planner's statistics from what each connection queried
+// (the pragma reads a connection's own history), kept in the file for
+// the next run. serve's shutdown runs it, nothing else: it may ANALYZE
+// under the write lock, which a backup or a migrate beside a running
+// serve must not take. A failure is a log line.
+func (s *Store) Optimize(ctx context.Context) {
+	// Every connection held at once, so each is a different one.
+	conns := make([]*sql.Conn, 0, maxConns)
+	defer func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}()
+	for i := 0; i < maxConns; i++ {
+		c, err := s.db.Conn(ctx)
+		if err != nil {
+			s.log.Warn("SQLite optimize: connection", "err", err.Error())
+			return
+		}
+		conns = append(conns, c)
+		if _, err := c.ExecContext(ctx, `PRAGMA optimize`); err != nil {
+			s.log.Warn("SQLite optimize failed", "err", err.Error())
+			return
+		}
+	}
 }
 
 // Backup writes a consistent copy of the database to dest with VACUUM
 // INTO: one transaction's view of every table, compacted, no -wal or
 // -shm beside it, taken while serve runs on (a reader, not a lock on
 // writers). Copying the file and its WAL by hand under live writes is
-// not consistent, which is why this exists. The copy lands at a
-// temporary name beside dest and is renamed into place, so a crash or a
-// full disk leaves no half backup under the name; dest must not exist
-// and must not be the database itself. Returns the copy's size.
+// not consistent, which is why this exists. The copy lands in a file of
+// its own name beside dest (CreateTemp: two backups at once never share
+// one), is synced (VACUUM INTO never fsyncs its output) and linked to
+// dest, which fails when dest exists meanwhile: no half copy and no
+// overwrite under the name, the folder synced after. dest must not be
+// the database or one of its sidecars. Returns the copy's size.
 func (s *Store) Backup(ctx context.Context, dest string) (int64, error) {
-	if sameFile(dest, s.path) {
-		return 0, fmt.Errorf("backup %s: is the database itself", dest)
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		if sameFile(dest, s.path+suffix) {
+			return 0, fmt.Errorf("backup %s: is the database itself", dest)
+		}
 	}
 	if _, err := os.Stat(dest); err == nil {
 		return 0, fmt.Errorf("backup %s: exists", dest)
 	}
-	tmp := dest + ".part"
-	_ = os.Remove(tmp)
-	// A folder that does not exist, or takes no file, fails here: SQLite
-	// opens the copy itself.
-	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
-		_ = os.Remove(tmp)
-		return 0, fmt.Errorf("backup %s: %w", dest, err)
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Remove(tmp)
-		return 0, fmt.Errorf("backup %s: %w", dest, err)
-	}
-	info, err := os.Stat(dest)
+	// A folder that does not exist, or takes no file, fails here.
+	part, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".*.part")
 	if err != nil {
 		return 0, fmt.Errorf("backup %s: %w", dest, err)
 	}
+	tmp := part.Name()
+	_ = part.Close()
+	size, err := s.backupInto(ctx, tmp, dest)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return 0, fmt.Errorf("backup %s: %w", dest, err)
+	}
+	return size, nil
+}
+
+// backupInto fills tmp (an empty file, which VACUUM INTO accepts), syncs
+// it, links it to dest and drops the temporary name; the caller removes
+// tmp on failure.
+func (s *Store) backupInto(ctx context.Context, tmp, dest string) (int64, error) {
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
+		return 0, err
+	}
+	if err := syncFile(tmp); err != nil {
+		return 0, err
+	}
+	if err := os.Link(tmp, dest); err != nil {
+		return 0, err
+	}
+	_ = os.Remove(tmp)
+	if err := syncFile(filepath.Dir(dest)); err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		return 0, err
+	}
 	return info.Size(), nil
+}
+
+// syncFile fsyncs a file or a folder: the bytes, or the names in it.
+func syncFile(path string) error {
+	f, err := os.Open(path) //nolint:gosec // a path this package built
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.Sync()
 }
 
 // sameFile reports whether a and b name the same file: by the file system

@@ -1291,16 +1291,24 @@ the epoch: stored pages change as before.
   POSIX locks of one host. One replica.
 - `almanach backup <file>` is the backup: `VACUUM INTO` writes one
   transaction's view of every table, compacted, as a database of its own
-  (no `-wal`, no `-shm`), while `serve` runs on. It lands under a `.part`
-  name beside the file and is renamed into place, so a crash leaves no
-  half copy under the name; an existing file and the database itself are
-  refused. Copying the folder by hand under live writes is not
-  consistent: the file and its WAL are two moments. Needs
-  `BACKEND_DB_PATH` alone; in compose,
-  `docker compose run --rm migrate backup /data/almanach-$(date +%F).db`
+  (no `-wal`, no `-shm`), while `serve` runs on. It is written to a
+  `.part` file of its own name beside the target (two backups at once
+  never share one), fsynced (`VACUUM INTO` never syncs its output),
+  linked to the target, which fails when the target exists meanwhile,
+  and the folder synced: no half copy and no overwrite under the name.
+  An existing file and the database itself, sidecars included, are
+  refused, and so is a `BACKEND_DB_PATH` that names no file (the driver
+  would create an empty one and the copy of it read as success).
+  Copying the folder by hand under live writes is not consistent: the
+  file and its WAL are two moments. Needs `BACKEND_DB_PATH` alone; in
+  compose, `docker compose run --rm migrate backup /data/almanach-$(date +%F).db`
   writes into the data folder (the migrate service has the volume and
-  nothing else). On shutdown `serve` runs `PRAGMA optimize`, SQLite's
-  refresh of the planner's statistics, kept in the file.
+  nothing else; the folder is uid 65532, mode 700, so the copy leaves
+  the host with `sudo cp`). On shutdown `serve` runs `PRAGMA optimize`
+  on each pooled connection, SQLite's refresh of the planner's
+  statistics from what that connection queried, kept in the file;
+  `backup` and `migrate` do not, it may ANALYZE under the write lock a
+  running `serve` needs.
 - `/healthz` is liveness, `/readyz` asks the database and the room on its
   disk (64 MB free at least: SQLite answers a ping from a full disk, and
   every write after a paid call then fails). Both answer loopback

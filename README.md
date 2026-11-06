@@ -103,8 +103,10 @@ The database lives in the host folder `data/` (`/data/almanach.db` in the
 container), the clones in `repos/`: two folders, the database alone in its
 own. A backup is `docker compose run --rm migrate backup /data/almanach-$(date +%F).db`,
 a consistent copy written into `data/` while the stack runs (copying the
-folder under live writes is not); the clones refill from the forge. A
-fresh start: stack down, both folders emptied, up again.
+folder under live writes is not). `data/` belongs to uid 65532 and is
+mode 700, so the copy is read off the host with `sudo cp`; the clones
+refill from the forge. A fresh start: stack down, both folders emptied,
+up again.
 
 Open http://localhost:8081/sources and add a single repository by its
 clone URL (more can join it later) or a whole Bitbucket project; each repository's
