@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/trick77/almanach/internal/baseline"
@@ -137,6 +138,8 @@ type Poller struct {
 		sync.Mutex
 		byRepo map[string]verdict
 	}
+	// beat is the loop's last heartbeat, unix seconds.
+	beat atomic.Int64
 }
 
 // CycleStatus is the sync cycle at one instant: the repository in flight,
@@ -332,9 +335,11 @@ func (p *Poller) run(ctx context.Context) {
 				c.NextAt = &at
 			}
 		})
+		p.heartbeat()
 		if !p.wait(ctx, delay) {
 			return
 		}
+		p.heartbeat()
 		if err := p.CycleOnce(ctx); err != nil && ctx.Err() == nil {
 			p.Log.Error("sync cycle failed", "err", err.Error())
 		}
@@ -412,6 +417,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		p.heartbeat()
 		repoStart := time.Now()
 		unlock := p.lockRepo(j.Repo.RepoID)
 		var head string

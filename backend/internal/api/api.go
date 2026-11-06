@@ -74,6 +74,8 @@ type Deps struct {
 	Sources *SourcesDeps
 	// Queue is the queue page's view of the worker and the poller.
 	Queue *QueueDeps
+	// Metrics is /metrics; nil answers it 404.
+	Metrics *MetricsDeps
 	// OIDC, Sessions and RedirectURL are the sign-in, set in oidc mode
 	// only; RedirectURL's origin is trusted for a change beside the
 	// request's own host.
@@ -89,7 +91,9 @@ func Register(s *httpapi.Server, d Deps) {
 	// pattern, so every explicit route below still wins, the SPA's own
 	// allowlist keeps /api, /auth and /webhooks typos a 404, and a wrong
 	// method on a real route stays the mux's 405 rather than falling in.
+	s.Classify(logClass)
 	s.Handle("GET /", web.Handler())
+	s.HandleFunc("GET /metrics", d.metrics)
 	s.HandleFunc("GET /auth/ping", d.ping)
 	s.Handle("POST /webhooks/noergler", httpx.MaxBody(maxBody)(http.HandlerFunc(d.webhook)))
 	s.HandleFunc("GET /api/projects", d.projects)

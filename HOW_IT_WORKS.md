@@ -1108,6 +1108,35 @@ the epoch: stored pages change as before.
   not list the alias is a fault.
 - Logs are structured, one line per event. No secret, no token ever
   appears in them; the startup config line prints addresses, model and caps.
+- The access log writes one `http_request` line per request, its level by
+  route (`api.logClass`), since kit's level rule sees the status only: a
+  reader's `/api` request at Info, so who read what (`user`, `team`) is
+  in the log at the default level; a bearer route (the webhook, the ping,
+  a Markdown export sent a bearer) at Info and its 401 at Warn, a wrong or
+  guessed token being what an operator looks for; the reads the UI polls
+  (`GET /api/queue/count` from every page every 15 s, `/api/queue` and
+  `/api/sources/{key}` every 3 s) and the static files at Debug, which at
+  Info would bury the rest. A 5xx is Error, another 4xx Warn, everywhere.
+- `/metrics` is Prometheus's text format, written by hand (no client
+  library). It carries every project's spend, so no team's bearer opens
+  it: a direct loopback caller does, as on the probes, and the bearer
+  `BACKEND_METRICS_TOKEN` names from anywhere; anyone else gets 404, a
+  bearer refused there a Warn line. Every value is an integer: times in
+  unix seconds, 0 for none, money in nano-USD. The queue (notes, open
+  runs), the last ok merge call (the call, not whether its patch then
+  applied) and the last successful sync come from the rows, so a restart
+  keeps them; the calls and their cost by purpose and project are the
+  whole `llm_calls` ledger (noergler's `note_calls` never in it). The hold
+  (until, cause), the item in flight and both loops' heartbeats are the
+  process's own. The heartbeats are metrics only, never a readiness check:
+  a worker holding on the gateway or a poller in a long clone is alive and
+  the wiki still reads. The worker stamps at each drain and before each
+  item: alert when it is older than the hold's remainder plus the call
+  timeout (10 min) and a minute. The poller stamps on each wake and before
+  each repository: between cycles it sleeps the interval, so its stamp
+  counts only while `almanach_poller_cycle_started_seconds` is set; alert
+  when a cycle runs and the stamp is older than the slowest clone you
+  expect.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
   asked to stop and finishes the fold in flight, up to a grace of the call
@@ -1130,12 +1159,12 @@ one.
 | Package | Role | Depends on |
 | --- | --- | --- |
 | `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
-| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, and `/` handed to `web`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | auth, baseline, clone, config, consolidate, diagram, gitrepo, httpapi, ingest, markup, secret, store, teamkeys, web |
+| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, `/metrics`, and `/` handed to `web`; which log class a request is. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | auth, baseline, clone, config, consolidate, diagram, gitrepo, httpapi, ingest, markup, secret, store, teamkeys, web |
 | `internal/auth` | The oidc sign-in: kit's OIDC flow with discovery retried in the background, kit's signed session cookie, the gate in front of `/api`. | authroute, urlorigin, kit/auth |
 | `internal/authroute` | The sign-in's route names, a leaf so `config` checks the redirect URL without pulling in the OIDC client. | nothing |
 | `internal/urlorigin` | A URL's origin, the one normaliser wherever two are compared: the auth gate's browser check, the host a source's token is bound to. | nothing |
 | `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
-| `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
+| `internal/httpapi` | The mux with kit's probes, an access log per log class and panic recovery. net/http only. | kit/httpx |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
 | `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | diagram, manifest, redact, urlorigin, ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |

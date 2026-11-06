@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -110,6 +111,8 @@ type Worker struct {
 	waiting   *Wait
 	holdUntil time.Time
 	holdCause string
+	// beat is the loop's last heartbeat, unix seconds.
+	beat atomic.Int64
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the
@@ -247,7 +250,9 @@ func (w *Worker) drain(ctx context.Context) {
 		}
 	}()
 	w.saveFailed = nil
+	w.heartbeat()
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
+		w.heartbeat()
 		note, run = nil, nil
 		q, ok, err := w.store.NextQueued(ctx)
 		if err != nil {

@@ -97,6 +97,10 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 	if err := p.CycleOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Each repository of a cycle stamps the heartbeat.
+	if p.Heartbeat().IsZero() {
+		t.Error("no heartbeat after a cycle with a repository")
+	}
 	want := manifest.Read{
 		Provides: []string{"go:example.invalid/loom", "maven:example.loom:cli", "maven:example.loom:loom-jvm", "npm:loom-ui"},
 		Requires: []manifest.Dep{
