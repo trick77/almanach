@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/trick77/almanach/internal/diagram"
 )
 
 // Projects and Repos count what was ingested and carry the last merge and
@@ -173,6 +175,38 @@ func TestRevisions_NewestFirstLimited(t *testing.T) {
 	rs, err = s.Revisions(ctx, ScopeProject, "PRJ", "", 10)
 	if err != nil || len(rs) != 1 || rs[0].SourcePR != "PRJ/svc#9" {
 		t.Errorf("project revisions = %+v, %v; want the one project revision", rs, err)
+	}
+	// One revision by its number, its text as it stood; an unknown number
+	// or page is ok=false.
+	p, ok, err := s.Revision(ctx, ScopeRepository, "PRJ", "svc", 2)
+	if err != nil || !ok || p.Revision != 2 || p.SourcePR != "PRJ/svc#2" || len(p.Statements) != 2 || p.Statements[0].ID != "s1" ||
+		p.ProjectKey != "PRJ" || p.RepoSlug != "svc" || p.UpdatedAt.IsZero() {
+		t.Errorf("Revision(2) = %+v ok=%v err=%v", p, ok, err)
+	}
+	if p, ok, err := s.Revision(ctx, ScopeRepository, "PRJ", "svc", 3); err != nil || !ok || len(p.Statements) != 0 {
+		t.Errorf("Revision(3) = %+v ok=%v err=%v, want no statements, not nil", p, ok, err)
+	}
+	if _, ok, err := s.Revision(ctx, ScopeRepository, "PRJ", "svc", 4); err != nil || ok {
+		t.Errorf("Revision(4): ok=%v err=%v, want unknown", ok, err)
+	}
+	if _, ok, err := s.Revision(ctx, ScopeProject, "NONE", "", 1); err != nil || ok {
+		t.Errorf("Revision of an unknown project: ok=%v err=%v", ok, err)
+	}
+	if p, ok, err := s.Revision(ctx, ScopeProject, "PRJ", "", 1); err != nil || !ok || p.SourcePR != "PRJ/svc#9" || p.RepoSlug != "" ||
+		p.Map != nil || p.Shape != "" {
+		t.Errorf("project Revision(1) = %+v ok=%v err=%v, want no map, no shape", p, ok, err)
+	}
+	// A project revision carries its map and shape: a revision written for
+	// those alone shows what it changed.
+	m := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR",
+		Nodes: []diagram.Node{{ID: "svc", Label: "svc", Shape: "step", Zone: "repositories"}},
+		Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}}}
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeProject, ProjectKey: "PRJ", Summary: "p", SourceKind: FromBaseline, SourceCommit: "abc",
+		Map: m, Shape: ShapeCollection}); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok, err := s.Revision(ctx, ScopeProject, "PRJ", "", 2); err != nil || !ok || !diagram.Equal(p.Map, m) || p.Shape != ShapeCollection {
+		t.Errorf("project Revision(2) = %+v ok=%v err=%v, want the map and the collection", p, ok, err)
 	}
 }
 

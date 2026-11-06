@@ -48,6 +48,7 @@ type Store interface {
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
 	CurrentPages(ctx context.Context, sourced bool) ([]store.PageText, error)
 	Revisions(ctx context.Context, scope, project, repo string, limit int) ([]store.RevisionRow, error)
+	Revision(ctx context.Context, scope, project, repo string, n int) (store.Page, bool, error)
 	Notes(ctx context.Context, project, repo string, limit int) ([]store.NoteRow, error)
 	NoteByKey(ctx context.Context, project, repo string, prID int) (store.NoteDetail, bool, error)
 	Taught(ctx context.Context, project, repo string, prID int, sourced bool) ([]store.TaughtRow, error)
@@ -112,6 +113,8 @@ func Register(s *httpapi.Server, d Deps) {
 	// Also GET /api/projects/{key}/repos/{slug}.md, the repository's.
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}", d.repo)
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
+	s.HandleFunc("GET /api/projects/{key}/revisions/{n}", d.projectRevision)
+	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/revisions/{n}", d.repoRevision)
 	s.HandleFunc("GET /api/dependencies", d.dependencies)
 	s.HandleFunc("GET /api/costs", d.costs)
 	s.HandleFunc("GET /api/search", d.search)
@@ -499,6 +502,9 @@ type projectDetailBody struct {
 	Problems    []problemBody `json:"problems"`
 	ProblemDays int           `json:"problem_window_days"`
 	Notes       []noteBody    `json:"recent_notes"`
+	// Revisions is the project page's history, newest first; empty for a
+	// project of one, which has no project page.
+	Revisions []revisionBody `json:"revisions"`
 }
 
 func (d Deps) project(w http.ResponseWriter, r *http.Request) {
@@ -569,7 +575,15 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	}
 	out := projectDetailBody{Key: key, Team: team, Single: alone, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
-		Problems: problemBodies(problems), Notes: noteBodies(notes)}
+		Problems: problemBodies(problems), Notes: noteBodies(notes), Revisions: []revisionBody{}}
+	if !alone {
+		revisions, err := d.Store.Revisions(ctx, store.ScopeProject, key, "", 50)
+		if err != nil {
+			httpx.ServerError(w, r, err, "revisions")
+			return
+		}
+		out.Revisions = revisionBodies(revisions)
+	}
 	if found && !alone && page.Shape != "" {
 		out.Shape = &page.Shape
 	}
@@ -711,18 +725,24 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	}
 	declined := diagram.IsSentinel(page.RepoMap) && page.MapStands()
 	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Map: drawn, MapDeclined: declined,
-		Notes: noteBodies(notes), Revisions: make([]revisionBody, 0, len(revisions))}
+		Notes: noteBodies(notes), Revisions: revisionBodies(revisions)}
 	out.Uses, out.UsedBy = usesOf(g, store.RepoRef{ProjectKey: key, Slug: slug})
 	for _, rp := range repos {
 		if rp.Slug == slug {
 			out.NotesTotal, out.LastMerge = rp.Notes, rp.LastMerge
 		}
 	}
-	for _, rv := range revisions {
-		out.Revisions = append(out.Revisions, revisionBody{Revision: rv.Revision, SourceKind: sourceKind(rv.SourceKind), SourcePR: rv.SourcePR,
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// revisionBodies is a page's history as the wire lists it.
+func revisionBodies(rows []store.RevisionRow) []revisionBody {
+	out := make([]revisionBody, 0, len(rows))
+	for _, rv := range rows {
+		out = append(out, revisionBody{Revision: rv.Revision, SourceKind: sourceKind(rv.SourceKind), SourcePR: rv.SourcePR,
 			SourceCommit: rv.SourceCommit, Statements: rv.Statements, Chars: rv.Chars, CreatedAt: rv.CreatedAt})
 	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	return out
 }
 
 type noteCallBody struct {

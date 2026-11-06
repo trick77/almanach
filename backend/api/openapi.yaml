@@ -412,6 +412,56 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/projects/{key}/revisions/{n}:
+    get:
+      tags: [wiki]
+      summary: One revision of a project's page, with what it changed
+      description: >-
+        The project page as it stood at revision `n`: its summary and
+        statements, and the diff against revision `n-1` by statement id
+        (added, changed, dropped; all added on the first). The sources on
+        each statement say which pull request or run wrote it. A project
+        of one has no project page and answers 404.
+      operationId: getProjectRevision
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/revisionNumber"
+      responses:
+        "200":
+          description: The revision with its diff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevisionDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/projects/{key}/repos/{slug}/revisions/{n}:
+    get:
+      tags: [wiki]
+      summary: One revision of a repository's page, with what it changed
+      description: >-
+        The repository page as it stood at revision `n` and the diff
+        against revision `n-1` by statement id, as the project's.
+      operationId: getRepoRevision
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+        - $ref: "#/components/parameters/revisionNumber"
+      responses:
+        "200":
+          description: The revision with its diff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevisionDetail"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/dependencies:
     get:
       tags: [wiki]
@@ -1017,6 +1067,13 @@ components:
       required: true
       schema:
         type: string
+    revisionNumber:
+      name: n
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
 
   responses:
     Unauthorized:
@@ -2433,7 +2490,7 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes]
+      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes, revisions]
       properties:
         key:
           type: string
@@ -2504,6 +2561,77 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/NoteSummary"
+        revisions:
+          type: array
+          description: The project page's history, newest first, fifty at most; empty for a project of one.
+          items:
+            $ref: "#/components/schemas/Revision"
+
+    RevisionDetail:
+      type: object
+      required: [scope, project_key, revision, current, previous, created_at, description, added, changed, dropped, rechecked, summary_changed, map_changed, shape_changed]
+      properties:
+        scope:
+          type: string
+          enum: [repository, project]
+        project_key:
+          type: string
+          description: The page's current project key.
+        repo_slug:
+          type: string
+          description: The page's current repository slug; absent on a project page.
+        revision:
+          type: integer
+        current:
+          type: integer
+          description: The page's current revision number.
+        previous:
+          type: integer
+          description: The revision diffed against; 0 on the first.
+        created_at:
+          type: string
+          format: date-time
+        description:
+          $ref: "#/components/schemas/Description"
+        added:
+          type: array
+          description: Statements not in the previous revision, in this one's order.
+          items:
+            $ref: "#/components/schemas/StatementRef"
+        changed:
+          type: array
+          description: Statements whose name, text, files, kind or diagram differ from the previous revision's, in this one's order.
+          items:
+            $ref: "#/components/schemas/StatementRef"
+        dropped:
+          type: array
+          description: Statements of the previous revision this one no longer holds, in the previous one's order.
+          items:
+            $ref: "#/components/schemas/StatementRef"
+        rechecked:
+          type: array
+          description: Statements a baseline run confirmed against the code with nothing else of them changed, in this one's order.
+          items:
+            $ref: "#/components/schemas/StatementRef"
+        summary_changed:
+          type: boolean
+        map_changed:
+          type: boolean
+          description: The project page's map differs from the previous revision's (on the first, it has one); always false on a repository page.
+        shape_changed:
+          type: boolean
+          description: What the project was judged to be (system, collection) moved against the previous revision; always false on a repository page.
+
+    StatementRef:
+      type: object
+      required: [id, kind, name]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
 
     Revision:
       type: object

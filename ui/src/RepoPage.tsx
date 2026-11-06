@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { DependencyEnd, ProjectDetail, RepoDetail } from "./api";
 import { oddVersions } from "./DepsPage";
-import {
-  DESCRIPTION,
-  DescriptionView,
-  SourceChip,
-  descriptionRail,
-} from "./Description";
+import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
+import { Revisions } from "./Revisions";
 import {
   Rail,
   RailPage,
@@ -215,7 +211,7 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
         },
         {
           id: ids.revisions,
-          label: S.repo.revisions,
+          label: S.revision.list,
           tab: HISTORY,
           count: data.revisions.length,
         },
@@ -467,45 +463,13 @@ function History({ data, current }: { data: RepoDetail; current: number }) {
       </section>
 
       <section id={ids.revisions} className="scroll-mt-16">
-        <div className={eyebrow}>{S.repo.revisions}</div>
-        {data.revisions.length === 0 ? (
-          <Empty>{S.repo.noRevisions}</Empty>
-        ) : (
-          <ol className="m-0 list-none p-0">
-            {data.revisions.map((r) => (
-              <li
-                key={r.revision}
-                className="flex items-baseline gap-3.5 border-b border-border-soft py-2 text-[13.5px] text-ink-dim"
-              >
-                <span className="w-[34px] tabular-nums text-muted">
-                  {r.revision}
-                </span>
-                <span className="flex-1">
-                  {S.repo.revisionFrom}{" "}
-                  <SourceChip
-                    source={{
-                      kind: r.source_kind,
-                      pr_key: r.source_pr_key,
-                      commit: r.source_commit,
-                    }}
-                  />
-                  <span className="ml-2 text-muted">
-                    {S.repo.statements(r.statements)} {S.common.sep}{" "}
-                    {S.repo.chars(r.chars)}
-                  </span>
-                </span>
-                {r.revision === current && (
-                  <span className="text-[11px] tracking-[.08em] text-ochre uppercase">
-                    {S.repo.current}
-                  </span>
-                )}
-                <span className="whitespace-nowrap text-muted">
-                  {day(r.created_at)}
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
+        <div className={eyebrow}>{S.revision.list}</div>
+        <Revisions
+          projectKey={data.project_key}
+          slug={data.slug}
+          revisions={data.revisions}
+          current={current}
+        />
       </section>
     </>
   );

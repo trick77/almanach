@@ -39,15 +39,18 @@ type fakeStore struct {
 	repos    map[string][]store.RepoRow
 	pages    map[string]store.Page
 	// allPages is what CurrentPages answers, the search's; pagesErr fails it.
-	allPages   []store.PageText
-	pagesErr   error
-	revisions  []store.RevisionRow
-	notes      []store.NoteRow
-	details    map[string]store.NoteDetail
-	taught     map[string][]store.TaughtRow
-	problems   []store.ProblemArea
-	daysAsked  []int
-	problemErr error
+	allPages  []store.PageText
+	pagesErr  error
+	revisions []store.RevisionRow
+	// revisionPages are single revisions by scope|project|repo|n; revisionErr fails the read.
+	revisionPages map[string]store.Page
+	revisionErr   error
+	notes         []store.NoteRow
+	details       map[string]store.NoteDetail
+	taught        map[string][]store.TaughtRow
+	problems      []store.ProblemArea
+	daysAsked     []int
+	problemErr    error
 
 	sourceRepos  map[string]bool
 	sourceErr    error
@@ -114,7 +117,8 @@ func (f *fakeStore) SingleRepos(context.Context) (map[string]store.RepoRow, erro
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{accepted: true, teams: map[string]string{}, repos: map[string][]store.RepoRow{},
-		pages: map[string]store.Page{}, details: map[string]store.NoteDetail{}, taught: map[string][]store.TaughtRow{}}
+		pages: map[string]store.Page{}, details: map[string]store.NoteDetail{}, taught: map[string][]store.TaughtRow{},
+		revisionPages: map[string]store.Page{}}
 }
 
 func (f *fakeStore) Ingest(_ context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error) {
@@ -153,6 +157,13 @@ func (f *fakeStore) RepoExists(_ context.Context, project, slug string, _ bool) 
 		}
 	}
 	return false, nil
+}
+
+// Revision answers the fake's revisions by scope, names and number
+// (revisionPages), the current page's names.
+func (f *fakeStore) Revision(_ context.Context, scope, project, repo string, n int) (store.Page, bool, error) {
+	p, ok := f.revisionPages[scope+"|"+project+"|"+repo+"|"+itoa(n)]
+	return p, ok, f.revisionErr
 }
 
 func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) (store.Page, bool, error) {

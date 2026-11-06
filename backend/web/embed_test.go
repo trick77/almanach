@@ -31,6 +31,7 @@ func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 	for _, path := range []string{
 		"/", "/queue", "/dependencies", "/costs", "/projects/PLAT", "/projects/pay.v2/repos/pay-api", "/projects/PLAT/repos/files/notes/42",
 		"/projects/PLAT/repos/files/notes/123456789", "/projects/~jan/repos/scratch", "/sources", "/sources/~jan",
+		"/projects/PLAT/revisions/3", "/projects/PLAT/repos/files/revisions/12",
 	} {
 		w := req(t, h, path)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "id=root") {
@@ -40,6 +41,8 @@ func TestKnownRoutesGetTheShellAndUnknownOnesA404(t *testing.T) {
 	for _, path := range []string{
 		"/nope", "/projects", "/projects/", "/projects/PLAT/repos", "/projects/PLAT/repos/files/notes/0",
 		"/projects/PLAT/repos/files/notes/abc", "/projects/PLAT/repos/files/notes/1234567890",
+		"/projects/PLAT/revisions/0", "/projects/PLAT/revisions/abc", "/projects/PLAT/revisions/1234567890",
+		"/projects/PLAT/repos/files/revisions/", "/projects/PLAT/revisions",
 		"/projects/a%20b", "/projects/PLAT/repos/~x", "/FAQ", "/api/projects", "/auth/ping", "/webhooks/noergler",
 		"/assets/missing.js", "/queue/x", "/dependencies/x", "/costs/x", "/sources/", "/sources/a%20b", "/sources/a/b",
 		// The German paths the UI had first: gone, no redirect.

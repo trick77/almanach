@@ -7,6 +7,7 @@ import { fits, type FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
 import { RepoPage } from "./RepoPage";
+import { Revisions } from "./Revisions";
 import {
   Rail,
   RailPage,
@@ -60,6 +61,7 @@ const ids = {
   repos: "repositories",
   problems: "problems",
   notes: "notes",
+  revisions: "revisions",
 };
 
 export function ProjectPage({ projectKey }: { projectKey: string }) {
@@ -156,6 +158,12 @@ function Body({ data }: { data: ProjectDetail }) {
           label: S.project.recentNotes,
           tab: OVERVIEW,
           count: data.recent_notes.length,
+        },
+        {
+          id: ids.revisions,
+          label: S.revision.list,
+          tab: OVERVIEW,
+          count: data.revisions.length,
         },
       ],
     },
@@ -341,6 +349,16 @@ function Overview({
       <section id={ids.notes} className="scroll-mt-16">
         <div className={eyebrow}>{S.project.recentNotes}</div>
         <NotesTable projectKey={data.key} notes={data.recent_notes} />
+      </section>
+
+      <section id={ids.revisions} className="scroll-mt-16">
+        <div className={eyebrow}>{S.revision.list}</div>
+        <Revisions
+          projectKey={data.key}
+          slug=""
+          revisions={data.revisions}
+          current={data.description?.revision ?? 0}
+        />
       </section>
     </>
   );

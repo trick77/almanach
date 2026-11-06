@@ -270,13 +270,42 @@ export const S = {
     map: "Aufbau",
     mapDeclined:
       "Kein Aufbau: der letzte Run hat jeden Entwurf verworfen, weil er gegen die Regeln der Karte verstiess. Er wird neu gezeichnet, sobald sich die Beschreibung ändert.",
-    revisions: "Revisionen",
-    revisionFrom: "aus",
-    current: "aktuell",
+    notes: "Notizen",
+  },
+  // One revision's page: the description as it stood, and what it changed
+  // against the revision before.
+  revision: {
+    title: (n: number) => `Revision ${n}`,
+    of: (n: number, current: number) =>
+      n === current
+        ? `Revision ${n}, die aktuelle`
+        : `Revision ${n} von ${current}`,
+    failed: "Die Revision konnte nicht geladen werden.",
+    changes: "Änderungen",
+    against: (previous: number) => `Gegenüber Revision ${previous}`,
+    first: "Die erste Revision: alles neu",
+    added: "Neu",
+    changed: "Geändert",
+    dropped: "Entfernt",
+    // A baseline run confirmed the statement against the code, nothing
+    // else of it changed.
+    rechecked: "Bestätigt",
+    summaryChanged: "Überblick geändert",
+    mapChanged: "Neu gezeichnet",
+    shape: "Einordnung",
+    shapeChanged: "Neu beurteilt: System oder Sammlung",
+    nothing: "Keine Aussage hinzugekommen, geändert oder entfernt.",
+    description: "Beschreibung in dieser Revision",
+    previous: "‹ Vorherige",
+    next: "Nächste ›",
+    current: "Aktuelle Seite",
+    // A page's history, the list on the repository and the project page.
+    list: "Revisionen",
+    none: "Noch keine Revision.",
+    from: "aus",
+    marked: "aktuell",
     statements: (n: number) => (n === 1 ? "1 Aussage" : `${n} Aussagen`),
     chars: (n: number) => `${fmtInt(n)} Zeichen`,
-    noRevisions: "Noch keine Revision.",
-    notes: "Notizen",
   },
   kinds: {
     component: "Komponenten",
