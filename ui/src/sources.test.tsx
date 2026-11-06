@@ -177,6 +177,7 @@ const detail: SourceDetail = {
         left_parts: false,
         auto_retry: false,
       },
+      brief: null,
     },
     {
       slug: "acme-legacy",
@@ -191,6 +192,7 @@ const detail: SourceDetail = {
       deactivated_at: null,
       dir: "/app/repos/p3/r12",
       baseline: null,
+      brief: null,
     },
   ],
 };
@@ -471,6 +473,112 @@ describe("SourcePage baseline", () => {
         body: { mode: "full" },
       },
     ]);
+  });
+
+  it("asks for a PROJECT.md and opens its text when the push is refused", async () => {
+    const refused = {
+      state: "push_failed" as const,
+      waiting: "" as const,
+      error: "git push: 403 not allowed",
+      has_text: true,
+      page_revision: 4,
+      written_at: when,
+      branch: "feature/repository-description-update",
+      pushed_commit: "",
+      push_at: when,
+    };
+    let current: SourceDetail = detail;
+    const table = {
+      get "sources/werkzeuge"() {
+        return structuredClone(current);
+      },
+      "sources/werkzeuge/repos/acme-cli/brief": {
+        ...refused,
+        markdown: "## Projekt\n\nDer CLI-Client.\n",
+        path: ".agents/PROJECT.md",
+      },
+    };
+    const writes = serve(table);
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    render(<SourcePage projectKey="werkzeuge" />);
+    const buttons = await screen.findAllByText(S.brief.action);
+    // The repository with no description has nothing to write from.
+    expect(buttons[1]).toBeDisabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The row shows the request under way; a refusal from before it would
+    // open nothing.
+    const withBrief = (brief: SourceDetail["repos"][0]["brief"]) => ({
+      ...detail,
+      repos: [{ ...detail.repos[0], brief }, detail.repos[1]],
+    });
+    fireEvent.click(buttons[0]);
+    current = withBrief({ ...refused, state: "requested", error: "" });
+    await waitFor(() =>
+      expect(writes).toEqual([
+        {
+          method: "POST",
+          path: "sources/werkzeuge/repos/acme-cli/brief",
+          body: undefined,
+        },
+      ]),
+    );
+    expect(
+      await screen.findByText(S.brief.state.requested),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // The page polls while it is under way; the refusal opens the text.
+    current = withBrief(refused);
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
+    expect(
+      await within(dialog).findByText(/Der CLI-Client\./),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        S.brief.pushRefused(refused.branch, refused.error),
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByText(S.brief.copy));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("## Projekt\n\nDer CLI-Client.\n"),
+    );
+    expect(await within(dialog).findByText(S.brief.copied)).toBeInTheDocument();
+    // The row keeps the refusal and the way back to the text.
+    fireEvent.click(within(dialog).getByLabelText(S.diagram.close));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(S.brief.state.push_failed)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(S.brief.show));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("says when the day's budget holds a PROJECT.md request", async () => {
+    serve({
+      "sources/werkzeuge": {
+        ...detail,
+        repos: [
+          {
+            ...detail.repos[0],
+            brief: {
+              state: "requested",
+              waiting: "budget",
+              error: "",
+              has_text: false,
+              page_revision: 0,
+              written_at: null,
+              branch: "feature/repository-description-update",
+              pushed_commit: "",
+              push_at: null,
+            },
+          },
+          detail.repos[1],
+        ],
+      },
+    });
+    render(<SourcePage projectKey="werkzeuge" />);
+    expect(await screen.findByText(S.brief.waitBudget)).toBeInTheDocument();
+    // Asked already: no second request.
+    expect(screen.getAllByText(S.brief.action)[0]).toBeDisabled();
   });
 
   it("keeps a row held while its request is out, whatever another row's answers", async () => {

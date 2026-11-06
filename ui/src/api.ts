@@ -36,6 +36,8 @@ export interface CostProject {
   calls: number;
   merges: CostSum;
   runs: CostSum;
+  /** The repositories' PROJECT.md calls. */
+  briefs: CostSum;
 }
 
 export interface CostMonth {
@@ -464,6 +466,38 @@ export interface SourceRepo {
   dir: string;
   /** The newest baseline run, null before the first. */
   baseline: Baseline | null;
+  /** The repository's .agents/PROJECT.md, null before the first request. */
+  brief: RepoBrief | null;
+}
+
+/** A brief's state, the newest thing that happened: a request waiting or
+ *  failed, then its push: due, done, not needed (the default branch holds
+ *  the file) or refused (the text is there to copy). */
+export type BriefState =
+  "requested" | "failed" | "pushing" | "pushed" | "unchanged" | "push_failed";
+
+/** RepoBrief is a repository's brief on its source page row. */
+export interface RepoBrief {
+  state: BriefState;
+  /** Why a request is not taken yet: the day's budget is spent. */
+  waiting: "" | "budget";
+  /** Why the request (failed) or the push (push_failed) failed. */
+  error: string;
+  has_text: boolean;
+  /** The page revision it was written from, 0 before the first. */
+  page_revision: number;
+  written_at: string | null;
+  /** The branch it is pushed to. */
+  branch: string;
+  pushed_commit: string;
+  push_at: string | null;
+}
+
+/** BriefText is the brief with its file, for the copy. */
+export interface BriefText extends RepoBrief {
+  markdown: string;
+  /** Where the file goes in the repository. */
+  path: string;
 }
 
 export type RunState =
@@ -589,9 +623,10 @@ export interface QueueRun {
   steps: RunStep[];
 }
 
-/** A note or a run in the queue. */
+/** A note or a run in the queue; as the current item also a repository's
+ *  brief, its call or its push. */
 export interface QueueItem {
-  kind: "note" | "run";
+  kind: "note" | "run" | "brief";
   project: string;
   repo: string;
   pr_key?: string;

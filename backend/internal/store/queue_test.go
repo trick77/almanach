@@ -18,6 +18,7 @@ func TestCostsByMonthAndProject(t *testing.T) {
 		{ProjectKey: "PRJ", RepoSlug: "svc", SourcePR: "PRJ/svc#1", Outcome: "ok", CostNanoUSD: i64(30_000_000)},
 		{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "c0ffee", Purpose: PurposeSubject, Outcome: "ok", CostNanoUSD: i64(1_000_000_000)},
 		{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "c0ffee", Purpose: PurposeCatalogue, Outcome: "ok"},
+		{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromPage, Purpose: PurposeBrief, Outcome: "ok", CostNanoUSD: i64(7_000_000)},
 		{ProjectKey: "ZED", RepoSlug: "web", SourcePR: "ZED/web#2", Outcome: "error"},
 	} {
 		if _, err := s.InsertLLMCall(ctx, c); err != nil {
@@ -36,7 +37,8 @@ func TestCostsByMonthAndProject(t *testing.T) {
 	}
 	prj, zed := rows[0], rows[1]
 	if prj.Month != month || prj.ProjectKey != "PRJ" || prj.Merges.Calls != 1 || prj.Merges.NanoUSD == nil || *prj.Merges.NanoUSD != 30_000_000 ||
-		prj.Runs.Calls != 2 || prj.Runs.Unpriced != 1 || prj.Runs.NanoUSD == nil || *prj.Runs.NanoUSD != 1_000_000_000 {
+		prj.Runs.Calls != 2 || prj.Runs.Unpriced != 1 || prj.Runs.NanoUSD == nil || *prj.Runs.NanoUSD != 1_000_000_000 ||
+		prj.Briefs.Calls != 1 || prj.Briefs.NanoUSD == nil || *prj.Briefs.NanoUSD != 7_000_000 {
 		t.Errorf("PRJ = %+v", prj)
 	}
 	if zed.ProjectKey != "ZED" || zed.Merges.Calls != 1 || zed.Merges.Unpriced != 1 || zed.Merges.NanoUSD != nil || zed.Runs.Calls != 0 {

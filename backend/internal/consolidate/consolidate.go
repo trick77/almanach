@@ -334,10 +334,11 @@ func (w *Worker) stopping() bool {
 // back at once, one paid call per lap; the next wake or poll tries again.
 //
 // Notes come first: a note is a small, timely delta, a run minutes of
-// calls. With the baseline on, one step of the oldest open run follows
-// when no note is due, and the notes are looked at again after it.
-// QueueOrder lays the queue out in this order for the queue page: a
-// change here changes it too.
+// calls. With the baseline on, a requested brief (one call, or its push)
+// comes next, a click waiting for it, then one step of the oldest open run
+// when neither is due, and the notes are looked at again after each.
+// QueueOrder lays the notes and runs out in this order for the queue page:
+// a change here changes it too.
 func (w *Worker) drain(ctx context.Context) {
 	// The backstop: a fold's and a step's own panics fail their item (Fold,
 	// step); one outside them (a source check, a run's failure write) ends
@@ -345,10 +346,11 @@ func (w *Worker) drain(ctx context.Context) {
 	// so it never blocks the rest: none blocks the queue forever.
 	var note *store.QueuedNote
 	var run *store.BaselineRun
+	var brief *store.BriefJob
 	defer func() {
 		if r := recover(); r != nil {
 			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: drain panicked: %v", r), slog.String("stack", string(debug.Stack())))
-			w.dropAfterPanic(ctx, note, run, r)
+			w.dropAfterPanic(ctx, note, run, brief, r)
 		}
 	}()
 	w.saveFailed = nil
@@ -356,8 +358,11 @@ func (w *Worker) drain(ctx context.Context) {
 	// every item.
 	w.heartbeat()
 	w.requeueAged(ctx)
+	// briefsWait: a brief's clone was busy; the briefs wait for the next
+	// drain, the runs go on.
+	briefsWait := false
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
-		note, run = nil, nil
+		note, run, brief = nil, nil, nil
 		q, ok, err := w.store.NextQueued(ctx)
 		if err != nil {
 			w.log.WarnContext(ctx, "consolidate: queue read failed", logging.Err(err))
@@ -373,6 +378,24 @@ func (w *Worker) drain(ctx context.Context) {
 		}
 		if w.base == nil {
 			return
+		}
+		if !briefsWait {
+			j, ok, err := w.nextBrief(ctx)
+			if err != nil {
+				w.log.WarnContext(ctx, "brief: queue read failed", logging.Err(err))
+				return
+			}
+			if ok {
+				brief = &j
+				switch w.brief(ctx, j) {
+				case briefStop:
+					return
+				case briefSkip:
+					briefsWait = true
+				}
+				w.heartbeat()
+				continue
+			}
 		}
 		r, ok, err := w.base.Store.NextRun(ctx)
 		if err != nil {
@@ -394,7 +417,7 @@ func (w *Worker) drain(ctx context.Context) {
 // dropAfterPanic takes the item a drain panicked on off the queue: the
 // note failed, the run failed as it was loaded. A panic here too is only
 // logged; the next drain meets the item again.
-func (w *Worker) dropAfterPanic(ctx context.Context, note *store.QueuedNote, run *store.BaselineRun, cause any) {
+func (w *Worker) dropAfterPanic(ctx context.Context, note *store.QueuedNote, run *store.BaselineRun, brief *store.BriefJob, cause any) {
 	defer func() {
 		if r := recover(); r != nil {
 			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: dropping the item after a panic panicked too: %v", r))
@@ -405,6 +428,12 @@ func (w *Worker) dropAfterPanic(ctx context.Context, note *store.QueuedNote, run
 		w.failNote(ctx, *note, fmt.Sprintf("panic: %v", cause), false)
 	case run != nil:
 		w.failRun(ctx, *run, fmt.Sprintf("panicked: %v", cause))
+	case brief != nil && brief.Write:
+		w.failBrief(ctx, *brief, fmt.Sprintf("panic: %v", cause))
+	case brief != nil:
+		if err := w.base.Briefs.Store.PushedBrief(ctx, brief.RepoID, store.PushFailed, "", fmt.Sprintf("panic: %v", cause)); err != nil {
+			w.log.WarnContext(ctx, "brief: push outcome not written", logging.Err(err))
+		}
 	}
 }
 
@@ -633,10 +662,7 @@ func (w *Worker) fold(ctx context.Context, q store.QueuedNote, counted int) (nex
 	case inference.OutcomeOK:
 	default:
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s", q.PRKey, res.Outcome), logging.Err(res.Err))
-		failed = res.Outcome.String()
-		if res.Err != nil {
-			failed += ": " + res.Err.Error()
-		}
+		failed = outcomeReason(res.Call)
 		return
 	}
 	var id *int64
@@ -833,9 +859,13 @@ const singleProject = "_None: this project is one repository, it has no project 
 
 // collectionProject heads the merge prompt's project description of a
 // collection: its page is a summary alone, which a note seldom changes.
-const collectionProject = "_This project is a collection: repositories that each stand on their own, grouped for another reason. " +
+const collectionProject = collectionLead + " " +
 	"Its description is a short summary alone, no statements. Answer `\"project\": null` unless this note changes what the project " +
 	"holds; then the summary alone, `statements` and `added` empty._"
+
+// collectionLead says what a collection is, the merge's and the brief's
+// one wording, an italic left open for the rest of its line.
+const collectionLead = "_This project is a collection: repositories that each stand on their own, grouped for another reason."
 
 // deferNote leaves a note queued with its failed attempt counted, after a
 // hold. Once maxFoldAttempts is reached the note is given up: off the queue
@@ -1535,6 +1565,9 @@ type pageView struct {
 	read  bool
 	prs   prShown
 	newer map[string]string
+	// noDiagrams leaves the statements' diagrams out: a reader that writes
+	// none (a brief) pays for no JSON it ignores.
+	noDiagrams bool
 }
 
 // prShown is how a statement's pull requests are shown: not at all, by key,
@@ -1582,7 +1615,9 @@ func describePage(p store.Page, v pageView) string {
 		if len(s.Files) > 0 {
 			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
 		}
-		b.WriteString(diagramLine(s.Diagram))
+		if !v.noDiagrams {
+			b.WriteString(diagramLine(s.Diagram))
+		}
 		if v.prs != prNone {
 			var prs []string
 			for _, src := range s.Sources {

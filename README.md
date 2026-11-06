@@ -54,7 +54,10 @@ Nothing flows back into reviews.
   of the call that wrote it.
 - **Quellen** (sources): the projects Almanach clones, listed from
   Bitbucket's API or entered by hand, kept current by a poller, each
-  repository with its baseline state and a button to read it again.
+  repository with its baseline state and a button to read it again, and
+  one that writes its `.agents/PROJECT.md` (what an agent cannot read from
+  the code) and pushes it to `feature/repository-description-update`, or
+  shows the text to copy when the token may not push.
 
 A page is system documentation, as long as its subject needs: nothing
 is dropped or truncated for its size. A JSON API serves all of it

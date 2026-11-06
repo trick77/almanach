@@ -419,6 +419,28 @@ describe("QueuePage", () => {
     expect(screen.queryByText(S.queue.failedNotes)).not.toBeInTheDocument();
   });
 
+  it("shows a repository's PROJECT.md in flight", async () => {
+    serve({
+      queue: queue({
+        current: {
+          kind: "brief",
+          project: "pay",
+          repo: "billing",
+          attempts: 0,
+          since: iso(-1),
+        },
+        next: [note(812)],
+      }),
+    });
+    render(<QueuePage />);
+    const items = await screen.findAllByTestId("queue-item");
+    expect(within(items[0]).getByText(S.queue.brief)).toBeInTheDocument();
+    expect(within(items[0]).getByText("billing")).toBeInTheDocument();
+    expect(
+      within(items[0]).getByText(/^erzeugt oder pusht seit/),
+    ).toBeInTheDocument();
+  });
+
   it("counts what it does not list", async () => {
     serve({ queue: queue({ next: [note(812)], more: 5 }) });
     render(<QueuePage />);

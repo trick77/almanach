@@ -306,6 +306,11 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 				}
 			}
 		}
+		if b.Kind == consolidate.KindBrief {
+			// A repository's brief: its call or its push, never queued
+			// here, the source page's row says the rest.
+			out.Current = &queueItemBody{Kind: consolidate.KindBrief, Project: b.ProjectKey, Repo: b.RepoSlug}
+		}
 		if out.Current != nil {
 			since := b.Since
 			out.Current.Since = &since

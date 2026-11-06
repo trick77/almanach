@@ -233,6 +233,12 @@ func (s *Store) Shared(ctx context.Context, key, slug string) ([]SharedRepo, err
 	if err != nil {
 		return nil, err
 	}
+	return s.SharedIn(ctx, g, key, slug)
+}
+
+// SharedIn is Shared over a graph already read (Dependencies, main uses):
+// a reader that needs the graph too reads it once.
+func (s *Store) SharedIn(ctx context.Context, g Graph, key, slug string) ([]SharedRepo, error) {
 	out := []SharedRepo{}
 	at := map[RepoRef]int{}
 	for _, e := range g.Edges {

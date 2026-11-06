@@ -1,8 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ApiError,
+  get,
   send,
   type Baseline,
+  type BriefText,
+  type RepoBrief,
   type SkippedPart,
   type SkipReason,
   type SourceDetail,
@@ -22,6 +25,7 @@ import {
   stateTone,
   type Tone,
 } from "./format";
+import OverlayShell from "./OverlayShell";
 import { navigateTo, replaceTo, sourcePath, sourcesPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
@@ -68,15 +72,28 @@ export function runOpen(b: Baseline | null): boolean {
   return b !== null && b.state !== "done" && b.state !== "failed";
 }
 
-/** running reports whether a clone or a baseline run is in progress, which
- *  is when the page polls. A deactivated repository stays pending, waiting
- *  for no sync: only its departure run counts. */
+/** briefOpen reports whether a brief is being written or pushed: not one
+ *  the day's budget holds, which waits for the next day and is no reason
+ *  to poll. */
+export function briefOpen(b: RepoBrief | null): boolean {
+  return (
+    b !== null &&
+    b.waiting === "" &&
+    (b.state === "requested" || b.state === "pushing")
+  );
+}
+
+/** running reports whether a clone, a baseline run or a brief is in
+ *  progress, which is when the page polls. A deactivated repository stays
+ *  pending, waiting for no sync: only its departure run counts. */
 function running(d: SourceDetail | null): number {
   return d?.repos.some(
     (r) =>
       (r.deactivated_at === null &&
         (r.state === "pending" || r.state === "syncing")) ||
-      runOpen(r.baseline),
+      runOpen(r.baseline) ||
+      // A deactivated repository's brief waits for its comeback.
+      (r.deactivated_at === null && briefOpen(r.brief)),
   )
     ? pollEvery
     : 0;
@@ -128,6 +145,39 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
   const [fullOf, setFullOf] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [rowError, setRowError] = useState<RowError | null>(null);
+  // The repository whose brief is open in the dialog. A brief asked for on
+  // this page opens there by itself once its push is refused: the text to
+  // copy is what the reader came for. asked follows each such request:
+  // sent, then seen under way on the row (an answer from before the
+  // request, a refusal of the brief before, must not open it), then over.
+  const [briefOf, setBriefOf] = useState<string | null>(null);
+  const [asked, setAsked] = useState<ReadonlyMap<string, "sent" | "seen">>(
+    new Map(),
+  );
+  {
+    let next: Map<string, "sent" | "seen"> | null = null;
+    let refused: string | null = null;
+    for (const [slug, step] of asked) {
+      const row = data.repos.find((r) => r.slug === slug);
+      const b = row?.brief ?? null;
+      const to =
+        row === undefined
+          ? ""
+          : briefOpen(b)
+            ? "seen"
+            : step === "seen"
+              ? ""
+              : step;
+      if (to === step) continue;
+      next ??= new Map(asked);
+      if (to === "") {
+        next.delete(slug);
+        if (b?.state === "push_failed") refused = slug;
+      } else next.set(slug, to);
+    }
+    if (next !== null) setAsked(next);
+    if (refused !== null) setBriefOf(refused);
+  }
   const isStatic = data.kind === "static";
   // A deactivated repository is no source: its state (pending, waiting for
   // a comeback) counts for nothing here.
@@ -446,6 +496,13 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           onSync={(slug) =>
             rowAct(slug, () => send("POST", `${repoPath(slug)}/sync`))
           }
+          onBrief={(slug) =>
+            rowAct(slug, async () => {
+              await send("POST", `${repoPath(slug)}/brief`);
+              setAsked((cur) => new Map(cur).set(slug, "sent"));
+            })
+          }
+          onShowBrief={setBriefOf}
           onDescribe={(slug, mode) =>
             rowAct(slug, async () => {
               await send("POST", `${repoPath(slug)}/describe`, { mode });
@@ -510,7 +567,141 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
         />
       )}
       {!isStatic && <Empty>{S.sources.listedOnly}</Empty>}
+      {briefOf !== null && (
+        <BriefDialog
+          path={`${repoPath(briefOf)}/brief`}
+          onClose={() => setBriefOf(null)}
+        />
+      )}
     </>
+  );
+}
+
+/** BriefDialog is a repository's PROJECT.md to copy: opened by hand, or by
+ *  itself when the push of one asked for here was refused. */
+function BriefDialog({ path, onClose }: { path: string; onClose: () => void }) {
+  const [brief, setBrief] = useState<BriefText | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [copied, setCopied] = useState<"" | "ok" | "failed">("");
+  useEffect(() => {
+    const ctl = new AbortController();
+    get<BriefText>(path, ctl.signal).then(setBrief, (e: unknown) => {
+      if (!ctl.signal.aborted) setFailed(true);
+      return e;
+    });
+    return () => ctl.abort();
+  }, [path]);
+  const copy = async () => {
+    if (brief === null) return;
+    try {
+      await navigator.clipboard.writeText(brief.markdown);
+      setCopied("ok");
+    } catch {
+      setCopied("failed");
+    }
+  };
+  return (
+    <OverlayShell
+      label={S.brief.title}
+      dialogClassName="flex h-full w-full flex-col overflow-hidden sm:h-auto sm:max-h-full sm:w-[min(100%,760px)] rounded-none border-0 bg-panel font-sans shadow-panel sm:rounded-ui-lg sm:border sm:border-elevated-border"
+      headerClassName="flex items-center gap-2 border-b border-border px-3 py-2.5 sm:gap-3 sm:px-4.5 sm:py-3"
+      header={
+        <>
+          <span className="font-mono text-[13px] text-ink">
+            {brief?.path ?? S.brief.title}
+          </span>
+          <span className="ml-auto flex items-center gap-2">
+            {copied !== "" && (
+              <span
+                role="status"
+                className={
+                  "text-[12.5px] " +
+                  (copied === "ok" ? "text-muted" : "text-danger-ink")
+                }
+              >
+                {copied === "ok" ? S.brief.copied : S.brief.copyFailed}
+              </span>
+            )}
+            <button
+              type="button"
+              className={btnPrimary}
+              disabled={brief === null}
+              onClick={copy}
+            >
+              {S.brief.copy}
+            </button>
+          </span>
+        </>
+      }
+      onClose={onClose}
+    >
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-4.5">
+        {failed ? (
+          <Failed message={S.brief.failedLoad} />
+        ) : brief === null ? (
+          <Skeleton />
+        ) : (
+          <>
+            {brief.state === "push_failed" && (
+              <Panel tone="danger">
+                {S.brief.pushRefused(brief.branch, brief.error)}
+              </Panel>
+            )}
+            <p className="mt-2 text-[12.5px] text-faint">
+              {S.brief.fromRevision(brief.path, brief.page_revision)}
+            </p>
+            <pre
+              tabIndex={0}
+              className="mt-2 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink wrap-anywhere"
+            >
+              {brief.markdown}
+            </pre>
+          </>
+        )}
+      </div>
+    </OverlayShell>
+  );
+}
+
+/** BriefLine is a repository's brief under its description state. */
+function BriefLine({ b, onShow }: { b: RepoBrief | null; onShow: () => void }) {
+  if (b === null) return null;
+  const tone: Tone =
+    b.state === "pushed" || b.state === "unchanged"
+      ? "ok"
+      : b.state === "failed" || b.state === "push_failed"
+        ? "fail"
+        : "warn";
+  const note =
+    b.waiting === "budget"
+      ? S.brief.waitBudget
+      : b.state === "pushed" && b.pushed_commit !== ""
+        ? S.brief.pushedTo(b.branch, shortSHA(b.pushed_commit))
+        : b.state === "unchanged"
+          ? S.brief.unchangedNote
+          : b.state === "failed" || b.state === "push_failed"
+            ? b.error
+            : "";
+  return (
+    <div className="mt-1.5">
+      <Pill tone={tone} dot>
+        {S.brief.state[b.state]}
+      </Pill>
+      {note !== "" && (
+        <div className="mt-0.5 max-w-[190px] text-[11.5px] text-faint wrap-anywhere">
+          {note}
+        </div>
+      )}
+      {b.has_text && (
+        <button
+          type="button"
+          className={rowBtn + " mt-0.5 px-0"}
+          onClick={onShow}
+        >
+          {S.brief.show}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -518,6 +709,8 @@ function ReposTable({
   data,
   rowError,
   onSync,
+  onBrief,
+  onShowBrief,
   onDescribe,
   removing,
   onAskRemove,
@@ -536,6 +729,8 @@ function ReposTable({
   data: SourceDetail;
   rowError: RowError | null;
   onSync: (slug: string) => Promise<void>;
+  onBrief: (slug: string) => Promise<void>;
+  onShowBrief: (slug: string) => void;
   onDescribe: (slug: string, mode: "reconcile" | "full") => Promise<void>;
   removing: string | null;
   onAskRemove: (slug: string | null) => void;
@@ -648,6 +843,8 @@ function ReposTable({
                 isStatic={data.kind === "static"}
                 under={under(r)}
                 onSync={() => onSync(r.slug)}
+                onBrief={() => onBrief(r.slug)}
+                onShowBrief={() => onShowBrief(r.slug)}
                 onDescribe={(mode) => onDescribe(r.slug, mode)}
                 onAskFull={() => onAskFull(r.slug)}
                 held={busy.has(r.slug)}
@@ -711,6 +908,8 @@ function RepoRow({
   isStatic,
   under,
   onSync,
+  onBrief,
+  onShowBrief,
   onDescribe,
   onAskFull,
   held,
@@ -724,6 +923,10 @@ function RepoRow({
   /** What the row asks or reports: right under it, above its failures. */
   under: ReactNode;
   onSync: () => void;
+  /** Asks for the repository's PROJECT.md: written from its page, pushed
+   *  to a branch of its own. */
+  onBrief: () => Promise<void>;
+  onShowBrief: () => void;
   onDescribe: (mode: "reconcile" | "full") => Promise<void>;
   /** A full run is asked for under the row (RowConfirm), never sent on
    *  the click: it is paid for whole. */
@@ -761,6 +964,14 @@ function RepoRow({
       setSending(false);
     }
   };
+  const brief = async () => {
+    setSending(true);
+    try {
+      await onBrief();
+    } finally {
+      setSending(false);
+    }
+  };
   return (
     <>
       <tr className={off ? "text-faint" : undefined}>
@@ -793,6 +1004,7 @@ function RepoRow({
         </td>
         <td className={td}>
           <BaselineCell b={r.baseline} />
+          <BriefLine b={r.brief} onShow={onShowBrief} />
         </td>
         <td className={td + " text-right"}>
           {/* Stacked: four actions side by side push the table past the
@@ -831,6 +1043,24 @@ function RepoRow({
                 onClick={onAskFull}
               >
                 {S.baseline.actions.full}
+              </button>
+            )}
+            {live && (
+              <button
+                type="button"
+                className={rowBtn}
+                // One waiting for the budget is asked already.
+                disabled={
+                  !documented ||
+                  sending ||
+                  held ||
+                  r.brief?.state === "requested" ||
+                  r.brief?.state === "pushing"
+                }
+                title={documented ? undefined : S.brief.noPage}
+                onClick={brief}
+              >
+                {S.brief.action}
               </button>
             )}
             {renamable && (

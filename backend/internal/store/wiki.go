@@ -561,7 +561,14 @@ const (
 	// PurposeRestyle is a restyle run's call, the repository's page or the
 	// project's (its step says which).
 	PurposeRestyle = "restyle"
+	// PurposeBrief is a repository's brief written from its page, the
+	// call's source FromPage.
+	PurposeBrief = "brief"
 )
+
+// FromPage is a call's source when it read a stored page alone: a brief.
+// A call's only, never a revision's or a statement's.
+const FromPage = "page"
 
 // LLMCall is one model call as llmwire described it. SourceKind "" and
 // Purpose "" are a note's merge (SourcePR); a baseline step sets

@@ -272,6 +272,16 @@ func TestQueue_NoteFoldedMeanwhile(t *testing.T) {
 	}
 }
 
+// A brief in flight is the current item, the notes still next.
+func TestQueue_BriefInFlight(t *testing.T) {
+	st := &fakeQueueStore{notes: []store.PendingNote{pending("ledger", "pay/ledger#813", -2, 0)}}
+	busy := consolidate.Busy{Kind: consolidate.KindBrief, ProjectKey: "pay", RepoSlug: "billing", Since: at(0)}
+	out := getQueue(t, &QueueDeps{Store: st, Worker: fakeWorkerStatus{consolidate.Status{Busy: &busy}}})
+	if c := out.Current; c == nil || c.Kind != consolidate.KindBrief || c.Repo != "billing" || c.Since == nil || len(out.Next) != 1 {
+		t.Errorf("current %+v next %+v", out.Current, out.Next)
+	}
+}
+
 // With the sources off there are no runs and no sync: the runs are never
 // read, the sync is null; a note in flight is current.
 func TestQueue_SourcesOff(t *testing.T) {

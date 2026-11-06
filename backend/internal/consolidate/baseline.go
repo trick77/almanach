@@ -94,6 +94,8 @@ type Baseline struct {
 	Catalogue Cataloguer
 	Describer Describer
 	Limits    config.Baseline
+	// Briefs writes and pushes the repositories' briefs; nil: none.
+	Briefs *Briefs
 }
 
 // runPlan is a run's plan as stored: the catalogue the next reconcile
@@ -270,7 +272,7 @@ func (w *Worker) overBudget(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return spent != nil && *spent >= budget, nil
+	return store.OverBudget(spent, budget), nil
 }
 
 // ErrCloneBusy is a Code read that found the clone held by the poller: no

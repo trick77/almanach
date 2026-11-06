@@ -298,15 +298,17 @@ func (s *Store) RunCosts(ctx context.Context, ids []int64) (map[int64]int64, err
 }
 
 // CostRow is one month of one project's own model calls, the merges (a
-// note's fold) apart from the runs (every baseline call): what they cost,
-// how many there were, and how many of them no one priced. Never summed
-// with note_calls, noergler's ledger.
+// note's fold) apart from the runs (every baseline call) and the briefs
+// (a repository's PROJECT.md, asked by a button): what they cost, how many
+// there were, and how many of them no one priced. Never summed with
+// note_calls, noergler's ledger.
 type CostRow struct {
 	// Month is YYYY-MM, UTC.
 	Month      string
 	ProjectKey string
 	Merges     CostSum
 	Runs       CostSum
+	Briefs     CostSum
 }
 
 // CostSum is calls and their cost; NanoUSD nil when none was priced.
@@ -327,7 +329,8 @@ func (s *Store) Costs(ctx context.Context, now time.Time) ([]CostRow, error) {
 	from := DayStart(now)
 	from = time.Date(from.Year(), from.Month()-CostsMonths+1, 1, 0, 0, 0, 0, time.UTC)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT substr(c.created_at, 1, 7), p.key, c.purpose = 'merge',
+		SELECT substr(c.created_at, 1, 7), p.key,
+		       CASE c.purpose WHEN 'merge' THEN 'merge' WHEN 'brief' THEN 'brief' ELSE 'run' END,
 		       COUNT(*), COUNT(*) - COUNT(c.cost_nano_usd), SUM(c.cost_nano_usd)
 		  FROM llm_calls c JOIN repos r ON r.id = c.repo_id JOIN projects p ON p.id = r.project_id
 		 WHERE c.created_at >= ?
@@ -339,11 +342,10 @@ func (s *Store) Costs(ctx context.Context, now time.Time) ([]CostRow, error) {
 	defer func() { _ = rows.Close() }()
 	out := []CostRow{}
 	for rows.Next() {
-		var month, key string
-		var merge bool
+		var month, key, kind string
 		var sum CostSum
 		var nano sql.NullInt64
-		if err := rows.Scan(&month, &key, &merge, &sum.Calls, &sum.Unpriced, &nano); err != nil {
+		if err := rows.Scan(&month, &key, &kind, &sum.Calls, &sum.Unpriced, &nano); err != nil {
 			return nil, err
 		}
 		if nano.Valid {
@@ -353,9 +355,12 @@ func (s *Store) Costs(ctx context.Context, now time.Time) ([]CostRow, error) {
 			out = append(out, CostRow{Month: month, ProjectKey: key})
 		}
 		row := &out[len(out)-1]
-		if merge {
+		switch kind {
+		case PurposeMerge:
 			row.Merges = sum
-		} else {
+		case PurposeBrief:
+			row.Briefs = sum
+		default:
 			row.Runs = sum
 		}
 	}
@@ -382,6 +387,13 @@ func USD(nano int64) string {
 		frac = "0" + frac
 	}
 	return sign + strconv.FormatInt(milli/1000, 10) + "." + frac
+}
+
+// OverBudget reports whether spent (nil: none priced) has reached a daily
+// budget; never with none (budget 0 or less). The worker's rule and the
+// source page's, one.
+func OverBudget(spent *int64, budget int64) bool {
+	return budget > 0 && spent != nil && *spent >= budget
 }
 
 // Spent is what Almanach's own model calls since a time cost, and how many
