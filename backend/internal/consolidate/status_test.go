@@ -79,6 +79,16 @@ func TestQueueOrder_FoldDelay(t *testing.T) {
 	if !slices.Equal(free, []string{"d1", "d2"}) {
 		t.Errorf("free = %v, want the due repository's notes, its new one too", free)
 	}
+	// Two due repositories, their notes interleaved: listed by
+	// repository, as the drain folds them together.
+	two := []store.PendingNote{note("a", "a1", 30*time.Hour), note("b", "b1", 29*time.Hour), note("a", "a2", time.Hour)}
+	var grouped []string
+	for _, n := range QueueOrder(two, nil, 24*time.Hour, now).Free {
+		grouped = append(grouped, n.PRKey)
+	}
+	if !slices.Equal(grouped, []string{"a1", "a2", "b1"}) {
+		t.Errorf("free = %v, want a's notes together first", grouped)
+	}
 	if want := []string{"s1@1h0m0s", "l1@4h0m0s", "l2@4h0m0s"}; !slices.Equal(waiting, want) {
 		t.Errorf("waiting = %v, want %v", waiting, want)
 	}

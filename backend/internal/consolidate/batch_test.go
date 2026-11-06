@@ -9,9 +9,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/store"
 )
+
+// Fold runs one note through the merge: a fold of one, as the worker
+// makes it without a fold delay.
+func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
+	return w.fold(ctx, []store.QueuedNote{q}, 0)
+}
+
+// render is the merge prompt of one note without a bugfix.
+func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l config.Limits) string {
+	return renderBatch(tmpl, []store.QueuedNote{q}, repoPage, describe(projectPage), noProblems, l)
+}
 
 // seqMerger answers each call with the next result, the last one again
 // past the end, and records the prompts.
@@ -224,10 +236,11 @@ func TestBatch_SplitBoundedByItsNotes(t *testing.T) {
 	}
 }
 
-// A gateway failure keeps every note of the batch queued, only the first
-// one's attempt counted, as before batching the oldest's alone; a timeout
-// halves the repository's next batches until a fold gets an answer.
-func TestBatch_GatewayCountsTheFirstNote(t *testing.T) {
+// A gateway failure keeps every note of the batch queued, only the
+// anchor's attempt counted (the oldest received), as before batching the
+// oldest's alone; a timeout halves the repository's next batches, and an
+// answer at the half keeps them halved.
+func TestBatch_GatewayCountsTheAnchor(t *testing.T) {
 	m := &seqMerger{results: []inference.MergeResult{{Call: inference.Call{Outcome: inference.OutcomeTimedOut}}, okResult(nil, nil)}}
 	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), batchNote(2, "feature"), batchNote(3, "feature"))
 	w.drain(context.Background())
@@ -237,19 +250,47 @@ func TestBatch_GatewayCountsTheFirstNote(t *testing.T) {
 	if st.attempts["PLAT|files|1"] != 1 || st.attempts["PLAT|files|2"] != 0 || st.attempts["PLAT|files|3"] != 0 {
 		t.Errorf("attempts = %v, want the first note's alone", st.attempts)
 	}
-	if got := w.batchMax["PLAT/files"]; got != 1 {
-		t.Fatalf("batchMax = %d, want half of 3", got)
+	if got := w.batchMax["plat/files"]; got != 1 {
+		t.Fatalf("batchMax = %v, want half of 3", w.batchMax)
 	}
 	st.popped = batchNote(1, "feature")
 	st.queue = []store.QueuedNote{batchNote(2, "feature"), batchNote(3, "feature")}
-	chunks, err := w.batchOf(context.Background(), st.popped)
-	if err != nil || len(chunks) != 3 {
-		t.Fatalf("after the timeout: %d batches, %v; want one note each", len(chunks), err)
+	batch, left, err := w.batchOf(context.Background(), st.popped, true)
+	if err != nil || len(batch) != 1 || left != 2 {
+		t.Fatalf("after the timeout: batch %d, left %d, %v; want one note, two left", len(batch), left, err)
 	}
-	w.retryAt = time.Time{}
-	w.fold(context.Background(), chunks[0], 0)
-	if _, kept := w.batchMax["PLAT/files"]; kept {
-		t.Error("an answered fold kept the repository's cap")
+	w.fold(context.Background(), batch, 0)
+	if got := w.batchMax["plat/files"]; got != 1 {
+		t.Errorf("an answer at the half reset the cap: %v", w.batchMax)
+	}
+
+	// A note merged first but received last is not the anchor: the
+	// oldest received keeps counting.
+	late := batchNote(1, "feature")
+	late.ReceivedAt = mergedAt.Add(2 * time.Hour)
+	early := batchNote(2, "feature")
+	m2 := &fakeMerger{result: inference.MergeResult{Call: inference.Call{Outcome: inference.OutcomeTimedOut}}}
+	w2, st2 := batchWorker(mergedAt.Add(25*time.Hour), m2, early, late)
+	w2.drain(context.Background())
+	if st2.attempts["PLAT|files|2"] != 1 || st2.attempts["PLAT|files|1"] != 0 {
+		t.Errorf("attempts = %v, want the oldest received's alone", st2.attempts)
+	}
+}
+
+// A mark the store refused after the fold was written is retried before
+// anything else, never folded again.
+func TestBatch_RefusedMarkIsRetriedNotRefolded(t *testing.T) {
+	m := &fakeMerger{result: okResult(nil, nil)}
+	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), batchNote(2, "feature"))
+	st.markErr = errors.New("disk full")
+	w.drain(context.Background())
+	if len(m.prompts) != 1 || len(w.unmarked) != 2 || !w.holding() {
+		t.Fatalf("calls %d unmarked %d holding %v", len(m.prompts), len(w.unmarked), w.holding())
+	}
+	st.markErr, w.retryAt = nil, time.Time{}
+	w.drain(context.Background())
+	if len(m.prompts) != 1 || len(st.marked) != 2 || len(w.unmarked) != 0 {
+		t.Errorf("calls %d marked %v unmarked %d, want both marked without a second call", len(m.prompts), st.marked, len(w.unmarked))
 	}
 }
 
@@ -278,7 +319,7 @@ func TestBatchOf_Bytes(t *testing.T) {
 		t.Errorf("marked = %v, want all four in one drain", st.marked)
 	}
 	w.foldDelay = 0
-	if chunks, _ := w.batchOf(context.Background(), batchNote(5, "feature")); len(chunks) != 1 || len(chunks[0]) != 1 {
-		t.Errorf("no delay: %v", chunks)
+	if batch, left, _ := w.batchOf(context.Background(), batchNote(5, "feature"), true); len(batch) != 1 || left != 0 {
+		t.Errorf("no delay: %v, %d left", batch, left)
 	}
 }

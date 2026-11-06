@@ -90,6 +90,10 @@ type Worker struct {
 	// make (splitFold): never more than its notes would have cost one by
 	// one.
 	splitCalls int
+	// unmarked is a written fold's notes whose marks the store refused:
+	// marked first at the next drain, never folded again. In memory: a
+	// restart folds them again, as a refused mark of one note always did.
+	unmarked []store.QueuedNote
 	// quit asks the loop to end after the fold in flight; cancel cuts that
 	// fold off when the grace runs out; done closes when the loop ended.
 	quit   chan struct{}
@@ -397,6 +401,9 @@ func (w *Worker) drain(ctx context.Context) {
 	briefsWait := false
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		notes, run, brief = nil, nil, nil
+		if len(w.unmarked) > 0 && !w.markFolded(ctx, w.unmarked) {
+			return
+		}
 		q, ok, err := w.store.NextQueued(ctx, w.now().Add(-w.foldDelay))
 		if err != nil {
 			w.log.WarnContext(ctx, "consolidate: queue read failed", logging.Err(err))
@@ -404,15 +411,15 @@ func (w *Worker) drain(ctx context.Context) {
 		}
 		if ok {
 			notes = []store.QueuedNote{q}
-			chunks, err := w.batchOf(ctx, q)
-			if err != nil {
-				w.log.WarnContext(ctx, "consolidate: the repository's queued notes not read", logging.Err(err))
-				return
-			}
+			batch, left, err := w.batchOf(ctx, q, true)
 			// The repository's notes past one call's bound fold right after,
-			// not a delay later: their oldest has waited it.
-			for _, batch := range chunks {
-				if ctx.Err() != nil || w.stopping() || w.holding() {
+			// not a delay later: their oldest has waited it. Read anew before
+			// each: a note delivered again meanwhile folds as delivered.
+			// Bounded by the notes there were: a batch that marks nothing
+			// (delivered again before its call) is not taken forever.
+			for laps := left; ; laps-- {
+				if err != nil {
+					w.log.WarnContext(ctx, "consolidate: the repository's queued notes not read", logging.Err(err))
 					return
 				}
 				notes = batch
@@ -420,6 +427,12 @@ func (w *Worker) drain(ctx context.Context) {
 					return
 				}
 				w.heartbeat()
+				if left == 0 || laps <= 0 || ctx.Err() != nil || w.stopping() || w.holding() {
+					break
+				}
+				if batch, left, err = w.batchOf(ctx, q, false); err == nil && len(batch) == 0 {
+					break
+				}
 			}
 			continue
 		}
@@ -484,37 +497,40 @@ func (w *Worker) dropAfterPanic(ctx context.Context, notes []store.QueuedNote, r
 	}
 }
 
-// batchOf is what the folds of q's repository take, q its oldest queued
-// note, one batch a call: q alone with no fold delay; else the
-// repository's queued notes in merge order, cut into batches of at most
-// FoldBatchBytes of note bodies (the bugfix is part of the body) and of at
-// most the repository's cap after a timed-out call (batchMax), each of at
-// least one note. The drain folds them one after another: the repository
-// is due, its oldest note having waited.
-func (w *Worker) batchOf(ctx context.Context, q store.QueuedNote) ([][]store.QueuedNote, error) {
+// batchOf is the next fold of q's repository, q its oldest queued note,
+// and how many of its queued notes are left past it: q alone with no fold
+// delay; else the repository's queued notes in merge order, as many as fit
+// in FoldBatchBytes of note bodies (the bugfix is part of the body) and in
+// the repository's cap after a fold too large for one call (batchMax), at
+// least one. The drain reads it again for the rest. first: none queued
+// any more is q as it was read (gone between the two reads, renamed);
+// later, it is none.
+func (w *Worker) batchOf(ctx context.Context, q store.QueuedNote, first bool) ([]store.QueuedNote, int, error) {
 	if w.foldDelay <= 0 {
-		return [][]store.QueuedNote{{q}}, nil
+		return []store.QueuedNote{q}, 0, nil
 	}
 	all, err := w.store.QueuedBatch(ctx, q.ProjectKey, q.RepoSlug)
 	if err != nil || len(all) == 0 {
-		// Gone between the two reads (folded, renamed): q as it was read.
-		return [][]store.QueuedNote{{q}}, err
+		if first {
+			return []store.QueuedNote{q}, 0, err
+		}
+		return nil, 0, err
 	}
 	most := w.batchMax[repoKey(q)]
-	var out [][]store.QueuedNote
-	start, size := 0, 0
+	size := 0
 	for i, n := range all {
 		size += len(n.Body)
-		if i > start && (size > FoldBatchBytes || (most > 0 && i-start >= most)) {
-			out = append(out, all[start:i])
-			start, size = i, len(n.Body)
+		if i > 0 && (size > FoldBatchBytes || (most > 0 && i >= most)) {
+			return all[:i], len(all) - i, nil
 		}
 	}
-	return append(out, all[start:]), nil
+	return all, 0, nil
 }
 
-// repoKey names a note's repository in the worker's own maps.
-func repoKey(q store.QueuedNote) string { return q.ProjectKey + "/" + q.RepoSlug }
+// repoKey names a note's repository in the worker's own maps, folded to
+// lower case: a name is never another repository's in any case, so a
+// case-only rename keeps its entry.
+func repoKey(q store.QueuedNote) string { return strings.ToLower(q.ProjectKey + "/" + q.RepoSlug) }
 
 // foldKeys is a fold's notes' PR keys, in its order.
 func foldKeys(batch []store.QueuedNote) []string {
@@ -555,9 +571,9 @@ func (w *Worker) foldOrIgnore(ctx context.Context, batch []store.QueuedNote) boo
 	if w.diskLow(ctx) {
 		return false
 	}
-	// The hold of a refused write names the batch's first note (holdNote):
-	// its retry counts that note's attempt before the call.
-	counted, fold, next := w.noteWritable(ctx, q)
+	// The hold of a refused write names the batch's anchor (holdNote): its
+	// retry counts that note's attempt before the call.
+	counted, fold, next := w.noteWritable(ctx, batch[anchor(batch)])
 	if !fold {
 		return next
 	}
@@ -636,11 +652,6 @@ func gatewayClass(res inference.Call) (gateway bool, retryAfter time.Duration) {
 		return false, 0
 	}
 	return true, 0
-}
-
-// Fold runs one note through the merge: a batch of one (fold).
-func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
-	return w.fold(ctx, []store.QueuedNote{q}, 0)
 }
 
 // fold runs a repository's batch of notes, in merge order, through one
@@ -758,24 +769,28 @@ func (w *Worker) fold(ctx context.Context, batch []store.QueuedNote, counted int
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res.Call); gateway {
-		w.hold(ctx, gatewayCause(res.Call), retryAfter)
-		// A timed-out fold of several may be one too large for the call
-		// cap: the repository's next folds take half as many.
-		if res.Outcome == inference.OutcomeTimedOut && len(batch) > 1 {
+		cause := gatewayCause(res.Call)
+		w.hold(ctx, cause, retryAfter)
+		// A fold of several that timed out, or met a proxy's page or a 5xx,
+		// may be one too large for the call cap or the request bound: the
+		// repository's next folds take half as many, for as long as the
+		// process runs (an answer at the half says the half fits, not that
+		// the whole would). A rate limit or a refused key says nothing of
+		// the size.
+		if (cause == HoldTimeout || cause == HoldUnavailable) && len(batch) > 1 {
 			w.batchMax[repoKey(q)] = len(batch) / 2
-			w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %d notes timed out together, the repository's folds take at most %d", len(batch), len(batch)/2))
+			w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %d notes failed together (%s), the repository's folds take at most %d",
+				len(batch), cause, len(batch)/2))
 		}
-		// Only the first note's attempt is counted, as before batching the
+		// Only the anchor's attempt is counted, as before batching the
 		// oldest note's alone: an outage must not spend a whole day of
 		// notes' attempts at once, giving them all up together.
 		deferred = true
-		w.deferNote(ctx, q, res.Outcome.String(), res.Err, counted)
+		w.deferNote(ctx, batch[anchor(batch)], res.Outcome.String(), res.Err, counted)
 		return
 	}
-	// The gateway answered: whatever it said, the hold is over, and the
-	// repository's batches are whole again.
+	// The gateway answered: whatever it said, the hold is over.
 	w.clearHold()
-	delete(w.batchMax, repoKey(q))
 	switch res.Outcome {
 	case inference.OutcomeOK:
 	default:
@@ -842,29 +857,32 @@ func (w *Worker) fold(ctx context.Context, batch []store.QueuedNote, counted int
 // down to single notes: the split makes at most the n-1 calls after the
 // first that its notes would have cost one by one (splitCalls); past them
 // a half fails unfolded, its reason kept, and comes back like any failed
-// note. A stop asked for, a hold or a full disk ends the split, the rest
-// left queued. counted is the first note's attempt, the first half's.
-// Reports whether the drain may go on: a first half deferred or held ends
-// it, the second half staying queued for the next.
+// note, a good one among them too (late, never lost: the cost bound is
+// the trade). A stop asked for, a hold or a full disk ends the split, the
+// rest left queued. counted is the anchor's attempt, the half's that holds
+// it. Reports whether the drain may go on: a first half deferred or held
+// ends it, the second half staying queued for the next.
 func (w *Worker) splitFold(ctx context.Context, batch []store.QueuedNote, counted int, reason string) bool {
 	half := len(batch) / 2
 	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %d notes not folded together, each half folded on its own", len(batch)),
 		slog.String("reason", redact.Text(reason)))
+	inFirst := anchor(batch) < half
 	for i, part := range [][]store.QueuedNote{batch[:half], batch[half:]} {
-		if i > 0 {
-			counted = 0
+		c := 0
+		if (i == 0) == inFirst {
+			c = counted
 		}
 		if ctx.Err() != nil || w.stopping() || w.holding() || w.diskLow(ctx) {
 			return false
 		}
 		if w.splitCalls <= 0 {
-			if !w.failNotes(ctx, part, reason+"; folded with others, the split's calls spent", counted) {
+			if !w.failNotes(ctx, part, reason+"; folded with others, the split's calls spent", c) {
 				return false
 			}
 			continue
 		}
 		w.splitCalls--
-		if !w.fold(ctx, part, counted) {
+		if !w.fold(ctx, part, c) {
 			return false
 		}
 	}
@@ -872,26 +890,46 @@ func (w *Worker) splitFold(ctx context.Context, batch []store.QueuedNote, counte
 }
 
 // markFolded marks a fold's notes consolidated. A mark the store refuses
-// holds the worker, its note and those after it left queued: the paid fold
-// would be made again at the next poll otherwise; the retry counts the
-// held note's attempt first (noteWritable).
+// holds the worker, the notes left kept as unmarked: the next drain marks
+// them before it folds anything, and never folds them again.
 func (w *Worker) markFolded(ctx context.Context, batch []store.QueuedNote) bool {
-	for _, q := range batch {
+	for i, q := range batch {
 		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID); err != nil {
+			// The fold is written: what is left is marks, never a second
+			// call (a day of notes folded twice, their new statements
+			// twice). The next drain marks them before anything else.
+			w.unmarked = slices.Clone(batch[i:])
 			w.holdNote(ctx, q, err)
 			return false
 		}
 		w.writeOK()
 	}
+	w.unmarked = nil
 	return true
 }
 
-// failNotes is failNote for each of a fold's notes, the first one's
-// attempt counted already when counted is set. Reports whether the drain
-// may go on: false at the first mark the store refused.
-func (w *Worker) failNotes(ctx context.Context, batch []store.QueuedNote, reason string, counted int) bool {
+// anchor is the index of a fold's oldest received note: the note
+// NextQueued found, the one a gateway failure or a refused write counts
+// its attempt against. Not the first in merge order: a late note merged
+// earlier would take that place lap after lap, and no note's count would
+// reach maxFoldAttempts.
+func anchor(batch []store.QueuedNote) int {
+	a := 0
 	for i, q := range batch {
-		if !w.failNote(ctx, q, reason, i == 0 && counted > 0) {
+		if q.ReceivedAt.Before(batch[a].ReceivedAt) {
+			a = i
+		}
+	}
+	return a
+}
+
+// failNotes is failNote for each of a fold's notes, the anchor's attempt
+// counted already when counted is set. Reports whether the drain may go
+// on: false at the first mark the store refused.
+func (w *Worker) failNotes(ctx context.Context, batch []store.QueuedNote, reason string, counted int) bool {
+	a := anchor(batch)
+	for i, q := range batch {
+		if !w.failNote(ctx, q, reason, i == a && counted > 0) {
 			return false
 		}
 	}
@@ -1107,9 +1145,10 @@ func (w *Worker) deferStore(ctx context.Context, batch []store.QueuedNote, err e
 	if !busy && !store.IsRefused(err) {
 		return false
 	}
-	w.holdNote(ctx, batch[0], err)
+	a := batch[anchor(batch)]
+	w.holdNote(ctx, a, err)
 	if busy {
-		w.deferNote(ctx, batch[0], "database busy", err, counted)
+		w.deferNote(ctx, a, "database busy", err, counted)
 	}
 	return true
 }
@@ -1753,11 +1792,6 @@ func sameStatements(stored, returned []store.Statement) bool {
 		}
 	}
 	return true
-}
-
-// render fills the merge prompt in one pass.
-func render(tmpl string, q store.QueuedNote, repoPage, projectPage store.Page, l config.Limits) string {
-	return renderBatch(tmpl, []store.QueuedNote{q}, repoPage, describe(projectPage), noProblems, l)
 }
 
 // renderBatch fills the merge prompt for a fold's notes, the project

@@ -192,6 +192,19 @@ func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun, delay time.
 		}
 	}
 	slices.SortStableFunc(o.Waiting, func(a, b PendingDue) int { return a.Due.Compare(b.Due) })
+	// Under the delay the drain folds a due repository's notes together:
+	// listed together, repositories in the order of their oldest notes.
+	if delay > 0 {
+		first := map[string]int{}
+		for i, n := range o.Free {
+			if _, ok := first[n.ProjectKey+"/"+n.RepoSlug]; !ok {
+				first[n.ProjectKey+"/"+n.RepoSlug] = i
+			}
+		}
+		slices.SortStableFunc(o.Free, func(a, b store.PendingNote) int {
+			return first[a.ProjectKey+"/"+a.RepoSlug] - first[b.ProjectKey+"/"+b.RepoSlug]
+		})
+	}
 	for i := range runs {
 		switch {
 		case runs[i].State == store.RunQueued:

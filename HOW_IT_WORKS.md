@@ -175,7 +175,10 @@ now less the delay (`NextQueued`): the oldest note of all is its
 repository's oldest too, so its repository is due, and `QueuedBatch` reads
 every queued note of it in merge order, as many as fit in 240 kB of note
 text (`FoldBatchBytes`, the most a baseline step shows of a repository's
-files); the rest fold in the calls right after, in the same drain. A note over the
+files); the rest fold in the calls right after, in the same drain, read
+anew before each so a note delivered again meanwhile folds as delivered.
+A due repository's notes are listed together on the queue page, as they
+are folded. A note over the
 bound folds alone, as before. Nothing is dropped for size. The queue page
 lists a waiting repository's notes last, each with when it is folded (a
 note its repository's started run holds stays with the run, no time
@@ -294,12 +297,18 @@ two calls a halving and costs that note alone. A failure every call meets
 halving down to single notes, so a split makes at most the n-1 calls after
 the first that its notes would have cost one by one; past them a half
 fails unfolded, its reason kept, and comes back like any failed note. A
-gateway failure keeps every note of the fold queued and counts the first
-note's attempt alone, as before batching the oldest note's alone: an
-outage of hours must not give a whole day of notes up together. A
-timed-out fold of several may be one too large for the call cap, so the
-repository's next folds take half as many notes, halved again at each
-timeout, whole again once one gets an answer (in memory).
+gateway failure keeps every note of the fold queued and counts the
+attempt of its oldest received note alone, as before batching: an outage
+of hours must not give a whole day of notes up together, and a late note
+merged earlier must not take the count's place lap after lap. A fold of
+several that timed out or met a proxy's page or a 5xx may be one too
+large for the call cap or the request bound, so the repository's next
+folds take half as many notes, halved again at each such failure, for as
+long as the process runs: an answer at the half says the half fits, not
+the whole. Once a fold is written, what is left is marks: one the store
+refuses is retried before the next fold, the notes never folded again
+(a restart before it folds them again, as a refused mark of one note
+always did).
 
 A failure of the gateway as a whole is different: a timeout, a 5xx or
 transport failure, a refused key, a rate limit, a proxy page where the

@@ -129,6 +129,10 @@ func (f *fakeStore) NextQueued(_ context.Context, dueBefore time.Time) (store.Qu
 	if f.queueErr != nil {
 		return store.QueuedNote{}, false, f.queueErr
 	}
+	// A note a batch folded and marked is off the queue, as in the store.
+	for len(f.queue) > 0 && f.done(f.queue[0]) {
+		f.queue = f.queue[1:]
+	}
 	if len(f.queue) == 0 || f.queue[0].ReceivedAt.After(dueBefore) {
 		return store.QueuedNote{}, false, nil
 	}
@@ -138,22 +142,26 @@ func (f *fakeStore) NextQueued(_ context.Context, dueBefore time.Time) (store.Qu
 	return q, true, nil
 }
 
+// done reports whether a note was marked or failed.
+func (f *fakeStore) done(q store.QueuedNote) bool {
+	k := pageKey(q.ProjectKey, q.RepoSlug, strconv.Itoa(q.PRID))
+	_, failed := f.failed[k]
+	return failed || slices.Contains(f.marked, k)
+}
+
 // QueuedBatch is the note NextQueued last took and every queued note of
-// its repository, in merge order, all taken off the fake's queue.
+// its repository, in merge order, those marked or failed left out; the
+// fake's queue keeps them, as the store does until a mark.
 func (f *fakeStore) QueuedBatch(_ context.Context, project, repo string) ([]store.QueuedNote, error) {
 	if f.batchErr != nil {
 		return nil, f.batchErr
 	}
-	out := []store.QueuedNote{f.popped}
-	rest := f.queue[:0]
-	for _, q := range f.queue {
-		if q.ProjectKey == project && q.RepoSlug == repo {
+	var out []store.QueuedNote
+	for _, q := range append([]store.QueuedNote{f.popped}, f.queue...) {
+		if q.ProjectKey == project && q.RepoSlug == repo && !f.done(q) {
 			out = append(out, q)
-		} else {
-			rest = append(rest, q)
 		}
 	}
-	f.queue = rest
 	slices.SortStableFunc(out, func(a, b store.QueuedNote) int { return a.MergedAt.Compare(b.MergedAt) })
 	return out, nil
 }
@@ -1639,9 +1647,10 @@ func TestNewStatementIDNeverReusesADroppedOne(t *testing.T) {
 }
 
 // A mark the store refuses for a reason that is not its lock (a full disk)
-// pauses the drain and holds the worker, longer each time, so the paid
-// fold is not made again at every poll; a write that gets through clears
-// the hold's backoff, and the gateway's own clearing of the hold does not.
+// pauses the drain and holds the worker, longer each time; the folded
+// note's mark is retried, its paid fold never made again; a write that
+// gets through clears the hold's backoff, and the gateway's own clearing
+// of the hold does not.
 func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	st := newFakeStore()
 	st.queue = []store.QueuedNote{queued("PLAT/files#1"), queued("PLAT/files#2")}
@@ -1660,39 +1669,33 @@ func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	if s := w.Status(); !w.holding() || s.HoldCause != HoldWrite || !w.retryAt.Equal(clock.Add(backoffMin)) {
 		t.Fatalf("after a refused mark: holding %v cause %q until %v, want a write hold of %s", w.holding(), s.HoldCause, w.retryAt, backoffMin)
 	}
-	// Inside the hold nothing is folded; past it the next fold's call gets
-	// through (which clears the gateway hold), the mark fails again and
-	// the hold doubles.
+	// Inside the hold nothing is folded; past it the folded note's mark is
+	// tried again before anything else, never its call: refused again,
+	// the hold doubles and nothing is paid.
 	w.drain(context.Background())
 	if len(m.prompts) != 1 {
 		t.Errorf("a drain inside the hold made %d calls", len(m.prompts)-1)
 	}
 	clock = w.retryAt
-	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	st.queue = nil
 	w.drain(context.Background())
-	if len(m.prompts) != 2 || !w.retryAt.Equal(clock.Add(2*backoffMin)) || w.Status().HoldCause != HoldWrite {
-		t.Errorf("second refused mark: calls %d hold until %v cause %q, want doubled to %s", len(m.prompts), w.retryAt, w.Status().HoldCause, 2*backoffMin)
+	if len(m.prompts) != 1 || !w.retryAt.Equal(clock.Add(2*backoffMin)) || w.Status().HoldCause != HoldWrite || len(w.unmarked) != 1 {
+		t.Errorf("second refused mark: calls %d hold until %v cause %q unmarked %d, want no call, doubled to %s",
+			len(m.prompts), w.retryAt, w.Status().HoldCause, len(w.unmarked), 2*backoffMin)
 	}
-	if st.attempts["PLAT|files|42"] != 1 {
-		t.Errorf("attempts %v, want the retry counted before its call", st.attempts)
-	}
-	// The store refusing still: the count before the call is refused, the
-	// worker holds again and pays nothing.
+	// The store writing again: marked without a call, the backoff
+	// forgotten.
 	clock = w.retryAt
-	st.deferErr = store.ErrFull
-	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	st.markErr, st.callErr = nil, nil
 	w.drain(context.Background())
-	if len(m.prompts) != 2 || !w.retryAt.Equal(clock.Add(4*backoffMin)) {
-		t.Errorf("count refused: calls %d hold until %v, want no call, the hold doubled", len(m.prompts), w.retryAt)
+	if len(m.prompts) != 1 || len(st.marked) != 1 || w.holding() || w.writeBackoff != 0 || len(w.unmarked) != 0 {
+		t.Errorf("store back: calls %d marked %v holding %v backoff %s, want marked, no call, no hold", len(m.prompts), st.marked, w.holding(), w.writeBackoff)
 	}
-	// The store writing again: folded, marked, the backoff forgotten.
-	clock = w.retryAt
-	st.markErr, st.callErr, st.deferErr = nil, nil, nil
-	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
-	w.drain(context.Background())
-	if len(st.marked) != 1 || w.holding() || w.writeBackoff != 0 {
-		t.Errorf("store back: marked %v holding %v backoff %s, want marked and no hold", st.marked, w.holding(), w.writeBackoff)
+	if st.attempts == nil {
+		st.attempts = map[string]int{}
 	}
+	// The same PR delivered again: queued anew, not the marked one.
+	st.marked = st.marked[:0]
 	// A note whose writes are refused at every attempt is given up at
 	// maxFoldAttempts, its last count taking the place of a call: failed,
 	// never consolidated, counted once.
@@ -1701,7 +1704,7 @@ func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
 	calls := len(m.prompts)
 	w.drain(context.Background())
-	if len(m.prompts) != calls || len(st.marked) != 1 || st.failed["PLAT|files|42"] == "" || st.attempts["PLAT|files|42"] != maxFoldAttempts ||
+	if len(m.prompts) != calls || len(st.marked) != 0 || st.failed["PLAT|files|42"] == "" || st.attempts["PLAT|files|42"] != maxFoldAttempts ||
 		w.writeBackoff != 0 {
 		t.Errorf("given up: calls %d marked %v failed %v attempts %v backoff %s, want failed with no call, counted once",
 			len(m.prompts)-calls, st.marked, st.failed, st.attempts, w.writeBackoff)
