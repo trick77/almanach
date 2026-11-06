@@ -130,6 +130,7 @@ function Shell({ me }: { me: Me }) {
             route.page !== "queue" &&
               route.page !== "deps" &&
               route.page !== "costs" &&
+              route.page !== "search" &&
               !inSources,
           )}
           {sourcesOn && nav(S.nav.deps, depsPath, route.page === "deps")}

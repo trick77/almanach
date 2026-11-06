@@ -39,6 +39,10 @@ export const summaryId = "summary";
 /** areaId is an area's chapter, by the area's place among the page's
  *  areas (areaNames), so a search leaves it where it was. */
 export const areaId = (i: number) => `area-${i}`;
+/** statementId is a statement's block, its deep link's target and a search
+ *  hit's: the bare id (`s12`), which no section id ("summary", "area-N")
+ *  meets. */
+export const statementId = (id: string) => id;
 
 const areaOf = (s: Statement) => s.area ?? "";
 

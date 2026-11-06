@@ -147,7 +147,7 @@ func TestSearch_SourcesAndBound(t *testing.T) {
 // A snippet is the plain text around the first hit, bounded, cut at the
 // ends only with an ellipsis for what is left out.
 func TestSnippet(t *testing.T) {
-	q := func(s string) phrase { return phrase{raw: s, low: strings.ToLower(s)} }
+	q := func(s string) phrase { return phrase(strings.ToLower(s)) }
 	long := strings.Repeat("Wort ", 60) + "Treffer " + strings.Repeat("Wort ", 60)
 	s, ok := snippet(long, q("treffer"))
 	if !ok || !strings.HasPrefix(s, "… ") || !strings.HasSuffix(s, " …") || !strings.Contains(s, "Treffer") || len([]rune(s)) > snippetRunes+4 {
@@ -174,5 +174,25 @@ func TestSnippet(t *testing.T) {
 	s, ok = snippet(strings.Repeat("K", 10)+" Treffer", q("treffer"))
 	if !ok || !strings.HasSuffix(s, " Treffer") {
 		t.Errorf("snippet after a shrinking rune = %q %v", s, ok)
+	}
+	// A phrase longer than the window's tail after the hit, up to the
+	// longest searched, is still whole.
+	for _, n := range []int{snippetRunes - 10, searchMaxRunes} {
+		hit := strings.TrimSpace(strings.Repeat("satz ", n/5+1))[:n]
+		s, ok = snippet(strings.Repeat("Wort ", 60)+hit+strings.Repeat(" Wort", 60), q(hit))
+		if !ok || !strings.Contains(s, hit) {
+			t.Errorf("long phrase (%d runes) cut: %q", n, s)
+		}
+	}
+	// A hit near the end shows what comes before it, a full window.
+	s, ok = snippet(strings.Repeat("Wort ", 60)+"Treffer am Ende.", q("treffer"))
+	if !ok || len([]rune(s)) != snippetRunes+2 || !strings.HasSuffix(s, "Treffer am Ende.") {
+		t.Errorf("hit near the end = %q (%d runes)", s, len([]rune(s)))
+	}
+	// Code spans lose their backticks, the padding of one holding a
+	// backtick too; a run nothing closes stays as written.
+	s, ok = snippet("Liest `config.yaml` und ``a ` b`` beim Start, `offen", q("config"))
+	if !ok || s != "Liest config.yaml und a ` b beim Start, `offen" {
+		t.Errorf("code spans = %q", s)
 	}
 }

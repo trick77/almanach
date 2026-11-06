@@ -62,11 +62,9 @@ type searchHitBody struct {
 	File    string `json:"file,omitempty"`
 }
 
-// phrase is the search's phrase as typed, its spaces collapsed, and
-// folded once for every text to be matched against.
-type phrase struct {
-	raw, low string
-}
+// phrase is the search's phrase, its spaces collapsed, folded once for
+// every text to be matched against.
+type phrase string
 
 // search answers GET /api/search?q=: the pages whose text holds the
 // phrase, case folded. A phrase under searchMinRunes, or past
@@ -94,7 +92,7 @@ func (d Deps) search(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "repos")
 		return
 	}
-	p := phrase{raw: q, low: strings.ToLower(q)}
+	p := phrase(strings.ToLower(q))
 	for _, page := range pages {
 		_, alone := single[page.ProjectKey]
 		if alone && page.Scope == store.ScopeProject {
@@ -122,15 +120,14 @@ func searchPage(p store.PageText, q phrase) (searchPageBody, bool) {
 	}
 	for _, s := range p.Statements {
 		hit := searchHitBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Area: s.Area}
-		switch text, ok := snippet(s.Text, q); {
-		case ok:
+		if text, ok := snippet(s.Text, q); ok {
 			hit.Snippet = text
-		case contains(s.Name, q), contains(s.Area, q):
-			// The name alone: the page shows name and area anyway.
-		case firstFile(s.Files, q) != "":
-			hit.File = firstFile(s.Files, q)
-		default:
-			continue
+		} else if !contains(s.Name, q) && !contains(s.Area, q) {
+			// Not the name alone, which the page shows with the area
+			// anyway: a file, or no hit.
+			if hit.File = firstFile(s.Files, q); hit.File == "" {
+				continue
+			}
 		}
 		out.Statements = append(out.Statements, hit)
 	}
@@ -138,19 +135,23 @@ func searchPage(p store.PageText, q phrase) (searchPageBody, bool) {
 }
 
 // snippet is the plain text around the phrase's first hit in a stored
-// text, ok false when none: up to snippetRunes, the hit near its middle,
-// cut at the text's ends only, an ellipsis for what is left out. The
-// layout (headings, items, bolds) is dropped first: a search box shows
-// words.
+// text, ok false when none: snippetRunes of it, or the hit whole when
+// longer, the hit a third in, or further when the text ends sooner, an
+// ellipsis for what is left out. The layout (headings, items, bolds,
+// the code spans' backticks) is dropped first, as format.ts plain drops
+// it for the page's own search: a search box shows words.
 func snippet(text string, q phrase) (string, bool) {
-	plain := strings.Join(strings.Fields(markup.Plain(text)), " ")
+	plain := strings.Join(strings.Fields(untick(markup.Plain(text))), " ")
 	hit := runeIndex(plain, q)
 	if hit < 0 {
 		return "", false
 	}
 	runes := []rune(plain)
-	start := max(hit-snippetRunes/3, 0)
-	end := min(start+snippetRunes, len(runes))
+	n := utf8.RuneCountInString(string(q))
+	width := max(snippetRunes, n)
+	lead := min(snippetRunes/3, width-n)
+	start := max(min(hit-lead, len(runes)-width), 0)
+	end := min(start+width, len(runes))
 	s := string(runes[start:end])
 	if start > 0 {
 		s = "… " + s
@@ -168,14 +169,55 @@ func snippet(text string, q phrase) (string, bool) {
 // (a rune whose lower case is longer or shorter in bytes).
 func runeIndex(text string, q phrase) int {
 	low := strings.ToLower(text)
-	at := strings.Index(low, q.low)
+	at := strings.Index(low, string(q))
 	if at < 0 {
 		return -1
 	}
 	return utf8.RuneCountInString(low[:at])
 }
 
-func contains(text string, q phrase) bool { return strings.Contains(strings.ToLower(text), q.low) }
+func contains(text string, q phrase) bool {
+	return strings.Contains(strings.ToLower(text), string(q))
+}
+
+// untick is plain text without its code spans' backticks, line by line,
+// as format.ts codeSpans cuts them (markup.SpanAt): a span's code with
+// CommonMark's one blank of padding off, a run nothing closes left as
+// written.
+func untick(s string) string {
+	if !strings.Contains(s, "`") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for n, l := range lines {
+		var b strings.Builder
+		for i := 0; i < len(l); {
+			if l[i] != '`' {
+				j := strings.IndexByte(l[i:], '`')
+				if j < 0 {
+					j = len(l) - i
+				}
+				b.WriteString(l[i : i+j])
+				i += j
+				continue
+			}
+			end, ok := markup.SpanAt(l, i)
+			if !ok {
+				b.WriteString(l[i:])
+				break
+			}
+			tick := len(l[i:]) - len(strings.TrimLeft(l[i:], "`"))
+			code := l[i+tick : end-tick]
+			if len(code) > 2 && code[0] == ' ' && code[len(code)-1] == ' ' && strings.TrimSpace(code) != "" {
+				code = code[1 : len(code)-1]
+			}
+			b.WriteString(code)
+			i = end
+		}
+		lines[n] = b.String()
+	}
+	return strings.Join(lines, "\n")
+}
 
 // firstFile is the first file the phrase matches, "" for none.
 func firstFile(files []string, q phrase) string {

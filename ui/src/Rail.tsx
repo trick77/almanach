@@ -328,11 +328,12 @@ export function Tabs({
  *  switch replaces the address, so back and forward leave the page rather
  *  than step through its tabs, and return to it on the tab it was left
  *  on. The hash may name a target after the tab (`#description/s12`, a
- *  statement's deep link): target, "" for none, which a switch clears;
- *  setTarget writes one in place, the page's own control. landing is the
- *  target as the address brought it (a link opened, a reload, back), ""
- *  for one the page set itself: what useJumpTo scrolls to, so a click on
- *  a statement's control never moves the page under the reader. */
+ *  statement's deep link, a search hit's too): target, "" for none, which
+ *  a switch clears; setTarget writes one in place, the page's own control.
+ *  landing is the target as the address brought it (a link opened, a
+ *  reload, back), "" for one the page set itself: what useJumpTo scrolls
+ *  to, so a click on a statement's control never moves the page under the
+ *  reader. */
 export function useHashTab(
   tabs: readonly string[],
   start: string,

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { SearchHit, SearchPage as Hit, SearchResult } from "./api";
-import { kindLabel } from "./Description";
+import { kindLabel, statementId, summaryId } from "./Description";
+import { refName } from "./format";
 import { projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
@@ -28,7 +29,9 @@ const minChars = 2;
  *  around the hit, the phrase marked. The phrase lives in the address
  *  (?q=): a search is a page to share and to come back to. */
 export function SearchPage({ q }: { q: string }) {
-  const phrase = q.trim();
+  // Its spaces collapsed, as the server matches it: the marks find what
+  // it found.
+  const phrase = q.trim().split(/\s+/).join(" ");
   useEffect(() => {
     document.title = `${S.search.title} ${S.common.sep} ${S.app}`;
   }, []);
@@ -39,7 +42,7 @@ export function SearchPage({ q }: { q: string }) {
           {S.search.title}
           {phrase !== "" && (
             <span className="ml-3 font-sans text-[17px] font-normal text-muted">
-              «{phrase}»
+              {S.search.quoted(phrase)}
             </span>
           )}
         </h2>
@@ -82,8 +85,8 @@ function Results({ phrase }: { phrase: string }) {
 
 const pageKey = (p: Hit) => p.scope + "|" + p.project_key + "|" + p.repo_slug;
 
-/** anchor is a statement's deep link on its page: the description tab,
- *  then its id (the page's hash scheme). */
+/** anchor is a hit's deep link on its page: the description tab, then
+ *  the element to scroll to (useHashTab's "tab/id"). */
 const anchor = (id: string) => `#description/${id}`;
 
 /** pagePath is where a hit's page is: a project of one's repository page
@@ -94,11 +97,11 @@ function pagePath(p: Hit): string {
     : repoPath(p.project_key, p.repo_slug ?? "");
 }
 
-/** pageName names a hit's page: a project's by its key, a repository's by
- *  project and slug; a project of one by its key alone. */
+/** pageName names a hit's page: a project's by its key, a repository's as
+ *  the pages name one (refName); a project of one by its key alone. */
 function pageName(p: Hit): string {
   if (p.scope === "project" || p.single) return S.search.project(p.project_key);
-  return `${p.project_key} / ${p.repo_slug}`;
+  return refName(p.project_key, p.repo_slug ?? "");
 }
 
 /** PageHits is one page's hits under its name. */
@@ -114,7 +117,7 @@ function PageHits({ p, query }: { p: Hit; query: string }) {
       <ol className="m-0 list-none p-0">
         {p.summary !== undefined && (
           <Row
-            to={at + "#description"}
+            to={at + anchor(summaryId)}
             label=""
             title={S.rail.summary}
             snippet={p.summary}
@@ -124,7 +127,7 @@ function PageHits({ p, query }: { p: Hit; query: string }) {
         {p.statements.map((s: SearchHit) => (
           <Row
             key={s.id}
-            to={at + anchor(s.id)}
+            to={at + anchor(statementId(s.id))}
             label={kindLabel(s.kind, p.scope === "project")}
             title={s.name}
             area={s.area}

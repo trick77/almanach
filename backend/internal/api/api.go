@@ -417,9 +417,6 @@ type repoBody struct {
 	LastMerge *time.Time `json:"last_merge"`
 }
 
-// single reports whether a project is a project of one: its source holds
-// one repository, and the sources are on. With them off there are no
-// sources, and every project keeps its page.
 // singles is every project of one by key, with its repository: the
 // sources' notion, so with them off there are none.
 func (d Deps) singles(ctx context.Context) (map[string]store.RepoRow, error) {
@@ -429,6 +426,9 @@ func (d Deps) singles(ctx context.Context) (map[string]store.RepoRow, error) {
 	return d.Store.SingleRepos(ctx)
 }
 
+// single reports whether a project is a project of one: its source holds
+// one repository, and the sources are on. With them off there are no
+// sources, and every project keeps its page.
 func (d Deps) single(ctx context.Context, key string) (bool, error) {
 	if d.Sources == nil {
 		return false, nil

@@ -46,6 +46,7 @@ export const S = {
     placeholder: "Suchen",
     failed: "Die Suche konnte nicht ausgeführt werden.",
     tooShort: "Mindestens zwei Zeichen.",
+    quoted: (q: string) => `«${q}»`,
     none: (q: string) => `Keine Treffer für «${q}».`,
     hits: (n: number, pages: number) =>
       `${n === 1 ? "1 Treffer" : `${n} Treffer`} auf ${pages === 1 ? "einer Seite" : `${pages} Seiten`}`,

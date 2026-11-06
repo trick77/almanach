@@ -1794,6 +1794,11 @@ describe("App", () => {
     expect(
       await screen.findByText("Keine Treffer für «Gebühren»."),
     ).toBeInTheDocument();
+    // The search is no nav entry's page: Projekte is not current.
+    const nav = screen.getByRole("navigation", { name: S.nav.label });
+    expect(
+      within(nav).getByText(S.nav.projects).getAttribute("aria-current"),
+    ).toBeNull();
     // The box shows the phrase searched; an empty one submits nothing.
     expect(
       screen.getByRole("searchbox", { name: "Wiki durchsuchen" }),

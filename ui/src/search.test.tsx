@@ -90,7 +90,7 @@ describe("SearchPage", () => {
     // The page's name heads its hits and links to it.
     const project = screen.getByText("Projekt PAY").closest("a");
     expect(project?.getAttribute("href")).toBe("/projects/PAY");
-    const repo = screen.getByText("PAY / pay-api").closest("a");
+    const repo = screen.getByText("PAY/pay-api").closest("a");
     expect(repo?.getAttribute("href")).toBe("/projects/PAY/repos/pay-api");
     // The summary's hit first, then the statements, each by its anchor.
     const links = screen
@@ -98,7 +98,7 @@ describe("SearchPage", () => {
       .map((a) => a.getAttribute("href"));
     expect(links).toEqual([
       "/projects/PAY",
-      "/projects/PAY#description",
+      "/projects/PAY#description/summary",
       "/projects/PAY#description/s1",
       "/projects/PAY/repos/pay-api",
       "/projects/PAY/repos/pay-api#description/s1",
@@ -143,6 +143,17 @@ describe("SearchPage", () => {
       screen.getByText("sannahme").closest("a")?.getAttribute("href"),
     ).toBe("/projects/PAY#description/s1");
     expect(screen.getByText(S.search.more(2))).toBeInTheDocument();
+  });
+
+  it("marks a phrase typed with two spaces, as the server matched it", async () => {
+    const calls = serve({
+      "search?q=Auftrag%20zur": { ...result, query: "Auftrag zur" },
+    });
+    render(<SearchPage q="Auftrag  zur" />);
+    expect(
+      await screen.findByText("Auftrag zur", { selector: "mark" }),
+    ).toBeInTheDocument();
+    expect(calls).toEqual(["/api/search?q=Auftrag%20zur"]);
   });
 
   it("says when nothing matched, when the phrase is too short, and when the search failed", async () => {
