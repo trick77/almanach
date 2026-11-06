@@ -365,6 +365,40 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 	return p, true, nil
 }
 
+// Revision is one revision of a page by its number, ok false when the page
+// or the number is unknown: the summary and statements as they stood, the
+// source that wrote them, when. No maps: a revision's view is its text.
+// Any name the project or repository ever had finds it; the page carries
+// the current ones.
+func (s *Store) Revision(ctx context.Context, scope, project, repo string, n int) (Page, bool, error) {
+	pid, rid, ok, err := scopeIDs(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return Page{}, false, err
+	}
+	p := Page{Scope: scope}
+	var statements []byte
+	err = s.db.QueryRowContext(ctx, `
+		SELECT pj.key, COALESCE(rp.slug, ''), r.id, r.revision, r.summary, r.statements, r.source_kind,
+		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), r.created_at
+		  FROM revisions r JOIN projects pj ON pj.id = r.project_id LEFT JOIN repos rp ON rp.id = r.repo_id
+		 WHERE r.scope = ? AND r.project_id = ? AND COALESCE(r.repo_id, 0) = ? AND r.revision = ?`, scope, pid, rid, n).Scan(
+		&p.ProjectKey, &p.RepoSlug, &p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR,
+		&p.SourceCommit, timeAt(&p.UpdatedAt))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Page{}, false, nil
+	}
+	if err != nil {
+		return Page{}, false, err
+	}
+	if err := json.Unmarshal(statements, &p.Statements); err != nil {
+		return Page{}, false, err
+	}
+	if p.Statements == nil {
+		p.Statements = []Statement{}
+	}
+	return p, true, nil
+}
+
 // NewRevision is what one fold produces for one scope. SourceKind "" is a
 // PR's note (SourcePR); a baseline run sets FromBaseline, SourceCommit and
 // BaselineRunID.

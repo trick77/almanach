@@ -182,6 +182,9 @@ export interface ProjectDetail {
   problems: Problem[];
   problem_window_days: number;
   recent_notes: NoteSummary[];
+  /** The project page's history, newest first; empty for a project of
+   *  one. */
+  revisions: Revision[];
 }
 
 export interface Revision {
@@ -192,6 +195,32 @@ export interface Revision {
   statements: number;
   chars: number;
   created_at: string;
+}
+
+/** GET …/revisions/{n}: one revision of a page as it stood, with what it
+ *  changed against the one before, by statement id. Mirrors
+ *  api/revision.go. */
+export interface RevisionDetail {
+  scope: "repository" | "project";
+  project_key: string;
+  repo_slug?: string;
+  revision: number;
+  /** The page's current revision number. */
+  current: number;
+  /** The revision diffed against; 0 on the first. */
+  previous: number;
+  created_at: string;
+  description: Description;
+  added: StatementRef[];
+  changed: StatementRef[];
+  dropped: StatementRef[];
+  summary_changed: boolean;
+}
+
+export interface StatementRef {
+  id: string;
+  kind: Kind;
+  name: string;
 }
 
 export interface RepoDetail {

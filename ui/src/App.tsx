@@ -7,6 +7,7 @@ import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { QueuePage } from "./QueuePage";
 import { RepoPage } from "./RepoPage";
+import { RevisionPage } from "./RevisionPage";
 import { SearchPage } from "./SearchPage";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
@@ -183,6 +184,14 @@ function Shell({ me }: { me: Me }) {
             key={route.key + "/" + route.slug}
             projectKey={route.key}
             slug={route.slug}
+          />
+        )}
+        {route.page === "revision" && (
+          <RevisionPage
+            key={`${route.key}/${route.slug}@${route.n}`}
+            projectKey={route.key}
+            slug={route.slug}
+            n={route.n}
           />
         )}
         {route.page === "note" && (

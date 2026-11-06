@@ -174,6 +174,25 @@ func TestRevisions_NewestFirstLimited(t *testing.T) {
 	if err != nil || len(rs) != 1 || rs[0].SourcePR != "PRJ/svc#9" {
 		t.Errorf("project revisions = %+v, %v; want the one project revision", rs, err)
 	}
+	// One revision by its number, its text as it stood; an unknown number
+	// or page is ok=false.
+	p, ok, err := s.Revision(ctx, ScopeRepository, "PRJ", "svc", 2)
+	if err != nil || !ok || p.Revision != 2 || p.SourcePR != "PRJ/svc#2" || len(p.Statements) != 2 || p.Statements[0].ID != "s1" ||
+		p.ProjectKey != "PRJ" || p.RepoSlug != "svc" || p.UpdatedAt.IsZero() {
+		t.Errorf("Revision(2) = %+v ok=%v err=%v", p, ok, err)
+	}
+	if p, ok, err := s.Revision(ctx, ScopeRepository, "PRJ", "svc", 3); err != nil || !ok || len(p.Statements) != 0 {
+		t.Errorf("Revision(3) = %+v ok=%v err=%v, want no statements, not nil", p, ok, err)
+	}
+	if _, ok, err := s.Revision(ctx, ScopeRepository, "PRJ", "svc", 4); err != nil || ok {
+		t.Errorf("Revision(4): ok=%v err=%v, want unknown", ok, err)
+	}
+	if _, ok, err := s.Revision(ctx, ScopeProject, "NONE", "", 1); err != nil || ok {
+		t.Errorf("Revision of an unknown project: ok=%v err=%v", ok, err)
+	}
+	if p, ok, err := s.Revision(ctx, ScopeProject, "PRJ", "", 1); err != nil || !ok || p.SourcePR != "PRJ/svc#9" || p.RepoSlug != "" {
+		t.Errorf("project Revision(1) = %+v ok=%v err=%v", p, ok, err)
+	}
 }
 
 // Notes lists newest first by project or by repo, with the item count.

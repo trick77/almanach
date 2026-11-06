@@ -5,6 +5,7 @@ import {
   projectPath,
   replaceTo,
   repoPath,
+  revisionPath,
   routeFromPath,
   searchFor,
   sourcePath,
@@ -28,6 +29,25 @@ describe("routeFromPath", () => {
       slug: "files",
       pr: 42,
     });
+    expect(routeFromPath("/projects/PLAT/revisions/3")).toEqual({
+      page: "revision",
+      key: "PLAT",
+      slug: "",
+      n: 3,
+    });
+    expect(routeFromPath("/projects/PLAT/repos/files/revisions/12")).toEqual({
+      page: "revision",
+      key: "PLAT",
+      slug: "files",
+      n: 12,
+    });
+    expect(routeFromPath("/projects/PLAT/revisions/0")).toEqual({
+      page: "projects",
+    });
+    expect(revisionPath("PLAT", "", 3)).toBe("/projects/PLAT/revisions/3");
+    expect(revisionPath("PLAT", "files", 12)).toBe(
+      "/projects/PLAT/repos/files/revisions/12",
+    );
     expect(routeFromPath("/sources")).toEqual({ page: "sources" });
     expect(routeFromPath("/queue")).toEqual({ page: "queue" });
     expect(routeFromPath("/queue/x")).toEqual({ page: "projects" });

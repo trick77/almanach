@@ -7,6 +7,7 @@ export type Route =
   | { page: "project"; key: string }
   | { page: "repo"; key: string; slug: string }
   | { page: "note"; key: string; slug: string; pr: number }
+  | { page: "revision"; key: string; slug: string; n: number }
   | { page: "sources" }
   | { page: "source"; key: string }
   | { page: "queue" }
@@ -41,6 +42,13 @@ const NOTE = new RegExp(
   `^${projectsPath}/(${KEY})/repos/(${SLUG})/notes/(${PR})$`,
 );
 const PR_KEY = new RegExp(`^(${KEY})/(${SLUG})#(${PR})$`);
+// A revision number is one as a PR id is: positive, nine digits at most.
+const PROJECT_REVISION = new RegExp(
+  `^${projectsPath}/(${KEY})/revisions/(${PR})$`,
+);
+const REPO_REVISION = new RegExp(
+  `^${projectsPath}/(${KEY})/repos/(${SLUG})/revisions/(${PR})$`,
+);
 const SOURCE = new RegExp(`^${sourcesPath}/(${KEY})$`);
 
 /** routeFromPath is the page an address names; search is the address's
@@ -50,6 +58,10 @@ export function routeFromPath(path: string, search = ""): Route {
     return { page: "search", q: new URLSearchParams(search).get("q") ?? "" };
   let m = NOTE.exec(path);
   if (m) return { page: "note", key: m[1], slug: m[2], pr: Number(m[3]) };
+  m = REPO_REVISION.exec(path);
+  if (m) return { page: "revision", key: m[1], slug: m[2], n: Number(m[3]) };
+  m = PROJECT_REVISION.exec(path);
+  if (m) return { page: "revision", key: m[1], slug: "", n: Number(m[2]) };
   m = REPO.exec(path);
   if (m) return { page: "repo", key: m[1], slug: m[2] };
   m = PROJECT.exec(path);
@@ -90,6 +102,13 @@ export function projectExportHref(key: string): string {
 
 export function repoExportHref(key: string, slug: string): string {
   return `/api${repoPath(key, slug)}.md`;
+}
+
+/** revisionPath is a revision's page: the project's (slug "") or the
+ *  repository's. */
+export function revisionPath(key: string, slug: string, n: number): string {
+  const base = slug === "" ? projectPath(key) : repoPath(key, slug);
+  return `${base}/revisions/${n}`;
 }
 
 export function notePath(key: string, slug: string, pr: number): string {

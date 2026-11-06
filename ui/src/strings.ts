@@ -278,6 +278,28 @@ export const S = {
     noRevisions: "Noch keine Revision.",
     notes: "Notizen",
   },
+  // One revision's page: the description as it stood, and what it changed
+  // against the revision before.
+  revision: {
+    title: (n: number) => `Revision ${n}`,
+    of: (n: number, current: number) =>
+      n === current
+        ? `Revision ${n}, die aktuelle`
+        : `Revision ${n} von ${current}`,
+    failed: "Die Revision konnte nicht geladen werden.",
+    changes: "Änderungen",
+    against: (previous: number) => `gegenüber Revision ${previous}`,
+    first: "die erste Revision: alles neu",
+    added: "Neu",
+    changed: "Geändert",
+    dropped: "Entfernt",
+    summaryChanged: "Überblick geändert",
+    nothing: "Keine Aussage hinzugekommen, geändert oder entfernt.",
+    description: "Beschreibung in dieser Revision",
+    previous: "Vorherige",
+    next: "Nächste",
+    current: "Aktuelle Seite",
+  },
   kinds: {
     component: "Komponenten",
     interface: "Schnittstellen",

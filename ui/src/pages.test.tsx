@@ -168,6 +168,7 @@ const project: ProjectDetail = {
     },
   ],
   problem_window_days: 90,
+  revisions: [],
   recent_notes: [
     {
       pr_id: 231,
@@ -387,6 +388,45 @@ describe("ProjectPage", () => {
     expect(document.title).toContain("PAY");
     // The start tab has no hash.
     expect(window.location.hash).toBe("");
+  });
+
+  it("lists the project page's revisions on the overview, each a link", async () => {
+    serve({
+      "projects/PAY": {
+        ...project,
+        revisions: [
+          {
+            revision: 7,
+            source_pr_key: "PAY/pay-api#231",
+            statements: 2,
+            chars: 300,
+            created_at: mergedAt,
+          },
+          {
+            revision: 6,
+            source_kind: "baseline",
+            source_pr_key: "",
+            source_commit: "abc1234abc1234",
+            statements: 1,
+            chars: 120,
+            created_at: mergedAt,
+          },
+        ],
+      },
+    });
+    render(<ProjectPage projectKey="PAY" />);
+    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    const rail = screen.getByRole("navigation", { name: "Inhalt" });
+    expect(within(rail).getByText("Revisionen").closest("a")?.textContent).toBe(
+      "Revisionen2",
+    );
+    expect(within(overview).getByText("aktuell")).toBeInTheDocument();
+    expect(
+      within(overview).getByText("7", { selector: "a" }).getAttribute("href"),
+    ).toBe("/projects/PAY/revisions/7");
+    expect(
+      within(overview).getByText("6", { selector: "a" }).getAttribute("href"),
+    ).toBe("/projects/PAY/revisions/6");
   });
 
   it("reads a repository's summary as the tile does: code spans, no heading", async () => {
@@ -1206,6 +1246,10 @@ describe("RepoPage", () => {
         .closest("a")
         ?.getAttribute("href"),
     ).toBe("/projects/PAY/repos/pay-clearing/notes/51");
+    // Each revision's number opens its view.
+    expect(screen.getByText("2", { selector: "a" }).getAttribute("href")).toBe(
+      "/projects/PAY/repos/pay-clearing/revisions/2",
+    );
   });
 
   it("labels each statement with its kind, a page in no area one chapter", async () => {

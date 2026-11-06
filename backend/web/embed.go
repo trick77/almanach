@@ -36,6 +36,8 @@ var routes = []*regexp.Regexp{
 	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+$`),
 	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+$`),
 	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+/notes/[1-9][0-9]{0,8}$`),
+	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/revisions/[1-9][0-9]{0,8}$`),
+	regexp.MustCompile(`^/projects/[A-Za-z0-9._~-]+/repos/[A-Za-z0-9._-]+/revisions/[1-9][0-9]{0,8}$`),
 	regexp.MustCompile(`^/sources$`),
 	regexp.MustCompile(`^/queue$`),
 	regexp.MustCompile(`^/dependencies$`),

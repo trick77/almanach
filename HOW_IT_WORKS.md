@@ -317,6 +317,14 @@ themselves go oldest first, one to its end before the next begins.
   pages are a few hundred at most. Answered by page in the wiki's order,
   each with the statements that matched and a snippet of the text around
   the first hit; fifty pages, the rest counted.
+- `/api/projects/{key}/revisions/{n}` and
+  `/api/projects/{key}/repos/{slug}/revisions/{n}`: one revision as it
+  stood (summary, statements, source, time) and what it changed against
+  revision n-1, by statement id: added, changed (name, text, files or
+  kind), dropped, the summary's change flagged. The diff is computed
+  from the two stored revisions on every read, nothing stored; the
+  sources on each statement say which pull request or run did it. A
+  project page's history is on `/api/projects/{key}` as `revisions`.
 - `/api/projects/{key}.md` and `/api/projects/{key}/repos/{slug}.md`: a
   page as Markdown, for a coding agent (below).
 - `/api/sources` and below: the clones, read and written (section 4a).
@@ -1365,7 +1373,7 @@ one.
 | `internal/auth` | The oidc sign-in: kit's OIDC flow with discovery retried in the background, kit's signed session cookie, the gate in front of `/api`. | authroute, urlorigin, kit/auth |
 | `internal/authroute` | The sign-in's route names, a leaf so `config` checks the redirect URL without pulling in the OIDC client. | nothing |
 | `internal/urlorigin` | A URL's origin, the one normaliser wherever two are compared: the auth gate's browser check, the host a source's token is bound to. | nothing |
-| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`, `/costs`, `/search`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
+| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `.../revisions/{n}` on a project and a repository, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`, `/costs`, `/search`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
 | `internal/httpapi` | The mux with kit's probes, an access log per log class and panic recovery. net/http only. | kit/httpx |
 | `internal/heartbeat` | A loop's last sign of life, stamped by the worker's and the poller's goroutines, read by `/metrics`. | nothing |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
@@ -1852,7 +1860,12 @@ baseline step's patch never is: its bad items are left out one by one (see
   on Übersicht (architecture overview, repositories, problem areas, recent notes),
   the hub's job, then Beschreibung; a repository page opens on
   Beschreibung (its map, the summary, its own problem areas, the
-  statements), its content, then Verlauf (notes, revisions). The hash
+  statements), its content, then Verlauf (notes, revisions); a project
+  page lists its revisions under its recent notes. Each revision links
+  to its own page: what it changed against the one before (added,
+  changed and dropped statements by name, the summary's change), then
+  the description as it stood, with previous, next and the current
+  page a step away. The hash
   holds the tab (`#description`, `#history`, none for the start tab),
   replaced on a switch, never pushed, and after a slash a statement's id
   (`#description/s12`, the statement's deep link): the page opens on that
