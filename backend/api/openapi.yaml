@@ -156,8 +156,9 @@ paths:
         "403":
           description: >-
             The project belongs to another team and `BACKEND_TEAM_CLAIMS` is
-            `enforce`; nothing is stored. The team-keys file may list the
-            project for the sender.
+            `enforce`; nothing is stored, not even the delivery id, so the
+            sender keeps the note pending and a resend lands once the
+            team-keys file lists the project for the sender.
           content:
             application/json:
               schema:

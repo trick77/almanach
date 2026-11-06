@@ -37,9 +37,8 @@ const maxBody = 1 << 20
 
 // Store is what the handlers need of the store.
 type Store interface {
-	Ingest(ctx context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error)
+	Ingest(ctx context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (store.Ingested, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
-	ProjectTeam(ctx context.Context, key string) (string, error)
 	Projects(ctx context.Context, sourced bool) ([]store.ProjectRow, error)
 	SourceRepoCount(ctx context.Context, key string) (int, error)
 	SingleRepos(ctx context.Context) (map[string]store.RepoRow, error)
@@ -76,8 +75,8 @@ type Deps struct {
 	Keys     *teamkeys.Keys
 	Worker   Waker
 	AuthMode config.AuthMode
-	// TeamClaims is what a note for another team's project gets: 202
-	// ignored and a log line (log, the default), or a 403 (enforce).
+	// TeamClaims is what a note for another team's project gets: stored
+	// with a warning line (log, the default), or a 403 (enforce).
 	TeamClaims    config.TeamClaims
 	ProblemWindow int
 	// Sources is the clone feature; nil when BACKEND_REPOS_DIR is unset,
@@ -208,8 +207,8 @@ type acceptedBody struct {
 // webhook takes one noergler note. Strict: an unknown field or a missing
 // required one is a 422 naming it; our own contract, so an invalid body is
 // a bug on one side and must not be swallowed. Exactly one
-// webhook_processed line per request, outcome accepted, deduped, ignored
-// or invalid, always with the delivery id when one could be built.
+// webhook_processed line per request, outcome accepted, deduped, ignored,
+// refused or invalid, always with the delivery id when one could be built.
 func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	team := d.team(w, r)
@@ -268,26 +267,13 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	// a warning naming team, project and owner (log, the rollout's grace:
 	// nothing lost, the log says who writes where). Unless the team-keys
 	// file lists the project for the sender, the operator's word for a
-	// repository that changed hands or two teams on one project. Without
-	// the gate any team's token, or anything holding one, would write
-	// into every team's pages, and the prompts read note text as data.
-	listed, reloadErr := d.Keys.Allowed(team, in.Note.ProjectKey)
-	if reloadErr != nil {
-		d.Log.WarnContext(ctx, "team keys reload failed, last good table in use", logging.Err(reloadErr))
-	}
-	enforce := d.TeamClaims == config.TeamClaimsEnforce
-	delivery := store.Delivery{ID: in.DeliveryID, Team: team, EventType: in.EventType, Payload: raw, Shared: listed || !enforce}
-	var owner string
-	if !enforce && !listed {
-		// For the warning alone: the owner as it stood before the write.
-		if owner, err = d.Store.ProjectTeam(ctx, in.Note.ProjectKey); err != nil {
-			d.Log.ErrorContext(ctx, "webhook_owner_check_failed", "webhook_source", "noergler", "team", team,
-				"delivery_id", in.DeliveryID, logging.Err(err))
-			httpx.WriteError(w, http.StatusInternalServerError, "owner check failed")
-			return
-		}
-	}
-	accepted, err := d.Store.Ingest(ctx, delivery, in.Note, in.Call, in.Claims)
+	// repository that changed hands or two teams on one project; the
+	// store resolves the listing by project id. Without the gate any
+	// team's token, or anything holding one, would write into every
+	// team's pages, and the prompts read note text as data.
+	delivery := store.Delivery{ID: in.DeliveryID, Team: team, EventType: in.EventType, Payload: raw,
+		Listed: d.Keys.Projects(team), Grace: d.TeamClaims != config.TeamClaimsEnforce}
+	got, err := d.Store.Ingest(ctx, delivery, in.Note, in.Call, in.Claims)
 	var owned *store.OwnedError
 	if errors.As(err, &owned) {
 		d.Log.WarnContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", "refused", "team", team,
@@ -305,18 +291,18 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outcome := "accepted"
-	if !accepted {
+	if !got.Accepted {
 		outcome = "deduped"
 	}
-	if accepted && owner != "" && owner != team {
+	if got.Owner != "" {
 		d.Log.WarnContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
 			"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind,
-			"project", in.Note.ProjectKey, "owner", owner, "reason", "project owned by another team, stored under log mode")
+			"project", in.Note.ProjectKey, "owner", got.Owner, "reason", "project owned by another team, stored under log mode")
 	} else {
 		d.Log.InfoContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
 			"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind)
 	}
-	if accepted && d.Worker != nil {
+	if got.Accepted && d.Worker != nil {
 		d.Worker.Wake()
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, acceptedBody{Status: outcome})

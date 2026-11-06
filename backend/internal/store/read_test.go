@@ -72,13 +72,6 @@ func TestExists(t *testing.T) {
 	if err != nil || !ok || team != "alpha" {
 		t.Errorf("ProjectExists(PRJ) = %q, %v, %v; want alpha, true", team, ok, err)
 	}
-	// The team a project belongs to, by any name; none for an unknown one.
-	if team, err := s.ProjectTeam(ctx, "PRJ"); err != nil || team != "alpha" {
-		t.Errorf("ProjectTeam(PRJ) = %q, %v; want alpha", team, err)
-	}
-	if team, err := s.ProjectTeam(ctx, "NONE"); err != nil || team != "" {
-		t.Errorf("ProjectTeam(NONE) = %q, %v; want none", team, err)
-	}
 	if team, ok, err := s.ProjectExists(ctx, "NONE", false); err != nil || ok || team != "" {
 		t.Errorf("ProjectExists(NONE) = %q, %v, %v; want false", team, ok, err)
 	}
@@ -486,8 +479,8 @@ func TestNoteByKey(t *testing.T) {
 
 	// Without a call the detail has none.
 	plain := noteFor("PRJ", "svc", 5)
-	if ok, err := s.Ingest(ctx, deliveryFor(plain), plain, nil, nil); err != nil || !ok {
-		t.Fatalf("ingest without call: ok=%v err=%v", ok, err)
+	if got, err := s.Ingest(ctx, deliveryFor(plain), plain, nil, nil); err != nil || !got.Accepted {
+		t.Fatalf("ingest without call: %+v err=%v", got, err)
 	}
 	d, ok, err = s.NoteByKey(ctx, "PRJ", "svc", 5)
 	if err != nil || !ok || d.Call != nil {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,9 +45,9 @@ func TestLoadAndLookup(t *testing.T) {
 }
 
 // An entry may be an object with the token and the projects the team may
-// write into beyond its own: looked up in any case, by team; a bare
-// string entry lists none.
-func TestAllowed(t *testing.T) {
+// write into beyond its own, trimmed, by team; a bare string entry lists
+// none.
+func TestProjects(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "keys.json")
 	writeKeys(t, path, `{"platform": {"token": "tok-platform", "projects": [" Pay ", "shop"]}, "billing": "tok-billing"}`, t0)
 	k, err := Load(path)
@@ -56,16 +57,14 @@ func TestAllowed(t *testing.T) {
 	if team, _ := k.Lookup("tok-platform"); team != "platform" {
 		t.Errorf("Lookup of an object entry's token = %q", team)
 	}
-	for _, c := range []struct {
-		team, project string
-		want          bool
-	}{
-		{"platform", "PAY", true}, {"platform", "pay", true}, {"platform", "shop", true}, {"platform", "platform", false},
-		{"billing", "PAY", false}, {"nobody", "PAY", false}, {"platform", "", false},
-	} {
-		if got, err := k.Allowed(c.team, c.project); err != nil || got != c.want {
-			t.Errorf("Allowed(%q, %q) = %v, %v; want %v", c.team, c.project, got, err, c.want)
-		}
+	if got := k.Projects("platform"); !slices.Equal(got, []string{"Pay", "shop"}) {
+		t.Errorf("Projects(platform) = %q", got)
+	}
+	if got := k.Projects("billing"); len(got) != 0 {
+		t.Errorf("Projects(billing) = %q, want none", got)
+	}
+	if got := k.Projects("nobody"); len(got) != 0 {
+		t.Errorf("Projects(nobody) = %q, want none", got)
 	}
 }
 
@@ -82,6 +81,7 @@ func TestLoadFailures(t *testing.T) {
 		{"no entries", `{}`, "no team keys"},
 		{"malformed", `{"a": `, "team keys"},
 		{"wrong shape", `{"a": 7}`, "team keys"},
+		{"unknown field in an object", `{"a": {"token": "tok", "project": ["x"]}}`, `unknown field "project"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

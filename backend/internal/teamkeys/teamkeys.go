@@ -13,6 +13,7 @@
 package teamkeys
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -31,7 +32,7 @@ type Keys struct {
 	mod  time.Time
 	// byToken is token -> team; teams is the sorted names, for the log;
 	// projects is team -> the project keys it may write into beyond its
-	// own, folded to lower case (a key is one name in any case).
+	// own, as the file spells them.
 	byToken  map[string]string
 	teams    []string
 	projects map[string][]string
@@ -44,7 +45,9 @@ type entry struct {
 	Projects []string `json:"projects"`
 }
 
-// UnmarshalJSON takes a bare string as the token.
+// UnmarshalJSON takes a bare string as the token. An object with a field
+// it does not know is refused: a misspelt "projects" would otherwise list
+// nothing and say nothing, and enforce would refuse the team unexplained.
 func (e *entry) UnmarshalJSON(raw []byte) error {
 	var token string
 	if err := json.Unmarshal(raw, &token); err == nil {
@@ -53,7 +56,9 @@ func (e *entry) UnmarshalJSON(raw []byte) error {
 	}
 	type plain entry
 	var p plain
-	if err := json.Unmarshal(raw, &p); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
 		return err
 	}
 	*e = entry(p)
@@ -82,7 +87,9 @@ func (k *Keys) Teams() []string {
 func (k *Keys) Lookup(token string) (team string, reloadErr error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	reloadErr = k.refresh()
+	if st, err := os.Stat(k.path); err == nil && !st.ModTime().Equal(k.mod) {
+		reloadErr = k.reload()
+	}
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return "", reloadErr
@@ -96,30 +103,15 @@ func (k *Keys) Lookup(token string) (team string, reloadErr error) {
 	return team, reloadErr
 }
 
-// Allowed reports whether the file lets team write into project, a key
-// in any case: the team's own projects need no entry, this is for
-// another team's. The file is re-read first when its mtime moved, as on
-// a lookup; a failed reload keeps the last good table.
-func (k *Keys) Allowed(team, project string) (allowed bool, reloadErr error) {
+// Projects is the project keys the file lists for team, the projects it
+// may write into though another team owns them; the store resolves them
+// by any name in any case. Read from the table as the request's Lookup
+// left it: no second re-read, so a broken file costs one parse and one
+// log line a request.
+func (k *Keys) Projects(team string) []string {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	reloadErr = k.refresh()
-	want := strings.ToLower(strings.TrimSpace(project))
-	for _, p := range k.projects[team] {
-		if p == want {
-			return true, reloadErr
-		}
-	}
-	return false, reloadErr
-}
-
-// refresh re-reads the file when its mtime moved; the caller holds the
-// lock. A failed reload keeps the last good table and is returned.
-func (k *Keys) refresh() error {
-	if st, err := os.Stat(k.path); err == nil && !st.ModTime().Equal(k.mod) {
-		return k.reload()
-	}
-	return nil
+	return append([]string(nil), k.projects[team]...)
 }
 
 // reload reads the file into the table; the caller holds the lock. A
@@ -151,7 +143,7 @@ func (k *Keys) reload() error {
 		byToken[token] = team
 		teams = append(teams, team)
 		for _, p := range e.Projects {
-			p = strings.ToLower(strings.TrimSpace(p))
+			p = strings.TrimSpace(p)
 			if p == "" {
 				return fmt.Errorf("team keys: %s: team %s lists an empty project", k.path, team)
 			}

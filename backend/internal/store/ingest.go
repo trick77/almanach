@@ -14,11 +14,26 @@ type Delivery struct {
 	Team      string
 	EventType string
 	Payload   json.RawMessage
-	// Shared lets the note into a project another team owns: the sender
-	// is listed for it in the team-keys file, or the gate is in log mode.
-	// Without it such a note is refused with an *OwnedError inside the
-	// transaction, so a first claim and a refusal never race.
-	Shared bool
+	// Listed is the project keys the team-keys file lists for the sender:
+	// a note for a project one of them names, by any name it had in any
+	// case, may write into it though another team owns it, and never
+	// claims it (a listing shares, it does not transfer).
+	Listed []string
+	// Grace stores a note for another team's project that no listing lets
+	// in (log mode), its owner reported; without it such a note is refused
+	// with an *OwnedError inside the transaction, so a first claim and a
+	// refusal never race.
+	Grace bool
+}
+
+// Ingested is what Ingest did with a delivery.
+type Ingested struct {
+	// Accepted is false for a delivery id seen before: nothing written.
+	Accepted bool
+	// Owner is the team that owns the project when the note was stored
+	// into it under Grace alone; "" for the sender's own project, one no
+	// note has claimed yet, or one the listing let it into.
+	Owner string
 }
 
 // OwnedError is a note refused for a project another team owns.
@@ -88,68 +103,78 @@ type NoteCall struct {
 }
 
 // Ingest writes one accepted delivery in a single transaction: the raw body,
-// the structure it names, the note and the call. accepted is false when the
+// the structure it names, the note and the call. Accepted is false when the
 // delivery id was seen before (a retry): nothing is written, the first
 // delivery stands, as riptide does it.
-func (s *Store) Ingest(ctx context.Context, d Delivery, n Note, call *NoteCall, claims []Claim) (bool, error) {
-	accepted := false
+func (s *Store) Ingest(ctx context.Context, d Delivery, n Note, call *NoteCall, claims []Claim) (Ingested, error) {
+	var got Ingested
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		ok, err := writeDelivery(ctx, tx, d, n, call, claims)
-		accepted = ok
+		var err error
+		got, err = writeDelivery(ctx, tx, d, n, call, claims)
 		return err
 	})
 	if err != nil {
-		return false, err
+		return Ingested{}, err
 	}
-	return accepted, nil
+	return got, nil
 }
 
 // writeDelivery is Ingest inside its transaction.
-func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *NoteCall, claims []Claim) (bool, error) {
+func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *NoteCall, claims []Claim) (Ingested, error) {
 	now := nowStamp()
 	var id string
 	err := tx.QueryRowContext(ctx, `INSERT INTO deliveries (delivery_id, team, event_type, received_at, payload) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`, d.ID, d.Team, d.EventType, now, jsonText(d.Payload)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return Ingested{}, nil
 	}
 	if err != nil {
-		return false, err
+		return Ingested{}, err
 	}
 
 	// The structure: upsert, last_seen bumped.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO teams (slug, first_seen, last_seen) VALUES (?1, ?2, ?2)
 		ON CONFLICT (slug) DO UPDATE SET last_seen = EXCLUDED.last_seen`, n.Team, now); err != nil {
-		return false, err
+		return Ingested{}, err
 	}
 	// A project belongs to the first team whose note names it, and keeps
 	// it: a note from another team is refused here, under the
-	// transaction's lock, unless the delivery is Shared (the team-keys
-	// file lists the project for the sender; a handover is a listing, not
-	// a transfer). A name no project or repository ever had registers a
-	// new one; an old name lands on the row that had it.
+	// transaction's lock, unless the team-keys file lists the project for
+	// the sender or the delivery has Grace. A listed note never claims a
+	// project no note has claimed yet: a listing shares, it does not
+	// transfer. A name no project or repository ever had registers a new
+	// one; an old name lands on the row that had it.
 	pid, err := ensureProject(ctx, tx, n.ProjectKey)
 	if err != nil {
-		return false, err
+		return Ingested{}, err
+	}
+	listed, err := listedFor(ctx, tx, d.Listed, pid)
+	if err != nil {
+		return Ingested{}, err
 	}
 	var owner sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT team FROM projects WHERE id = ?`, pid).Scan(&owner); err != nil {
-		return false, err
+		return Ingested{}, err
 	}
-	if owner.Valid && owner.String != "" && owner.String != n.Team && !d.Shared {
-		return false, &OwnedError{Owner: owner.String}
+	got := Ingested{Accepted: true}
+	if owner.Valid && owner.String != n.Team && !listed {
+		if !d.Grace {
+			return Ingested{}, &OwnedError{Owner: owner.String}
+		}
+		got.Owner = owner.String
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE projects SET team = COALESCE(team, ?2), first_seen = COALESCE(first_seen, ?3), last_seen = ?3 WHERE id = ?1`,
-		pid, n.Team, now); err != nil {
-		return false, err
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET team = CASE WHEN ?4 THEN team ELSE COALESCE(team, ?2) END,
+		first_seen = COALESCE(first_seen, ?3), last_seen = ?3 WHERE id = ?1`,
+		pid, n.Team, now, listed); err != nil {
+		return Ingested{}, err
 	}
 	rid, err := ensureRepo(ctx, tx, pid, n.RepoSlug)
 	if err != nil {
-		return false, err
+		return Ingested{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE repos SET team = ?2, first_seen = COALESCE(first_seen, ?3), last_seen = ?3 WHERE id = ?1`,
 		rid, n.Team, now); err != nil {
-		return false, err
+		return Ingested{}, err
 	}
 	// Claims are kept as noergler sent them, names and all, never joined
 	// on: a claim of a repository Almanach has not met registers nothing
@@ -161,7 +186,7 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO claims (team, project_key, repo_slug, seen_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 			n.Team, c.ProjectKey, repo, now); err != nil {
-			return false, err
+			return Ingested{}, err
 		}
 	}
 
@@ -187,14 +212,14 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 		rid, n.PRID, n.Team, n.PRKey, n.PRTitle, n.TicketKey, n.IssueType, n.ChangeKind,
 		jsonOrNull(n.Bugfix), n.BugfixArea, n.BugfixComponent, jsonText(n.Body), n.ReviewedCommit, n.SourceCommit, n.MergeCommit,
 		stamp(n.MergedAt), n.RunID, n.ModelLabel, n.IssuesPosted, n.Suggestions, d.ID, now); err != nil {
-		return false, err
+		return Ingested{}, err
 	}
 
 	if call != nil {
 		c := call
 		warnings, err := jsonOf(orEmpty(c.Warnings))
 		if err != nil {
-			return false, err
+			return Ingested{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO note_calls (delivery_id, team, repo_id, pr_id, run_id, outcome, note_status,
@@ -216,10 +241,26 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 			c.Cost, c.CostInput, c.CostCacheRead, c.CostCacheWrite, c.CostOutput, c.CostReasoning, c.CostTool,
 			c.KeySpend, c.HeadersMS, c.TotalMS, warnings,
 			c.Rounds, c.RoundsInputTokens, c.RoundsOutputTokens, c.RoundsCost, now); err != nil {
-			return false, err
+			return Ingested{}, err
 		}
 	}
-	return true, nil
+	return got, nil
+}
+
+// listedFor reports whether one of the listed keys names the project, by
+// any name it had in any case: a renamed project keeps its listing under
+// either name. A key no project ever had lists nothing.
+func listedFor(ctx context.Context, tx *sql.Tx, keys []string, pid int64) (bool, error) {
+	for _, key := range keys {
+		id, ok, err := projectIDAnyCase(ctx, tx, key)
+		if err != nil {
+			return false, err
+		}
+		if ok && id == pid {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func orEmpty(s []string) []string {
