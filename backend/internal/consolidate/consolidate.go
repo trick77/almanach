@@ -15,13 +15,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/heartbeat"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/markup"
@@ -111,8 +111,8 @@ type Worker struct {
 	waiting   *Wait
 	holdUntil time.Time
 	holdCause string
-	// beat is the loop's last heartbeat, unix seconds.
-	beat atomic.Int64
+	// beat is the loop's last heartbeat.
+	beat heartbeat.Beat
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the

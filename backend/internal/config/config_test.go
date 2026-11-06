@@ -125,6 +125,10 @@ func TestMetricsToken(t *testing.T) {
 	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_METRICS_TOKEN: want at least 32 bytes") {
 		t.Errorf("short token: err = %v", err)
 	}
+	env["BACKEND_METRICS_TOKEN"] = "a passphrase with spaces in it, long enough"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_METRICS_TOKEN: want no space or tab") {
+		t.Errorf("token with spaces: err = %v", err)
+	}
 	const token = "metrics-token-metrics-token-metrics-token"
 	env["BACKEND_METRICS_TOKEN"] = token
 	app, err := Load(lookup(env))

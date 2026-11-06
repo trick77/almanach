@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { get } from "./api";
 
 export interface Fetched<T> {
@@ -29,10 +29,19 @@ export function useFetch<T>(
   }>({ data: null, failed: false, path: null });
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((n) => n + 1), []);
+  // polled is set by the timer for the fetch it causes: that one is sent
+  // as a poll, the first load and a reload are the reader's own.
+  const polled = useRef(false);
+  const poll = useCallback(() => {
+    polled.current = true;
+    setTick((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    get<T>(path, controller.signal).then(
+    const isPoll = polled.current;
+    polled.current = false;
+    get<T>(path, controller.signal, isPoll).then(
       (data) => setState({ data, failed: false, path }),
       (err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -50,9 +59,9 @@ export function useFetch<T>(
   const ms = typeof every === "function" ? every(shown) : every;
   useEffect(() => {
     if (ms <= 0) return;
-    const id = window.setInterval(reload, ms);
+    const id = window.setInterval(poll, ms);
     return () => window.clearInterval(id);
-  }, [ms, reload]);
+  }, [ms, poll]);
 
   return state.path === path
     ? { data: state.data, failed: state.failed, reload }

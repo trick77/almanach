@@ -512,10 +512,23 @@ export interface QueueCount {
   count: number;
 }
 
+/** pollHeader marks a request a timer repeats; mirrored in
+ *  backend/internal/api/logclass.go. */
+export const pollHeader = "X-Almanach-Poll";
+
 /** get fetches one API path. A non-2xx is an error: the pages show their
  *  failed state rather than an empty one. */
-export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`/api/${path}`, { signal });
+export async function get<T>(
+  path: string,
+  signal?: AbortSignal,
+  poll = false,
+): Promise<T> {
+  // A refetch on a timer says so: the server logs it at Debug, a reader's
+  // own request at Info.
+  const res = await fetch(`/api/${path}`, {
+    signal,
+    ...(poll ? { headers: { [pollHeader]: "1" } } : {}),
+  });
   onUnauthorized(res.status);
   if (!res.ok) {
     throw new Error(`${path}: HTTP ${res.status}`);

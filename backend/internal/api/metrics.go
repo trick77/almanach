@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/trick77/almanach/internal/clone"
@@ -30,7 +32,7 @@ import (
 // MetricsStore is what /metrics reads of the store.
 type MetricsStore interface {
 	Metrics(ctx context.Context) (store.Metrics, error)
-	Ledger(ctx context.Context, afterID int64) ([]store.LedgerRow, int64, error)
+	Ledger(ctx context.Context, afterID int64) (store.LedgerPart, error)
 }
 
 // MetricsWorker is the worker as /metrics sees it.
@@ -43,6 +45,7 @@ type MetricsWorker interface {
 type MetricsSync interface {
 	Cycle() clone.CycleStatus
 	Heartbeat() time.Time
+	CycleSince() time.Time
 }
 
 // MetricsDeps is what /metrics needs. Used by pointer: it keeps the
@@ -59,10 +62,20 @@ type MetricsDeps struct {
 	// it never reads the whole ever-growing table again. A restart reads
 	// it once. lmu is held across the read, so two scrapes never add the
 	// same rows.
-	lmu    sync.Mutex
-	lastID int64
-	totals map[ledgerKey]ledgerSum
+	lmu       sync.Mutex
+	lastID    int64
+	totals    map[ledgerKey]ledgerSum
+	lastMerge *time.Time
+
+	// refused is when a refused bearer was last logged, unix seconds: one
+	// Warn a minute at most, so a scanner or a scraper left with an old
+	// token cannot fill the log.
+	refused atomic.Int64
 }
+
+// refusedEvery is how often a refused bearer on /metrics is logged at
+// most.
+const refusedEvery = time.Minute
 
 type ledgerKey struct {
 	purpose   string
@@ -77,9 +90,9 @@ const metricsType = "text/plain; version=0.0.4; charset=utf-8"
 func (d Deps) metrics(w http.ResponseWriter, r *http.Request) {
 	m := d.Metrics
 	if m == nil || !m.allowed(r) {
-		if _, sent := httpx.Bearer(r); sent && m != nil {
+		if _, sent := httpx.Bearer(r); sent && m != nil && m.logRefusal(time.Now()) {
 			// Its access line is routine (scrapes every few seconds): the
-			// refusal is logged here, with who sent it.
+			// refusal is logged here, with who sent it, once a minute.
 			d.Log.WarnContext(r.Context(), "metrics: a bearer was refused", slog.String("ip", httpx.ClientIP(r, 0)))
 		}
 		http.NotFound(w, r)
@@ -98,7 +111,17 @@ func (d Deps) metrics(w http.ResponseWriter, r *http.Request) {
 	m.write(&b, st)
 	w.Header().Set("Content-Type", metricsType)
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(b.String()))
+	_, _ = io.WriteString(w, b.String())
+}
+
+// logRefusal reports whether a refused bearer at now is to be logged: the
+// first one, then one per refusedEvery.
+func (m *MetricsDeps) logRefusal(now time.Time) bool {
+	last := m.refused.Load()
+	if last != 0 && now.Unix()-last < int64(refusedEvery/time.Second) {
+		return false
+	}
+	return m.refused.CompareAndSwap(last, now.Unix())
 }
 
 // allowed: a direct loopback caller, or the metrics token's bearer
@@ -131,21 +154,24 @@ func loopback(r *http.Request) bool {
 func (m *MetricsDeps) addLedger(ctx context.Context) error {
 	m.lmu.Lock()
 	defer m.lmu.Unlock()
-	rows, last, err := m.Store.Ledger(ctx, m.lastID)
+	part, err := m.Store.Ledger(ctx, m.lastID)
 	if err != nil {
 		return err
 	}
 	if m.totals == nil {
 		m.totals = map[ledgerKey]ledgerSum{}
 	}
-	for _, r := range rows {
+	for _, r := range part.Rows {
 		k := ledgerKey{r.Purpose, r.ProjectID}
 		s := m.totals[k]
 		s.calls += r.Calls
 		s.nano += r.NanoUSD
 		m.totals[k] = s
 	}
-	m.lastID = last
+	if part.LastMerge != nil {
+		m.lastMerge = part.LastMerge
+	}
+	m.lastID = part.LastID
 	return nil
 }
 
@@ -159,8 +185,11 @@ func (m *MetricsDeps) write(b *strings.Builder, st store.Metrics) {
 	series(b, "almanach_info", "gauge", "The running version.", sample{labels: labels("version", version.String()), value: 1})
 	series(b, "almanach_queue_notes", "gauge", "Notes not yet folded.", sample{value: int64(st.Notes)})
 	series(b, "almanach_queue_runs", "gauge", "Baseline runs open.", sample{value: int64(st.Runs)})
+	m.lmu.Lock()
+	lastMerge := m.lastMerge
+	m.lmu.Unlock()
 	series(b, "almanach_last_merge_seconds", "gauge", "When the newest merge call answered ok (the call, not its patch's apply), unix seconds.",
-		sample{value: unixOrZero(st.LastMerge)})
+		sample{value: unixOrZero(lastMerge)})
 	series(b, "almanach_last_sync_seconds", "gauge", "When any source repository last synced, unix seconds.",
 		sample{value: unixOrZero(st.LastSync)})
 
@@ -194,15 +223,14 @@ func (m *MetricsDeps) write(b *strings.Builder, st store.Metrics) {
 	if m.Sync != nil {
 		hb := m.Sync.Heartbeat()
 		series(b, "almanach_poller_heartbeat_seconds", "gauge", "The poller loop's last heartbeat, unix seconds.", sample{value: unixOrZero(&hb)})
-		c := m.Sync.Cycle()
-		var started, next int64
-		if c.Running {
-			started = c.StartedAt.Unix()
-		} else if c.NextAt != nil {
+		since := m.Sync.CycleSince()
+		var next int64
+		if c := m.Sync.Cycle(); since.IsZero() && c.NextAt != nil {
 			next = c.NextAt.Unix()
 		}
-		series(b, "almanach_poller_cycle_started_seconds", "gauge", "When the sync cycle in flight started, unix seconds; 0 when none runs.", sample{value: started})
-		series(b, "almanach_poller_next_cycle_seconds", "gauge", "When the next sync cycle is due, unix seconds; 0 with no interval or one running. Past due: the cycle is stuck before its first repository.", sample{value: next})
+		series(b, "almanach_poller_cycle_started_seconds", "gauge", "When the sync cycle in flight started, its listings included, unix seconds; 0 when none runs.",
+			sample{value: unixOrZero(&since)})
+		series(b, "almanach_poller_next_cycle_seconds", "gauge", "When the next sync cycle is due on its own, unix seconds; 0 with no interval or one running.", sample{value: next})
 	}
 
 	projects := make([]sample, 0, len(st.Projects))

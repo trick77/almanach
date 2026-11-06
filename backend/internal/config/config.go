@@ -231,6 +231,11 @@ func Load(lookup func(string) string) (*App, error) {
 	if n := len(app.MetricsToken); n > 0 && n < minSessionSecret {
 		r.Fail("BACKEND_METRICS_TOKEN: want at least %d bytes (openssl rand -base64 48), got %d", minSessionSecret, n)
 	}
+	// kit's Bearer reads no token with a space or a tab in it: one would
+	// pass here and never open /metrics.
+	if strings.ContainsAny(app.MetricsToken, " \t") {
+		r.Fail("BACKEND_METRICS_TOKEN: want no space or tab, a bearer cannot carry one")
+	}
 	for _, old := range slices.Sorted(maps.Keys(renamed)) {
 		if strings.TrimSpace(lookup(old)) != "" {
 			r.Fail("%s was renamed to %s; rename it", old, renamed[old])

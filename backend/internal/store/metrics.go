@@ -6,14 +6,12 @@ import (
 )
 
 // Metrics is what /metrics reads of the store besides the ledger: the
-// queue, the last success of a merge and of a sync, the projects' current
-// keys. From the rows, so a restart keeps it.
+// queue, the last successful sync, the projects' current keys. From the
+// rows, so a restart keeps it.
 type Metrics struct {
-	// Notes is the notes not yet folded, Runs the open baseline runs.
+	// Notes is the notes not yet folded, Runs the open baseline runs: the
+	// nav's count (QueueCount), split.
 	Notes, Runs int
-	// LastMerge is the newest merge call that answered ok: the call, not
-	// whether its patch then applied. Nil before the first.
-	LastMerge *time.Time
 	// LastSync is the newest successful sync of any source repository.
 	LastSync *time.Time
 	// Projects is every project's current key by its id: the counters are
@@ -24,13 +22,16 @@ type Metrics struct {
 // Metrics reads the store's side of /metrics but the ledger.
 func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 	var m Metrics
-	err := s.db.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(*) FROM notes WHERE consolidated_at IS NULL),
-		       (SELECT COUNT(*) FROM baseline_runs WHERE state NOT IN ('done', 'failed')),
-		       (SELECT MAX(created_at) FROM llm_calls WHERE purpose = 'merge' AND outcome = 'ok'),
-		       (SELECT MAX(last_synced_at) FROM source_repos)`).
-		Scan(&m.Notes, &m.Runs, timeOrNil(&m.LastMerge), timeOrNil(&m.LastSync))
+	notes, err := s.QueueCount(ctx, false)
 	if err != nil {
+		return Metrics{}, err
+	}
+	all, err := s.QueueCount(ctx, true)
+	if err != nil {
+		return Metrics{}, err
+	}
+	m.Notes, m.Runs = notes, all-notes
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(last_synced_at) FROM source_repos`).Scan(timeOrNil(&m.LastSync)); err != nil {
 		return Metrics{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id, key FROM projects`)
@@ -59,34 +60,52 @@ type LedgerRow struct {
 	NanoUSD   int64
 }
 
-// Ledger is Almanach's own calls past the row afterID, by purpose and
-// project, and the newest row's id (afterID when there is none): /metrics
-// adds them to its totals, so a scrape reads only what came since the last
-// one, never the whole ledger. llm_calls is append-only and its ids grow
-// (rowid, nothing deleted), so no row is read twice or skipped.
+// LedgerPart is the ledger's rows past one id: summed by purpose and
+// project, the newest id among them, and the newest merge call among them
+// that answered ok (the call, not whether its patch then applied).
+type LedgerPart struct {
+	Rows []LedgerRow
+	// LastID is the newest row's id, the asked one when there is none.
+	LastID int64
+	// LastMerge is nil when none of the rows is an ok merge.
+	LastMerge *time.Time
+}
+
+// Ledger is Almanach's own calls past the row afterID: /metrics adds them
+// to its totals, so a scrape reads only what came since the last one, by
+// rowid range (the primary key), never the whole ledger. llm_calls is append-only and its
+// ids grow (rowid, nothing deleted), so no row is read twice or skipped.
 // note_calls, noergler's ledger, is never in it.
-func (s *Store) Ledger(ctx context.Context, afterID int64) ([]LedgerRow, int64, error) {
+func (s *Store) Ledger(ctx context.Context, afterID int64) (LedgerPart, error) {
+	part := LedgerPart{Rows: []LedgerRow{}, LastID: afterID}
+	// One statement, so the sums, the last id and the last merge are of
+	// one snapshot: a row landing between two reads would be counted and
+	// its merge time lost.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.purpose, r.project_id, COUNT(*), COALESCE(SUM(c.cost_nano_usd), 0), MAX(c.id)
+		SELECT c.purpose, r.project_id, COUNT(*), COALESCE(SUM(c.cost_nano_usd), 0), MAX(c.id),
+		       MAX(CASE WHEN c.purpose = 'merge' AND c.outcome = 'ok' THEN c.created_at END)
 		  FROM llm_calls c JOIN repos r ON r.id = c.repo_id
 		 WHERE c.id > ?
 		 GROUP BY c.purpose, r.project_id`, afterID)
 	if err != nil {
-		return nil, afterID, err
+		return LedgerPart{}, err
 	}
 	defer func() { _ = rows.Close() }()
-	out, last := []LedgerRow{}, afterID
 	for rows.Next() {
 		var r LedgerRow
 		var maxID int64
-		if err := rows.Scan(&r.Purpose, &r.ProjectID, &r.Calls, &r.NanoUSD, &maxID); err != nil {
-			return nil, afterID, err
+		var merge *time.Time
+		if err := rows.Scan(&r.Purpose, &r.ProjectID, &r.Calls, &r.NanoUSD, &maxID, timeOrNil(&merge)); err != nil {
+			return LedgerPart{}, err
 		}
-		last = max(last, maxID)
-		out = append(out, r)
+		part.LastID = max(part.LastID, maxID)
+		if merge != nil && (part.LastMerge == nil || merge.After(*part.LastMerge)) {
+			part.LastMerge = merge
+		}
+		part.Rows = append(part.Rows, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, afterID, err
+		return LedgerPart{}, err
 	}
-	return out, last, nil
+	return part, nil
 }
