@@ -48,10 +48,27 @@ func TestStatus_NamesTheNoteInFlight(t *testing.T) {
 func TestQueueOrder(t *testing.T) {
 	notes := []store.PendingNote{{PRKey: "a", HeldBy: 7}, {PRKey: "b"}, {PRKey: "c", HeldBy: 7}}
 	runs := []store.BaselineRun{{ID: 7, State: store.RunDescribing}, {ID: 8, State: store.RunProject}, {ID: 9, State: store.RunQueued}}
-	o := QueueOrder(notes, runs, 0, mergedAt)
+	o := QueueOrder(notes, runs, 0, mergedAt, false)
 	if len(o.Free) != 1 || o.Free[0].PRKey != "b" || len(o.Held) != 2 || o.Held[0].PRKey != "a" || o.Started == nil ||
 		o.Started.ID != 7 || len(o.Queued) != 1 || o.Queued[0].ID != 9 || len(o.Waiting) != 0 {
 		t.Errorf("order = %+v", o)
+	}
+	// A spent budget: the departures first, each kind oldest first.
+	runs = []store.BaselineRun{{ID: 1, State: store.RunQueued}, {ID: 2, State: store.RunQueued, Trigger: store.TriggerDeparture},
+		{ID: 3, State: store.RunQueued}, {ID: 4, State: store.RunQueued, Trigger: store.TriggerDeparture}}
+	got := []int64{}
+	for _, r := range QueueOrder(nil, runs, 0, mergedAt, true).Queued {
+		got = append(got, r.ID)
+	}
+	if !slices.Equal(got, []int64{2, 4, 1, 3}) {
+		t.Errorf("spent budget: queued = %v, want 2 4 1 3", got)
+	}
+	got = got[:0]
+	for _, r := range QueueOrder(nil, runs, 0, mergedAt, false).Queued {
+		got = append(got, r.ID)
+	}
+	if !slices.Equal(got, []int64{1, 2, 3, 4}) {
+		t.Errorf("budget left: queued = %v, want 1 2 3 4", got)
 	}
 }
 
@@ -68,7 +85,7 @@ func TestQueueOrder_FoldDelay(t *testing.T) {
 		note("due", "d1", 30*time.Hour), note("soon", "s1", 23*time.Hour), note("late", "l1", 20*time.Hour),
 		note("due", "d2", time.Hour), note("late", "l2", time.Minute),
 	}
-	o := QueueOrder(notes, nil, 24*time.Hour, now)
+	o := QueueOrder(notes, nil, 24*time.Hour, now, false)
 	var free, waiting []string
 	for _, n := range o.Free {
 		free = append(free, n.PRKey)
@@ -83,7 +100,7 @@ func TestQueueOrder_FoldDelay(t *testing.T) {
 	// repository, as the drain folds them together.
 	two := []store.PendingNote{note("a", "a1", 30*time.Hour), note("b", "b1", 29*time.Hour), note("a", "a2", time.Hour)}
 	var grouped []string
-	for _, n := range QueueOrder(two, nil, 24*time.Hour, now).Free {
+	for _, n := range QueueOrder(two, nil, 24*time.Hour, now, false).Free {
 		grouped = append(grouped, n.PRKey)
 	}
 	if !slices.Equal(grouped, []string{"a1", "a2", "b1"}) {
@@ -95,7 +112,7 @@ func TestQueueOrder_FoldDelay(t *testing.T) {
 	// A started run holds its repository's notes whatever their delay.
 	held := note("soon", "s2", time.Hour)
 	held.HeldBy = 7
-	o = QueueOrder(append(slices.Clone(notes), held), nil, 24*time.Hour, now)
+	o = QueueOrder(append(slices.Clone(notes), held), nil, 24*time.Hour, now, false)
 	if len(o.Held) != 1 || o.Held[0].PRKey != "s2" {
 		t.Errorf("held = %+v, want s2", o.Held)
 	}

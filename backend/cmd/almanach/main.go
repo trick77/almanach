@@ -348,7 +348,7 @@ func serve(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		git.WithTimeout(app.Sources.GitTimeout)
+		git.WithTimeouts(app.Sources.GitTimeout, app.Sources.GitCloneTimeout)
 		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: lister, Key: key, Interval: app.Sources.SyncInterval, Log: log,
 			Describe: clone.Describe{Reconcile: app.Baseline.Reconcile, Wake: worker.Wake}, Manifests: clone.Manifests{Store: db, Reads: git}})
 		// The clones take one write too: a repository's brief, pushed with

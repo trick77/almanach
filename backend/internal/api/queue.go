@@ -246,7 +246,7 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 	}
 
 	// The worker's order, its own (consolidate.QueueOrder).
-	order := consolidate.QueueOrder(notes, runs, st.FoldDelay, q.now())
+	order := consolidate.QueueOrder(notes, runs, st.FoldDelay, q.now(), st.Wait != nil && st.Wait.Reason == consolidate.WaitBudget)
 	queued := order.Queued
 	var free, held, waiting []queueItemBody
 	for _, n := range order.Free {

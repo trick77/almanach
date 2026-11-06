@@ -67,18 +67,31 @@ type Client struct {
 	// or local path to another clone on this disk, or an ssh:// with
 	// whatever key the process finds.
 	protocols string
-	// timeout bounds every command that reaches a remote (clone, fetch,
-	// ls-remote); zero is none. The poller's cycle is sequential, so one
-	// stalled fetch once held every source and every baseline step behind
-	// it, for good.
-	timeout time.Duration
+	// timeout bounds every command that reaches a remote but a clone
+	// (fetch, ls-remote, push), cloneTimeout a clone; zero is none. The
+	// poller's cycle is sequential, so one stalled fetch once held every
+	// source and every baseline step behind it, for good. Apart, since a
+	// first clone of a big repository honestly takes long, and one bound
+	// for both let every fetch hang as long.
+	timeout, cloneTimeout time.Duration
 }
 
-// WithTimeout bounds the commands that reach a remote.
-func (c *Client) WithTimeout(d time.Duration) *Client {
-	c.timeout = d
+// WithTimeouts bounds the commands that reach a remote: fetch the fetch,
+// ls-remote and push, clone the clone.
+func (c *Client) WithTimeouts(fetch, clone time.Duration) *Client {
+	c.timeout, c.cloneTimeout = fetch, clone
 	return c
 }
+
+// A remote command's bound and the setting that names it.
+type bound struct {
+	d       time.Duration
+	setting string
+}
+
+func (c *Client) fetchBound() bound { return bound{c.timeout, "BACKEND_GIT_TIMEOUT"} }
+
+func (c *Client) cloneBound() bound { return bound{c.cloneTimeout, "BACKEND_GIT_CLONE_TIMEOUT"} }
 
 // lowSpeed is git's own stall guard, on every command (http.* touches only
 // the ones that reach a remote): a connection carrying nothing at all for
@@ -212,7 +225,7 @@ func (c *Client) EnsureCloned(ctx context.Context, dir, cloneURL string, a Acces
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
 		return fmt.Errorf("create project directory: %w", err)
 	}
-	if _, err := c.remote(ctx, c.root, a.env(cloneURL), "clone", "--quiet", "--bare", cloneURL, dir); err != nil {
+	if _, err := c.remote(ctx, c.cloneBound(), c.root, a.env(cloneURL), "clone", "--quiet", "--bare", cloneURL, dir); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, marker), nil, 0o600)
@@ -220,7 +233,7 @@ func (c *Client) EnsureCloned(ctx context.Context, dir, cloneURL string, a Acces
 
 // DefaultBranch asks the remote what HEAD points at. Never assume master.
 func (c *Client) DefaultBranch(ctx context.Context, cloneURL string, a Access) (string, error) {
-	out, err := c.remote(ctx, c.root, a.env(cloneURL), "ls-remote", "--symref", cloneURL, "HEAD")
+	out, err := c.remote(ctx, c.fetchBound(), c.root, a.env(cloneURL), "ls-remote", "--symref", cloneURL, "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -239,24 +252,24 @@ func (c *Client) DefaultBranch(ctx context.Context, cloneURL string, a Access) (
 // Fetch updates the remote-tracking refs and the tags, pruning what the
 // remote dropped, by explicit refspecs rather than the persisted config.
 func (c *Client) Fetch(ctx context.Context, dir, cloneURL string, a Access) error {
-	_, err := c.remote(ctx, dir, a.env(cloneURL), "fetch", "--quiet", "--prune", cloneURL,
+	_, err := c.remote(ctx, c.fetchBound(), dir, a.env(cloneURL), "fetch", "--quiet", "--prune", cloneURL,
 		"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
 	return err
 }
 
-// remote is run for a command that reaches a remote: under the client's
-// timeout. A deadline that fires says so and names the setting, where a
-// terminated child would say "signal: terminated": a clone that honestly
-// needs longer is cut, and redone from nothing, every cycle.
-func (c *Client) remote(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
-	if c.timeout > 0 {
+// remote is run for a command that reaches a remote: under its bound. A
+// deadline that fires says so and names the setting, where a terminated
+// child would say "signal: terminated": a clone that honestly needs longer
+// is cut, and redone from nothing, every cycle.
+func (c *Client) remote(ctx context.Context, b bound, dir string, extra []string, args ...string) (string, error) {
+	if b.d > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeoutCause(ctx, c.timeout, errTimeout)
+		ctx, cancel = context.WithTimeoutCause(ctx, b.d, errTimeout)
 		defer cancel()
 	}
 	out, err := c.run(ctx, dir, extra, args...)
 	if err != nil && errors.Is(context.Cause(ctx), errTimeout) {
-		return out, fmt.Errorf("cut after %s (BACKEND_GIT_TIMEOUT): %w", c.timeout, err)
+		return out, fmt.Errorf("cut after %s (%s): %w", b.d, b.setting, err)
 	}
 	return out, err
 }
