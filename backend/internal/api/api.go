@@ -408,7 +408,10 @@ type descriptionBody struct {
 	SourceKind   string          `json:"source_kind"`
 	SourcePR     string          `json:"source_pr_key"`
 	SourceCommit string          `json:"source_commit"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	// SourcePRKeys is every pull request a fold of several notes took, in
+	// merge order, source_pr_key the first; absent for one.
+	SourcePRKeys []string  `json:"source_pr_keys,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // sourceKind is a kind as the wire says it: "" stored is a PR.
@@ -424,7 +427,8 @@ func describe(p store.Page, ok bool) *descriptionBody {
 		return nil
 	}
 	out := &descriptionBody{Revision: p.Revision, Summary: p.Summary, SourceKind: sourceKind(p.SourceKind), SourcePR: p.SourcePR,
-		SourceCommit: p.SourceCommit, UpdatedAt: p.UpdatedAt, Statements: make([]statementBody, 0, len(p.Statements))}
+		SourceCommit: p.SourceCommit, SourcePRKeys: p.BatchPRKeys, UpdatedAt: p.UpdatedAt,
+		Statements: make([]statementBody, 0, len(p.Statements))}
 	for _, s := range p.Statements {
 		sb := statementBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Checked: s.Checked, Area: s.Area,
 			Diagram: s.Diagram, Sources: make([]sourceBody, 0, len(s.Sources))}
@@ -665,6 +669,7 @@ type revisionBody struct {
 	SourceKind   string    `json:"source_kind"`
 	SourcePR     string    `json:"source_pr_key"`
 	SourceCommit string    `json:"source_commit"`
+	SourcePRKeys []string  `json:"source_pr_keys,omitempty"`
 	Statements   int       `json:"statements"`
 	Chars        int       `json:"chars"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -768,7 +773,7 @@ func revisionBodies(rows []store.RevisionRow) []revisionBody {
 	out := make([]revisionBody, 0, len(rows))
 	for _, rv := range rows {
 		out = append(out, revisionBody{Revision: rv.Revision, SourceKind: sourceKind(rv.SourceKind), SourcePR: rv.SourcePR,
-			SourceCommit: rv.SourceCommit, Statements: rv.Statements, Chars: rv.Chars, CreatedAt: rv.CreatedAt})
+			SourceCommit: rv.SourceCommit, SourcePRKeys: rv.BatchPRKeys, Statements: rv.Statements, Chars: rv.Chars, CreatedAt: rv.CreatedAt})
 	}
 	return out
 }

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { RevisionDetail, StatementRef } from "./api";
-import { DescriptionView, SourceChip, kindLabel } from "./Description";
+import { DescriptionView, RevisionSources, kindLabel } from "./Description";
 import { dayTime } from "./format";
 import { projectPath, repoPath, revisionPath } from "./routing";
 import { S } from "./strings";
@@ -91,12 +91,11 @@ function Body({ d }: { d: RevisionDetail }) {
       <h2 className={h2}>{S.revision.of(d.revision, d.current)}</h2>
       <p className={meta}>
         {S.revision.from}{" "}
-        <SourceChip
-          source={{
-            kind: desc.source_kind,
-            pr_key: desc.source_pr_key,
-            commit: desc.source_commit,
-          }}
+        <RevisionSources
+          kind={desc.source_kind}
+          prKey={desc.source_pr_key}
+          prKeys={desc.source_pr_keys}
+          commit={desc.source_commit}
         />
         <Sep />
         {dayTime(d.created_at)}

@@ -504,7 +504,7 @@ func TestNoteReadsRedactCredentials(t *testing.T) {
 	if err := s.db.QueryRowContext(ctx, `SELECT note FROM notes`).Scan(&raw); err != nil || !strings.Contains(raw, token) {
 		t.Fatalf("stored note = %q (%v), want it verbatim", raw, err)
 	}
-	q, ok, err := s.NextQueued(ctx)
+	q, ok, err := s.NextQueued(ctx, anyTime)
 	if err != nil || !ok {
 		t.Fatalf("NextQueued: ok=%v err=%v", ok, err)
 	}

@@ -245,6 +245,11 @@ type Statement struct {
 	// statements, or "summary", its text was split out of. Only the restyle
 	// schema offers it; the code carries their sources.
 	From []string `json:"from,omitempty"`
+	// FromPRs is a merge's edit or new statement's pull requests: the keys
+	// of the notes that taught it, of those the fold took. Only the merge
+	// schema offers it; the code checks it against the fold's notes and
+	// credits each named one.
+	FromPRs []string `json:"from_prs,omitempty"`
 }
 
 // OutlineArea is one area of the map step's outline: its name and its
@@ -512,12 +517,17 @@ func shapeProps(props map[string]any) map[string]any {
 
 // mergePatch is one description's patch as the merge returns it: the
 // summary or null to keep it, the edits, the new statements and the ids to
-// drop; no confirmation, a fold reads no code.
+// drop; no confirmation, a fold reads no code. Each edit and new statement
+// names the pull requests that taught it (from_prs): a fold takes a
+// repository's notes together, and the code credits only those.
 func mergePatch(diagrams bool, kinds []string) map[string]any {
+	edit, news := statementProps(diagrams, kinds), statementProps(diagrams, kinds)
+	edit["id"] = map[string]any{"type": "string", "minLength": 1}
+	edit["from_prs"], news["from_prs"] = array(str()), array(str())
 	return nullable(object(map[string]any{
 		"summary":    nullableBlocks(),
-		"statements": statements(diagrams, kinds),
-		"added":      added(diagrams, kinds),
+		"statements": array(object(edit)),
+		"added":      array(object(news)),
 		"drop":       array(str()),
 	}))
 }

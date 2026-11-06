@@ -917,7 +917,7 @@ func (w *Worker) foldPatch(ctx context.Context, r *store.BaselineRun, plan *runP
 	}
 	// ApplyPatch left out what attach would refuse, so a reason here is a
 	// bug, and costs the part.
-	statements, leftOut, reason := attach(store.ScopeRepository, page.Statements, applied.Statements, runSource(*r, *plan), next, limitsOf(w.limits))
+	statements, leftOut, reason := attach(store.ScopeRepository, page.Statements, applied.Statements, only(runSource(*r, *plan)), next, limitsOf(w.limits))
 	if reason != "" {
 		return w.skipPart(ctx, r, plan, baseline.SkipRefused, "patch refused: "+reason)
 	}
@@ -1830,7 +1830,7 @@ func (w *Worker) projectRevision(ctx context.Context, r *store.BaselineRun, plan
 	}
 	// ApplyPatch left out what attach would refuse, so a reason here is a
 	// bug, and costs the step.
-	statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, runSource(*r, plan), next, limitsOf(w.limits))
+	statements, leftOut, reason := attach(store.ScopeProject, page.Statements, applied.Statements, only(runSource(*r, plan)), next, limitsOf(w.limits))
 	if reason != "" {
 		return nil, nil, reason, nil
 	}

@@ -184,8 +184,10 @@ func (s *Store) RunCalls(ctx context.Context, runID int64) ([]RunCall, error) {
 
 // FoldedNote is a note the worker took off the queue: folded, refused or
 // ignored. Outcome and cost are the last merge call of this delivery
-// (made between its arrival and its fold); "" and nil when it made none
-// (a note for a repository that is no source).
+// (made between its arrival and its fold), one it shared with its
+// repository's other notes too; "" and nil when it made none (a note for
+// a repository that is no source). Batch is how many notes that call
+// folded, 1 for one: its cost is the whole call's, not this note's share.
 type FoldedNote struct {
 	ProjectKey     string
 	RepoSlug       string
@@ -194,6 +196,7 @@ type FoldedNote struct {
 	ConsolidatedAt time.Time
 	Outcome        string
 	CostNanoUSD    *int64
+	Batch          int
 }
 
 // FoldedNotes is the notes taken off the queue at or after since, newest
@@ -201,12 +204,18 @@ type FoldedNote struct {
 func (s *Store) FoldedNotes(ctx context.Context, since time.Time, limit int) ([]FoldedNote, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.key, r.slug, n.pr_key, n.pr_title, n.consolidated_at,
-		       COALESCE(c.outcome, ''), c.cost_nano_usd
+		       COALESCE(c.outcome, ''), c.cost_nano_usd, COALESCE(json_array_length(c.batch_pr_keys), 1)
 		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
-		  LEFT JOIN llm_calls c ON c.id = (SELECT MAX(l.id) FROM llm_calls l
-		                                    WHERE l.repo_id = n.repo_id AND l.source_pr_key = n.pr_key
-		                                      AND l.purpose = 'merge'
-		                                      AND l.created_at BETWEEN n.received_at AND n.consolidated_at)
+		  LEFT JOIN llm_calls c ON c.id = NULLIF(max(
+		      COALESCE((SELECT MAX(l.id) FROM llm_calls l
+		                 WHERE l.repo_id = n.repo_id AND l.source_pr_key = n.pr_key AND l.purpose = 'merge'
+		                   AND l.created_at BETWEEN n.received_at AND n.consolidated_at), 0),
+		      -- A later note of a fold: only the batch calls of its own window
+		      -- (llm_calls_created_idx), their few keys expanded.
+		      COALESCE((SELECT MAX(l.id) FROM llm_calls l
+		                 WHERE l.created_at BETWEEN n.received_at AND n.consolidated_at
+		                   AND l.batch_pr_keys IS NOT NULL AND l.repo_id = n.repo_id AND l.purpose = 'merge'
+		                   AND EXISTS (SELECT 1 FROM json_each(l.batch_pr_keys) k WHERE k.value = n.pr_key)), 0)), 0)
 		 WHERE n.consolidated_at >= ?
 		 ORDER BY n.consolidated_at DESC, n.pr_id DESC LIMIT ?`, stamp(since), limit)
 	if err != nil {
@@ -217,7 +226,7 @@ func (s *Store) FoldedNotes(ctx context.Context, since time.Time, limit int) ([]
 	for rows.Next() {
 		var n FoldedNote
 		if err := rows.Scan(&n.ProjectKey, &n.RepoSlug, &n.PRKey, &n.PRTitle, timeAt(&n.ConsolidatedAt),
-			&n.Outcome, &n.CostNanoUSD); err != nil {
+			&n.Outcome, &n.CostNanoUSD, &n.Batch); err != nil {
 			return nil, err
 		}
 		n.PRTitle, _, _ = noteOut(n.PRTitle, nil, nil)

@@ -40,6 +40,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
 - One worker, serial, oldest first. Merge = patch. Repo revision written = note done (refold dups).
+  Repo's notes = one call a day (docs a day behind ok; user, 2026-11-06); credit = model's
+  `from_prs`, held to the fold's PRs, never all PRs on every statement.
   Code drop: files gone at head, never merge tree. Call failure: note failed, never consolidated.
   `gatewayClass`: hold, note kept. Refused write: hold, note kept, retry counts once before its
   call (a pause repaid the call each poll). All ≤ `maxFoldAttempts`: none blocks queue forever.

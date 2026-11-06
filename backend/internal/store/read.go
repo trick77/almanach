@@ -263,9 +263,11 @@ type RevisionRow struct {
 	SourceKind   string
 	SourcePR     string
 	SourceCommit string
-	Statements   int
-	Chars        int
-	CreatedAt    time.Time
+	// BatchPRKeys is every pull request a fold of several notes took.
+	BatchPRKeys []string
+	Statements  int
+	Chars       int
+	CreatedAt   time.Time
 }
 
 // Revisions is a page's history, newest first.
@@ -276,7 +278,7 @@ func (s *Store) Revisions(ctx context.Context, scope, project, repo string, limi
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT revision, source_kind, COALESCE(source_pr_key, ''), COALESCE(source_commit, ''),
-		       json_array_length(statements), chars, created_at
+		       json_array_length(statements), chars, created_at, batch_pr_keys
 		  FROM revisions WHERE scope = ? AND project_id = ? AND COALESCE(repo_id, 0) = ?
 		 ORDER BY revision DESC LIMIT ?`, scope, pid, rid, limit)
 	if err != nil {
@@ -286,7 +288,12 @@ func (s *Store) Revisions(ctx context.Context, scope, project, repo string, limi
 	out := []RevisionRow{}
 	for rows.Next() {
 		var r RevisionRow
-		if err := rows.Scan(&r.Revision, &r.SourceKind, &r.SourcePR, &r.SourceCommit, &r.Statements, &r.Chars, timeAt(&r.CreatedAt)); err != nil {
+		var batch []byte
+		if err := rows.Scan(&r.Revision, &r.SourceKind, &r.SourcePR, &r.SourceCommit, &r.Statements, &r.Chars, timeAt(&r.CreatedAt),
+			&batch); err != nil {
+			return nil, err
+		}
+		if r.BatchPRKeys, err = keysOf(batch); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -277,7 +277,7 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 		w.log.WarnContext(ctx, "baseline: statement id read failed, drain paused", logging.Err(err))
 		return store.Restyled{}, errStop
 	}
-	statements, parts, reason := attach(scope, page.Statements, applied.Statements, store.Source{Kind: store.FromBaseline, Commit: r.Commit, Repo: r.Slug}, next, limitsOf(w.limits))
+	statements, parts, reason := attach(scope, page.Statements, applied.Statements, only(store.Source{Kind: store.FromBaseline, Commit: r.Commit, Repo: r.Slug}), next, limitsOf(w.limits))
 	if reason != "" {
 		// ApplyPatch left out what attach refuses: a bug, and the run's.
 		return store.Restyled{}, fmt.Errorf("restyle refused: %s", reason)

@@ -3,6 +3,7 @@ package consolidate
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -47,10 +48,56 @@ func TestStatus_NamesTheNoteInFlight(t *testing.T) {
 func TestQueueOrder(t *testing.T) {
 	notes := []store.PendingNote{{PRKey: "a", HeldBy: 7}, {PRKey: "b"}, {PRKey: "c", HeldBy: 7}}
 	runs := []store.BaselineRun{{ID: 7, State: store.RunDescribing}, {ID: 8, State: store.RunProject}, {ID: 9, State: store.RunQueued}}
-	o := QueueOrder(notes, runs)
+	o := QueueOrder(notes, runs, 0, mergedAt)
 	if len(o.Free) != 1 || o.Free[0].PRKey != "b" || len(o.Held) != 2 || o.Held[0].PRKey != "a" || o.Started == nil ||
-		o.Started.ID != 7 || len(o.Queued) != 1 || o.Queued[0].ID != 9 {
+		o.Started.ID != 7 || len(o.Queued) != 1 || o.Queued[0].ID != 9 || len(o.Waiting) != 0 {
 		t.Errorf("order = %+v", o)
+	}
+}
+
+// Under the fold delay a repository's notes wait until its oldest has
+// waited the delay, all of them together, soonest repository first; a
+// repository past it is free, a note newer than the delay with it.
+func TestQueueOrder_FoldDelay(t *testing.T) {
+	now := mergedAt
+	note := func(repo, pr string, ago time.Duration) store.PendingNote {
+		return store.PendingNote{ProjectKey: "P", RepoSlug: repo, PRKey: pr, ReceivedAt: now.Add(-ago)}
+	}
+	// Oldest first, as PendingNotes lists them.
+	notes := []store.PendingNote{
+		note("due", "d1", 30*time.Hour), note("soon", "s1", 23*time.Hour), note("late", "l1", 20*time.Hour),
+		note("due", "d2", time.Hour), note("late", "l2", time.Minute),
+	}
+	o := QueueOrder(notes, nil, 24*time.Hour, now)
+	var free, waiting []string
+	for _, n := range o.Free {
+		free = append(free, n.PRKey)
+	}
+	for _, n := range o.Waiting {
+		waiting = append(waiting, n.PRKey+"@"+n.Due.Sub(now).String())
+	}
+	if !slices.Equal(free, []string{"d1", "d2"}) {
+		t.Errorf("free = %v, want the due repository's notes, its new one too", free)
+	}
+	// Two due repositories, their notes interleaved: listed by
+	// repository, as the drain folds them together.
+	two := []store.PendingNote{note("a", "a1", 30*time.Hour), note("b", "b1", 29*time.Hour), note("a", "a2", time.Hour)}
+	var grouped []string
+	for _, n := range QueueOrder(two, nil, 24*time.Hour, now).Free {
+		grouped = append(grouped, n.PRKey)
+	}
+	if !slices.Equal(grouped, []string{"a1", "a2", "b1"}) {
+		t.Errorf("free = %v, want a's notes together first", grouped)
+	}
+	if want := []string{"s1@1h0m0s", "l1@4h0m0s", "l2@4h0m0s"}; !slices.Equal(waiting, want) {
+		t.Errorf("waiting = %v, want %v", waiting, want)
+	}
+	// A started run holds its repository's notes whatever their delay.
+	held := note("soon", "s2", time.Hour)
+	held.HeldBy = 7
+	o = QueueOrder(append(slices.Clone(notes), held), nil, 24*time.Hour, now)
+	if len(o.Held) != 1 || o.Held[0].PRKey != "s2" {
+		t.Errorf("held = %+v, want s2", o.Held)
 	}
 }
 

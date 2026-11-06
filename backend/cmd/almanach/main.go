@@ -334,7 +334,8 @@ func serve(log *slog.Logger) error {
 	// a full disk is found by a syscall, not by a paid call whose write
 	// then fails.
 	diskFree := httpapi.DiskFree(filepath.Dir(app.DBPath), httpapi.MinFreeBytes)
-	worker := consolidate.New(db, llm, app.Limits, log).WithDiskCheck(func() error { return diskFree(context.Background()) })
+	worker := consolidate.New(db, llm, app.Limits, log).WithDiskCheck(func() error { return diskFree(context.Background()) }).
+		WithFoldDelay(app.FoldDelay)
 
 	// The poller too runs past the signal: the server drains first, then
 	// Stop cuts the clone in flight (the next cycle redoes it), before the

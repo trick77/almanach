@@ -12,12 +12,16 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 )
 
+// anyTime is a due cutoff every note is received before: the queue as
+// before the fold delay.
+var anyTime = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // The queue hands out the oldest unconsolidated note; marking it takes it
 // off; empty is ok=false.
 func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if _, ok, err := s.NextQueued(ctx); err != nil || ok {
+	if _, ok, err := s.NextQueued(ctx, anyTime); err != nil || ok {
 		t.Fatalf("empty queue: ok=%v err=%v", ok, err)
 	}
 	ingest(t, s, noteFor("PRJ", "svc", 1))
@@ -27,7 +31,7 @@ func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	q, ok, err := s.NextQueued(ctx)
+	q, ok, err := s.NextQueued(ctx, anyTime)
 	if err != nil || !ok {
 		t.Fatalf("NextQueued: ok=%v err=%v", ok, err)
 	}
@@ -50,7 +54,7 @@ func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 			t.Fatalf("DeferFold = %d, %v; want %d", n, err, want)
 		}
 	}
-	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 1 {
+	if q, ok, err := s.NextQueued(ctx, anyTime); err != nil || !ok || q.PRID != 1 {
 		t.Fatalf("after defer: ok=%v pr=%d err=%v, want pr 1 still queued", ok, q.PRID, err)
 	}
 
@@ -60,14 +64,14 @@ func TestNextQueued_OldestFirstUntilMarked(t *testing.T) {
 	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1, q.DeliveryID); err != nil {
 		t.Fatal(err)
 	}
-	q, ok, err = s.NextQueued(ctx)
+	q, ok, err = s.NextQueued(ctx, anyTime)
 	if err != nil || !ok || q.PRID != 2 {
 		t.Fatalf("after mark: ok=%v pr=%d err=%v, want pr 2", ok, q.PRID, err)
 	}
 	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 2, q.DeliveryID); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := s.NextQueued(ctx); err != nil || ok {
+	if _, ok, err := s.NextQueued(ctx, anyTime); err != nil || ok {
 		t.Fatalf("drained queue: ok=%v err=%v", ok, err)
 	}
 }
@@ -79,7 +83,7 @@ func TestMarkConsolidated_RedeliveredDuringFoldStaysQueued(t *testing.T) {
 	ctx := context.Background()
 	n := noteFor("PRJ", "svc", 1)
 	ingest(t, s, n)
-	first, ok, err := s.NextQueued(ctx)
+	first, ok, err := s.NextQueued(ctx, anyTime)
 	if err != nil || !ok {
 		t.Fatalf("NextQueued: ok=%v err=%v", ok, err)
 	}
@@ -96,7 +100,7 @@ func TestMarkConsolidated_RedeliveredDuringFoldStaysQueued(t *testing.T) {
 	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 1, first.DeliveryID); err != nil {
 		t.Fatal(err)
 	}
-	q, ok, err := s.NextQueued(ctx)
+	q, ok, err := s.NextQueued(ctx, anyTime)
 	if err != nil || !ok || q.DeliveryID != "d-second" || q.PRTitle != "merged again" {
 		t.Fatalf("after the first fold's mark: ok=%v delivery=%q title=%q err=%v, want the second still queued", ok, q.DeliveryID, q.PRTitle, err)
 	}
@@ -133,7 +137,7 @@ func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
 	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "too_long", true); err != nil || n != 1 {
 		t.Fatalf("MarkFoldFailed = %d, %v; want attempt 1", n, err)
 	}
-	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 2 {
+	if q, ok, err := s.NextQueued(ctx, anyTime); err != nil || !ok || q.PRID != 2 {
 		t.Fatalf("after the failure: ok=%v pr=%d err=%v, want pr 2", ok, q.PRID, err)
 	}
 	if pending, err := s.PendingNotes(ctx, 10); err != nil || len(pending) != 1 || pending[0].PRKey != "PRJ/svc#2" {
@@ -154,7 +158,7 @@ func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
 	if n, err := s.RequeueFailed(ctx, "PRJ", "svc", 8); err != nil || n != 1 {
 		t.Fatalf("RequeueFailed = %d, %v; want 1", n, err)
 	}
-	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 1 {
+	if q, ok, err := s.NextQueued(ctx, anyTime); err != nil || !ok || q.PRID != 1 {
 		t.Fatalf("after the requeue: ok=%v pr=%d err=%v, want pr 1 first again", ok, q.PRID, err)
 	}
 	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {

@@ -1,5 +1,5 @@
 import type { Revision } from "./api";
-import { SourceChip } from "./Description";
+import { RevisionSources } from "./Description";
 import { day } from "./format";
 import { revisionPath } from "./routing";
 import { S } from "./strings";
@@ -36,12 +36,11 @@ export function Revisions({
           </Link>
           <span className="flex-1">
             {S.revision.from}{" "}
-            <SourceChip
-              source={{
-                kind: r.source_kind,
-                pr_key: r.source_pr_key,
-                commit: r.source_commit,
-              }}
+            <RevisionSources
+              kind={r.source_kind}
+              prKey={r.source_pr_key}
+              prKeys={r.source_pr_keys}
+              commit={r.source_commit}
             />
             <span className="ml-2 text-muted">
               {S.revision.statements(r.statements)} {S.common.sep}{" "}

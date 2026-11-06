@@ -1579,6 +1579,13 @@ components:
         held_by:
           type: integer
           description: The run of the note's repository it waits for; omitted when none.
+        due_at:
+          type: string
+          format: date-time
+          description: When the note's repository is folded, its oldest note's arrival plus BACKEND_FOLD_DELAY; set while it waits for that, omitted otherwise.
+        batch:
+          type: integer
+          description: How many notes the fold in flight takes in one call; on the current item, when more than one.
         run:
           $ref: "#/components/schemas/QueueRun"
         attempts:
@@ -1717,6 +1724,9 @@ components:
         outcome:
           type: string
           description: A note's merge call outcome (ok, timed_out, unparseable, too_long, error); omitted when no call was made.
+        batch:
+          type: integer
+          description: How many notes the note's merge call folded, when more than one; cost_usd is then the whole call's, shared with them.
         run_id:
           type: integer
         state:
@@ -2528,7 +2538,12 @@ components:
           enum: [pr, baseline]
         source_pr_key:
           type: string
-          description: The PR whose note produced this revision; empty for a baseline.
+          description: The PR whose note produced this revision, the first of a fold of several; empty for a baseline.
+        source_pr_keys:
+          type: array
+          items:
+            type: string
+          description: Every PR a fold of several notes took, in merge order, source_pr_key the first; omitted for one.
         source_commit:
           type: string
           description: The commit a baseline run read; empty for a PR.
@@ -2777,6 +2792,11 @@ components:
           type: string
         source_commit:
           type: string
+        source_pr_keys:
+          type: array
+          items:
+            type: string
+          description: Every PR a fold of several notes took, in merge order, source_pr_key the first; omitted for one.
         statements:
           type: integer
         chars:

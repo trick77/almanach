@@ -36,8 +36,17 @@ var (
 type fakeStore struct {
 	queue    []store.QueuedNote
 	queueErr error
-	markErr  error
-	deferErr error
+	// popped is the note NextQueued took last, the first of QueuedBatch's
+	// answer; batchErr fails QueuedBatch.
+	popped   store.QueuedNote
+	batchErr error
+	// repoProblems is the repository's problem areas a fold of bugfix
+	// notes reads; repoProblemsErr fails the read.
+	repoProblems    []store.RepoProblem
+	repoProblemsErr error
+	problemsUntil   time.Time
+	markErr         error
+	deferErr        error
 	// deferReplaced answers a defer as for a note delivered again.
 	deferReplaced bool
 	attempts      map[string]int
@@ -115,17 +124,51 @@ func newFakeStore() *fakeStore {
 
 func pageKey(scope, project, repo string) string { return scope + "|" + project + "|" + repo }
 
-func (f *fakeStore) NextQueued(context.Context) (store.QueuedNote, bool, error) {
+func (f *fakeStore) NextQueued(_ context.Context, dueBefore time.Time) (store.QueuedNote, bool, error) {
 	f.nextQueuedN++
 	if f.queueErr != nil {
 		return store.QueuedNote{}, false, f.queueErr
 	}
-	if len(f.queue) == 0 {
+	// A note a batch folded and marked is off the queue, as in the store.
+	for len(f.queue) > 0 && f.done(f.queue[0]) {
+		f.queue = f.queue[1:]
+	}
+	if len(f.queue) == 0 || f.queue[0].ReceivedAt.After(dueBefore) {
 		return store.QueuedNote{}, false, nil
 	}
 	q := f.queue[0]
 	f.queue = f.queue[1:]
+	f.popped = q
 	return q, true, nil
+}
+
+// done reports whether a note was marked or failed.
+func (f *fakeStore) done(q store.QueuedNote) bool {
+	k := pageKey(q.ProjectKey, q.RepoSlug, strconv.Itoa(q.PRID))
+	_, failed := f.failed[k]
+	return failed || slices.Contains(f.marked, k)
+}
+
+// QueuedBatch is the note NextQueued last took and every queued note of
+// its repository, in merge order, those marked or failed left out; the
+// fake's queue keeps them, as the store does until a mark.
+func (f *fakeStore) QueuedBatch(_ context.Context, project, repo string) ([]store.QueuedNote, error) {
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
+	var out []store.QueuedNote
+	for _, q := range append([]store.QueuedNote{f.popped}, f.queue...) {
+		if q.ProjectKey == project && q.RepoSlug == repo && !f.done(q) {
+			out = append(out, q)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b store.QueuedNote) int { return a.MergedAt.Compare(b.MergedAt) })
+	return out, nil
+}
+
+func (f *fakeStore) RepoProblems(_ context.Context, _, _ string, until time.Time) ([]store.RepoProblem, error) {
+	f.problemsUntil = until
+	return f.repoProblems, f.repoProblemsErr
 }
 
 func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, prID int, delivery string) error {
@@ -843,14 +886,14 @@ func TestFoldProjectExtensionRefused(t *testing.T) {
 			t.Errorf("%s: project revision = %+v, want the summary alone", kind, rev)
 		}
 	}
-	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason == "" {
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, only(store.Source{}), 1, limitsOf(limits)); reason == "" {
 		t.Error("attach took an unknown kind on the project page")
 	}
 	project.Statements[0].Kind = "extension"
-	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); !strings.Contains(reason, "extension not on a project page") {
+	if _, _, reason := attach(store.ScopeProject, nil, project.Statements, only(store.Source{}), 1, limitsOf(limits)); !strings.Contains(reason, "extension not on a project page") {
 		t.Errorf("reason = %q", reason)
 	}
-	if _, _, reason := attach(store.ScopeRepository, nil, project.Statements, store.Source{}, 1, limitsOf(limits)); reason != "" {
+	if _, _, reason := attach(store.ScopeRepository, nil, project.Statements, only(store.Source{}), 1, limitsOf(limits)); reason != "" {
 		t.Errorf("repository extension refused: %q", reason)
 	}
 }
@@ -873,12 +916,12 @@ func TestValidFor_StoredStatementsNeverHeld(t *testing.T) {
 	}
 	legacy := []store.Statement{{ID: "s1", Kind: "extension", Name: "Alt", Text: "Von früher.", Checked: "old"}}
 	out, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Von früher."}},
-		store.Source{PRKey: "x"}, 2, limitsOf(limits))
+		only(store.Source{PRKey: "x"}), 2, limitsOf(limits))
 	if reason != "" || len(out) != 1 || out[0].Checked != "old" {
 		t.Fatalf("stored legacy kind: out %+v, reason %q; want it kept as is", out, reason)
 	}
 	if _, _, reason := attach(store.ScopeProject, legacy, []inference.Statement{{ID: str("s1"), Kind: "extension", Name: "Alt", Text: "Geändert."}},
-		store.Source{PRKey: "x"}, 2, limitsOf(limits)); reason == "" {
+		only(store.Source{PRKey: "x"}), 2, limitsOf(limits)); reason == "" {
 		t.Error("a merge took a changed statement of a kind its page cannot hold")
 	}
 }
@@ -898,7 +941,7 @@ func TestAttach_AreaIsNoText(t *testing.T) {
 		{ID: str("s2"), Kind: "rule", Name: "Liste", Text: "Paginiert.", Area: "Abfrage"},
 		{ID: str("s3"), Kind: "rule", Name: "Datei", Text: "XLSX.", Area: "Export"},
 		{Kind: "rule", Name: "Filter", Text: "Nach Status.", Area: "abfrage"},
-	}, store.Source{PRKey: "PRJ/svc#2"}, 4, limitsOf(limits))
+	}, only(store.Source{PRKey: "PRJ/svc#2"}), 4, limitsOf(limits))
 	if reason != "" {
 		t.Fatal(reason)
 	}
@@ -1458,14 +1501,14 @@ func TestRender(t *testing.T) {
 	q.Body = json.RawMessage(`{"components":[{"name":"x"}]}`)
 	empty := store.Page{}
 	out := render(prompts.Merge, q, existingRepoPage(), empty, limits)
-	for _, ph := range []string{"{repo}", "{project}", "{pr_key}", "{ticket_key}", "{change_kind}", "{repo_max_statements}",
-		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}", "{note}",
+	for _, ph := range []string{"{repo}", "{project}", "{note_count}", "{notes}", "{problems}", "{repo_max_statements}",
+		"{project_max_statements}", "{repo_max_chars}", "{project_max_chars}", "{repo_description}", "{project_description}",
 		"{diagram_rules}", "{diagram_max_nodes}", "{diagram_max_edges}", "{max_diagrams}"} {
 		if strings.Contains(out, ph) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
 	}
-	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown",
+	for _, want := range []string{"`files`", "`PLAT`", "### PR PLAT/files#42 (ticket none, kind unknown, merged 2026-10-20)", "(1 note)", noProblems,
 		"Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram",
 		// A PR-taught statement is marked, the prompt naming the mark: a
@@ -1604,9 +1647,10 @@ func TestNewStatementIDNeverReusesADroppedOne(t *testing.T) {
 }
 
 // A mark the store refuses for a reason that is not its lock (a full disk)
-// pauses the drain and holds the worker, longer each time, so the paid
-// fold is not made again at every poll; a write that gets through clears
-// the hold's backoff, and the gateway's own clearing of the hold does not.
+// pauses the drain and holds the worker, longer each time; the folded
+// note's mark is retried, its paid fold never made again; a write that
+// gets through clears the hold's backoff, and the gateway's own clearing
+// of the hold does not.
 func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	st := newFakeStore()
 	st.queue = []store.QueuedNote{queued("PLAT/files#1"), queued("PLAT/files#2")}
@@ -1625,39 +1669,33 @@ func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	if s := w.Status(); !w.holding() || s.HoldCause != HoldWrite || !w.retryAt.Equal(clock.Add(backoffMin)) {
 		t.Fatalf("after a refused mark: holding %v cause %q until %v, want a write hold of %s", w.holding(), s.HoldCause, w.retryAt, backoffMin)
 	}
-	// Inside the hold nothing is folded; past it the next fold's call gets
-	// through (which clears the gateway hold), the mark fails again and
-	// the hold doubles.
+	// Inside the hold nothing is folded; past it the folded note's mark is
+	// tried again before anything else, never its call: refused again,
+	// the hold doubles and nothing is paid.
 	w.drain(context.Background())
 	if len(m.prompts) != 1 {
 		t.Errorf("a drain inside the hold made %d calls", len(m.prompts)-1)
 	}
 	clock = w.retryAt
-	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	st.queue = nil
 	w.drain(context.Background())
-	if len(m.prompts) != 2 || !w.retryAt.Equal(clock.Add(2*backoffMin)) || w.Status().HoldCause != HoldWrite {
-		t.Errorf("second refused mark: calls %d hold until %v cause %q, want doubled to %s", len(m.prompts), w.retryAt, w.Status().HoldCause, 2*backoffMin)
+	if len(m.prompts) != 1 || !w.retryAt.Equal(clock.Add(2*backoffMin)) || w.Status().HoldCause != HoldWrite || len(w.unmarked) != 1 {
+		t.Errorf("second refused mark: calls %d hold until %v cause %q unmarked %d, want no call, doubled to %s",
+			len(m.prompts), w.retryAt, w.Status().HoldCause, len(w.unmarked), 2*backoffMin)
 	}
-	if st.attempts["PLAT|files|42"] != 1 {
-		t.Errorf("attempts %v, want the retry counted before its call", st.attempts)
-	}
-	// The store refusing still: the count before the call is refused, the
-	// worker holds again and pays nothing.
+	// The store writing again: marked without a call, the backoff
+	// forgotten.
 	clock = w.retryAt
-	st.deferErr = store.ErrFull
-	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	st.markErr, st.callErr = nil, nil
 	w.drain(context.Background())
-	if len(m.prompts) != 2 || !w.retryAt.Equal(clock.Add(4*backoffMin)) {
-		t.Errorf("count refused: calls %d hold until %v, want no call, the hold doubled", len(m.prompts), w.retryAt)
+	if len(m.prompts) != 1 || len(st.marked) != 1 || w.holding() || w.writeBackoff != 0 || len(w.unmarked) != 0 {
+		t.Errorf("store back: calls %d marked %v holding %v backoff %s, want marked, no call, no hold", len(m.prompts), st.marked, w.holding(), w.writeBackoff)
 	}
-	// The store writing again: folded, marked, the backoff forgotten.
-	clock = w.retryAt
-	st.markErr, st.callErr, st.deferErr = nil, nil, nil
-	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
-	w.drain(context.Background())
-	if len(st.marked) != 1 || w.holding() || w.writeBackoff != 0 {
-		t.Errorf("store back: marked %v holding %v backoff %s, want marked and no hold", st.marked, w.holding(), w.writeBackoff)
+	if st.attempts == nil {
+		st.attempts = map[string]int{}
 	}
+	// The same PR delivered again: queued anew, not the marked one.
+	st.marked = st.marked[:0]
 	// A note whose writes are refused at every attempt is given up at
 	// maxFoldAttempts, its last count taking the place of a call: failed,
 	// never consolidated, counted once.
@@ -1666,7 +1704,7 @@ func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
 	calls := len(m.prompts)
 	w.drain(context.Background())
-	if len(m.prompts) != calls || len(st.marked) != 1 || st.failed["PLAT|files|42"] == "" || st.attempts["PLAT|files|42"] != maxFoldAttempts ||
+	if len(m.prompts) != calls || len(st.marked) != 0 || st.failed["PLAT|files|42"] == "" || st.attempts["PLAT|files|42"] != maxFoldAttempts ||
 		w.writeBackoff != 0 {
 		t.Errorf("given up: calls %d marked %v failed %v attempts %v backoff %s, want failed with no call, counted once",
 			len(m.prompts)-calls, st.marked, st.failed, st.attempts, w.writeBackoff)
@@ -1803,7 +1841,7 @@ func TestDrainOldestFirst(t *testing.T) {
 	if len(m.prompts) != 3 {
 		t.Fatalf("folded %d notes, want 3", len(m.prompts))
 	}
-	for i, want := range []string{"PR PLAT/files#1,", "PR PLAT/files#2,", "PR PLAT/files#3,"} {
+	for i, want := range []string{"PR PLAT/files#1 (", "PR PLAT/files#2 (", "PR PLAT/files#3 ("} {
 		if !strings.Contains(m.prompts[i], want) {
 			t.Errorf("fold %d prompt lacks %q", i, want)
 		}
