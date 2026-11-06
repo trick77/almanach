@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -19,9 +20,9 @@ func depsGraph() store.Graph {
 	return store.Graph{
 		Repos: []store.RepoRef{fetch, loom, rongo, wire},
 		Edges: []store.Edge{
-			{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Version: "v0.2.0"},
-			{From: loom, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.8"},
-			{From: rongo, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6"},
+			{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Version: "v0.2.0", Scope: manifest.ScopeMain},
+			{From: loom, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.8", Scope: manifest.ScopeMain},
+			{From: rongo, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6", Scope: manifest.ScopeMain},
 		},
 		Ambiguous: []store.Ambiguous{{Coord: "npm:shared", Providers: []store.RepoRef{fetch, wire}, Twice: true}},
 	}
@@ -63,6 +64,32 @@ func TestDependencies_Route(t *testing.T) {
 	h, _, _ = sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
 	if code, _ := do(t, h, http.MethodGet, "/api/dependencies", "", "", nil); code != 500 {
 		t.Fatalf("failing store: %d, want 500", code)
+	}
+}
+
+// The dependency page gets every scope, each edge saying its own; a
+// repository's uses and its export main ones only.
+func TestDependencies_Scopes(t *testing.T) {
+	st := depsStore()
+	loom, rongo := store.RepoRef{ProjectKey: "apps", Slug: "loom"}, store.RepoRef{ProjectKey: "apps", Slug: "rongo"}
+	st.graph.Edges = append(st.graph.Edges, store.Edge{From: rongo, To: loom, Coords: []string{"go:example.invalid/loom"},
+		Version: "v1", Scope: manifest.ScopeTest})
+	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	_, body := do(t, h, http.MethodGet, "/api/dependencies", "", "", nil)
+	var edges []edgeBody
+	if err := json.Unmarshal(body["edges"], &edges); err != nil || len(edges) != 4 {
+		t.Fatalf("edges: %v %s", err, body["edges"])
+	}
+	if edges[0].Scope != manifest.ScopeMain || edges[3].Scope != manifest.ScopeTest {
+		t.Fatalf("scopes = %q %q, want main, test", edges[0].Scope, edges[3].Scope)
+	}
+	_, body = do(t, h, http.MethodGet, "/api/projects/apps/repos/rongo", "", "", nil)
+	var uses []useBody
+	if err := json.Unmarshal(body["uses"], &uses); err != nil || len(uses) != 1 || uses[0].Slug != "wire" {
+		t.Fatalf("rongo uses = %s, want wire alone, not its test use", body["uses"])
+	}
+	if rec := getMD(h, "/api/projects/apps/repos/loom.md", ""); strings.Contains(rec.Body.String(), "apps/rongo") {
+		t.Fatalf("loom export names its test user: %q", rec.Body.String())
 	}
 }
 

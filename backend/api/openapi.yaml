@@ -421,10 +421,12 @@ paths:
         time from the build manifests the poller read after each sync
         (go.mod, pom.xml, package.json, a Gradle build's build and
         settings files, gradle.properties and gradle/libs.versions.toml,
-        at the root or one level down):
-        what one requires against what another provides. Never stored,
-        never a model's. A coordinate two repositories provide gives no
-        edge and is listed under `ambiguous`. Empty with the sources off.
+        pyproject.toml, requirements files, Cargo.toml, at the root or one
+        level down, and in every folder a build or workspace declares):
+        what one requires against what another provides, every scope, each
+        edge naming its own. Never stored, never a model's. A coordinate
+        two repositories provide gives no edge and is listed under
+        `ambiguous`. Empty with the sources off.
       operationId: getDependencies
       responses:
         "200":
@@ -2319,8 +2321,9 @@ components:
           type: array
           description: >-
             Repositories of other projects this project's repositories depend
-            on, by their manifests (a build dependency, whatever they are),
-            each with its users here: the architecture overview's shared
+            on, by their manifests (a main build dependency, whatever they
+            are; a test, build-tool or version-pin use is none), each with
+            its users here: the architecture overview's shared
             zone, drawn by the UI, never stored in the map. Empty with the
             sources off and whenever `map` is null.
           items:
@@ -2401,12 +2404,14 @@ components:
             $ref: "#/components/schemas/NoteSummary"
         uses:
           type: array
-          description: The source repositories this one uses, by its manifests.
+          description: >-
+            The source repositories this one uses at runtime, by its
+            manifests (main scope; the others only on `/api/dependencies`).
           items:
             $ref: "#/components/schemas/Use"
         used_by:
           type: array
-          description: The source repositories that use this one.
+          description: The source repositories that use this one at runtime (main scope).
           items:
             $ref: "#/components/schemas/DependencyEnd"
 
@@ -2474,7 +2479,7 @@ components:
           type: array
           items:
             type: object
-            required: [from, to, version, coords]
+            required: [from, to, version, coords, scope]
             properties:
               from:
                 $ref: "#/components/schemas/RepoRef"
@@ -2482,12 +2487,27 @@ components:
                 $ref: "#/components/schemas/RepoRef"
               version:
                 type: string
-                description: What `from` names for the first of the coordinates, as written; empty when none.
+                description: >-
+                  What `from` names for the first of the coordinates of the
+                  edge's `scope` that names one, as written; empty when none.
               coords:
                 type: array
-                description: The coordinates `from` requires and `to` provides (`go:<module>`, `maven:<group>:<artifact>`, `npm:<name>`).
+                description: >-
+                  The coordinates `from` requires and `to` provides
+                  (`go:<module>`, `maven:<group>:<artifact>`, `npm:<name>`,
+                  `py:<name>`, `cargo:<crate>`).
                 items:
                   type: string
+              scope:
+                type: string
+                enum: [main, managed, dev, test, indirect]
+                description: >-
+                  The strongest of the coordinates' scopes: `main` a use at
+                  runtime, `managed` a version pin (a BOM import, a Gradle
+                  platform, a parent POM), `dev` a build or check tool, `test`
+                  tests only, `indirect` a go.mod's `// indirect`. Only main
+                  edges reach a repository's `uses`, `used_by`, a project's
+                  `shared` and the maps.
         ambiguous:
           type: array
           description: Coordinates more than one source repository provides; no edge points at any of them.

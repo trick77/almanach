@@ -40,6 +40,7 @@ type edgeBody struct {
 	To      repoRefBody `json:"to"`
 	Version string      `json:"version"`
 	Coords  []string    `json:"coords"`
+	Scope   string      `json:"scope"`
 }
 
 type ambiguousBody struct {
@@ -55,12 +56,13 @@ type dependenciesBody struct {
 	Ambiguous []ambiguousBody `json:"ambiguous"`
 }
 
-// graph is the dependency graph, empty with the sources off.
-func (d Deps) graph(ctx context.Context) (store.Graph, error) {
+// graph is the dependency graph, empty with the sources off: every scope
+// with all, else main uses only (a repository's uses, the export).
+func (d Deps) graph(ctx context.Context, all bool) (store.Graph, error) {
 	if d.Sources == nil {
 		return store.Graph{Repos: []store.RepoRef{}, Edges: []store.Edge{}, Ambiguous: []store.Ambiguous{}}, nil
 	}
-	return d.Store.Dependencies(ctx)
+	return d.Store.Dependencies(ctx, all)
 }
 
 func refBody(r store.RepoRef) repoRefBody { return repoRefBody{Project: r.ProjectKey, Slug: r.Slug} }
@@ -68,7 +70,7 @@ func refBody(r store.RepoRef) repoRefBody { return repoRefBody{Project: r.Projec
 // dependencies serves GET /api/dependencies.
 func (d Deps) dependencies(w http.ResponseWriter, r *http.Request) {
 	d.reader(r)
-	g, err := d.graph(r.Context())
+	g, err := d.graph(r.Context(), true)
 	if err != nil {
 		httpx.ServerError(w, r, err, "dependencies")
 		return
@@ -79,7 +81,8 @@ func (d Deps) dependencies(w http.ResponseWriter, r *http.Request) {
 		out.Repos = append(out.Repos, refBody(rp))
 	}
 	for _, e := range g.Edges {
-		out.Edges = append(out.Edges, edgeBody{From: refBody(e.From), To: refBody(e.To), Version: e.Version, Coords: e.Coords})
+		out.Edges = append(out.Edges, edgeBody{From: refBody(e.From), To: refBody(e.To), Version: e.Version, Coords: e.Coords,
+			Scope: e.Scope})
 	}
 	for _, a := range g.Ambiguous {
 		p := make([]repoRefBody, 0, len(a.Providers))

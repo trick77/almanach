@@ -4,6 +4,8 @@ import type { Dependencies, RepoDetail } from "./api";
 import {
   DepsPage,
   depGraph,
+  drawnGraph,
+  edgeLabel,
   sharedRows,
   oddVersions,
   repoNamer,
@@ -43,18 +45,21 @@ const graph: Dependencies = {
       to: ref("tools", "llmwire"),
       version: "v0.1.8",
       coords: ["go:example.invalid/llmwire"],
+      scope: "main",
     },
     {
       from: ref("tools", "loom"),
       to: ref("tools", "webfetch"),
       version: "v0.3.0",
       coords: ["go:example.invalid/webfetch"],
+      scope: "main",
     },
     {
       from: ref("tools", "rongo"),
       to: ref("tools", "llmwire"),
       version: "v0.1.6",
       coords: ["go:example.invalid/llmwire"],
+      scope: "main",
     },
   ],
   ambiguous: [
@@ -103,6 +108,53 @@ describe("dependency graph", () => {
       "v0.3.0",
       "v0.1.6",
     ]);
+  });
+
+  it("dashes a use that is not at runtime and says what it is for", () => {
+    const withTest: Dependencies = {
+      ...graph,
+      edges: [
+        ...graph.edges,
+        {
+          from: ref("tools", "rongo"),
+          to: ref("tools", "webfetch"),
+          version: "",
+          coords: ["go:example.invalid/webfetch"],
+          scope: "test",
+        },
+      ],
+    };
+    const ir = depGraph(withTest);
+    expect(ir.edges.map((e) => [e.label, e.dashed])).toEqual([
+      ["v0.1.8", false],
+      ["v0.3.0", false],
+      ["v0.1.6", false],
+      ["Test", true],
+    ]);
+    expect(depGraph(withTest, true).edges).toHaveLength(3);
+    expect(
+      edgeLabel({ ...withTest.edges[0], scope: "managed", version: "2.0" }),
+    ).toBe("Versionen · 2.0");
+    expect(drawnGraph(withTest)).toMatchObject({ draw: true, mainOnly: false });
+  });
+
+  it("draws the uses at runtime alone when all would not fit", () => {
+    const many: Dependencies = {
+      ...graph,
+      edges: [
+        ...graph.edges,
+        ...Array.from({ length: 20 }, (_, i) => ({
+          from: ref("tools", `t${i}`),
+          to: ref("tools", "llmwire"),
+          version: "",
+          coords: ["go:example.invalid/llmwire"],
+          scope: "test" as const,
+        })),
+      ],
+    };
+    const g = drawnGraph(many);
+    expect(g).toMatchObject({ draw: true, mainOnly: true });
+    expect(g.ir.edges.every((e) => !e.dashed)).toBe(true);
   });
 
   it("names a repository with its project only across projects", () => {
@@ -162,6 +214,31 @@ describe("DepsPage", () => {
     ).toBe("/projects/tools/repos/llmwire");
     expect(screen.getByText("npm:shared")).toBeInTheDocument();
     expect(screen.getByText(/von zwei Quellen geclont/)).toBeInTheDocument();
+  });
+
+  it("says what a dashed edge is, and the scope beside its version", async () => {
+    const withTest: Dependencies = {
+      ...graph,
+      edges: [
+        ...graph.edges,
+        {
+          from: ref("tools", "rongo"),
+          to: ref("tools", "webfetch"),
+          version: "v0.2.0",
+          coords: ["go:example.invalid/webfetch"],
+          scope: "test",
+        },
+      ],
+    };
+    serve({
+      dependencies: withTest,
+      sources: { enabled: true, sources: [], default_host: "" },
+    });
+    render(<DepsPage />);
+    const table = await screen.findByRole("table");
+    expect(screen.getByText(/^Ocker gestrichelt:/)).toBeInTheDocument();
+    const row = within(table).getByText("v0.2.0").closest("tr")!;
+    expect(within(row).getByText("Test")).toBeInTheDocument();
   });
 
   it("says so when the sources cannot be read, not loading for ever", async () => {

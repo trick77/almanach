@@ -23,7 +23,7 @@ export const S = {
   deps: {
     title: "Abhängigkeiten",
     failed: "Die Abhängigkeiten konnten nicht geladen werden.",
-    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json und Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; im Wurzelverzeichnis, eine Ebene darunter und in jedem Ordner, den der Build als Gradle-Projekt oder Maven-Modul einbindet) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
+    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json, Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; Python: pyproject.toml, requirements.txt; Rust: Cargo.toml; im Wurzelverzeichnis, eine Ebene darunter und in jedem Ordner, den der Build als Gradle-Projekt, Maven-Modul oder Workspace-Paket einbindet) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Eine Verwendung nur für Tests, für den Build oder als Versionsvorgabe ist ocker gestrichelt; die Karten und die Beschreibungen zählen nur die Verwendungen zur Laufzeit. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
     disabled:
       "Abhängigkeiten gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
     empty:
@@ -31,6 +31,20 @@ export const S = {
     graph: "Graph",
     tooLarge: (n: number) =>
       `${n} Repositories sind zu viele für einen Graphen; die Tabelle zeigt alle.`,
+    // Under the graph when it holds a dashed edge.
+    dashed:
+      "Ocker gestrichelt: nur für Tests, den Build oder als Versionsvorgabe verwendet.",
+    // Under the graph when all scopes would not fit and the main ones do.
+    mainOnly:
+      "Der Graph zeigt nur die Verwendungen zur Laufzeit; mit allen wäre er zu gross. Die Tabelle zeigt alle.",
+    // What a dashed use is for, on its edge and in the table.
+    scopes: {
+      main: "",
+      managed: "Versionen",
+      dev: "Entwicklung",
+      test: "Test",
+      indirect: "Indirekt",
+    } as Record<string, string>,
     shared: "Geteilte Repositories",
     headers: ["Repository", "Verwendet von", "Version"],
     ambiguous: "Mehrdeutig",

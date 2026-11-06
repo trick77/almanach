@@ -109,12 +109,17 @@ func TestInnerEdges(t *testing.T) {
 	)
 	saveRead(t, s, "apps", "kit", "1", manifest.Read{Provides: []string{"npm:kit"}})
 	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:example.invalid/wire"}})
-	saveRead(t, s, "apps", "web", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "npm:kit"}, {Coord: "go:example.invalid/wire"}}})
+	saveRead(t, s, "apps", "kit", "2", manifest.Read{Provides: []string{"npm:kit"}, Requires: []manifest.Dep{
+		// A test use is no part of the project's shape.
+		{Coord: "go:example.invalid/web", Scope: manifest.ScopeTest},
+	}})
+	saveRead(t, s, "apps", "web", "1", manifest.Read{Provides: []string{"go:example.invalid/web"},
+		Requires: []manifest.Dep{{Coord: "npm:kit"}, {Coord: "go:example.invalid/wire"}}})
 	edges, err := s.InnerEdges(ctx, "apps")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Edge{{From: RepoRef{"apps", "web"}, To: RepoRef{"apps", "kit"}, Coords: []string{"npm:kit"}}}
+	want := []Edge{{From: RepoRef{"apps", "web"}, To: RepoRef{"apps", "kit"}, Coords: []string{"npm:kit"}, Scope: manifest.ScopeMain}}
 	if !reflect.DeepEqual(edges, want) {
 		t.Fatalf("inner edges = %+v, want %+v", edges, want)
 	}

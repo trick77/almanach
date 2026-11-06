@@ -30,7 +30,8 @@ export interface Links {
   usedBy: number;
 }
 
-/** linksOf is every project's links, by key. */
+/** linksOf is every project's links, by key: uses at runtime only, as the
+ *  maps count them. */
 export function linksOf(d: Dependencies | null): Map<string, Links> {
   const out = new Map<string, Links>();
   const at = (key: string) => {
@@ -43,7 +44,7 @@ export function linksOf(d: Dependencies | null): Map<string, Links> {
   };
   const users = new Map<string, Set<string>>();
   for (const e of d?.edges ?? []) {
-    if (e.from.project === e.to.project) continue;
+    if (e.from.project === e.to.project || e.scope !== "main") continue;
     const name = refName(e.to.project, e.to.slug);
     const from = at(e.from.project);
     if (!from.uses.includes(name)) from.uses.push(name);

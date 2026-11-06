@@ -114,7 +114,7 @@ func (d Deps) repoMarkdown(w http.ResponseWriter, r *http.Request, key, slug str
 		httpx.ServerError(w, r, err, "repo names")
 		return
 	}
-	g, err := d.graph(ctx)
+	g, err := d.graph(ctx, false)
 	if err != nil {
 		httpx.ServerError(w, r, err, "dependencies")
 		return

@@ -207,10 +207,22 @@ export interface SharedRepo {
   used_by: RepoRef[];
 }
 
-/** GET /api/dependencies: joined from the manifests at read time. */
+/** What a use is for: main at runtime, managed a version pin (a BOM, a
+ *  platform, a parent POM), dev a build or check tool, test tests only,
+ *  indirect a go.mod's dependency of a dependency. */
+export type DepScope = "main" | "managed" | "dev" | "test" | "indirect";
+
+/** GET /api/dependencies: joined from the manifests at read time, every
+ *  scope, each edge its strongest. */
 export interface Dependencies {
   repos: RepoRef[];
-  edges: { from: RepoRef; to: RepoRef; version: string; coords: string[] }[];
+  edges: {
+    from: RepoRef;
+    to: RepoRef;
+    version: string;
+    coords: string[];
+    scope: DepScope;
+  }[];
   /** Coordinates several repositories provide: no edge to any of them. */
   ambiguous: {
     coord: string;
