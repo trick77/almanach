@@ -600,12 +600,15 @@ optional; Python `[project].dependencies`; Cargo `[dependencies]`);
 or `testFixtures(...)`, Cargo `[dev-dependencies]`, a Python group named
 test); `dev` a build or check tool (an annotation processor, kapt, ksp,
 `developmentOnly`, npm `devDependencies`, Cargo `[build-dependencies]`, a
-Python extra or any other group); `managed` a version pin (a POM's
-parent, a BOM imported by `dependencyManagement`, a Gradle `platform(...)`
-or `mavenBom`); `indirect` a go.mod's `// indirect`. A coordinate named
-twice counts as its strongest, in that order. A `dependencyManagement`
-entry that is no BOM import is no requirement: it only gives its version
-to a dependency naming none. Only main uses are the system: the maps, the
+Python extra, a Poetry or Cargo `optional = true`, or any other group);
+`managed` a version pin (a POM's parent, a BOM imported by
+`dependencyManagement`, a Gradle `platform(...)` or `mavenBom`);
+`indirect` a go.mod's `// indirect`. A coordinate named twice counts as
+its strongest, in that order. A `dependencyManagement` entry that is no
+BOM import is no requirement: it only gives its version and scope to a
+dependency naming none, the POM's own or the nearest one's above, as a
+multi-module build pins them in its root POM. An edge shows the version
+of its strongest coordinates. Only main uses are the system: the maps, the
 prompts (`store.Shared`, the project step's build dependencies), a
 repository's `uses`, `used_by` and its export count them alone; the page
 "Abhängigkeiten" draws the others dashed. A row read before scopes

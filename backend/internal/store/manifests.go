@@ -60,9 +60,10 @@ type RepoRef struct {
 }
 
 // Edge is one repository using another: From requires coordinates To
-// provides. Coords are those coordinates, sorted; Version is what From
-// names for the first of them that names one, as written ("" when none
-// does); Scope the strongest of their scopes (manifest.Scope*).
+// provides. Coords are those coordinates, sorted; Scope the strongest of
+// their scopes (manifest.Scope*); Version is what From names for the first
+// of that scope's coordinates that names one, as written ("" when none
+// does).
 type Edge struct {
 	From    RepoRef
 	To      RepoRef
@@ -171,11 +172,16 @@ func (s *Store) Dependencies(ctx context.Context, all bool) (Graph, error) {
 				order = append(order, p[0])
 			}
 			e.Coords = append(e.Coords, d.Coord)
-			if e.Version == "" {
-				e.Version = d.Version
-			}
-			if manifest.Stronger(d.Scope, e.Scope) {
+			// The version shown is the strongest scope's: a main edge names
+			// what runs, not its test kit's version.
+			switch {
+			case manifest.Stronger(d.Scope, e.Scope):
 				e.Scope = d.Scope
+				if d.Version != "" || e.Version == "" {
+					e.Version = d.Version
+				}
+			case e.Version == "":
+				e.Version = d.Version
 			}
 		}
 		sort.Slice(order, func(i, j int) bool { return less(order[i], order[j]) })

@@ -57,6 +57,9 @@ func Stronger(a, b string) bool { return scopeRank[Norm(a)] < scopeRank[Norm(b)]
 
 // Norm is a stored scope as it counts: "" (a row read before scopes) is
 // main, as everything was then.
+//
+// TRANSITIONAL(unscoped-requires): Remove when no repo_manifests row has
+// reader < 5 (each is read again at its repository's next sync).
 func Norm(s string) string {
 	if _, ok := scopeRank[s]; !ok {
 		return ScopeMain
@@ -230,6 +233,7 @@ func Parse(in map[string][]byte) Read {
 		provides[c] = true
 	}
 	cargoWS := cargoWorkspaces(files)
+	pins := pomPins(files)
 	for _, p := range paths {
 		body := files[p]
 		var prov []string
@@ -240,7 +244,7 @@ func Parse(in map[string][]byte) Read {
 		case "go.work", "pnpm-workspace.yaml":
 			// Members only (Modules), nothing provided or required.
 		case "pom.xml":
-			prov, reqs = pom(body)
+			prov, reqs = pom(body, pins.of(dirOf(p)))
 		case "package.json":
 			prov, reqs = packageJSON(body)
 		case "pyproject.toml":
@@ -353,16 +357,80 @@ func (d pomDep) version() string {
 	return v
 }
 
+// pomPin is what a dependencyManagement entry gives a dependency naming
+// none of its own: a version and a scope (as written, "" for none).
+type pomPin struct{ version, scope string }
+
+// pomPinsByDir is each pom.xml's managed entries (BOM imports aside) by its
+// folder.
+type pomPinsByDir map[string]map[string]pomPin
+
+func pomPins(files map[string][]byte) pomPinsByDir {
+	out := pomPinsByDir{}
+	for p, body := range files {
+		if path.Base(p) != "pom.xml" {
+			continue
+		}
+		x, ok := decodePom(body)
+		if !ok {
+			continue
+		}
+		pins := map[string]pomPin{}
+		for _, d := range x.Managed {
+			c, ok := mavenCoord(d.GroupID, d.ArtifactID)
+			if _, seen := pins[c]; !ok || seen || d.bomImport() {
+				continue
+			}
+			pins[c] = pomPin{version: d.version(), scope: strings.TrimSpace(d.Scope)}
+		}
+		out[dirOf(p)] = pins
+	}
+	return out
+}
+
+// of is the pin of a coordinate for a pom.xml in folder d: its own first,
+// then the nearest folder above's, as a multi-module build keeps them in
+// the parent POM at its root. False for none.
+func (b pomPinsByDir) of(d string) func(coord string) (pomPin, bool) {
+	return func(coord string) (pomPin, bool) {
+		for at := d; ; at = dirOf(at) {
+			if pin, ok := b[at][coord]; ok {
+				return pin, true
+			}
+			if at == "" {
+				return pomPin{}, false
+			}
+		}
+	}
+}
+
+func (d pomDep) bomImport() bool {
+	return strings.TrimSpace(d.Scope) == "import" && strings.TrimSpace(d.Type) == "pom"
+}
+
+// pomScope is a Maven scope as a Dep's: compile, runtime, provided, system
+// (and none) Main, test Test, import Managed.
+func pomScope(s string) string {
+	switch strings.TrimSpace(s) {
+	case "test":
+		return ScopeTest
+	case "import":
+		return ScopeManaged
+	}
+	return ScopeMain
+}
+
 // pom is a pom.xml's own coordinate (groupId from its parent when it has
-// none) and its dependencies by scope: compile, runtime, provided and
-// system Main, test Test. Its parent is Managed: build inheritance, what
-// most services of one platform share, no use at runtime. So is a BOM its
-// dependencyManagement imports (`<type>pom</type>`, `<scope>import</scope>`);
-// any other managed entry only pins a version, required by nothing, and
-// gives its version to a dependency naming none. A coordinate built of a
-// property (`${...}`) is left out: unresolved, it would match nothing or
-// the wrong thing.
-func pom(body []byte) ([]string, []Dep) {
+// none) and its dependencies by scope (pomScope). Its parent is Managed:
+// build inheritance, what most services of one platform share, no use at
+// runtime. So is a BOM its dependencyManagement imports
+// (`<type>pom</type>`, `<scope>import</scope>`); any other managed entry
+// is required by nothing and gives its version and scope to a dependency
+// naming none, its own or the nearest one's above (pinned), as Maven
+// inherits them from the parent. A coordinate built of a property
+// (`${...}`) is left out: unresolved, it would match nothing or the wrong
+// thing.
+func pom(body []byte, pinned func(coord string) (pomPin, bool)) ([]string, []Dep) {
 	p, ok := decodePom(body)
 	if !ok {
 		return nil, nil
@@ -379,16 +447,9 @@ func pom(body []byte) ([]string, []Dep) {
 	if c, ok := mavenCoord(p.Parent.GroupID, p.Parent.ArtifactID); ok {
 		reqs = append(reqs, Dep{Coord: c, Version: p.Parent.version(), Scope: ScopeManaged})
 	}
-	pinned := map[string]string{}
 	for _, d := range p.Managed {
-		c, ok := mavenCoord(d.GroupID, d.ArtifactID)
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(d.Scope) == "import" && strings.TrimSpace(d.Type) == "pom" {
+		if c, ok := mavenCoord(d.GroupID, d.ArtifactID); ok && d.bomImport() {
 			reqs = append(reqs, Dep{Coord: c, Version: d.version(), Scope: ScopeManaged})
-		} else if _, seen := pinned[c]; !seen {
-			pinned[c] = d.version()
 		}
 	}
 	for _, d := range p.Dependencies {
@@ -396,18 +457,16 @@ func pom(body []byte) ([]string, []Dep) {
 		if !ok {
 			continue
 		}
-		v := d.version()
-		if v == "" && strings.TrimSpace(d.Version) == "" {
-			v = pinned[c]
+		v, scope := d.version(), strings.TrimSpace(d.Scope)
+		if pin, ok := pinned(c); ok {
+			if v == "" && strings.TrimSpace(d.Version) == "" {
+				v = pin.version
+			}
+			if scope == "" {
+				scope = pin.scope
+			}
 		}
-		scope := ScopeMain
-		switch strings.TrimSpace(d.Scope) {
-		case "test":
-			scope = ScopeTest
-		case "import":
-			scope = ScopeManaged
-		}
-		reqs = append(reqs, Dep{Coord: c, Version: v, Scope: scope})
+		reqs = append(reqs, Dep{Coord: c, Version: v, Scope: pomScope(scope)})
 	}
 	return prov, reqs
 }

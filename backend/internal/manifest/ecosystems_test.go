@@ -77,6 +77,38 @@ func TestParse_GradleScopes(t *testing.T) {
 	}
 }
 
+// A multi-module build pins versions and scopes in the root POM; a module
+// naming neither takes them, its own pin first, as Maven inherits them.
+func TestParse_PomInheritedPins(t *testing.T) {
+	got := Parse(map[string][]byte{
+		"pom.xml": []byte(`<project><groupId>com.acme</groupId><artifactId>parent</artifactId>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>com.acme</groupId><artifactId>lib</artifactId><version>1.0</version></dependency>
+    <dependency><groupId>com.acme</groupId><artifactId>testkit</artifactId><version>2.0</version><scope>test</scope></dependency>
+    <dependency><groupId>com.acme</groupId><artifactId>wire</artifactId><version>3.0</version></dependency>
+  </dependencies></dependencyManagement>
+</project>`),
+		"svc/pom.xml": []byte(`<project><parent><groupId>com.acme</groupId><artifactId>parent</artifactId></parent><artifactId>svc</artifactId>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>com.acme</groupId><artifactId>wire</artifactId><version>3.1</version></dependency>
+  </dependencies></dependencyManagement>
+  <dependencies>
+    <dependency><groupId>com.acme</groupId><artifactId>lib</artifactId></dependency>
+    <dependency><groupId>com.acme</groupId><artifactId>testkit</artifactId></dependency>
+    <dependency><groupId>com.acme</groupId><artifactId>wire</artifactId></dependency>
+  </dependencies>
+</project>`),
+	})
+	want := []Dep{
+		{Coord: "maven:com.acme:lib", Version: "1.0", Scope: ScopeMain},
+		{Coord: "maven:com.acme:testkit", Version: "2.0", Scope: ScopeTest},
+		{Coord: "maven:com.acme:wire", Version: "3.1", Scope: ScopeMain},
+	}
+	if !reflect.DeepEqual(got.Requires, want) {
+		t.Fatalf("Requires = %+v\nwant %+v", got.Requires, want)
+	}
+}
+
 func TestParse_Pyproject(t *testing.T) {
 	got := Parse(map[string][]byte{
 		"pyproject.toml": []byte(`[project]
@@ -116,7 +148,8 @@ pytest = "^8"
 		Provides: []string{"py:acme-tool", "py:acme-wire-client"},
 		Requires: []Dep{
 			{Coord: "py:acme-core", Version: "==1.2", Scope: ScopeMain},
-			{Coord: "py:click", Version: "^8.1", Scope: ScopeMain},
+			// Optional: an extra's, as in PEP 621.
+			{Coord: "py:click", Version: "^8.1", Scope: ScopeDev},
 			{Coord: "py:coverage", Version: "", Scope: ScopeTest},
 			{Coord: "py:mypy", Version: "^1.0", Scope: ScopeDev},
 			{Coord: "py:psycopg", Version: ">=3", Scope: ScopeDev},
@@ -142,11 +175,14 @@ Django==5.0 \
 acme.core>=1.2  # ours
 git+https://example.invalid/x.git#egg=x
 ./wheels/thing.whl
+acme-wire[async] @ git+https://git.example.invalid/acme/wire.git@v1
 `),
 		"requirements-dev.txt": []byte("pytest\nDjango\n"),
 	})
 	want := []Dep{
 		{Coord: "py:acme-core", Version: ">=1.2", Scope: ScopeMain},
+		// A direct reference names its distribution, no version.
+		{Coord: "py:acme-wire", Version: "", Scope: ScopeMain},
 		// A per-requirement option (--hash) is no part of the version.
 		{Coord: "py:django", Version: "==5.0", Scope: ScopeMain},
 		{Coord: "py:pytest", Version: "", Scope: ScopeDev},
@@ -175,6 +211,7 @@ wire.workspace = true
 tokio = "1.38"
 core-lib = { path = "../core-lib" }
 rand_x = { package = "rand", version = "0.8" }
+metrics = { version = "0.23", optional = true }
 
 [dev-dependencies]
 proptest = "1"
@@ -193,6 +230,8 @@ libc = "0.2"
 			{Coord: "cargo:acme-wire", Version: "0.3", Scope: ScopeMain},
 			{Coord: "cargo:cc", Version: "1.0", Scope: ScopeDev},
 			{Coord: "cargo:libc", Version: "0.2", Scope: ScopeMain},
+			// A feature's, so no part of every build.
+			{Coord: "cargo:metrics", Version: "0.23", Scope: ScopeDev},
 			{Coord: "cargo:proptest", Version: "1", Scope: ScopeTest},
 			{Coord: "cargo:rand", Version: "0.8", Scope: ScopeMain},
 			{Coord: "cargo:serde", Version: "1.0.200", Scope: ScopeMain},

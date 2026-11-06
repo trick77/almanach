@@ -9,7 +9,8 @@ import (
 // cargo:<name>, compared as crates.io does (case and `-`/`_` alike). Its
 // `[dependencies]`, and a target's (`[target.'cfg(unix)'.dependencies]`),
 // are Main, `[dev-dependencies]` Test (tests, examples, benches),
-// `[build-dependencies]` Dev. A dependency renamed (`x = { package = "y" }`)
+// `[build-dependencies]` Dev, an optional one (a feature's) Dev, as a
+// Python extra. A dependency renamed (`x = { package = "y" }`)
 // is crate y; one taking its version from the workspace (`workspace =
 // true`) gets the version the nearest workspace root's
 // `[workspace.dependencies]` names, a table that itself requires nothing.
@@ -20,8 +21,9 @@ func cargoCoord(name string) string {
 }
 
 // cargoDep is a dependency entry: the crate it names (key or `package`),
-// its version as written, and whether it takes the workspace's.
-func cargoDep(key string, v any) (crate, version string, inherited bool) {
+// its version as written, whether it takes the workspace's, and whether
+// it is optional (a feature's).
+func cargoDep(key string, v any) (crate, version string, inherited, optional bool) {
 	crate = key
 	switch t := v.(type) {
 	case string:
@@ -32,9 +34,10 @@ func cargoDep(key string, v any) (crate, version string, inherited bool) {
 		}
 		version, _ = t["version"].(string)
 		w, _ := t["workspace"].(string)
-		inherited = w == "true"
+		o, _ := t["optional"].(string)
+		inherited, optional = w == "true", o == "true"
 	}
-	return crate, strings.TrimSpace(version), inherited
+	return crate, strings.TrimSpace(version), inherited, optional
 }
 
 // cargoWS is each workspace root's `[workspace.dependencies]` by folder:
@@ -58,7 +61,7 @@ func cargoWorkspaces(files map[string][]byte) cargoWS {
 		deps := map[string]Dep{}
 		table, _ := ws["dependencies"].(map[string]any)
 		for k, v := range table {
-			crate, version, _ := cargoDep(k, v)
+			crate, version, _, _ := cargoDep(k, v)
 			deps[k] = Dep{Coord: cargoCoord(crate), Version: version}
 		}
 		out[dirOf(p)] = deps
@@ -101,7 +104,7 @@ func cargo(body []byte, ws map[string]Dep) ([]string, []Dep) {
 		} {
 			table, _ := t[s.key].(map[string]any)
 			for _, k := range sortedKeys(table) {
-				crate, version, inherited := cargoDep(k, table[k])
+				crate, version, inherited, optional := cargoDep(k, table[k])
 				coord := cargoCoord(crate)
 				if inherited {
 					if w, ok := ws[k]; ok {
@@ -111,7 +114,11 @@ func cargo(body []byte, ws map[string]Dep) ([]string, []Dep) {
 				if crate = strings.TrimSpace(crate); crate == "" {
 					continue
 				}
-				reqs = append(reqs, Dep{Coord: coord, Version: version, Scope: s.scope})
+				scope := s.scope
+				if optional && scope == ScopeMain {
+					scope = ScopeDev
+				}
+				reqs = append(reqs, Dep{Coord: coord, Version: version, Scope: scope})
 			}
 		}
 	}

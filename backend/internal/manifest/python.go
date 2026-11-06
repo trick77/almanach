@@ -15,8 +15,9 @@ import (
 // py:<name>.
 //
 // Scopes: `[project].dependencies` and Poetry's `dependencies` are Main;
-// an extra (`optional-dependencies`), a PEP 735 `[dependency-groups]` group
-// and a Poetry group are Dev, Test when the group's name says test. An
+// an extra (`optional-dependencies`, a Poetry `optional = true`), a PEP 735
+// `[dependency-groups]` group and a Poetry group are Dev, Test when the
+// group's name says test. An
 // extra may be a runtime feature, but none is what every install pulls in:
 // the maps stay with what surely runs.
 
@@ -74,16 +75,13 @@ func pyproject(body []byte) ([]string, []Dep) {
 	}
 	var prov []string
 	var reqs []Dep
+	// A dependency group may include another ({include-group = "x"}): that
+	// group's entries are read where it stands.
 	strs := func(v any, scope string) {
-		list, _ := v.([]any)
-		for _, e := range list {
-			// A dependency group may include another ({include-group = "x"}):
-			// that group's entries are read where it stands.
-			if s, ok := e.(string); ok {
-				if d, ok := pep508(s); ok {
-					d.Scope = scope
-					reqs = append(reqs, d)
-				}
+		for _, s := range tomlStrings(v) {
+			if d, ok := pep508(s); ok {
+				d.Scope = scope
+				reqs = append(reqs, d)
 			}
 		}
 	}
@@ -112,14 +110,18 @@ func pyproject(body []byte) ([]string, []Dep) {
 			if strings.EqualFold(name, "python") || pyName.FindString(name) != name {
 				continue
 			}
-			version := ""
+			version, s := "", scope
 			switch t := spec.(type) {
 			case string:
 				version = t
 			case map[string]any:
 				version, _ = t["version"].(string)
+				// An optional one is an extra's, as in PEP 621.
+				if o, _ := t["optional"].(string); o == "true" && s == ScopeMain {
+					s = ScopeDev
+				}
 			}
-			reqs = append(reqs, Dep{Coord: pyCoord(name), Version: strings.TrimSpace(version), Scope: scope})
+			reqs = append(reqs, Dep{Coord: pyCoord(name), Version: strings.TrimSpace(version), Scope: s})
 		}
 	}
 	table(poetry["dependencies"], ScopeMain)
@@ -160,9 +162,26 @@ func requirementsScope(base string) (string, bool) {
 	return "", false
 }
 
+// directReference reports whether a requirement is PEP 508's `name @ url`
+// (name[extras] first, then `@`): a name, unlike a bare URL.
+func directReference(s string) bool {
+	name := pyName.FindString(s)
+	if name == "" {
+		return false
+	}
+	rest := strings.TrimSpace(s[len(name):])
+	if strings.HasPrefix(rest, "[") {
+		if i := strings.IndexByte(rest, ']'); i >= 0 {
+			rest = strings.TrimSpace(rest[i+1:])
+		}
+	}
+	return strings.HasPrefix(rest, "@")
+}
+
 // requirements is a requirements file's requirements, one per line (a
 // trailing `\` joins the next). Comments, options (`-r`, `-e`,
-// `--index-url`) and a path or URL in place of a name are left out.
+// `--index-url`) and a path or URL in place of a name are left out; a
+// `name @ url` is the name's, no version.
 func requirements(body []byte, scope string) []Dep {
 	var reqs []Dep
 	var line strings.Builder
@@ -186,7 +205,7 @@ func requirements(body []byte, scope string) []Dep {
 		}
 		s = strings.TrimSpace(s)
 		if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, "-") || strings.HasPrefix(s, ".") ||
-			strings.HasPrefix(s, "/") || strings.Contains(s, "://") {
+			strings.HasPrefix(s, "/") || strings.Contains(s, "://") && !directReference(s) {
 			return
 		}
 		if d, ok := pep508(s); ok {

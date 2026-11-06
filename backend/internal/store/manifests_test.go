@@ -101,6 +101,8 @@ func TestDependencies(t *testing.T) {
 	loom, diag := RepoRef{"apps", "loom"}, RepoRef{"apps", "diag"}
 	wire, fetch := RepoRef{"libs", "wire"}, RepoRef{"libs", "fetch"}
 	// A requirement saved without a scope (a reader before scopes) is main.
+	// TRANSITIONAL(unscoped-requires): Remove when no repo_manifests row has
+	// reader < 5; give these requires their scope then.
 	want := []Edge{
 		{From: diag, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6", Scope: "main"},
 		{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Version: "v0.2.0", Scope: "main"},
@@ -224,9 +226,11 @@ func TestDependencies_Scopes(t *testing.T) {
 		SourceRepo{ProjectKey: "libs", Slug: "kit", CloneURL: "https://forge.example.invalid/x/kit"},
 		SourceRepo{ProjectKey: "apps", Slug: "loom", CloneURL: "https://forge.example.invalid/x/loom"},
 	)
-	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:w", "go:w/testing"}})
+	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:a/wiretest", "go:w", "go:w/testing"}})
 	saveRead(t, s, "libs", "kit", "1", manifest.Read{Provides: []string{"go:k"}})
 	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{
+		// Sorts first, but a test kit's version is not the main edge's.
+		{Coord: "go:a/wiretest", Version: "v0.9", Scope: manifest.ScopeTest},
 		{Coord: "go:k", Version: "v1", Scope: manifest.ScopeTest},
 		{Coord: "go:w", Version: "v2", Scope: manifest.ScopeMain},
 		{Coord: "go:w/testing", Version: "v2", Scope: manifest.ScopeTest},
@@ -238,7 +242,7 @@ func TestDependencies_Scopes(t *testing.T) {
 	}
 	want := []Edge{
 		{From: loom, To: kit, Coords: []string{"go:k"}, Version: "v1", Scope: manifest.ScopeTest},
-		{From: loom, To: wire, Coords: []string{"go:w", "go:w/testing"}, Version: "v2", Scope: manifest.ScopeMain},
+		{From: loom, To: wire, Coords: []string{"go:a/wiretest", "go:w", "go:w/testing"}, Version: "v2", Scope: manifest.ScopeMain},
 	}
 	if !reflect.DeepEqual(g.Edges, want) {
 		t.Fatalf("all edges = %+v\nwant %+v", g.Edges, want)

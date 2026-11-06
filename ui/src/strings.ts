@@ -43,7 +43,7 @@ export const S = {
       managed: "Versionen",
       dev: "Entwicklung",
       test: "Test",
-      indirect: "indirekt",
+      indirect: "Indirekt",
     } as Record<string, string>,
     shared: "Geteilte Repositories",
     headers: ["Repository", "Verwendet von", "Version"],
