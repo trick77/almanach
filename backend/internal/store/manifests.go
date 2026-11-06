@@ -62,12 +62,13 @@ type RepoRef struct {
 // Edge is one repository using another: From requires coordinates To
 // provides. Coords are those coordinates, sorted; Version is what From
 // names for the first of them that names one, as written ("" when none
-// does).
+// does); Scope the strongest of their scopes (manifest.Scope*).
 type Edge struct {
 	From    RepoRef
 	To      RepoRef
 	Coords  []string
 	Version string
+	Scope   string
 }
 
 // Ambiguous is a coordinate more than one source repository provides (a
@@ -94,8 +95,10 @@ type Graph struct {
 // gone missing from its listing, or deactivated, counts for nothing; a repository's use of
 // itself (a monorepo's modules) is no edge; a coordinate two repositories
 // provide gives no edge, and is listed as ambiguous when something
-// requires it.
-func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
+// requires it. all false: main requirements only (manifest.ScopeMain), the
+// uses at runtime the maps, the prompts and a repository's uses show; all
+// true: every scope, for the dependency page, each edge its strongest.
+func (s *Store) Dependencies(ctx context.Context, all bool) (Graph, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.key, r.slug, sr.clone_url, m.provides, m.requires
 		  FROM repo_manifests m
@@ -126,9 +129,16 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 			_ = rows.Close()
 			return Graph{}, err
 		}
-		if err := json.Unmarshal([]byte(requires), &r.requires); err != nil {
+		var reqs []manifest.Dep
+		if err := json.Unmarshal([]byte(requires), &reqs); err != nil {
 			_ = rows.Close()
 			return Graph{}, err
+		}
+		for _, d := range reqs {
+			d.Scope = manifest.Norm(d.Scope)
+			if all || d.Scope == manifest.ScopeMain {
+				r.requires = append(r.requires, d)
+			}
 		}
 		for _, c := range coords {
 			providers[c] = append(providers[c], r.ref)
@@ -156,13 +166,16 @@ func (s *Store) Dependencies(ctx context.Context) (Graph, error) {
 			}
 			e, ok := byTo[p[0]]
 			if !ok {
-				e = &Edge{From: r.ref, To: p[0], Version: d.Version}
+				e = &Edge{From: r.ref, To: p[0], Version: d.Version, Scope: d.Scope}
 				byTo[p[0]] = e
 				order = append(order, p[0])
 			}
 			e.Coords = append(e.Coords, d.Coord)
 			if e.Version == "" {
 				e.Version = d.Version
+			}
+			if manifest.Stronger(d.Scope, e.Scope) {
+				e.Scope = d.Scope
 			}
 		}
 		sort.Slice(order, func(i, j int) bool { return less(order[i], order[j]) })
@@ -210,9 +223,10 @@ type SharedRepo struct {
 
 // Shared is what a repository depends on (slug set), or what a project's
 // repositories depend on of other projects' (slug ""): the context a step
-// reads beside its own code. In the graph's order, each once.
+// reads beside its own code. Main uses only: a test or build tool is no
+// part of the running system. In the graph's order, each once.
 func (s *Store) Shared(ctx context.Context, key, slug string) ([]SharedRepo, error) {
-	g, err := s.Dependencies(ctx)
+	g, err := s.Dependencies(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -257,9 +271,9 @@ func (s *Store) Shared(ctx context.Context, key, slug string) ([]SharedRepo, err
 // InnerEdges is the build dependencies between a project's own source
 // repositories, by their manifests, in the graph's order: one piece of
 // what the project step judges the project's shape by (a library use; a
-// call at runtime no manifest shows).
+// call at runtime no manifest shows). Main uses only, as Shared.
 func (s *Store) InnerEdges(ctx context.Context, key string) ([]Edge, error) {
-	g, err := s.Dependencies(ctx)
+	g, err := s.Dependencies(ctx, false)
 	if err != nil {
 		return nil, err
 	}

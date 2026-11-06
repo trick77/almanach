@@ -63,12 +63,12 @@ dependencies {
 	want := Read{
 		Provides: []string{"maven:com.acme.core:core", "maven:com.acme:api", "maven:com.acme:platform", "maven:com.acme:tools"},
 		Requires: []Dep{
-			{Coord: "maven:com.acme:commons", Version: "1.2"},
-			{Coord: "maven:com.acme:core", Version: "1.0"},
-			{Coord: "maven:com.acme:native", Version: "1.0"},
-			{Coord: "maven:org.example:util", Version: "2.0"},
-			{Coord: "maven:org.junit.jupiter:junit-jupiter", Version: "5.10.0"},
-			{Coord: "maven:org.slf4j:slf4j-api", Version: "2.0.9"},
+			{Coord: "maven:com.acme:commons", Version: "1.2", Scope: ScopeMain},
+			{Coord: "maven:com.acme:core", Version: "1.0", Scope: ScopeMain},
+			{Coord: "maven:com.acme:native", Version: "1.0", Scope: ScopeMain},
+			{Coord: "maven:org.example:util", Version: "2.0", Scope: ScopeMain},
+			{Coord: "maven:org.junit.jupiter:junit-jupiter", Version: "5.10.0", Scope: ScopeTest},
+			{Coord: "maven:org.slf4j:slf4j-api", Version: "2.0.9", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -138,14 +138,15 @@ dependencies {
 		// none, so provides nothing.
 		Provides: []string{"maven:com.acme:checkout"},
 		Requires: []Dep{
-			{Coord: "maven:com.acme:bom", Version: "4.1"},
-			{Coord: "maven:com.acme:commons", Version: "4.1"},
-			{Coord: "maven:com.acme:multi", Version: "1.0"},
-			{Coord: "maven:com.acme:x", Version: "3.0"},
-			{Coord: "maven:io.ktor:ktor-client-core", Version: "2.3.0"},
-			{Coord: "maven:io.ktor:ktor-server-core", Version: "2.3.0"},
-			{Coord: "maven:io.ktor:ktor-server-netty", Version: ""},
-			{Coord: "maven:org.junit.jupiter:junit-jupiter", Version: "5.10.0"},
+			// A platform only pins versions.
+			{Coord: "maven:com.acme:bom", Version: "4.1", Scope: ScopeManaged},
+			{Coord: "maven:com.acme:commons", Version: "4.1", Scope: ScopeMain},
+			{Coord: "maven:com.acme:multi", Version: "1.0", Scope: ScopeMain},
+			{Coord: "maven:com.acme:x", Version: "3.0", Scope: ScopeMain},
+			{Coord: "maven:io.ktor:ktor-client-core", Version: "2.3.0", Scope: ScopeMain},
+			{Coord: "maven:io.ktor:ktor-server-core", Version: "2.3.0", Scope: ScopeMain},
+			{Coord: "maven:io.ktor:ktor-server-netty", Version: "", Scope: ScopeMain},
+			{Coord: "maven:org.junit.jupiter:junit-jupiter", Version: "5.10.0", Scope: ScopeTest},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -169,8 +170,8 @@ acme-commons = "com.acme:commons:1.0"
 	want := Read{
 		Provides: []string{"maven:org.other:service"},
 		Requires: []Dep{
-			{Coord: "maven:com.acme:commons", Version: "1.0"},
-			{Coord: "maven:org.lib:core", Version: "9"},
+			{Coord: "maven:com.acme:commons", Version: "1.0", Scope: ScopeMain},
+			{Coord: "maven:org.lib:core", Version: "9", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -186,7 +187,7 @@ func TestParse_GradleNoGroupBadCatalog(t *testing.T) {
 		"gradle/libs.versions.toml": []byte("[libraries\n"),
 		"build.gradle":              []byte("dependencies {\n implementation libs.a.b\n implementation 'org.a:b:1'\n}\n"),
 	})
-	want := Read{Provides: []string{}, Requires: []Dep{{Coord: "maven:org.a:b", Version: "1"}}}
+	want := Read{Provides: []string{}, Requires: []Dep{{Coord: "maven:org.a:b", Version: "1", Scope: ScopeMain}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
 	}
@@ -266,7 +267,7 @@ func TestParse_GradleCatalogExact(t *testing.T) {
 		"gradle/libs.versions.toml": []byte("\xef\xbb\xbf[libraries]\naws-sdk = \"org.aws:core:2.0\"\naws-sdk-extra = { group = \"${g}\", name = \"extra\" }\n"),
 		"build.gradle":              []byte("dependencies {\n implementation libs.aws.sdk.extra\n implementation libs.aws.sdk.asProvider()\n}\n"),
 	})
-	want := Read{Provides: []string{}, Requires: []Dep{{Coord: "maven:org.aws:core", Version: "2.0"}}}
+	want := Read{Provides: []string{}, Requires: []Dep{{Coord: "maven:org.aws:core", Version: "2.0", Scope: ScopeMain}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
 	}
@@ -304,10 +305,10 @@ func TestParse_GradleListsAndMapOrder(t *testing.T) {
 		"build.gradle": []byte("dependencies {\n implementation 'a.b:one:1', 'a.b:two:2'\n compile name: 'n', group: 'g.h', version: '3'\n implementation(version = \"4\", name = \"k\", group = \"g.h\")\n}\n"),
 	})
 	want := []Dep{
-		{Coord: "maven:a.b:one", Version: "1"},
-		{Coord: "maven:a.b:two", Version: "2"},
-		{Coord: "maven:g.h:k", Version: "4"},
-		{Coord: "maven:g.h:n", Version: "3"},
+		{Coord: "maven:a.b:one", Version: "1", Scope: ScopeMain},
+		{Coord: "maven:a.b:two", Version: "2", Scope: ScopeMain},
+		{Coord: "maven:g.h:k", Version: "4", Scope: ScopeMain},
+		{Coord: "maven:g.h:n", Version: "3", Scope: ScopeMain},
 	}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v, want %+v", got.Requires, want)
@@ -329,7 +330,7 @@ func TestParse_GradleBuildLogic(t *testing.T) {
 	})
 	want := Read{
 		Provides: []string{"maven:com.acme:shared", "maven:com.acme:svc"},
-		Requires: []Dep{{Coord: "maven:org.lib:util", Version: "1"}},
+		Requires: []Dep{{Coord: "maven:org.lib:util", Version: "1", Scope: ScopeMain}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
@@ -352,7 +353,7 @@ dependencies {
 }
 `),
 	})
-	want := []Dep{{Coord: "maven:a.b:quoted", Version: "1"}, {Coord: "maven:a.b:real", Version: "2"}}
+	want := []Dep{{Coord: "maven:a.b:quoted", Version: "1", Scope: ScopeMain}, {Coord: "maven:a.b:real", Version: "2", Scope: ScopeMain}}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v, want %+v", got.Requires, want)
 	}
@@ -379,7 +380,7 @@ func TestParse_GradleSecretProperty(t *testing.T) {
 		"gradle.properties": []byte("repoToken=s3cr3tvalue\ntokenLibVersion=1.2.3\n"),
 		"build.gradle":      []byte("dependencies {\n implementation \"a.b:c:$repoToken\"\n implementation \"a.b:token-lib:$tokenLibVersion\"\n}\n"),
 	})
-	want := []Dep{{Coord: "maven:a.b:c", Version: ""}, {Coord: "maven:a.b:token-lib", Version: "1.2.3"}}
+	want := []Dep{{Coord: "maven:a.b:c", Version: "", Scope: ScopeMain}, {Coord: "maven:a.b:token-lib", Version: "1.2.3", Scope: ScopeMain}}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v, want %+v", got.Requires, want)
 	}
@@ -396,7 +397,7 @@ func TestParse_GradleOneFileNestedCatalog(t *testing.T) {
 		"jvm/gradle/libs.versions.toml": []byte("[libraries]\nwire = { module = \"a.b:wire\", version = { strictly = \"[1.0,2.0[\", prefer = \"1.5\" } }\n"),
 		"jvm/build.gradle.kts":          []byte("dependencies { implementation(libs.wire) }\n"),
 	}
-	want := []Dep{{Coord: "maven:a.b:c", Version: "1"}, {Coord: "maven:a.b:wire", Version: "1.5"}}
+	want := []Dep{{Coord: "maven:a.b:c", Version: "1", Scope: ScopeMain}, {Coord: "maven:a.b:wire", Version: "1.5", Scope: ScopeMain}}
 	for range 20 {
 		if got := Parse(files); !reflect.DeepEqual(got.Requires, want) {
 			t.Fatalf("Requires = %+v, want %+v", got.Requires, want)

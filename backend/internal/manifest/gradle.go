@@ -97,6 +97,45 @@ var excludedBlocks = map[string]bool{"buildscript": true, "constraints": true}
 
 var gradleConfSuffixes = []string{"Implementation", "Api", "CompileOnly", "RuntimeOnly", "AnnotationProcessor"}
 
+// gradleScope is what a configuration's dependency is for: a platform
+// (platform(...), enforcedPlatform(...), mavenBom) Managed; a test source
+// set's (testImplementation, integrationTestRuntimeOnly, androidTestApi,
+// testFixturesApi, kaptTest) or a testFixtures(...) one's Test; an
+// annotation processor's, kapt's, ksp's or developmentOnly's Dev; the rest
+// (implementation, api, compileOnly, runtimeOnly, a variant's) Main.
+// wrap is the text between the name and the coordinate.
+func gradleScope(name, wrap string) string {
+	switch {
+	case strings.Contains(strings.ToLower(wrap), "platform") || name == "mavenBom":
+		return ScopeManaged
+	case strings.Contains(wrap, "testFixtures"):
+		return ScopeTest
+	}
+	prefix := name
+	for _, s := range gradleConfSuffixes {
+		if strings.HasSuffix(name, s) && len(name) > len(s) {
+			prefix = name[:len(name)-len(s)]
+			break
+		}
+	}
+	tool := ""
+	for _, p := range []string{"kapt", "ksp"} {
+		if strings.HasPrefix(prefix, p) {
+			tool, prefix = p, prefix[len(p):]
+		}
+	}
+	switch {
+	// A source set named test, or ending a word in Test (camel case, so
+	// "latest" is none).
+	case strings.HasPrefix(prefix, "test") || strings.Contains(prefix, "Test"):
+		return ScopeTest
+	case tool != "" || name == "annotationProcessor" || name == "developmentOnly" ||
+		strings.HasSuffix(name, "AnnotationProcessor"):
+		return ScopeDev
+	}
+	return ScopeMain
+}
+
 func gradleConfName(name string) bool {
 	if gradleConfs[name] {
 		return true
@@ -417,14 +456,25 @@ func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalo
 		}
 		return true
 	}
+	// scopeOf is the scope of a gradleConf hit: its name, and the wrapper
+	// between the name and group 3, where the coordinate starts.
+	scopeOf := func(m []int, name string) string {
+		end := m[3]
+		if end < 0 {
+			end = m[5]
+		}
+		return gradleScope(name, text[end:m[6]])
+	}
 	var hits []hit
 	for _, m := range reGradleCoord.FindAllStringSubmatchIndex(text, -1) {
 		s := subs(text, m)
 		if !counts(m, s[1]+s[2]) {
 			continue
 		}
+		scope := scopeOf(m, s[1]+s[2])
 		for n, q := range reQuoted.FindAllStringSubmatch(s[3], -1) {
 			if d, ok := coordString(resolve(strMatch(q, 1), props)); ok {
+				d.Scope = scope
 				hits = append(hits, hit{m[0] + n, d})
 			}
 		}
@@ -439,7 +489,7 @@ func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalo
 			e[q[1]] = resolve(strMatch(q, 2), props)
 		}
 		if c, ok := gradleCoord(e["group"], e["name"]); ok {
-			hits = append(hits, hit{m[0], Dep{Coord: c, Version: cleanVersion(e["version"])}})
+			hits = append(hits, hit{m[0], Dep{Coord: c, Version: cleanVersion(e["version"]), Scope: gradleScope(s[1], "")}})
 		}
 	}
 	if cat != nil {
@@ -448,7 +498,9 @@ func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalo
 			if !counts(m, s[1]+s[2]) {
 				continue
 			}
+			scope := scopeOf(m, s[1]+s[2])
 			for _, d := range cat.lookup(s[3]) {
+				d.Scope = scope
 				hits = append(hits, hit{m[0], d})
 			}
 		}

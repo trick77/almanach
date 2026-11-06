@@ -68,6 +68,9 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		"corpus/checkout/a/build.gradle": "dependencies {\n implementation 'example.copied:copied-lib:9.9'\n}\n",
 		"jvm/gradle.properties":          "group=example.loom\ntokenLibVersion=1.2.3\n",
 		"jvm/build.gradle.kts":           "dependencies {\n implementation(\"example.wire:wire-core:1.0\")\n implementation(\"example.wire:token-lib:$tokenLibVersion\")\n}\n",
+		// A workspace's pattern, matched against the tree: two down, read.
+		"pnpm-workspace.yaml":          "packages:\n  - 'packages/*/*'\n",
+		"packages/ui/kit/package.json": `{"name": "loom-kit", "devDependencies": {"vitest": "4.0.0"}}`,
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(work, p)), 0o750); err != nil {
 			t.Fatal(err)
@@ -102,17 +105,18 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		t.Error("no heartbeat after a cycle with a repository")
 	}
 	want := manifest.Read{
-		Provides: []string{"go:example.invalid/loom", "maven:example.loom:cli", "maven:example.loom:loom-jvm", "npm:loom-ui"},
+		Provides: []string{"go:example.invalid/loom", "maven:example.loom:cli", "maven:example.loom:loom-jvm", "npm:loom-kit", "npm:loom-ui"},
 		Requires: []manifest.Dep{
-			{Coord: "go:example.invalid/wire", Version: "v0.1.8"},
-			{Coord: "maven:example.wire:token-lib", Version: "1.2.3"},
-			{Coord: "maven:example.wire:wire-api", Version: "2.0"},
-			{Coord: "maven:example.wire:wire-cli", Version: "1.1"},
-			{Coord: "maven:example.wire:wire-core", Version: "1.0"},
-			{Coord: "maven:io.jsonwebtoken:jjwt-api", Version: "0.12.5"},
-			{Coord: "npm:left-pad", Version: "^1.3.0"},
+			{Coord: "go:example.invalid/wire", Version: "v0.1.8", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:token-lib", Version: "1.2.3", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:wire-api", Version: "2.0", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:wire-cli", Version: "1.1", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:wire-core", Version: "1.0", Scope: manifest.ScopeMain},
+			{Coord: "maven:io.jsonwebtoken:jjwt-api", Version: "0.12.5", Scope: manifest.ScopeMain},
+			{Coord: "npm:left-pad", Version: "^1.3.0", Scope: manifest.ScopeMain},
 			// A credential in a dependency URL never leaves.
-			{Coord: "npm:vault", Version: "git+https://<redacted>@git.example.invalid/vault.git"},
+			{Coord: "npm:vault", Version: "git+https://<redacted>@git.example.invalid/vault.git", Scope: manifest.ScopeMain},
+			{Coord: "npm:vitest", Version: "4.0.0", Scope: manifest.ScopeDev},
 		},
 	}
 	rid := idOf("tools/loom")

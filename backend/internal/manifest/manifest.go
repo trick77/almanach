@@ -1,8 +1,11 @@
 // Package manifest reads what a repository's build manifests say it is and
 // what it pulls in: a go.mod's module and requires, a pom.xml's
 // coordinates and dependencies, a package.json's name and dependencies, a
-// Gradle build's projects and dependencies (gradle.go). Pure: bytes in, coordinates out, so every rule is a table test. Code
-// derives the dependency graph from these, never a model.
+// Gradle build's projects and dependencies (gradle.go), a pyproject.toml's
+// or requirements file's (python.go), a Cargo.toml's (cargo.go), and the
+// folders a workspace declares (workspace.go). Pure: bytes in, coordinates
+// out, so every rule is a table test. Code derives the dependency graph
+// from these, never a model.
 package manifest
 
 import (
@@ -19,20 +22,54 @@ import (
 // Version is this package's reading of the manifests: raise it with any
 // change to what Parse makes of one, and every repository's manifests are
 // read again at the next sync, not only those whose head moved.
-const Version = 4
+const Version = 5
 
 // Ecosystems: the prefix of a coordinate.
 const (
-	Go    = "go"
-	Maven = "maven"
-	NPM   = "npm"
+	Go     = "go"
+	Maven  = "maven"
+	NPM    = "npm"
+	Python = "py"
+	Cargo  = "cargo"
 )
 
-// Dep is one coordinate a manifest requires and the version it names, as
-// written ("" when none is).
+// Scopes: what a requirement is for, as its manifest says. Only Main is a
+// use at runtime, what the maps and the prompts draw; the others are kept
+// for the dependency page. Managed pins versions (a BOM import, a Gradle
+// platform, a parent POM), Dev builds or checks (an annotation processor,
+// a devDependency, a Cargo build-dependency), Test only runs in tests,
+// Indirect is a go.mod's `// indirect`: a dependency's dependency.
+const (
+	ScopeMain     = "main"
+	ScopeManaged  = "managed"
+	ScopeDev      = "dev"
+	ScopeTest     = "test"
+	ScopeIndirect = "indirect"
+)
+
+// scopeRank orders the scopes, strongest first: a coordinate named twice
+// counts as its strongest use (a library in dependencies and in
+// devDependencies is used).
+var scopeRank = map[string]int{ScopeMain: 0, ScopeManaged: 1, ScopeDev: 2, ScopeTest: 3, ScopeIndirect: 4}
+
+// Stronger reports whether scope a outranks scope b.
+func Stronger(a, b string) bool { return scopeRank[Norm(a)] < scopeRank[Norm(b)] }
+
+// Norm is a stored scope as it counts: "" (a row read before scopes) is
+// main, as everything was then.
+func Norm(s string) string {
+	if _, ok := scopeRank[s]; !ok {
+		return ScopeMain
+	}
+	return s
+}
+
+// Dep is one coordinate a manifest requires, the version it names, as
+// written ("" when none is), and what for.
 type Dep struct {
 	Coord   string `json:"coord"`
 	Version string `json:"version"`
+	Scope   string `json:"scope"`
 }
 
 // Read is what one repository's manifests say: the coordinates it provides
@@ -57,18 +94,20 @@ func Is(p string) bool {
 		return false
 	}
 	switch b := path.Base(p); b {
-	case "go.mod", "pom.xml", "package.json", "gradle.properties":
+	case "go.mod", "go.work", "pom.xml", "package.json", "pnpm-workspace.yaml", "gradle.properties", "pyproject.toml",
+		"Cargo.toml":
 		return true
 	default:
-		return gradleBuild(b) || gradleSettings(b)
+		_, req := requirementsScope(b)
+		return req || gradleBuild(b) || gradleSettings(b)
 	}
 }
 
 // Module is a folder a build among the manifests declares as its own, and
 // which tool declares it.
 type Module struct {
-	Dir           string
-	Gradle, Maven bool
+	Dir                               string
+	Gradle, Maven, NPM, Go, Cargo, Py bool
 }
 
 // Reads reports whether the module's file of this name is read: the
@@ -77,15 +116,19 @@ type Module struct {
 // project would provide what the build does not publish). A settings file
 // or a catalog there makes no build of its own.
 func (m Module) Reads(base string) bool {
-	return m.Maven && base == "pom.xml" || m.Gradle && (base == "gradle.properties" || gradleBuild(base))
+	return m.Maven && base == "pom.xml" || m.Gradle && (base == "gradle.properties" || gradleBuild(base)) ||
+		m.NPM && base == "package.json" || m.Go && base == "go.mod" || m.Cargo && base == "Cargo.toml" ||
+		m.Py && base == "pyproject.toml"
 }
 
 // Modules is the folders the builds among files declare as theirs, by
 // Dir: a Gradle settings file's includes (gradleProjects), a pom.xml's
-// modules, its profiles' too. A declared folder is part of the build at any
-// depth, no copy: its manifests are read too (a multi-project build keeps
-// its projects in lib/<x>, service/<x>, and only there what it requires).
-func Modules(files map[string][]byte) []Module {
+// modules, its profiles' too, and a workspace's members (workspaces: npm,
+// pnpm, go.work, Cargo, uv), whose patterns are matched against dirs, the
+// tree's folders. A declared folder is part of the build at any depth, no
+// copy: its manifests are read too (a multi-project build keeps its
+// projects in lib/<x>, service/<x>, and only there what it requires).
+func Modules(files map[string][]byte, dirs []string) []Module {
 	logic := buildLogic(files)
 	byDir := map[string]*Module{}
 	at := func(d string) *Module {
@@ -122,6 +165,19 @@ func Modules(files map[string][]byte) []Module {
 			}
 		}
 	}
+	for _, w := range workspaces(files, dirs) {
+		m := at(w.dir)
+		switch w.tool {
+		case NPM:
+			m.NPM = true
+		case Go:
+			m.Go = true
+		case Cargo:
+			m.Cargo = true
+		case Python:
+			m.Py = true
+		}
+	}
 	out := make([]Module, 0, len(byDir))
 	for _, m := range byDir {
 		out = append(out, *m)
@@ -142,11 +198,23 @@ func Parse(in map[string][]byte) Read {
 		files[p] = trimBOM(body)
 	}
 	provides := map[string]bool{}
-	requires := map[string]string{}
-	add := func(coord, version string) {
-		if v, ok := requires[coord]; !ok || v == "" {
-			requires[coord] = version
+	requires := map[string]Dep{}
+	// A coordinate named twice: the first version written, the strongest
+	// scope.
+	add := func(d Dep) {
+		d.Scope = Norm(d.Scope)
+		cur, ok := requires[d.Coord]
+		if !ok {
+			requires[d.Coord] = d
+			return
 		}
+		if cur.Version == "" {
+			cur.Version = d.Version
+		}
+		if Stronger(d.Scope, cur.Scope) {
+			cur.Scope = d.Scope
+		}
+		requires[d.Coord] = cur
 	}
 	// By path, so the version two manifests name differently is always
 	// the first one's.
@@ -161,34 +229,45 @@ func Parse(in map[string][]byte) Read {
 	for _, c := range gradleProv {
 		provides[c] = true
 	}
+	cargoWS := cargoWorkspaces(files)
 	for _, p := range paths {
 		body := files[p]
 		var prov []string
 		var reqs []Dep
-		switch path.Base(p) {
+		switch b := path.Base(p); b {
 		case "go.mod":
 			prov, reqs = goMod(body)
+		case "go.work", "pnpm-workspace.yaml":
+			// Members only (Modules), nothing provided or required.
 		case "pom.xml":
 			prov, reqs = pom(body)
 		case "package.json":
 			prov, reqs = packageJSON(body)
+		case "pyproject.toml":
+			prov, reqs = pyproject(body)
+		case "Cargo.toml":
+			prov, reqs = cargo(body, cargoWS.of(dirOf(p)))
 		default:
-			reqs = gradleReqs[p]
+			if scope, ok := requirementsScope(b); ok {
+				reqs = requirements(body, scope)
+			} else {
+				reqs = gradleReqs[p]
+			}
 		}
 		for _, c := range prov {
 			provides[c] = true
 		}
 		for _, d := range reqs {
-			add(d.Coord, d.Version)
+			add(d)
 		}
 	}
 	out := Read{Provides: []string{}, Requires: []Dep{}}
 	for c := range provides {
 		out.Provides = append(out.Provides, c)
 	}
-	for c, v := range requires {
+	for c, d := range requires {
 		if !provides[c] {
-			out.Requires = append(out.Requires, Dep{Coord: c, Version: v})
+			out.Requires = append(out.Requires, d)
 		}
 	}
 	sort.Strings(out.Provides)
@@ -197,8 +276,9 @@ func Parse(in map[string][]byte) Read {
 }
 
 // goMod is a go.mod's module and its requires, line by line: the module
-// directive, require lines and require blocks. Comments, replace and
-// exclude are left alone; an indirect require counts like any.
+// directive, require lines and require blocks. Replace and exclude are
+// left alone; a require marked `// indirect` is a dependency's dependency,
+// Indirect.
 func goMod(body []byte) ([]string, []Dep) {
 	var prov []string
 	var reqs []Dep
@@ -206,7 +286,11 @@ func goMod(body []byte) ([]string, []Dep) {
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	for sc.Scan() {
 		line := sc.Text()
+		scope := ScopeMain
 		if i := strings.Index(line, "//"); i >= 0 {
+			if strings.HasPrefix(strings.TrimSpace(line[i+2:]), "indirect") {
+				scope = ScopeIndirect
+			}
 			line = line[:i]
 		}
 		f := strings.Fields(line)
@@ -218,14 +302,14 @@ func goMod(body []byte) ([]string, []Dep) {
 			inBlock = false
 		case inBlock:
 			if len(f) >= 2 {
-				reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[0]), Version: f[1]})
+				reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[0]), Version: f[1], Scope: scope})
 			}
 		case f[0] == "module" && len(f) >= 2:
 			prov = append(prov, Go+":"+unquote(f[1]))
 		case f[0] == "require" && len(f) >= 2 && f[1] == "(":
 			inBlock = true
 		case f[0] == "require" && len(f) >= 3:
-			reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[1]), Version: f[2]})
+			reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[1]), Version: f[2], Scope: scope})
 		}
 	}
 	return prov, reqs
@@ -256,13 +340,28 @@ type pomDep struct {
 	GroupID    string `xml:"groupId"`
 	ArtifactID string `xml:"artifactId"`
 	Version    string `xml:"version"`
+	Scope      string `xml:"scope"`
+	Type       string `xml:"type"`
+}
+
+// version is the dependency's version as written, "" for a property.
+func (d pomDep) version() string {
+	v := strings.TrimSpace(d.Version)
+	if strings.Contains(v, "${") {
+		return ""
+	}
+	return v
 }
 
 // pom is a pom.xml's own coordinate (groupId from its parent when it has
-// none) and its dependencies, managed ones included, and its parent: a
-// parent POM is what most services of one platform share. A coordinate
-// built of a property (`${...}`) is left out: unresolved, it would match
-// nothing or the wrong thing.
+// none) and its dependencies by scope: compile, runtime, provided and
+// system Main, test Test. Its parent is Managed: build inheritance, what
+// most services of one platform share, no use at runtime. So is a BOM its
+// dependencyManagement imports (`<type>pom</type>`, `<scope>import</scope>`);
+// any other managed entry only pins a version, required by nothing, and
+// gives its version to a dependency naming none. A coordinate built of a
+// property (`${...}`) is left out: unresolved, it would match nothing or
+// the wrong thing.
 func pom(body []byte) ([]string, []Dep) {
 	p, ok := decodePom(body)
 	if !ok {
@@ -277,14 +376,38 @@ func pom(body []byte) ([]string, []Dep) {
 		prov = append(prov, c)
 	}
 	var reqs []Dep
-	for _, d := range append(append([]pomDep{p.Parent}, p.Dependencies...), p.Managed...) {
-		if c, ok := mavenCoord(d.GroupID, d.ArtifactID); ok {
-			v := strings.TrimSpace(d.Version)
-			if strings.Contains(v, "${") {
-				v = ""
-			}
-			reqs = append(reqs, Dep{Coord: c, Version: v})
+	if c, ok := mavenCoord(p.Parent.GroupID, p.Parent.ArtifactID); ok {
+		reqs = append(reqs, Dep{Coord: c, Version: p.Parent.version(), Scope: ScopeManaged})
+	}
+	pinned := map[string]string{}
+	for _, d := range p.Managed {
+		c, ok := mavenCoord(d.GroupID, d.ArtifactID)
+		if !ok {
+			continue
 		}
+		if strings.TrimSpace(d.Scope) == "import" && strings.TrimSpace(d.Type) == "pom" {
+			reqs = append(reqs, Dep{Coord: c, Version: d.version(), Scope: ScopeManaged})
+		} else if _, seen := pinned[c]; !seen {
+			pinned[c] = d.version()
+		}
+	}
+	for _, d := range p.Dependencies {
+		c, ok := mavenCoord(d.GroupID, d.ArtifactID)
+		if !ok {
+			continue
+		}
+		v := d.version()
+		if v == "" && strings.TrimSpace(d.Version) == "" {
+			v = pinned[c]
+		}
+		scope := ScopeMain
+		switch strings.TrimSpace(d.Scope) {
+		case "test":
+			scope = ScopeTest
+		case "import":
+			scope = ScopeManaged
+		}
+		reqs = append(reqs, Dep{Coord: c, Version: v, Scope: scope})
 	}
 	return prov, reqs
 }
@@ -317,14 +440,15 @@ func mavenCoord(group, artifact string) (string, bool) {
 	return Maven + ":" + group + ":" + artifact, true
 }
 
-// packageJSON is a package.json's name and the keys of its dependencies,
-// dev and peer ones included.
+// packageJSON is a package.json's name and the keys of its dependencies:
+// dependencies, peer and optional ones Main, devDependencies Dev.
 func packageJSON(body []byte) ([]string, []Dep) {
 	var p struct {
-		Name string            `json:"name"`
-		Deps map[string]string `json:"dependencies"`
-		Dev  map[string]string `json:"devDependencies"`
-		Peer map[string]string `json:"peerDependencies"`
+		Name     string            `json:"name"`
+		Deps     map[string]string `json:"dependencies"`
+		Dev      map[string]string `json:"devDependencies"`
+		Peer     map[string]string `json:"peerDependencies"`
+		Optional map[string]string `json:"optionalDependencies"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, nil
@@ -334,10 +458,13 @@ func packageJSON(body []byte) ([]string, []Dep) {
 		prov = append(prov, NPM+":"+n)
 	}
 	var reqs []Dep
-	for _, m := range []map[string]string{p.Deps, p.Dev, p.Peer} {
-		for name, v := range m {
+	for _, s := range []struct {
+		m     map[string]string
+		scope string
+	}{{p.Deps, ScopeMain}, {p.Peer, ScopeMain}, {p.Optional, ScopeMain}, {p.Dev, ScopeDev}} {
+		for name, v := range s.m {
 			if name = strings.TrimSpace(name); name != "" {
-				reqs = append(reqs, Dep{Coord: NPM + ":" + name, Version: v})
+				reqs = append(reqs, Dep{Coord: NPM + ":" + name, Version: v, Scope: s.scope})
 			}
 		}
 	}

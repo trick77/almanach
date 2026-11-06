@@ -40,9 +40,10 @@ replace github.com/trick77/webfetch => ../webfetch
 	want := Read{
 		Provides: []string{"go:github.com/trick77/rongo"},
 		Requires: []Dep{
-			{Coord: "go:github.com/ncruces/go-sqlite3", Version: "v0.36.0"},
-			{Coord: "go:github.com/trick77/llmwire", Version: "v0.1.9-0.20261026072811-61ed84c8533a"},
-			{Coord: "go:golang.org/x/sys", Version: "v0.49.0"},
+			{Coord: "go:github.com/ncruces/go-sqlite3", Version: "v0.36.0", Scope: ScopeMain},
+			{Coord: "go:github.com/trick77/llmwire", Version: "v0.1.9-0.20261026072811-61ed84c8533a", Scope: ScopeMain},
+			// A dependency's dependency.
+			{Coord: "go:golang.org/x/sys", Version: "v0.49.0", Scope: ScopeIndirect},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -56,22 +57,28 @@ func TestParse_Pom(t *testing.T) {
   <parent><groupId>com.acme</groupId><artifactId>parent</artifactId><version>3.1</version></parent>
   <artifactId>checkout</artifactId>
   <dependencyManagement><dependencies>
-    <dependency><groupId>com.acme</groupId><artifactId>bom</artifactId><version>2.0</version></dependency>
+    <dependency><groupId>com.acme</groupId><artifactId>bom</artifactId><version>2.0</version><type>pom</type><scope>import</scope></dependency>
+    <dependency><groupId>com.acme</groupId><artifactId>pinned</artifactId><version>7.0</version></dependency>
+    <dependency><groupId>org.junit</groupId><artifactId>junit</artifactId><version>5.10</version></dependency>
   </dependencies></dependencyManagement>
   <dependencies>
     <dependency><groupId>com.acme</groupId><artifactId>commons</artifactId><version>${commons.version}</version></dependency>
     <dependency><groupId>${project.groupId}</groupId><artifactId>sibling</artifactId></dependency>
-    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.9</version></dependency>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.9</version><scope>runtime</scope></dependency>
+    <dependency><groupId>org.junit</groupId><artifactId>junit</artifactId><scope>test</scope></dependency>
   </dependencies>
 </project>`)})
 	want := Read{
 		Provides: []string{"maven:com.acme:checkout"},
 		Requires: []Dep{
-			{Coord: "maven:com.acme:bom", Version: "2.0"},
-			{Coord: "maven:com.acme:commons", Version: ""},
-			// The parent POM is used too.
-			{Coord: "maven:com.acme:parent", Version: "3.1"},
-			{Coord: "maven:org.slf4j:slf4j-api", Version: "2.0.9"},
+			// The imported BOM and the parent only pin versions and share
+			// build settings; a managed entry nothing names is no requirement,
+			// one a dependency names gives it its version.
+			{Coord: "maven:com.acme:bom", Version: "2.0", Scope: ScopeManaged},
+			{Coord: "maven:com.acme:commons", Version: "", Scope: ScopeMain},
+			{Coord: "maven:com.acme:parent", Version: "3.1", Scope: ScopeManaged},
+			{Coord: "maven:org.junit:junit", Version: "5.10", Scope: ScopeTest},
+			{Coord: "maven:org.slf4j:slf4j-api", Version: "2.0.9", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -88,7 +95,7 @@ func TestParse_PomLatin1(t *testing.T) {
   <dependencies><dependency><groupId>com.acme</groupId><artifactId>commons</artifactId><version>1.0</version></dependency></dependencies>
 </project>`)...)
 	got := Parse(map[string][]byte{"pom.xml": body})
-	want := Read{Provides: []string{"maven:com.acme:legacy"}, Requires: []Dep{{Coord: "maven:com.acme:commons", Version: "1.0"}}}
+	want := Read{Provides: []string{"maven:com.acme:legacy"}, Requires: []Dep{{Coord: "maven:com.acme:commons", Version: "1.0", Scope: ScopeMain}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
 	}
@@ -108,15 +115,19 @@ func TestParse_PomOwnParent(t *testing.T) {
 
 func TestParse_PackageJSONAndMonorepo(t *testing.T) {
 	got := Parse(map[string][]byte{
-		"package.json":     []byte(`{"name": "@acme/web", "dependencies": {"react": "^19.0.0", "@acme/ui": "workspace:*"}, "devDependencies": {"vitest": "4.0.0"}}`),
-		"ui/package.json":  []byte(`{"name": "@acme/ui", "peerDependencies": {"react": ">=18"}}`),
+		"package.json":     []byte(`{"name": "@acme/web", "dependencies": {"react": "^19.0.0", "@acme/ui": "workspace:*"}, "devDependencies": {"vitest": "4.0.0", "zod": "3"}, "optionalDependencies": {"fsevents": "2"}}`),
+		"ui/package.json":  []byte(`{"name": "@acme/ui", "peerDependencies": {"react": ">=18"}, "dependencies": {"zod": "^3.2"}}`),
 		"bad/package.json": []byte(`{not json`),
 	})
 	want := Read{
 		Provides: []string{"npm:@acme/ui", "npm:@acme/web"},
 		Requires: []Dep{
-			{Coord: "npm:react", Version: "^19.0.0"},
-			{Coord: "npm:vitest", Version: "4.0.0"},
+			{Coord: "npm:fsevents", Version: "2", Scope: ScopeMain},
+			{Coord: "npm:react", Version: "^19.0.0", Scope: ScopeMain},
+			{Coord: "npm:vitest", Version: "4.0.0", Scope: ScopeDev},
+			// Dev at the root, used by ui: the strongest counts, the first
+			// version written.
+			{Coord: "npm:zod", Version: "3", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -138,7 +149,7 @@ func TestModules(t *testing.T) {
 		"parent/mod/pom.xml":       []byte(`<project><modules><module>sub</module></modules><profiles><profile><modules><module>it</module></modules></profile></profiles></project>`),
 		// A Gradle project's leftover pom declares no build's modules.
 		"service/pom.xml": []byte(`<project><modules><module>old/stale</module></modules></project>`),
-	})
+	}, nil)
 	want := []Module{
 		{Dir: "jvm/tools", Gradle: true},
 		{Dir: "jvm/tools/cli", Gradle: true},
@@ -196,9 +207,9 @@ func TestParse_GradleProjectsTwoDown(t *testing.T) {
 	want := Read{
 		Provides: []string{"maven:example.svc:api", "maven:example.svc:core", "maven:example.svc:svc"},
 		Requires: []Dep{
-			{Coord: "maven:example.flow:flow-engine", Version: "1.2"},
-			{Coord: "maven:example.wire:wire-core", Version: "2.0"},
-			{Coord: "maven:org.example:store", Version: "3.1"},
+			{Coord: "maven:example.flow:flow-engine", Version: "1.2", Scope: ScopeMain},
+			{Coord: "maven:example.wire:wire-core", Version: "2.0", Scope: ScopeMain},
+			{Coord: "maven:org.example:store", Version: "3.1", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -216,7 +227,7 @@ func TestParse_GradleIntermediateProject(t *testing.T) {
 	})
 	want := Read{
 		Provides: []string{"maven:example.svc:bom", "maven:example.svc:core", "maven:example.svc:platform", "maven:example.svc:svc"},
-		Requires: []Dep{{Coord: "maven:org.example:base-bom", Version: "2.0"}},
+		Requires: []Dep{{Coord: "maven:org.example:base-bom", Version: "2.0", Scope: ScopeManaged}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
@@ -236,7 +247,7 @@ func TestParse_GradleNestedBuildOwnsItsProjects(t *testing.T) {
 	})
 	want := Read{
 		Provides: []string{"maven:example.jvm:cli", "maven:example.jvm:jvm"},
-		Requires: []Dep{{Coord: "maven:example.wire:wire-core", Version: "2.1"}},
+		Requires: []Dep{{Coord: "maven:example.wire:wire-core", Version: "2.1", Scope: ScopeMain}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)

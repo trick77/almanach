@@ -45,17 +45,32 @@ export function shortVersion(v: string): string {
   return one.length <= versionMax ? one : one.slice(0, versionMax - 1) + "…";
 }
 
+type DepEdge = Dependencies["edges"][number];
+
+/** isMain reports whether an edge is a use at runtime. */
+export const isMain = (e: DepEdge) => e.scope === "main";
+
+/** edgeLabel is an edge's label: the version the user names, and for a use
+ *  other than at runtime what it is for. */
+export function edgeLabel(e: DepEdge): string {
+  const v = shortVersion(e.version);
+  const what = S.deps.scopes[e.scope] ?? "";
+  return [what, v].filter((s) => s !== "").join(` ${S.common.sep} `);
+}
+
 /** depGraph is the graph as a flow, left to right: a repository something
  *  is used stands among the shared ones, the rest among the users; an edge per
- *  use, labelled with the version the user names. Only repositories with
+ *  use, labelled with the version the user names, dashed when it is not a
+ *  use at runtime (mainOnly: those left out). Only repositories with
  *  an edge are drawn. Built by code from the graph the store joined, not
  *  a model's: no validation to pass, every label escaped by the drawing
  *  as any other. */
-export function depGraph(d: Dependencies): FlowIR {
+export function depGraph(d: Dependencies, mainOnly = false): FlowIR {
   const name = repoNamer(d);
-  const used = new Set(d.edges.map((e) => refId(e.to)));
+  const edges = mainOnly ? d.edges.filter(isMain) : d.edges;
+  const used = new Set(edges.map((e) => refId(e.to)));
   const nodes = new Map<string, RepoRef>();
-  for (const e of d.edges) {
+  for (const e of edges) {
     nodes.set(refId(e.from), e.from);
     nodes.set(refId(e.to), e.to);
   }
@@ -72,21 +87,27 @@ export function depGraph(d: Dependencies): FlowIR {
       shape: "pill",
       zone: used.has(id) ? "shared" : "users",
     })),
-    edges: d.edges.map((e) => ({
+    edges: edges.map((e) => ({
       from: refId(e.from),
       to: refId(e.to),
-      label: shortVersion(e.version),
-      dashed: false,
+      label: edgeLabel(e),
+      dashed: !isMain(e),
       head: "end",
     })),
   };
 }
 
 /** SharedRow is one row of the table: a used repository and its users, each
- *  with the version it names; odd marks a version the others do not name. */
+ *  with the version it names and what for; odd marks a version the others
+ *  do not name. */
 interface SharedRow {
   lib: RepoRef;
-  users: { ref: RepoRef; version: string; odd: boolean }[];
+  users: {
+    ref: RepoRef;
+    version: string;
+    scope: DepEdge["scope"];
+    odd: boolean;
+  }[];
 }
 
 /** sharedRows is every used repository, in the graph's order. */
@@ -95,7 +116,12 @@ export function sharedRows(d: Dependencies): SharedRow[] {
   for (const e of d.edges) {
     const id = refId(e.to);
     if (!rows.has(id)) rows.set(id, { lib: e.to, users: [] });
-    rows.get(id)!.users.push({ ref: e.from, version: e.version, odd: false });
+    rows.get(id)!.users.push({
+      ref: e.from,
+      version: e.version,
+      scope: e.scope,
+      odd: false,
+    });
   }
   for (const row of rows.values()) {
     const odd = oddVersions(row.users.map((u) => u.version));
@@ -147,29 +173,55 @@ export function DepsPage() {
   );
 }
 
+/** drawnGraph is the graph the page draws: every use when it fits, else
+ *  the uses at runtime alone when those fit (mainOnly), else none. */
+export function drawnGraph(data: Dependencies): {
+  ir: FlowIR;
+  draw: boolean;
+  mainOnly: boolean;
+} {
+  const all = titledZones(depGraph(data), S.diagram.depZones);
+  if (fits(all) || data.edges.every(isMain)) {
+    return { ir: all, draw: fits(all), mainOnly: false };
+  }
+  const main = titledZones(depGraph(data, true), S.diagram.depZones);
+  if (main.edges.length > 0 && fits(main)) {
+    return { ir: main, draw: true, mainOnly: true };
+  }
+  return { ir: all, draw: false, mainOnly: false };
+}
+
 function DepsBody({ data }: { data: Dependencies }) {
   const name = repoNamer(data);
-  const ir = titledZones(depGraph(data), S.diagram.depZones);
+  const { ir, draw, mainOnly } = drawnGraph(data);
   const rows = sharedRows(data);
   const [hd0, hd1, hd2] = S.deps.headers;
+  const note = "my-2 text-[13.5px] text-faint";
   return (
     <>
       {data.edges.length > 0 && (
         <>
           <div className={eyebrow}>{S.deps.graph}</div>
-          {fits(ir) ? (
-            <Diagram
-              ir={ir}
-              title={S.deps.title}
-              links={(id) => {
-                const r = data.repos.find((x) => refId(x) === id);
-                return r ? repoPath(r.project, r.slug) : null;
-              }}
-            />
+          {draw ? (
+            <>
+              <Diagram
+                ir={ir}
+                title={S.deps.title}
+                links={(id) => {
+                  const r = data.repos.find((x) => refId(x) === id);
+                  return r ? repoPath(r.project, r.slug) : null;
+                }}
+              />
+              {mainOnly ? (
+                <p className={note}>{S.deps.mainOnly}</p>
+              ) : (
+                ir.edges.some((e) => e.dashed) && (
+                  <p className={note}>{S.deps.dashed}</p>
+                )
+              )}
+            </>
           ) : (
-            <p className="my-2 text-[13.5px] text-faint">
-              {S.deps.tooLarge(ir.nodes.length)}
-            </p>
+            <p className={note}>{S.deps.tooLarge(ir.nodes.length)}</p>
           )}
           <div className={eyebrow}>{S.deps.shared}</div>
           <div className={tableBox}>
@@ -193,11 +245,18 @@ function DepsBody({ data }: { data: Dependencies }) {
                       <td className={tdMono}>
                         <RepoLink r={u.ref} name={name} />
                       </td>
-                      <td
-                        className={tdMono + (u.odd ? " text-ochre" : "")}
-                        title={u.odd ? S.deps.otherVersion : undefined}
-                      >
-                        {u.version || S.deps.noVersion}
+                      <td className={tdMono}>
+                        <span
+                          className={u.odd ? "text-ochre" : undefined}
+                          title={u.odd ? S.deps.otherVersion : undefined}
+                        >
+                          {u.version || S.deps.noVersion}
+                        </span>
+                        {u.scope !== "main" && (
+                          <span className="ml-2 text-faint">
+                            {S.deps.scopes[u.scope]}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   )),

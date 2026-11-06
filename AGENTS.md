@@ -64,5 +64,6 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   `component`) or collection (summary alone); model judges, no switch (user, 2026-11-04); its
   drops the model's word, PR-taught too.
 - Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, no
-  kind, not "library"; map zone UI-drawn.
+  kind, not "library"; map zone UI-drawn. Maps, prompts, uses: main scope only (test, dev, pins
+  dashed on Abhängigkeiten alone); parent POM a pin.
 - Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice): model's tags, `RuntimeOnly`.

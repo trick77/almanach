@@ -18,6 +18,7 @@ import (
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
+	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
 )
@@ -58,7 +59,21 @@ type fakeStore struct {
 	libs map[string][]store.SharedRepo
 }
 
-func (f *fakeStore) Dependencies(context.Context) (store.Graph, error) { return f.graph, f.graphErr }
+// Dependencies answers graph; all false keeps its main edges only, as the
+// store joins main requirements only.
+func (f *fakeStore) Dependencies(_ context.Context, all bool) (store.Graph, error) {
+	if all || f.graphErr != nil {
+		return f.graph, f.graphErr
+	}
+	g := f.graph
+	g.Edges = nil
+	for _, e := range f.graph.Edges {
+		if manifest.Norm(e.Scope) == manifest.ScopeMain {
+			g.Edges = append(g.Edges, e)
+		}
+	}
+	return g, nil
+}
 
 // Libraries answers libs by project key; graphErr fails it.
 func (f *fakeStore) Shared(_ context.Context, key, _ string) ([]store.SharedRepo, error) {

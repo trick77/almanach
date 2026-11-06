@@ -105,24 +105,27 @@ func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.
 	}
 	// Then the folders the builds declare (manifest.Modules), at any depth,
 	// until a pass declares none new: a Maven module may list modules of
-	// its own. Each module is visited once, so the passes end.
-	var byDir map[string][]gitrepo.Entry
+	// its own. Each module is visited once, so the passes end. A
+	// workspace's patterns are matched against the tree's folders.
+	byDir := map[string][]gitrepo.Entry{}
+	var dirs []string
+	for _, e := range entries {
+		if baseline.Readable(e) {
+			d := path.Dir(e.Path)
+			if _, ok := byDir[d]; !ok && d != "." {
+				dirs = append(dirs, d)
+			}
+			byDir[d] = append(byDir[d], e)
+		}
+	}
 	visited := map[manifest.Module]bool{}
 	for {
 		var next []gitrepo.Entry
-		for _, m := range manifest.Modules(files) {
+		for _, m := range manifest.Modules(files, dirs) {
 			if visited[m] {
 				continue
 			}
 			visited[m] = true
-			if byDir == nil {
-				byDir = map[string][]gitrepo.Entry{}
-				for _, e := range entries {
-					if baseline.Readable(e) {
-						byDir[path.Dir(e.Path)] = append(byDir[path.Dir(e.Path)], e)
-					}
-				}
-			}
 			for _, e := range byDir[m.Dir] {
 				if !tried[e.Path] && m.Reads(path.Base(e.Path)) {
 					next = append(next, e)

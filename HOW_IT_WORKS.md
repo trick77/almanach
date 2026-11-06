@@ -575,16 +575,43 @@ repository moved from a Bitbucket project to a folder is taken there.
 
 Who uses whom is code's, never a model's. After a sync, still under the
 clone's lock, the poller reads the build manifests at the head when they
-were last read at another commit: `go.mod`, `pom.xml`, `package.json`,
-`build.gradle(.kts)`, `settings.gradle(.kts)`, `gradle.properties`, at
-the root or one level down, and at any depth in a folder a Gradle
-`include` or a Maven `<module>` declares (an undeclared deeper one is a
-copy, a checked-out corpus or a fixture), and `gradle/libs.versions.toml`. `internal/manifest` turns
-them into coordinates: what the repository provides (`go:<module>`,
-`maven:<group>:<artifact>`, `npm:<name>`) and what it requires, with the
-version as written; a POM's parent counts as required, and an ISO-8859-1
-POM is read. A `${...}` coordinate is left out, a `${...}` version is
-empty.
+were last read at another commit: `go.mod`, `go.work`, `pom.xml`,
+`package.json`, `pnpm-workspace.yaml`, `build.gradle(.kts)`,
+`settings.gradle(.kts)`, `gradle.properties`, `pyproject.toml`,
+`requirements.txt` (and its `-dev`/`-test` kin), `Cargo.toml`, at the root
+or one level down, and at any depth in a folder a build declares: a Gradle
+`include`, a Maven `<module>`, a workspace's member (npm's and Yarn's
+`workspaces`, pnpm's `packages`, `go.work`'s `use`, Cargo's and uv's
+`members`, `*` one folder name, `**` any depth, matched against the tree's
+folders, `!x` or `exclude` left out, `node_modules` never). An undeclared
+deeper one is a copy, a checked-out corpus or a fixture. And
+`gradle/libs.versions.toml`. `internal/manifest` turns them into
+coordinates: what the repository provides (`go:<module>`,
+`maven:<group>:<artifact>`, `npm:<name>`, `py:<name>` as PEP 503
+normalises it, `cargo:<crate>` with `_` as `-`) and what it requires, with
+the version as written and what for. An ISO-8859-1 POM is read. A
+`${...}` coordinate is left out, a `${...}` version is empty.
+
+Each requirement has a scope, from the manifest's own words: `main` a use
+at runtime (Maven compile, runtime, provided; Gradle `implementation`,
+`api`, `compileOnly`, `runtimeOnly`; npm `dependencies`, peer and
+optional; Python `[project].dependencies`; Cargo `[dependencies]`);
+`test` tests only (Maven `test`, a Gradle test source set's configuration
+or `testFixtures(...)`, Cargo `[dev-dependencies]`, a Python group named
+test); `dev` a build or check tool (an annotation processor, kapt, ksp,
+`developmentOnly`, npm `devDependencies`, Cargo `[build-dependencies]`, a
+Python extra or any other group); `managed` a version pin (a POM's
+parent, a BOM imported by `dependencyManagement`, a Gradle `platform(...)`
+or `mavenBom`); `indirect` a go.mod's `// indirect`. A coordinate named
+twice counts as its strongest, in that order. A `dependencyManagement`
+entry that is no BOM import is no requirement: it only gives its version
+to a dependency naming none. Only main uses are the system: the maps, the
+prompts (`store.Shared`, the project step's build dependencies), a
+repository's `uses`, `used_by` and its export count them alone; the page
+"Abhängigkeiten" draws the others dashed. A row read before scopes
+(`manifest.Version` 4) is main until its next sync reads it again. Maps a
+project's last run drew from a test-only edge keep it until its next run:
+the rule is code's input, no prompt's, so no epoch.
 
 A Gradle build is a script, so it is read, not run, and its files
 together: settings names the root project and includes the others, the
@@ -620,13 +647,16 @@ ambiguous; when the providers share one clone URL (two sources cloned it
 before the rule) it says so, and removing all but one row gives the edges
 back. A repository's body carries `uses` (with the other users, `also`)
 and `used_by`, the `.md` export an `Abhängigkeiten` section, and
-`GET /api/dependencies` the whole graph, drawn on the page
-"Abhängigkeiten" as a flow from users to the repositories they use. With
-the sources off every list is empty.
+`GET /api/dependencies` the whole graph, every scope, each edge its
+strongest, drawn on the page "Abhängigkeiten" as a flow from users to the
+repositories they use, a non-main edge amber dashed with what it is for
+(a gray dashed one is the flow's loop back, any scope); when
+all would not fit and the main ones do, the main ones alone, said under
+it. With the sources off every list is empty.
 
 A repository others depend on is a **shared** repository, whatever it is
 (a library, a client module of a service, a contract): the manifests say
-only that one requires what the other publishes, a build dependency.
+only that one requires what the other publishes, a main build dependency.
 There is no kind to declare. A shared repository is described once, on
 its own page, and read as context where it is used. Every describe step
 gets the summaries of the repositories its repository depends on

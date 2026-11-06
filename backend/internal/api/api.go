@@ -55,7 +55,7 @@ type Store interface {
 	// new one.
 	ProjectKeyOf(ctx context.Context, key string) (string, bool, error)
 	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
-	Dependencies(ctx context.Context) (store.Graph, error)
+	Dependencies(ctx context.Context, all bool) (store.Graph, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 }
 
@@ -681,7 +681,7 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "repos")
 		return
 	}
-	g, err := d.graph(ctx)
+	g, err := d.graph(ctx, false)
 	if err != nil {
 		httpx.ServerError(w, r, err, "dependencies")
 		return
