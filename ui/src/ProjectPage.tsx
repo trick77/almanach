@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectDetail, SharedRepo } from "./api";
-import { DescriptionView, descriptionRail } from "./Description";
+import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import { CompactMap } from "./CompactMap";
 import { titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
@@ -50,7 +50,6 @@ import {
 /** The project page's tabs by their hash: the overview first, the hub's
  *  job; the description second. */
 const OVERVIEW = "overview";
-const DESCRIPTION = "description";
 const TABS = [OVERVIEW, DESCRIPTION];
 const tabLabel = (t: string) =>
   t === OVERVIEW ? S.tabs.overview : S.tabs.description;

@@ -18,6 +18,11 @@ import {
   useCopied,
 } from "./ui";
 
+/** DESCRIPTION is the description tab's hash on both pages, the first
+ *  part of a statement's deep link (anchorHash): a note page links into
+ *  it too. */
+export const DESCRIPTION = "description";
+
 /** kindLabel names one statement's kind, as a label over its name: the
  *  project page's entities are the shared ones and say so. A kind the UI
  *  does not know shows as stored. */
@@ -243,7 +248,7 @@ function AnchorLink({
       }}
       className="float-right px-1 font-mono text-[11px] text-faint hover:text-ink"
     >
-      {done ? S.copy.done : "#"}
+      {done ? S.copy.done : S.copy.statementAnchor}
     </a>
   );
 }
@@ -353,7 +358,7 @@ export function StatementBlock({
       id={s.id}
       data-targeted={targeted || undefined}
       className={
-        "group scroll-mt-16 border-t border-border-soft py-3 first-of-type:border-t-0 " +
+        "scroll-mt-16 border-t border-border-soft py-3 first-of-type:border-t-0 " +
         (targeted ? "-mx-3 rounded-ui bg-active px-3" : "")
       }
     >

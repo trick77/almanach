@@ -436,29 +436,37 @@ type TaughtRow struct {
 }
 
 // Taught lists the statements on the project's current pages that carry
-// the PR key among their sources, the repository page's before the
-// project's, each page in its stored order: the note page's reverse
+// the repository's PR among their sources, the repository page's before
+// the project's, each page in its stored order: the note page's reverse
 // provenance. The project's pages alone (a note teaches its own project),
 // current ones only: a statement dropped since is not taught any more.
 // Only pages the read routes serve: with sourced, a source project's and
 // its source repositories' (a repository removed from the sources keeps
-// its page but answers 404). The key is matched in any case, as a name
-// is; the project by any name it had.
-func (s *Store) Taught(ctx context.Context, project, prKey string, sourced bool) ([]TaughtRow, error) {
-	pid, ok, err := projectID(ctx, s.db, project)
+// its page but answers 404). A source names the PR by its key, which
+// embeds the names it had then: the PR is found under every name its
+// project and repository ever had, in any case, and under the note's own
+// key, so a rename and a re-delivery since leave the older credits found.
+func (s *Store) Taught(ctx context.Context, project, repo string, prID int, sourced bool) ([]TaughtRow, error) {
+	pid, rid, ok, err := scopeIDs(ctx, s.db, project, repo)
 	if err != nil || !ok {
 		return []TaughtRow{}, err
 	}
 	//nolint:gosec // G202: constant fragments of this file, no value spliced in
 	rows, err := s.db.QueryContext(ctx, `
+		WITH keys(k) AS (
+		  SELECT pn.key || '/' || rn.slug || '#' || ?
+		    FROM repo_names rn JOIN project_names pn ON pn.project_id = rn.project_id
+		   WHERE rn.repo_id = ?
+		  UNION SELECT pr_key FROM notes WHERE repo_id = ? AND pr_id = ?)
 		SELECT p.scope, pj.key, COALESCE(rp.slug, ''), st.value ->> '$.id', st.value ->> '$.kind', st.value ->> '$.name'
 		  FROM pages p JOIN revisions r ON r.id = p.current_revision_id
 		  JOIN `+projectsFrom(sourced)+` pj ON pj.id = p.project_id
 		  LEFT JOIN `+reposFrom(sourced)+` rp ON rp.id = p.repo_id,
 		  json_each(r.statements) st
 		 WHERE p.project_id = ? AND (p.scope = 'project' OR rp.id IS NOT NULL)
-		   AND EXISTS (SELECT 1 FROM json_each(st.value, '$.sources') src WHERE src.value ->> '$.pr_key' = ? COLLATE NOCASE)
-		 ORDER BY p.scope = 'project', rp.slug, st.key`, pid, prKey)
+		   AND EXISTS (SELECT 1 FROM json_each(st.value, '$.sources') src
+		                WHERE src.value ->> '$.pr_key' COLLATE NOCASE IN (SELECT k FROM keys))
+		 ORDER BY p.scope = 'project', rp.slug, st.key`, prID, rid, rid, prID, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -469,7 +477,6 @@ func (s *Store) Taught(ctx context.Context, project, prKey string, sourced bool)
 		if err := rows.Scan(&t.Scope, &t.ProjectKey, &t.RepoSlug, &t.ID, &t.Kind, &t.Name); err != nil {
 			return nil, err
 		}
-		t.Name = redact.Text(t.Name)
 		out = append(out, t)
 	}
 	return out, rows.Err()

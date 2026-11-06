@@ -251,7 +251,7 @@ func TestTaught(t *testing.T) {
 		Statements: []Statement{{ID: "s1", Kind: "flow", Name: "Upload", Text: "t", Sources: src("PRJ/svc#1")}}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Taught(ctx, "PRJ", "PRJ/svc#1", false)
+	got, err := s.Taught(ctx, "PRJ", "svc", 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,10 +268,10 @@ func TestTaught(t *testing.T) {
 	if _, err := s.InsertRevision(ctx, repoRev); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Taught(ctx, "PRJ", "PRJ/svc#1", false); err != nil || len(got) != 2 || got[0].ID != "s3" || got[1].Scope != ScopeProject {
+	if got, err := s.Taught(ctx, "PRJ", "svc", 1, false); err != nil || len(got) != 2 || got[0].ID != "s3" || got[1].Scope != ScopeProject {
 		t.Errorf("Taught after the drop = %+v, %v", got, err)
 	}
-	if got, err := s.Taught(ctx, "PRJ", "PRJ/svc#7", false); err != nil || len(got) != 0 {
+	if got, err := s.Taught(ctx, "PRJ", "svc", 7, false); err != nil || len(got) != 0 {
 		t.Errorf("Taught of a PR no statement names = %+v, %v; want none, not nil", got, err)
 	}
 	// Another project's pages are not read, even for the same key; an
@@ -281,29 +281,66 @@ func TestTaught(t *testing.T) {
 		Statements: []Statement{{ID: "s1", Kind: "rule", Name: "Stray", Text: "t", Sources: src("PRJ/svc#1")}}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Taught(ctx, "PRJ", "PRJ/svc#1", false); err != nil || len(got) != 2 {
+	if got, err := s.Taught(ctx, "PRJ", "svc", 1, false); err != nil || len(got) != 2 {
 		t.Errorf("Taught with another project's page naming the key = %+v, %v; want PRJ's two", got, err)
 	}
-	if got, err := s.Taught(ctx, "NONE", "PRJ/svc#1", false); err != nil || len(got) != 0 {
+	if got, err := s.Taught(ctx, "NONE", "svc", 1, false); err != nil || len(got) != 0 {
 		t.Errorf("Taught of an unknown project = %+v, %v; want none", got, err)
 	}
 	// With the sources on, only a source project's pages are on the wire,
 	// and of those its source repositories': a project without a source
 	// row teaches nothing, a repository that is no source neither.
-	if got, err := s.Taught(ctx, "PRJ", "PRJ/svc#1", true); err != nil || len(got) != 0 {
+	if got, err := s.Taught(ctx, "PRJ", "svc", 1, true); err != nil || len(got) != 0 {
 		t.Errorf("Taught sourced, PRJ no source = %+v, %v; want none", got, err)
 	}
 	if err := s.CreateSource(ctx, staticSource("PRJ")); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Taught(ctx, "PRJ", "PRJ/svc#1", true); err != nil || len(got) != 1 || got[0].Scope != ScopeProject {
+	if got, err := s.Taught(ctx, "PRJ", "svc", 1, true); err != nil || len(got) != 1 || got[0].Scope != ScopeProject {
 		t.Errorf("Taught sourced, svc no source = %+v, %v; want the project's alone", got, err)
 	}
 	if err := s.AddSourceRepo(ctx, SourceRepo{ProjectKey: "PRJ", Slug: "svc", CloneURL: "https://example.invalid/svc.git"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Taught(ctx, "PRJ", "PRJ/svc#1", true); err != nil || len(got) != 2 || got[0].RepoSlug != "svc" {
+	if got, err := s.Taught(ctx, "PRJ", "svc", 1, true); err != nil || len(got) != 2 || got[0].RepoSlug != "svc" {
 		t.Errorf("Taught sourced, svc a source = %+v, %v; want both", got, err)
+	}
+}
+
+// Taught finds a PR's credits under every name it had: a renamed
+// repository and project, the note re-delivered under its new key, leave
+// the statements credited under the old key found, and the new ones too.
+func TestTaught_Renamed(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "PRJ", "svc")
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	src := func(pr string) []Source { return []Source{{PRKey: pr, TicketKey: "ABC-1", MergedAt: mergedBase}} }
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "r", SourcePR: "PRJ/svc#1",
+		Statements: []Statement{{ID: "s1", Kind: "rule", Name: "Limit", Text: "t", Sources: src("PRJ/svc#1")}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenameRepo(ctx, "PRJ", "svc", "files", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RenameProject(ctx, "PRJ", "PRX"); err != nil {
+		t.Fatal(err)
+	}
+	ingest(t, s, noteFor("PRX", "files", 1))
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRX", RepoSlug: "files", Summary: "r", SourcePR: "PRX/files#1",
+		Statements: []Statement{
+			{ID: "s1", Kind: "rule", Name: "Limit", Text: "t", Sources: src("PRJ/svc#1")},
+			{ID: "s2", Kind: "rule", Name: "Retry", Text: "t", Sources: src("PRX/files#1")},
+			{ID: "s3", Kind: "rule", Name: "Other", Text: "t", Sources: src("PRJ/svc#2")},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Taught(ctx, "PRX", "files", 1, false)
+	if err != nil || len(got) != 2 || got[0].ID != "s1" || got[1].ID != "s2" || got[0].ProjectKey != "PRX" || got[0].RepoSlug != "files" {
+		t.Errorf("Taught after the renames = %+v, %v; want s1 and s2 under the current names", got, err)
+	}
+	if again, err := s.Taught(ctx, "PRJ", "svc", 1, false); err != nil || !slices.Equal(again, got) {
+		t.Errorf("Taught by the old names = %+v, %v; want the same", again, err)
 	}
 }
 

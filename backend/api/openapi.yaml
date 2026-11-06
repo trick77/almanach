@@ -2754,8 +2754,11 @@ components:
                 statement dropped since is not listed; a project of one has
                 no project page here either, and with the sources on only
                 source repositories' pages count, as on the repository
-                route. Empty when the note is not folded yet (the pages are
-                not read then) or taught nothing. Links as
+                route. A statement is found under every name the
+                project and repository had, so a rename keeps older
+                credits listed; a note queued again (a re-delivery) keeps
+                what its earlier fold taught. Empty when nothing on the
+                pages names the pull request. Links as
                 `/projects/{project_key}[/repos/{repo_slug}]#description/{id}`.
               items:
                 $ref: "#/components/schemas/Taught"

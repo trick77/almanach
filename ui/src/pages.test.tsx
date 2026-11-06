@@ -636,6 +636,25 @@ describe("ProjectPage", () => {
     expect(scrolled.mock.calls.length).toBe(before);
   });
 
+  it("hands the page to the reader on a click while it settles", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.replaceState({}, "", "/projects/PAY#description/s1");
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    await screen.findByText("Auftragsannahme");
+    await waitFor(() => expect(scrolled).toHaveBeenCalled());
+    // A click (a rail entry, the scrollbar) is the reader's: a change of
+    // the page after it, a rail's aria-current among them, moves nothing.
+    const before = scrolled.mock.calls.length;
+    fireEvent.pointerDown(window);
+    document.body.setAttribute("data-x", "1");
+    document.body.appendChild(document.createElement("p"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(scrolled.mock.calls.length).toBe(before);
+    document.body.removeAttribute("data-x");
+  });
+
   it("opens the description on a target it does not have, the page whole", async () => {
     window.history.replaceState({}, "", "/projects/PAY#description/s99");
     serve({ "projects/PAY": project });
@@ -1656,12 +1675,13 @@ describe("NotePage", () => {
     });
     render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
     expect(await screen.findByText("Eingearbeitet in")).toBeInTheDocument();
-    expect(
-      screen
-        .getByText("Grenze aus `limit()`")
-        .closest("a")
-        ?.getAttribute("href"),
-    ).toBe("/projects/PAY/repos/pay-api#description/s3");
+    // The name's inline markup renders as on the page: code, no backticks.
+    const code = screen.getByText("limit()");
+    expect(code.tagName).toBe("CODE");
+    expect(screen.queryByText(/`limit\(\)`/)).toBeNull();
+    expect(code.closest("a")?.getAttribute("href")).toBe(
+      "/projects/PAY/repos/pay-api#description/s3",
+    );
     expect(screen.getByText("Regel")).toBeInTheDocument();
     expect(screen.getByText("Auftrag").closest("a")?.getAttribute("href")).toBe(
       "/projects/PAY#description/s1",

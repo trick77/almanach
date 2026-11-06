@@ -418,8 +418,8 @@ function same(prev: At, next: At): At {
  *  the statement: content above it lands later (a repository's problem
  *  areas from the project fetch, a map or a statement's diagram laid out
  *  once elk has loaded) and pushes it down, so the jump is redone on
- *  every change of the page in that time, unless the reader scrolled or
- *  typed meanwhile: then the page is theirs. */
+ *  every change of the page in that time, unless the reader scrolled,
+ *  clicked or typed meanwhile: then the page is theirs. */
 const settleMs = 3000;
 
 /** useJumpTo scrolls the element a deep link names into view once it is
@@ -453,7 +453,10 @@ export function useJumpTo(landing: string, ready: boolean) {
       for (const ev of taken) window.removeEventListener(ev, stop);
       window.clearTimeout(settled);
     };
-    const taken = ["wheel", "touchmove", "keydown"] as const;
+    // pointerdown: a click (a rail entry, another statement's control)
+    // or a grab of the scrollbar moves the page too, and a rail jump's
+    // aria-current change is a mutation that would pull it back.
+    const taken = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
     for (const ev of taken) window.addEventListener(ev, stop);
     const settled = window.setTimeout(stop, settleMs);
     return stop;

@@ -49,7 +49,7 @@ type Store interface {
 	Revisions(ctx context.Context, scope, project, repo string, limit int) ([]store.RevisionRow, error)
 	Notes(ctx context.Context, project, repo string, limit int) ([]store.NoteRow, error)
 	NoteByKey(ctx context.Context, project, repo string, prID int) (store.NoteDetail, bool, error)
-	Taught(ctx context.Context, project, prKey string, sourced bool) ([]store.TaughtRow, error)
+	Taught(ctx context.Context, project, repo string, prID int, sourced bool) ([]store.TaughtRow, error)
 	Problems(ctx context.Context, project string, days int) ([]store.ProblemArea, error)
 	// Any name a project or repository ever had finds it; these give its
 	// current names, which a response carries so an old URL lands on the
@@ -791,29 +791,28 @@ func (d Deps) note(w http.ResponseWriter, r *http.Request) {
 		MergeCommit: n.MergeCommit, RunID: n.RunID, ModelLabel: n.ModelLabel, Bugfix: orNull(n.Bugfix), BugfixArea: n.BugfixArea,
 		Note: orNull(n.Body), ReceivedAt: n.ReceivedAt, ConsolidatedAt: n.ConsolidatedAt, Taught: []taughtBody{},
 	}
-	// Only a folded note can have taught: the scan over every current
-	// page's statements is spared a queued or failed one.
-	if n.ConsolidatedAt != nil {
-		taught, err := d.Store.Taught(ctx, n.ProjectKey, n.PRKey, d.Sources != nil)
-		if err != nil {
-			httpx.ServerError(w, r, err, "taught")
+	// Read whether the note is folded or not: a re-delivered note is queued
+	// again (consolidated_at cleared) while the pages still carry what its
+	// earlier fold taught.
+	taught, err := d.Store.Taught(ctx, n.ProjectKey, n.RepoSlug, n.PRID, d.Sources != nil)
+	if err != nil {
+		httpx.ServerError(w, r, err, "taught")
+		return
+	}
+	// A project of one has no project page: one written while it had more
+	// repositories stays in the store, not on the wire (see project); its
+	// repository's page is at the project's path.
+	if len(taught) > 0 {
+		if out.Single, err = d.single(ctx, n.ProjectKey); err != nil {
+			httpx.ServerError(w, r, err, "project source")
 			return
 		}
-		// A project of one has no project page: one written while it had
-		// more repositories stays in the store, not on the wire (see
-		// project); its repository's page is at the project's path.
-		if len(taught) > 0 {
-			if out.Single, err = d.single(ctx, n.ProjectKey); err != nil {
-				httpx.ServerError(w, r, err, "project source")
-				return
-			}
+	}
+	for _, t := range taught {
+		if out.Single && t.Scope == store.ScopeProject {
+			continue
 		}
-		for _, t := range taught {
-			if out.Single && t.Scope == store.ScopeProject {
-				continue
-			}
-			out.Taught = append(out.Taught, taughtBody{Scope: t.Scope, ProjectKey: t.ProjectKey, RepoSlug: t.RepoSlug, ID: t.ID, Kind: t.Kind, Name: t.Name})
-		}
+		out.Taught = append(out.Taught, taughtBody{Scope: t.Scope, ProjectKey: t.ProjectKey, RepoSlug: t.RepoSlug, ID: t.ID, Kind: t.Kind, Name: t.Name})
 	}
 	if c := n.Call; c != nil {
 		out.Call = &noteCallBody{Outcome: c.Outcome, NoteStatus: c.NoteStatus, Model: c.Model, InputTokens: c.InputTokens,

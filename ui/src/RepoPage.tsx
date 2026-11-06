@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { DependencyEnd, ProjectDetail, RepoDetail } from "./api";
 import { oddVersions } from "./DepsPage";
-import { DescriptionView, SourceChip, descriptionRail } from "./Description";
+import {
+  DESCRIPTION,
+  DescriptionView,
+  SourceChip,
+  descriptionRail,
+} from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
 import { NotesTable } from "./NotesTable";
@@ -50,7 +55,6 @@ import {
 
 /** The repository page's tabs by their hash: the page is a leaf, its
  *  content first; notes and revisions are where it came from. */
-const DESCRIPTION = "description";
 const HISTORY = "history";
 const TABS = [DESCRIPTION, HISTORY];
 

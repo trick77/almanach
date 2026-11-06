@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { NoteDetail, NoteItem, Taught } from "./api";
-import { kindLabel } from "./Description";
+import { DESCRIPTION, kindLabel } from "./Description";
 import { anchorHash } from "./Rail";
 import {
   causeLabel,
@@ -19,6 +19,7 @@ import {
   Crumbs,
   Empty,
   Failed,
+  Inline,
   Link,
   Pill,
   Prose,
@@ -84,7 +85,7 @@ function taughtPath(t: Taught, single: boolean): string {
     t.scope === "project" || single
       ? projectPath(t.project_key)
       : repoPath(t.project_key, t.repo_slug ?? "");
-  return base + anchorHash("description", t.id);
+  return base + anchorHash(DESCRIPTION, t.id);
 }
 
 const LISTS: {
@@ -150,7 +151,7 @@ function Body({ n }: { n: NoteDetail }) {
                 to={taughtPath(t, n.single)}
                 className="text-ink-dim hover:text-ink"
               >
-                {t.name}
+                <Inline text={t.name} />
               </Link>
               {/* The page: the project's, or the repository's by its
                   slug; a project of one has the one page, unnamed. */}

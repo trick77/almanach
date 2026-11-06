@@ -93,6 +93,7 @@ export const S = {
     openMarkdown: "Als Markdown öffnen",
     url: "URL kopieren",
     done: "Kopiert",
+    statementAnchor: "#",
     statementLink: (name: string) => `Link zur Aussage ${name}`,
     statementLinkHint: "Adresse dieser Aussage kopieren",
   },
