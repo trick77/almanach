@@ -31,12 +31,14 @@ var (
 // the page, as the store's transaction does.
 type runStore struct {
 	*fakeStore
-	runs       []store.BaselineRun
-	saveErr    error
-	applyErr   error
-	repos      []store.SourceRepo
-	documented *store.BaselineRun
-	sources    map[string]bool
+	runs []store.BaselineRun
+	// departureErr fails NextDeparture.
+	departureErr error
+	saveErr      error
+	applyErr     error
+	repos        []store.SourceRepo
+	documented   *store.BaselineRun
+	sources      map[string]bool
 	// others is the project's source repositories with their summaries;
 	// othersErr fails every read of them after the first othersOK.
 	others     []store.RepoSummary
@@ -172,6 +174,18 @@ func (s *runStore) NextRun(context.Context) (store.BaselineRun, bool, error) {
 			if r.Open() && (r.State != store.RunQueued) == started {
 				return r, true, nil
 			}
+		}
+	}
+	return store.BaselineRun{}, false, nil
+}
+
+func (s *runStore) NextDeparture(context.Context) (store.BaselineRun, bool, error) {
+	if s.departureErr != nil {
+		return store.BaselineRun{}, false, s.departureErr
+	}
+	for _, r := range s.runs {
+		if r.State == store.RunQueued && r.Trigger == store.TriggerDeparture {
+			return r, true, nil
 		}
 	}
 	return store.BaselineRun{}, false, nil
@@ -555,6 +569,9 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 	// and a budget that held it would hold them for the day.
 	x.st.runs[0].State, x.st.runs[0].Commit = store.RunCataloguing, head
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	if r, ok := x.w.nextRun(context.Background()); !ok || r.ID != x.run().ID {
+		t.Fatalf("started run under a spent budget: nextRun = %+v %v, want it", r, ok)
+	}
 	if next := x.w.stepRun(context.Background(), x.run()); !next || x.run().State == store.RunCataloguing || len(x.models.prompts) != 1 {
 		t.Errorf("started run under a spent budget: next %v run %+v calls %d, want the step taken", next, x.run(), len(x.models.prompts))
 	}
@@ -569,6 +586,9 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 	}
 	// The calls of yesterday count nothing: the next day the run steps.
 	x.w.now = func() time.Time { return mergedAt.Add(24 * time.Hour) }
+	if r, ok := x.w.nextRun(context.Background()); !ok || r.ID != x.run().ID {
+		t.Fatalf("next day: nextRun = %+v %v, want the run", r, ok)
+	}
 	if next := x.w.stepRun(context.Background(), x.run()); !next || x.run().State != store.RunCataloguing {
 		t.Errorf("next day: next %v run = %+v, want started", next, x.run())
 	}
@@ -583,6 +603,44 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 	y.w.drain(context.Background())
 	if r := y.run(); r.State != store.RunQueued || len(y.models.prompts) != 0 {
 		t.Errorf("spend read failed: run = %+v, calls %d", r, len(y.models.prompts))
+	}
+}
+
+// A spent budget still lets a queued departure run start, even behind an
+// older queued run: one call, no code read. The older run keeps waiting.
+func TestRun_BudgetLetsDepartureThrough(t *testing.T) {
+	x := departureWorld(t, 16)
+	x.st.runs = append([]store.BaselineRun{{ID: 2, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull,
+		Trigger: store.TriggerManual, Commit: older40, State: store.RunQueued}}, x.st.runs...)
+	x.w.base.Limits.DailyBudgetNanoUSD = 1
+	x.st.callAt = mergedAt.Add(-time.Hour)
+	x.st.calls = []store.LLMCall{{CostNanoUSD: i64(1)}}
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge aus svc und web.",
+		Statements: []inference.Statement{stmt(ref("s3"), "interface", "API", "svc bietet sie.")}, Drop: []string{"s1", "s2", "s4"},
+		Map: drawnMap("svc", "web")}}
+	x.w.drain(context.Background())
+	if d := x.st.runs[1]; d.State != store.RunDone {
+		t.Fatalf("departure under a spent budget = %+v, want done", d)
+	}
+	if r := x.st.runs[0]; r.State != store.RunQueued || len(x.models.prompts) != 1 {
+		t.Fatalf("older run = %+v, calls %d; want it waiting, one call", r, len(x.models.prompts))
+	}
+	if s := x.w.Status(); s.Wait == nil || s.Wait.Reason != WaitBudget || s.Wait.RunID != 2 {
+		t.Errorf("Status = %+v, want the older run waiting for the budget", s.Wait)
+	}
+	// A departure read the store cannot answer pauses the drain.
+	y := newWorld(t, 16)
+	y.queue(store.RunFull, "")
+	y.w.base.Limits.DailyBudgetNanoUSD = 1
+	y.st.callAt = mergedAt.Add(-time.Hour)
+	y.st.calls = []store.LLMCall{{CostNanoUSD: i64(1)}}
+	y.st.departureErr = errors.New("read-only")
+	y.w.drain(context.Background())
+	if r := y.run(); r.State != store.RunQueued || len(y.models.prompts) != 0 {
+		t.Errorf("departure read failed: run = %+v, calls %d", r, len(y.models.prompts))
+	}
+	if s := y.w.Status(); s.Wait != nil {
+		t.Errorf("Status = %+v, want no budget wait on a failed read", s.Wait)
 	}
 }
 

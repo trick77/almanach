@@ -1603,7 +1603,7 @@ components:
             reason:
               type: string
               enum: [timeout, rate_limit, key_refused, unavailable, busy, write, clone_busy, placing, budget]
-              description: A hold of the whole worker (the first six, `until` set; `write` is the store refusing writes, a full disk) or a run step that waits (`since` set; `budget` is the day's budget spent, every run waits for the next UTC day).
+              description: A hold of the whole worker (the first six, `until` set; `write` is the store refusing writes, a full disk) or a run step that waits (`since` set; `budget` is the day's budget spent, every run but a departure waits for the next UTC day).
             until:
               type: string
               format: date-time

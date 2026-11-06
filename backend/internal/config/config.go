@@ -154,11 +154,12 @@ type Sources struct {
 	// GitCAFile is a PEM bundle for a forge behind an internal CA, handed
 	// to git as GIT_SSL_CAINFO; "" keeps the system store.
 	GitCAFile string
-	// GitTimeout bounds every git command that reaches a remote (a clone,
-	// a fetch, ls-remote): the poller's cycle is sequential, and one
-	// stalled fetch once held every source and every baseline step for
-	// good (BACKEND_GIT_TIMEOUT).
-	GitTimeout time.Duration
+	// GitTimeout bounds every git command that reaches a remote but a
+	// clone (a fetch, ls-remote, a push): the poller's cycle is sequential,
+	// and one stalled fetch once held every source and every baseline step
+	// for good (BACKEND_GIT_TIMEOUT). GitCloneTimeout bounds a clone, which
+	// for a big repository honestly takes long (BACKEND_GIT_CLONE_TIMEOUT).
+	GitTimeout, GitCloneTimeout time.Duration
 	// BitbucketHost prefills the host of a new Bitbucket source, trailing
 	// slash trimmed; a source may still name another. "" prefills nothing.
 	BitbucketHost string
@@ -258,12 +259,13 @@ func Load(lookup func(string) string) (*App, error) {
 		FoldDelay:     r.Duration("BACKEND_FOLD_DELAY", DefaultFoldDelay),
 		ProblemWindow: positive(r, "BACKEND_PROBLEM_WINDOW_DAYS", 90),
 		Sources: Sources{
-			ReposDir:      r.String("BACKEND_REPOS_DIR", ""),
-			SecretKey:     r.String("BACKEND_SOURCE_TOKEN_KEY", ""),
-			SyncInterval:  r.Duration("BACKEND_SYNC_INTERVAL", 30*time.Minute),
-			GitCAFile:     r.String("BACKEND_GIT_CA_FILE", ""),
-			GitTimeout:    r.Duration("BACKEND_GIT_TIMEOUT", time.Hour),
-			BitbucketHost: strings.TrimRight(r.String("BACKEND_BITBUCKET_HOST", ""), "/"),
+			ReposDir:        r.String("BACKEND_REPOS_DIR", ""),
+			SecretKey:       r.String("BACKEND_SOURCE_TOKEN_KEY", ""),
+			SyncInterval:    r.Duration("BACKEND_SYNC_INTERVAL", 30*time.Minute),
+			GitCAFile:       r.String("BACKEND_GIT_CA_FILE", ""),
+			GitTimeout:      r.Duration("BACKEND_GIT_TIMEOUT", 10*time.Minute),
+			GitCloneTimeout: r.Duration("BACKEND_GIT_CLONE_TIMEOUT", time.Hour),
+			BitbucketHost:   strings.TrimRight(r.String("BACKEND_BITBUCKET_HOST", ""), "/"),
 		},
 		Baseline: Baseline{
 			CatalogueModel: r.String("BACKEND_BASELINE_CATALOGUE_MODEL", ""),
@@ -328,6 +330,9 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if app.Sources.GitTimeout <= 0 {
 		r.Fail("BACKEND_GIT_TIMEOUT: must be positive (a stalled fetch holds every source), got %s", app.Sources.GitTimeout)
+	}
+	if app.Sources.GitCloneTimeout <= 0 {
+		r.Fail("BACKEND_GIT_CLONE_TIMEOUT: must be positive (a stalled clone holds every source), got %s", app.Sources.GitCloneTimeout)
 	}
 	// Absolute once: git runs in the clone's folder and would resolve a
 	// relative path there, the listing and the startup check where the
@@ -529,8 +534,8 @@ func (a *App) Summary() string {
 		if catalogue == "" {
 			catalogue = a.Model
 		}
-		sources = fmt.Sprintf("{dir %s, interval %s, git_timeout %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
-			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.GitTimeout, a.Sources.SecretKey != "", a.Sources.BitbucketHost,
+		sources = fmt.Sprintf("{dir %s, interval %s, git_timeout %s, git_clone_timeout %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
+			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.GitTimeout, a.Sources.GitCloneTimeout, a.Sources.SecretKey != "", a.Sources.BitbucketHost,
 			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
 	}
 	mode := string(a.AuthMode)

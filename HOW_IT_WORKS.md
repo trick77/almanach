@@ -660,8 +660,11 @@ any repository size, and every rule here was paid for there.
   stderr is still redacted of any URL credentials before it reaches a log
   or a row, the belt to that brace. A cancelled command is given ten
   seconds for its helpers before its pipes are cut, so a shutdown cannot
-  hang on `git-remote-https`. Every command that reaches a remote runs
-  under `BACKEND_GIT_TIMEOUT` (an hour) and git's own stall guard (a
+  hang on `git-remote-https`. A clone runs under
+  `BACKEND_GIT_CLONE_TIMEOUT` (an hour), every other command that reaches
+  a remote (fetch, `ls-remote`, push) under `BACKEND_GIT_TIMEOUT` (ten
+  minutes), apart since a first clone of a big repository honestly takes
+  long and a fetch never should; both under git's own stall guard (a
   connection carrying nothing for five minutes; nothing, not slowly: with
   `--quiet` a server preparing a large pack sends only keep-alives for
   minutes, and a rate floor cut every big first clone): the cycle is
@@ -943,7 +946,10 @@ the budget or past it the run is not started, it waits (the queue page:
 `budget`) and the next poll asks again, the next day it goes on. A run
 already started goes on to its end: its repository's notes wait for it,
 and a budget that held it would hold them for the day; so the budget may
-be overshot by one run's calls, never by a day's. The notes never wait: a
+be overshot by one run's calls. A departure run starts all the same,
+ahead of the older runs: one call, no code read, and held it would keep a
+deactivated repository on its project page for the day; each deactivation
+past the budget costs that one call more. The notes never wait: a
 fold is one small call, and holding it would hold what a pull request
 taught. Only priced calls count. The UI says before
 the click what a source or a full run may cost (`max_calls` on the source

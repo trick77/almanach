@@ -1,6 +1,7 @@
 package consolidate
 
 import (
+	"cmp"
 	"errors"
 	"slices"
 	"time"
@@ -132,10 +133,16 @@ func (w *Worker) setWait(runID int64, reason string) bool {
 	return true
 }
 
-func (w *Worker) clearWait() {
+// clearWait ends the wait once run r took a step. A departure that passed a
+// spent budget leaves the wait of the run it passed: that one still waits,
+// since when it began.
+func (w *Worker) clearWait(r store.BaselineRun) {
 	w.smu.Lock()
+	defer w.smu.Unlock()
+	if r.Trigger == store.TriggerDeparture && w.waiting != nil && w.waiting.Reason == WaitBudget && w.waiting.RunID != r.ID {
+		return
+	}
 	w.waiting = nil
-	w.smu.Unlock()
 }
 
 func (w *Worker) setHold(until time.Time, cause string) {
@@ -147,9 +154,11 @@ func (w *Worker) setHold(until time.Time, cause string) {
 // Order is the queue as drain takes it: every note it may fold, oldest
 // first (NextQueued); the started run's next step (NextRun takes a started
 // run before a queued one); the notes waiting for that run, free once it
-// is over; the queued runs, oldest first; last the notes whose repository
-// is not due yet (the fold delay), soonest first, each with Due set. Kept
-// beside drain: a change to what drain takes first changes this too.
+// is over; the queued runs, oldest first, the departure runs ahead of the
+// rest once the day's budget is spent (nextRun); last the notes whose
+// repository is not due yet (the fold delay), soonest first, each with Due
+// set. Kept beside drain: a change to what drain takes first changes this
+// too.
 type Order struct {
 	Free    []store.PendingNote
 	Started *store.BaselineRun
@@ -167,8 +176,9 @@ type PendingDue struct {
 
 // QueueOrder lays notes (PendingNotes' order) and open runs (OpenRuns'
 // order) out as drain takes them, delay the fold delay at now: a note
-// waits until its repository's oldest has waited the delay (NextQueued).
-func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun, delay time.Duration, now time.Time) Order {
+// waits until its repository's oldest has waited the delay (NextQueued);
+// spent is the day's budget spent.
+func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun, delay time.Duration, now time.Time, spent bool) Order {
 	var o Order
 	// The notes come oldest first: a repository's first is its oldest.
 	oldest := map[string]time.Time{}
@@ -213,7 +223,20 @@ func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun, delay time.
 			o.Started = &runs[i]
 		}
 	}
+	if spent {
+		slices.SortStableFunc(o.Queued, func(a, b store.BaselineRun) int {
+			return cmp.Compare(departs(b), departs(a))
+		})
+	}
 	return o
+}
+
+// departs is 1 for a departure run, 0 for any other.
+func departs(r store.BaselineRun) int {
+	if r.Trigger == store.TriggerDeparture {
+		return 1
+	}
+	return 0
 }
 
 // gatewayCause names a gateway-class failure for the queue page.

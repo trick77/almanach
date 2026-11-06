@@ -180,6 +180,14 @@ func (s *Store) NextRun(ctx context.Context) (BaselineRun, bool, error) {
 		ORDER BY b.state = 'queued', b.queued_at, b.id LIMIT 1`)
 }
 
+// NextDeparture is the oldest queued departure run: the one a spent daily
+// budget still lets start.
+func (s *Store) NextDeparture(ctx context.Context) (BaselineRun, bool, error) {
+	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+`
+		WHERE b.state = 'queued' AND b.trigger = 'departure'
+		ORDER BY b.queued_at, b.id LIMIT 1`)
+}
+
 // RunByID is one run, ok false when it is gone (its repository removed).
 func (s *Store) RunByID(ctx context.Context, id int64) (BaselineRun, bool, error) {
 	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+` WHERE b.id = ?`, id)

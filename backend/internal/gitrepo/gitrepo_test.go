@@ -253,10 +253,10 @@ func TestCommand_EnvironmentAllowlisted(t *testing.T) {
 }
 
 // A remote that never answers is cut by the client's timeout, the error
-// saying so and naming the setting; git's stall guard rides on every
-// command.
+// saying so and naming the setting: a clone's own, every other command's;
+// git's stall guard rides on every command.
 func TestRemote_TimesOut(t *testing.T) {
-	c := client(t).WithTimeout(500 * time.Millisecond)
+	c := client(t).WithTimeouts(500*time.Millisecond, time.Hour)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skip(err)
@@ -285,10 +285,19 @@ func TestRemote_TimesOut(t *testing.T) {
 	if took := time.Since(start); took > 5*time.Second {
 		t.Errorf("took %s, want the timeout and little more", took)
 	}
+	// A clone is under its own bound, the fetch's left out.
+	dir, err := c.Dir("tools", "svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.WithTimeouts(time.Hour, 500*time.Millisecond).EnsureCloned(context.Background(), dir, "http://"+ln.Addr().String()+"/x.git", Access{})
+	if err == nil || !strings.Contains(err.Error(), "cut after 500ms (BACKEND_GIT_CLONE_TIMEOUT)") {
+		t.Fatalf("clone from a silent remote: err = %v, want the clone timeout named", err)
+	}
 	// A caller's own deadline is not the client's timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if _, err := c.WithTimeout(time.Hour).DefaultBranch(ctx, "http://"+ln.Addr().String()+"/x.git", Access{}); err == nil || strings.Contains(err.Error(), "BACKEND_GIT_TIMEOUT") {
+	if _, err := c.WithTimeouts(time.Hour, time.Hour).DefaultBranch(ctx, "http://"+ln.Addr().String()+"/x.git", Access{}); err == nil || strings.Contains(err.Error(), "BACKEND_GIT_TIMEOUT") {
 		t.Errorf("caller's deadline: err = %v, want no claim of the client's timeout", err)
 	}
 	args := strings.Join(c.command(context.Background(), c.root, nil, "fetch").Args, " ")

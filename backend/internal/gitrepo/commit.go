@@ -124,7 +124,7 @@ func (c *Client) RemoteBranch(ctx context.Context, dir, cloneURL, branch string,
 	if err := checkBranch(branch); err != nil {
 		return "", err
 	}
-	out, err := c.remote(ctx, dir, a.env(cloneURL), "ls-remote", cloneURL, "refs/heads/"+branch)
+	out, err := c.remote(ctx, c.fetchBound(), dir, a.env(cloneURL), "ls-remote", cloneURL, "refs/heads/"+branch)
 	if err != nil {
 		return "", err
 	}
@@ -151,6 +151,6 @@ func (c *Client) Push(ctx context.Context, dir, cloneURL, sha, branch, expect st
 		return err
 	}
 	ref := "refs/heads/" + branch
-	_, err := c.remote(ctx, dir, a.env(cloneURL), "push", "--quiet", "--no-verify", "--force-with-lease="+ref+":"+expect, cloneURL, sha+":"+ref)
+	_, err := c.remote(ctx, c.fetchBound(), dir, a.env(cloneURL), "push", "--quiet", "--no-verify", "--force-with-lease="+ref+":"+expect, cloneURL, sha+":"+ref)
 	return err
 }

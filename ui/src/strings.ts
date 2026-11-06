@@ -33,7 +33,7 @@ export const S = {
       noBudget:
         "Kein Budget gesetzt (BACKEND_DAILY_BUDGET_USD, nur mit Quellen: es hält die Läufe)",
       budgetNote: (spent: string, budget: string) =>
-        `${spent} von ${budget}; ausgeschöpft, warten die Läufe bis zum nächsten Tag (UTC), die Notizen nicht`,
+        `${spent} von ${budget}; ausgeschöpft, warten die Läufe bis zum nächsten Tag (UTC), die Notizen und das Deaktivieren nicht`,
     },
     headers: ["Projekt", "Notizen", "Läufe", "PROJECT.md", "Aufrufe", "Kosten"],
     monthTotal: "Summe",
@@ -829,7 +829,8 @@ export const S = {
       write: "Datenbank nimmt keine Schreibzugriffe an (Platte voll?)",
       clone_busy: "Clone belegt",
       placing: "Git ordnet einen Merge-Commit ein",
-      budget: "Tagesbudget ausgeschöpft, Läufe warten bis morgen (UTC)",
+      budget:
+        "Tagesbudget ausgeschöpft, Läufe warten bis morgen (UTC), ausser beim Deaktivieren",
     } satisfies Record<WaitReason, string>,
     until: (at: string, left: string) => `${at}, in ${left}`,
     soon: (s: number) => `in ≤ ${s} s`,

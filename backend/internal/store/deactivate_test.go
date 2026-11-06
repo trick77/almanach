@@ -141,6 +141,16 @@ func TestDeactivateSourceRepo_DepartureRun(t *testing.T) {
 	if err != nil || !ok || next.Trigger != TriggerDeparture || next.Slug != "svc" || next.Commit != "aaa" || string(next.Plan) != `{"departure":true}` {
 		t.Fatalf("the departure run: %+v ok=%v err=%v", next, ok, err)
 	}
+	// What a spent budget still starts: the departure, past an older
+	// queued reading run.
+	older := enqueue(t, s, "tools", "web")
+	if _, err := s.db.ExecContext(ctx, `UPDATE baseline_runs SET queued_at = '2000-01-01T00:00:00.000000000Z' WHERE id = ?`, older.ID); err != nil {
+		t.Fatal(err)
+	}
+	if d, ok, err := s.NextDeparture(ctx); err != nil || !ok || d.ID != next.ID {
+		t.Fatalf("NextDeparture = %+v ok=%v err=%v, want run %d", d, ok, err, next.ID)
+	}
+	finish(t, s, older, RunDone)
 	if departed, _ := s.DepartedRepos(ctx, "tools"); !reflect.DeepEqual(departed, []string{"svc"}) {
 		t.Errorf("DepartedRepos = %v", departed)
 	}
@@ -161,6 +171,9 @@ func TestDeactivateSourceRepo_DepartureRun(t *testing.T) {
 		t.Error("DepartureDue after its settle")
 	}
 	finish(t, s, next, RunDone)
+	if _, ok, err := s.NextDeparture(ctx); err != nil || ok {
+		t.Errorf("NextDeparture after its run: ok=%v err=%v, want none", ok, err)
+	}
 	if doc, ok, _ := s.DocumentedRun(ctx, "tools", "svc"); !ok || doc.ID != documented.ID {
 		t.Errorf("DocumentedRun = %+v, want the reading run %d, never the departure", doc, documented.ID)
 	}

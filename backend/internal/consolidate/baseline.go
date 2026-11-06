@@ -35,6 +35,7 @@ import (
 // RunStore is what the runs need of the store beside what Store has.
 type RunStore interface {
 	NextRun(ctx context.Context) (store.BaselineRun, bool, error)
+	NextDeparture(ctx context.Context) (store.BaselineRun, bool, error)
 	SaveRun(ctx context.Context, r store.BaselineRun) (bool, error)
 	ApplyBaselineStep(ctx context.Context, rev store.NewRevision, r store.BaselineRun) (int, bool, error)
 	SetRepoMap(ctx context.Context, project, repo string, m *diagram.Diagram, basis string, r store.BaselineRun) (bool, error)
@@ -171,30 +172,52 @@ func decodePlan(raw json.RawMessage) (runPlan, error) {
 	return p, nil
 }
 
+// nextRun is the run drain steps next (NextRun), the day's budget asked
+// before a queued one starts. One started goes on to its end, since its
+// repository's notes wait for it (NextQueued) and a budget that held it
+// would hold them for the day; so the budget may be overshot by one run's
+// calls. Spent, a queued departure run still starts: one call, no code
+// read, and held it would keep a deactivated repository on its project
+// page for the day; each deactivation past the budget costs that call. The
+// notes go on whatever it says. ok false: nothing to step now.
+func (w *Worker) nextRun(ctx context.Context) (store.BaselineRun, bool) {
+	r, ok, err := w.base.Store.NextRun(ctx)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: run queue read failed", logging.Err(err))
+		return r, false
+	}
+	if !ok || r.State != store.RunQueued || r.Trigger == store.TriggerDeparture {
+		return r, ok
+	}
+	over, err := w.overBudget(ctx)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: spend read failed, drain paused", logging.Err(err))
+		return r, false
+	}
+	if !over {
+		return r, true
+	}
+	d, ok, err := w.base.Store.NextDeparture(ctx)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: run queue read failed", logging.Err(err))
+		return r, false
+	}
+	if ok {
+		return d, true
+	}
+	if w.setWait(r.ID, WaitBudget) {
+		w.log.InfoContext(logging.With(ctx, "project", r.ProjectKey, "repo", r.Slug, "run_id", r.ID),
+			"baseline: the day's budget is spent, runs wait for the next day")
+	}
+	return r, false
+}
+
 // errStop ends a drain: a gateway hold or a store that does not answer.
 var errStop = errors.New("stop the drain")
 
 // stepRun runs one step of the run. Reports whether the drain may go on.
 func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	ctx = logging.With(ctx, "project", r.ProjectKey, "repo", r.Slug, "run_id", r.ID)
-	// The day's budget, asked before a run starts: one started goes on to
-	// its end, since its repository's notes wait for it (NextQueued) and a
-	// budget that held it would hold them for the day; so the budget may be
-	// overshot by one run's calls, never by a day's. The notes go on
-	// whatever it says.
-	if r.State == store.RunQueued {
-		over, err := w.overBudget(ctx)
-		if err != nil {
-			w.log.WarnContext(ctx, "baseline: spend read failed, drain paused", logging.Err(err))
-			return false
-		}
-		if over {
-			if w.setWait(r.ID, WaitBudget) {
-				w.log.InfoContext(ctx, "baseline: the day's budget is spent, runs wait for the next day")
-			}
-			return false
-		}
-	}
 	w.setBusy(Busy{Kind: KindRun, ProjectKey: r.ProjectKey, RepoSlug: r.Slug, RunID: r.ID})
 	defer w.clearBusy()
 	loaded := r
@@ -226,7 +249,7 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 		w.setWait(r.ID, WaitPlace)
 		return false
 	}
-	w.clearWait()
+	w.clearWait(r)
 	if err != nil {
 		w.failRun(ctx, r, err.Error())
 	}

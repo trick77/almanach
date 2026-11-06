@@ -457,11 +457,7 @@ func (w *Worker) drain(ctx context.Context) {
 				continue
 			}
 		}
-		r, ok, err := w.base.Store.NextRun(ctx)
-		if err != nil {
-			w.log.WarnContext(ctx, "baseline: run queue read failed", logging.Err(err))
-			return
-		}
+		r, ok := w.nextRun(ctx)
 		if !ok || w.diskLow(ctx) || !w.runWritable(ctx, r) {
 			return
 		}
