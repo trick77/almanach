@@ -368,7 +368,8 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 			}
 		}
 	}
-	if st.HoldUntil != nil && st.Busy == nil && out.Current == nil && len(out.Next) > 0 {
+	// Not on a note waiting for its fold delay: the hold is not what keeps it.
+	if st.HoldUntil != nil && st.Busy == nil && out.Current == nil && len(out.Next) > 0 && out.Next[0].DueAt == nil {
 		out.Next[0].Wait = &waitBody{Reason: st.HoldCause, Until: st.HoldUntil}
 	}
 	// The notes past notesMax are counted, not listed: a backlog of a long

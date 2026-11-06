@@ -814,10 +814,10 @@ export const S = {
     heldBy: (id: number) => `Wartet auf Run #${id}.`,
     // A repository's notes are folded together once a day: when this one's
     // turn comes, and how many one fold takes in one call.
-    dueAt: (at: string) => `gefaltet ab ${at}`,
+    dueAt: (at: string) => `Gefaltet ab ${at}`,
     batch: (n: number) => `${n} Notizen in einem Aufruf`,
     // A folded note's cost is its fold's, shared with the others.
-    shared: (n: number) => `für ${n} Notizen`,
+    shared: (n: number) => `Für ${n} Notizen`,
     commit: (from: string, to: string) =>
       from === "" ? `Commit ${to}` : `von ${from} auf ${to}`,
     wait: {

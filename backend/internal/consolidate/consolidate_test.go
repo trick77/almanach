@@ -44,6 +44,7 @@ type fakeStore struct {
 	// notes reads; repoProblemsErr fails the read.
 	repoProblems    []store.RepoProblem
 	repoProblemsErr error
+	problemsUntil   time.Time
 	markErr         error
 	deferErr        error
 	// deferReplaced answers a defer as for a note delivered again.
@@ -157,7 +158,8 @@ func (f *fakeStore) QueuedBatch(_ context.Context, project, repo string) ([]stor
 	return out, nil
 }
 
-func (f *fakeStore) RepoProblems(context.Context, string, string, time.Time) ([]store.RepoProblem, error) {
+func (f *fakeStore) RepoProblems(_ context.Context, _, _ string, until time.Time) ([]store.RepoProblem, error) {
+	f.problemsUntil = until
 	return f.repoProblems, f.repoProblemsErr
 }
 

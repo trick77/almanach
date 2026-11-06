@@ -139,8 +139,13 @@ func TestBatch_PitfallsAndProblemAreas(t *testing.T) {
 	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), fix)
 	st.repoProblems = []store.RepoProblem{{Area: "internal/files", Bugfixes: 3, TopCause: "logic", PRKeys: []string{"PLAT/files#2", "PLAT/files#0"}}}
 	w.drain(context.Background())
-	if want := "- `internal/files/`: bugfixes here PLAT/files#2; in all 3 bugfixes, cause seen most `logic`, newest fixes PLAT/files#2, PLAT/files#0"; !strings.Contains(m.prompts[0], want) {
+	if want := "- `internal/files/`: bugfixes here PLAT/files#2; before these 3 bugfixes, cause seen most `logic`, newest fixes PLAT/files#2, PLAT/files#0"; !strings.Contains(m.prompts[0], want) {
 		t.Errorf("prompt lacks the problem area:\n%s", want)
+	}
+	// The history ends before the fold's first merge: its fixes are not
+	// counted twice.
+	if want := mergedAt.Add(time.Minute - time.Nanosecond); !st.problemsUntil.Equal(want) {
+		t.Errorf("history read until %v, want %v", st.problemsUntil, want)
 	}
 	var names []string
 	for _, s := range st.revisions[0].Statements {
@@ -159,69 +164,121 @@ func TestBatch_PitfallsAndProblemAreas(t *testing.T) {
 	}
 }
 
-// An answer that fails a batch folds each half on its own, down to one
-// note, which fails as before batching; what passes is marked.
+// folded is which of notes #1..#n a prompt holds.
+func folded(prompt string, n int) []string {
+	var in []string
+	for i := 1; i <= n; i++ {
+		k := "#" + string(rune('0'+i))
+		if strings.Contains(prompt, "### PR PLAT/files"+k+" (") {
+			in = append(in, k)
+		}
+	}
+	return in
+}
+
+// An answer that fails a batch folds each half on its own, the bad note
+// found in about two calls a halving; what passes is marked. The split
+// makes no more calls than the notes would have: the last half, #4, fails
+// unfolded once they are spent.
 func TestBatch_SplitsOnABadAnswer(t *testing.T) {
 	bad := inference.MergeResult{Call: inference.Call{Outcome: inference.OutcomeUnparseable}}
-	m := &seqMerger{results: []inference.MergeResult{bad, okResult(nil, nil), bad, bad}}
-	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), batchNote(2, "feature"), batchNote(3, "feature"))
+	ok := okResult(nil, nil)
+	// The four (bad), #1 #2 (ok), #3 #4 (bad), #3 (ok); #4 past the calls.
+	m := &seqMerger{results: []inference.MergeResult{bad, ok, bad, ok}}
+	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), batchNote(2, "feature"), batchNote(3, "feature"),
+		batchNote(4, "feature"))
 	w.drain(context.Background())
-	// The three, then #1 alone (ok), then #2 and #3 (bad), then #2, #3.
-	if len(m.prompts) != 5 {
-		t.Fatalf("calls = %d, want 5", len(m.prompts))
+	want := [][]string{{"#1", "#2", "#3", "#4"}, {"#1", "#2"}, {"#3", "#4"}, {"#3"}}
+	if len(m.prompts) != len(want) {
+		t.Fatalf("calls = %d, want %d", len(m.prompts), len(want))
 	}
-	for i, want := range [][]string{{"#1", "#2", "#3"}, {"#1"}, {"#2", "#3"}, {"#2"}, {"#3"}} {
-		var in []string
-		for _, n := range []string{"#1", "#2", "#3"} {
-			if strings.Contains(m.prompts[i], "### PR PLAT/files"+n+" (") {
-				in = append(in, n)
-			}
-		}
-		if !slices.Equal(in, want) {
-			t.Errorf("call %d folded %v, want %v", i, in, want)
+	for i := range want {
+		if got := folded(m.prompts[i], 4); !slices.Equal(got, want[i]) {
+			t.Errorf("call %d folded %v, want %v", i, got, want[i])
 		}
 	}
-	if !slices.Equal(st.marked, []string{"PLAT|files|1"}) {
-		t.Errorf("marked = %v, want #1 alone", st.marked)
+	if !slices.Equal(st.marked, []string{"PLAT|files|1", "PLAT|files|2", "PLAT|files|3"}) {
+		t.Errorf("marked = %v, want #1 to #3", st.marked)
 	}
-	if len(st.failed) != 2 || st.failed["PLAT|files|2"] == "" || st.failed["PLAT|files|3"] == "" {
-		t.Errorf("failed = %v, want #2 and #3", st.failed)
+	if len(st.failed) != 1 || st.failed["PLAT|files|4"] == "" {
+		t.Errorf("failed = %v, want #4 alone", st.failed)
 	}
 }
 
-// A gateway failure keeps every note of the batch queued, each with its
-// attempt counted, and holds the worker.
-func TestBatch_GatewayDefersEveryNote(t *testing.T) {
-	m := &fakeMerger{result: inference.MergeResult{Call: inference.Call{Outcome: inference.OutcomeTimedOut}}}
-	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), batchNote(2, "feature"))
+// A failure every call meets costs a split no more calls than its notes
+// would have one by one: past them a half fails unfolded, never lost.
+func TestBatch_SplitBoundedByItsNotes(t *testing.T) {
+	bad := inference.MergeResult{Call: inference.Call{Outcome: inference.OutcomeUnparseable}}
+	m := &seqMerger{results: []inference.MergeResult{bad}}
+	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), batchNote(2, "feature"), batchNote(3, "feature"))
+	w.drain(context.Background())
+	// The three, then #1 alone, then #2 #3, past which the calls are spent.
+	if len(m.prompts) != 3 {
+		t.Fatalf("calls = %d, want 3, the notes' own count", len(m.prompts))
+	}
+	if len(st.failed) != 3 || !strings.Contains(st.failed["PLAT|files|3"], "the split's calls spent") {
+		t.Errorf("failed = %v, want all three, the last two unfolded", st.failed)
+	}
+	if len(st.marked) != 0 {
+		t.Errorf("marked = %v", st.marked)
+	}
+}
+
+// A gateway failure keeps every note of the batch queued, only the first
+// one's attempt counted, as before batching the oldest's alone; a timeout
+// halves the repository's next batches until a fold gets an answer.
+func TestBatch_GatewayCountsTheFirstNote(t *testing.T) {
+	m := &seqMerger{results: []inference.MergeResult{{Call: inference.Call{Outcome: inference.OutcomeTimedOut}}, okResult(nil, nil)}}
+	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, batchNote(1, "feature"), batchNote(2, "feature"), batchNote(3, "feature"))
 	w.drain(context.Background())
 	if len(m.prompts) != 1 || len(st.marked) != 0 || len(st.failed) != 0 || !w.holding() {
 		t.Fatalf("calls %d marked %v failed %v holding %v", len(m.prompts), st.marked, st.failed, w.holding())
 	}
-	if st.attempts["PLAT|files|1"] != 1 || st.attempts["PLAT|files|2"] != 1 {
-		t.Errorf("attempts = %v, want one each", st.attempts)
+	if st.attempts["PLAT|files|1"] != 1 || st.attempts["PLAT|files|2"] != 0 || st.attempts["PLAT|files|3"] != 0 {
+		t.Errorf("attempts = %v, want the first note's alone", st.attempts)
+	}
+	if got := w.batchMax["PLAT/files"]; got != 1 {
+		t.Fatalf("batchMax = %d, want half of 3", got)
+	}
+	st.popped = batchNote(1, "feature")
+	st.queue = []store.QueuedNote{batchNote(2, "feature"), batchNote(3, "feature")}
+	chunks, err := w.batchOf(context.Background(), st.popped)
+	if err != nil || len(chunks) != 3 {
+		t.Fatalf("after the timeout: %d batches, %v; want one note each", len(chunks), err)
+	}
+	w.retryAt = time.Time{}
+	w.fold(context.Background(), chunks[0], 0)
+	if _, kept := w.batchMax["PLAT/files"]; kept {
+		t.Error("an answered fold kept the repository's cap")
 	}
 }
 
-// A batch takes a repository's notes in merge order while they fit in
-// FoldBatchBytes, at least one; without a delay a note folds alone.
+// A repository's notes are cut into batches in merge order, each within
+// FoldBatchBytes and at least one note, and one drain folds them one after
+// another; without a delay a note folds alone.
 func TestBatchOf_Bytes(t *testing.T) {
 	big := func(n int) store.QueuedNote {
 		q := batchNote(n, "feature")
 		q.Body = json.RawMessage(`"` + strings.Repeat("x", FoldBatchBytes/2) + `"`)
 		return q
 	}
-	w, st := batchWorker(mergedAt, &fakeMerger{}, big(2), big(3), batchNote(4, "feature"))
-	st.popped = big(1)
-	batch, err := w.batchOf(context.Background(), st.popped)
-	if err != nil {
-		t.Fatal(err)
+	m := &fakeMerger{result: okResult(nil, nil)}
+	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, big(1), big(2), big(3), batchNote(4, "feature"))
+	w.drain(context.Background())
+	want := [][]string{{"#1"}, {"#2"}, {"#3", "#4"}}
+	if len(m.prompts) != len(want) {
+		t.Fatalf("calls = %d, want %d", len(m.prompts), len(want))
 	}
-	if got := foldKeys(batch); !slices.Equal(got, []string{"PLAT/files#1"}) {
-		t.Errorf("batch = %v, want the first note alone: two halves overrun the bound", got)
+	for i := range want {
+		if got := folded(m.prompts[i], 4); !slices.Equal(got, want[i]) {
+			t.Errorf("call %d folded %v, want %v", i, got, want[i])
+		}
+	}
+	if len(st.marked) != 4 {
+		t.Errorf("marked = %v, want all four in one drain", st.marked)
 	}
 	w.foldDelay = 0
-	if batch, _ := w.batchOf(context.Background(), batchNote(5, "feature")); len(batch) != 1 {
-		t.Errorf("no delay: batch of %d", len(batch))
+	if chunks, _ := w.batchOf(context.Background(), batchNote(5, "feature")); len(chunks) != 1 || len(chunks[0]) != 1 {
+		t.Errorf("no delay: %v", chunks)
 	}
 }

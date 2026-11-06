@@ -206,11 +206,16 @@ func (s *Store) FoldedNotes(ctx context.Context, since time.Time, limit int) ([]
 		SELECT p.key, r.slug, n.pr_key, n.pr_title, n.consolidated_at,
 		       COALESCE(c.outcome, ''), c.cost_nano_usd, COALESCE(json_array_length(c.batch_pr_keys), 1)
 		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
-		  LEFT JOIN llm_calls c ON c.id = (SELECT MAX(l.id) FROM llm_calls l
-		                                    WHERE l.repo_id = n.repo_id AND l.purpose = 'merge'
-		                                      AND (l.source_pr_key = n.pr_key
-		                                           OR EXISTS (SELECT 1 FROM json_each(l.batch_pr_keys) k WHERE k.value = n.pr_key))
-		                                      AND l.created_at BETWEEN n.received_at AND n.consolidated_at)
+		  LEFT JOIN llm_calls c ON c.id = NULLIF(max(
+		      COALESCE((SELECT MAX(l.id) FROM llm_calls l
+		                 WHERE l.repo_id = n.repo_id AND l.source_pr_key = n.pr_key AND l.purpose = 'merge'
+		                   AND l.created_at BETWEEN n.received_at AND n.consolidated_at), 0),
+		      -- A later note of a fold: only the batch calls of its own window
+		      -- (llm_calls_created_idx), their few keys expanded.
+		      COALESCE((SELECT MAX(l.id) FROM llm_calls l
+		                 WHERE l.created_at BETWEEN n.received_at AND n.consolidated_at
+		                   AND l.batch_pr_keys IS NOT NULL AND l.repo_id = n.repo_id AND l.purpose = 'merge'
+		                   AND EXISTS (SELECT 1 FROM json_each(l.batch_pr_keys) k WHERE k.value = n.pr_key)), 0)), 0)
 		 WHERE n.consolidated_at >= ?
 		 ORDER BY n.consolidated_at DESC, n.pr_id DESC LIMIT ?`, stamp(since), limit)
 	if err != nil {

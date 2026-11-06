@@ -175,10 +175,11 @@ now less the delay (`NextQueued`): the oldest note of all is its
 repository's oldest too, so its repository is due, and `QueuedBatch` reads
 every queued note of it in merge order, as many as fit in 240 kB of note
 text (`FoldBatchBytes`, the most a baseline step shows of a repository's
-files); the rest stay queued, due at once, and fold next. A note over the
+files); the rest fold in the calls right after, in the same drain. A note over the
 bound folds alone, as before. Nothing is dropped for size. The queue page
-lists a waiting repository's notes last, each with when it is folded, and
-a fold in flight with how many notes it takes.
+lists a waiting repository's notes last, each with when it is folded (a
+note its repository's started run holds stays with the run, no time
+promised), and a fold in flight with how many notes it takes.
 
 Nothing is lost to the batch. Every note reaches the model whole, under a
 heading with its PR key, ticket, kind and merge day, in merge order; where
@@ -200,7 +201,8 @@ A fold reads the current repository and project descriptions, renders the
 merge prompt (`backend/internal/prompts/almanach_merge.txt`, compiled in)
 and makes one `Chat` call with a strict JSON schema. Beside the notes the
 prompt shows the problem areas of the fold's bugfix notes: each area's
-bugfix notes in this fold and its history (`RepoProblems`: the count, the
+bugfix notes in this fold and its history before them (`RepoProblems` up
+to the fold's first merge, so no fix is counted twice: the count, the
 cause seen most, the newest fixes), as a baseline subject step sees it.
 Two fixes of one area in one day become one pitfall citing both, where
 two folds each saw one fix alone; a new pitfall stands only on a bugfix
@@ -286,10 +288,18 @@ reasons; a note delivered again starts afresh. Before, such a note was
 marked consolidated with a log line, and what its pull request taught was
 gone. A fold of several notes the answer fails is not failed whole: each
 half is folded on its own, the first half first, down to a single note,
-which fails as above. One note that breaks the answer costs that note
-alone, and a large batch is halved at most log2 of its size times rather
-than falling back to a call per note at once. A gateway failure keeps
-every note of the fold queued, each with its attempt counted.
+which fails as above. One note that breaks the answer is found in about
+two calls a halving and costs that note alone. A failure every call meets
+(a page past the context) would cost a batch of n up to 2n-1 calls
+halving down to single notes, so a split makes at most the n-1 calls after
+the first that its notes would have cost one by one; past them a half
+fails unfolded, its reason kept, and comes back like any failed note. A
+gateway failure keeps every note of the fold queued and counts the first
+note's attempt alone, as before batching the oldest note's alone: an
+outage of hours must not give a whole day of notes up together. A
+timed-out fold of several may be one too large for the call cap, so the
+repository's next folds take half as many notes, halved again at each
+timeout, whole again once one gets an answer (in memory).
 
 A failure of the gateway as a whole is different: a timeout, a 5xx or
 transport failure, a refused key, a rate limit, a proxy page where the

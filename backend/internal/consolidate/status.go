@@ -181,10 +181,12 @@ func QueueOrder(notes []store.PendingNote, runs []store.BaselineRun, delay time.
 	for _, n := range notes {
 		due := oldest[n.ProjectKey+"/"+n.RepoSlug].Add(delay)
 		switch {
-		case delay > 0 && due.After(now):
-			o.Waiting = append(o.Waiting, PendingDue{PendingNote: n, Due: due})
+		// A started run holds its repository's notes whatever their delay:
+		// they fold after it, not at a time the page could promise.
 		case n.HeldBy != 0:
 			o.Held = append(o.Held, n)
+		case delay > 0 && due.After(now):
+			o.Waiting = append(o.Waiting, PendingDue{PendingNote: n, Due: due})
 		default:
 			o.Free = append(o.Free, n)
 		}

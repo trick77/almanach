@@ -82,6 +82,13 @@ func TestQueueOrder_FoldDelay(t *testing.T) {
 	if want := []string{"s1@1h0m0s", "l1@4h0m0s", "l2@4h0m0s"}; !slices.Equal(waiting, want) {
 		t.Errorf("waiting = %v, want %v", waiting, want)
 	}
+	// A started run holds its repository's notes whatever their delay.
+	held := note("soon", "s2", time.Hour)
+	held.HeldBy = 7
+	o = QueueOrder(append(slices.Clone(notes), held), nil, 24*time.Hour, now)
+	if len(o.Held) != 1 || o.Held[0].PRKey != "s2" {
+		t.Errorf("held = %+v, want s2", o.Held)
+	}
 }
 
 // The loop sleeps a poll, or until a hold ends when that is sooner.

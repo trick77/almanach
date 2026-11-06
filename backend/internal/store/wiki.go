@@ -496,7 +496,7 @@ type NewRevision struct {
 	// departure) never resets it. Ignored on a repository revision.
 	Shape string
 	// BatchPRKeys is every pull request a fold of several notes took, in
-	// merge order, SourcePR the first; nil for one.
+	// merge order, SourcePR the first; stored for two or more (batchKeys).
 	BatchPRKeys []string
 }
 
@@ -663,7 +663,7 @@ type LLMCall struct {
 	CostNanoUSD  *int64
 	CallID       string
 	// BatchPRKeys is every pull request a merge folded together, in merge
-	// order, SourcePR the first; nil for a fold of one note.
+	// order, SourcePR the first; stored for two or more (batchKeys).
 	BatchPRKeys []string
 }
 

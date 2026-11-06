@@ -227,6 +227,14 @@ func TestQueue_FoldDelay(t *testing.T) {
 	if len(out.Recent) != 1 || out.Recent[0].Batch != 3 {
 		t.Errorf("recent = %+v, want the note's batch of 3", out.Recent)
 	}
+	// A hold is not what keeps a note waiting for its delay: not on it.
+	until := at(5)
+	st.notes, st.open = []store.PendingNote{pending("billing", "pay/billing#7", -60, 0)}, nil
+	out = getQueue(t, &QueueDeps{Store: st, Sync: fakeSync{},
+		Worker: fakeWorkerStatus{consolidate.Status{HoldUntil: &until, HoldCause: consolidate.HoldTimeout, FoldDelay: 24 * time.Hour}}})
+	if len(out.Next) != 1 || out.Next[0].DueAt == nil || out.Next[0].Wait != nil {
+		t.Errorf("next = %+v, want the waiting note without the hold", out.Next)
+	}
 }
 
 // Nothing in flight: a hold names its cause and end on the first item; a
