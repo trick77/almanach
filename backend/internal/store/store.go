@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	// Registers the "sqlite3" database/sql driver: SQLite as WASM, no cgo.
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -77,10 +79,64 @@ func open(ctx context.Context, path string, log *slog.Logger, extra ...string) (
 	return &Store{db: db, path: path, log: log}, nil
 }
 
-// Close releases the database.
+// Close releases the database, after PRAGMA optimize: SQLite's chance to
+// refresh the planner's statistics from what the run queried, cheap on
+// the way out and kept in the file for the next run. A failure there is
+// a log line, never a reason not to close.
 func (s *Store) Close() {
+	if _, err := s.db.ExecContext(context.Background(), `PRAGMA optimize`); err != nil {
+		s.log.Warn("SQLite optimize on close failed", "err", err.Error())
+	}
 	_ = s.db.Close()
 	s.log.Info("SQLite database closed")
+}
+
+// Backup writes a consistent copy of the database to dest with VACUUM
+// INTO: one transaction's view of every table, compacted, no -wal or
+// -shm beside it, taken while serve runs on (a reader, not a lock on
+// writers). Copying the file and its WAL by hand under live writes is
+// not consistent, which is why this exists. The copy lands at a
+// temporary name beside dest and is renamed into place, so a crash or a
+// full disk leaves no half backup under the name; dest must not exist
+// and must not be the database itself. Returns the copy's size.
+func (s *Store) Backup(ctx context.Context, dest string) (int64, error) {
+	if sameFile(dest, s.path) {
+		return 0, fmt.Errorf("backup %s: is the database itself", dest)
+	}
+	if _, err := os.Stat(dest); err == nil {
+		return 0, fmt.Errorf("backup %s: exists", dest)
+	}
+	tmp := dest + ".part"
+	_ = os.Remove(tmp)
+	// A folder that does not exist, or takes no file, fails here: SQLite
+	// opens the copy itself.
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return 0, fmt.Errorf("backup %s: %w", dest, err)
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return 0, fmt.Errorf("backup %s: %w", dest, err)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		return 0, fmt.Errorf("backup %s: %w", dest, err)
+	}
+	return info.Size(), nil
+}
+
+// sameFile reports whether a and b name the same file: by the file system
+// when both exist (a path given two ways, a link), else by their absolute
+// cleaned paths, as b does not exist yet.
+func sameFile(a, b string) bool {
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+	if errA == nil && errB == nil {
+		return os.SameFile(ia, ib)
+	}
+	absA, _ := filepath.Abs(a)
+	absB, _ := filepath.Abs(b)
+	return absA == absB
 }
 
 // Migrate applies every pending migration in file order, exactly once, each

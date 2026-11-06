@@ -48,8 +48,10 @@
 #
 #      mkdir -p data repos && sudo chown 65532:65532 data repos && chmod 700 data repos
 #
-#    A backup is data/; repos/ refills from the forge. A fresh start:
-#    stack down, both folders emptied, up again.
+#    A backup: docker compose run --rm migrate backup /data/almanach-$(date +%F).db
+#    writes a consistent copy into data/ while the stack runs (a copy of
+#    the folder under live writes is not one). repos/ refills from the
+#    forge. A fresh start: stack down, both folders emptied, up again.
 #
 # 4. docker compose up -d: pulls the image if missing, migrate runs, then
 #    almanach. A new release: docker compose pull && docker compose up -d.

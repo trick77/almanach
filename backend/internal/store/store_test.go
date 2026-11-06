@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,6 +46,55 @@ func storeAt(t *testing.T, path string, extra ...string) *Store {
 
 // The startup gate: an unmigrated database names what is pending, a
 // migrated one passes, and a second migrate applies nothing.
+// Backup writes a consistent, compacted copy that opens as a database of
+// its own with every row, while the original stays open; it refuses the
+// database itself and a file that exists, and leaves no part file behind.
+func TestBackup(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("PRJ", "svc", 2))
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "copy.db")
+	size, err := s.Backup(ctx, dest)
+	if err != nil || size <= 0 {
+		t.Fatalf("Backup = %d, %v", size, err)
+	}
+	if _, err := os.Stat(dest + ".part"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("part file left behind: %v", err)
+	}
+	for _, p := range []string{dest + "-wal", dest + "-shm"} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s written beside the copy", p)
+		}
+	}
+	// The copy stands on its own: migrated, every note there, writable.
+	c := storeAt(t, dest)
+	if err := c.SchemaCurrent(ctx); err != nil {
+		t.Errorf("copy's schema: %v", err)
+	}
+	if n := count(t, c, "notes", ""); n != 2 {
+		t.Errorf("copy's notes = %d, want 2", n)
+	}
+	ingest(t, c, noteFor("PRJ", "svc", 3))
+	if n := count(t, s, "notes", ""); n != 2 {
+		t.Errorf("original's notes after a write to the copy = %d, want 2", n)
+	}
+	// Refusals: the file exists; the database itself, by any spelling.
+	if _, err := s.Backup(ctx, dest); err == nil || !strings.Contains(err.Error(), "exists") {
+		t.Errorf("Backup onto an existing file = %v, want refused", err)
+	}
+	for _, same := range []string{s.path, filepath.Join(filepath.Dir(s.path), ".", filepath.Base(s.path))} {
+		if _, err := s.Backup(ctx, same); err == nil || !strings.Contains(err.Error(), "database itself") {
+			t.Errorf("Backup onto %s = %v, want refused", same, err)
+		}
+	}
+	// A folder that does not exist fails cleanly, nothing left.
+	if _, err := s.Backup(ctx, filepath.Join(dir, "nope", "copy.db")); err == nil {
+		t.Error("Backup into a missing folder succeeded")
+	}
+}
+
 func TestSchemaCurrent_FailsUntilMigrated(t *testing.T) {
 	s := emptyStore(t)
 	ctx := context.Background()

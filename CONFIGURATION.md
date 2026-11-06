@@ -146,6 +146,7 @@ default 10 s would kill it.
 | --- | --- |
 | `almanach serve` | Run the service. Refuses a schema that is behind. |
 | `almanach migrate` | Apply pending migrations to `BACKEND_DB_PATH` and exit. |
+| `almanach backup <file>` | Write a consistent copy of `BACKEND_DB_PATH` to the file (`VACUUM INTO`, while `serve` runs on) and exit. The file must not exist. |
 | `almanach version` | Print the version. |
 | `almanach -healthcheck` | Probe `/healthz` on loopback, exit 0 on a 2xx. |
 | `almanach -readycheck` | Probe `/readyz`: the database answers and its disk has 64 MB free. |

@@ -52,6 +52,8 @@ func main() {
 		err = withLog(serve)
 	case "migrate":
 		err = withLog(migrate)
+	case "backup":
+		err = withLog(backup)
 	case "version":
 		fmt.Println(version.String())
 	case "-healthcheck":
@@ -70,7 +72,7 @@ func main() {
 	}
 }
 
-const usage = "usage: almanach [serve|migrate|version|-healthcheck|-readycheck]"
+const usage = "usage: almanach [serve|migrate|backup <file>|version|-healthcheck|-readycheck]"
 
 // withLog sets up logging before anything logs, names the build, then runs.
 // An unknown BACKEND_LOG_LEVEL still fails startup: logging starts at info so the
@@ -173,6 +175,34 @@ func migrate(log *slog.Logger) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	log.Info("migrations up to date")
+	return nil
+}
+
+// backup writes a consistent copy of the database to the file named on
+// the command line and exits, while serve may run on: the way to back
+// the database up, a copy of its folder under live writes being none.
+// Only BACKEND_DB_PATH is needed.
+func backup(log *slog.Logger) error {
+	if len(os.Args) != 3 || strings.TrimSpace(os.Args[2]) == "" {
+		return errors.New("backup: one argument, the file to write, e.g. almanach backup /data/almanach-2026-11-06.db")
+	}
+	dest := os.Args[2]
+	path := strings.TrimSpace(os.Getenv("BACKEND_DB_PATH"))
+	if path == "" {
+		return errors.New("environment variable BACKEND_DB_PATH is not set")
+	}
+	ctx := context.Background()
+	db, err := openDB(ctx, path, log)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	start := time.Now()
+	size, err := db.Backup(ctx, dest)
+	if err != nil {
+		return err
+	}
+	log.Info("backup written", "file", dest, "bytes", size, "took", time.Since(start).Round(time.Millisecond).String())
 	return nil
 }
 

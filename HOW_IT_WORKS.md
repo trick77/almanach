@@ -1286,9 +1286,21 @@ the epoch: stored pages change as before.
   files. Both check first that the file's folder exists and takes a file.
 - The database is one file (with its `-wal` and `-shm` beside it) on a
   host folder of its own, apart from the clones: the clones can be wiped
-  and refilled from the forge, the database cannot, and a backup is its
-  folder. A local disk on one node (ReadWriteOnce), never a shared
-  filesystem: SQLite in WAL needs POSIX locks of one host. One replica.
+  and refilled from the forge, the database cannot. A local disk on one
+  node (ReadWriteOnce), never a shared filesystem: SQLite in WAL needs
+  POSIX locks of one host. One replica.
+- `almanach backup <file>` is the backup: `VACUUM INTO` writes one
+  transaction's view of every table, compacted, as a database of its own
+  (no `-wal`, no `-shm`), while `serve` runs on. It lands under a `.part`
+  name beside the file and is renamed into place, so a crash leaves no
+  half copy under the name; an existing file and the database itself are
+  refused. Copying the folder by hand under live writes is not
+  consistent: the file and its WAL are two moments. Needs
+  `BACKEND_DB_PATH` alone; in compose,
+  `docker compose run --rm migrate backup /data/almanach-$(date +%F).db`
+  writes into the data folder (the migrate service has the volume and
+  nothing else). On shutdown `serve` runs `PRAGMA optimize`, SQLite's
+  refresh of the planner's statistics, kept in the file.
 - `/healthz` is liveness, `/readyz` asks the database and the room on its
   disk (64 MB free at least: SQLite answers a ping from a full disk, and
   every write after a paid call then fails). Both answer loopback
@@ -2042,8 +2054,8 @@ baseline step's patch never is: its bad items are left out one by one (see
   seconds. A gateway that
   is unreachable or answers 5xx is a warning; a refused key, a 4xx, a body
   that is not a listing, or an alias missing from it is a fault.
-- `serve` never migrates; `migrate` needs only `BACKEND_DB_PATH`. A schema
-  behind the binary refuses to start.
+- `serve` never migrates; `migrate` and `backup` need only
+  `BACKEND_DB_PATH`. A schema behind the binary refuses to start.
 - `/healthz` and `/readyz` answer a loopback caller without forwarding
   headers only; through a router they are 404 by design.
 - In oidc mode the issuer (as written: https, http only on loopback), client

@@ -101,8 +101,10 @@ exported in your shell beats both files.
 
 The database lives in the host folder `data/` (`/data/almanach.db` in the
 container), the clones in `repos/`: two folders, the database alone in its
-own. A backup is `data/`; the clones refill from the forge. A fresh start:
-stack down, both folders emptied, up again.
+own. A backup is `docker compose run --rm migrate backup /data/almanach-$(date +%F).db`,
+a consistent copy written into `data/` while the stack runs (copying the
+folder under live writes is not); the clones refill from the forge. A
+fresh start: stack down, both folders emptied, up again.
 
 Open http://localhost:8081/sources and add a single repository by its
 clone URL (more can join it later) or a whole Bitbucket project; each repository's
