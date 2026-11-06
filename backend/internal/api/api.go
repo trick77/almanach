@@ -39,6 +39,7 @@ const maxBody = 1 << 20
 type Store interface {
 	Ingest(ctx context.Context, d store.Delivery, n store.Note, call *store.NoteCall, claims []store.Claim) (bool, error)
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
+	ProjectTeam(ctx context.Context, key string) (string, error)
 	Projects(ctx context.Context, sourced bool) ([]store.ProjectRow, error)
 	SourceRepoCount(ctx context.Context, key string) (int, error)
 	SingleRepos(ctx context.Context) (map[string]store.RepoRow, error)
@@ -71,10 +72,13 @@ type Waker interface{ Wake() }
 
 // Deps is what the routes need.
 type Deps struct {
-	Store         Store
-	Keys          *teamkeys.Keys
-	Worker        Waker
-	AuthMode      config.AuthMode
+	Store    Store
+	Keys     *teamkeys.Keys
+	Worker   Waker
+	AuthMode config.AuthMode
+	// TeamClaims is what a note for another team's project gets: 202
+	// ignored and a log line (log, the default), or a 403 (enforce).
+	TeamClaims    config.TeamClaims
 	ProblemWindow int
 	// Sources is the clone feature; nil when BACKEND_REPOS_DIR is unset,
 	// and the routes then say so.
@@ -235,6 +239,40 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Note.Team = team
+	// The bearer is the team, and a project belongs to the team whose
+	// notes name it: a note from another team for it is refused, unless
+	// the team-keys file lists the project for the sender (the operator's
+	// word: a repository that changed hands, two teams on one project).
+	// Otherwise any team's token, or anything holding one, would write
+	// into every team's pages, and the prompts read note text as data.
+	owner, err := d.Store.ProjectTeam(ctx, in.Note.ProjectKey)
+	if err != nil {
+		d.Log.ErrorContext(ctx, "webhook_owner_check_failed", "webhook_source", "noergler", "team", team,
+			"delivery_id", in.DeliveryID, logging.Err(err))
+		httpx.WriteError(w, http.StatusInternalServerError, "owner check failed")
+		return
+	}
+	if owner != "" && owner != team {
+		allowed, reloadErr := d.Keys.Allowed(team, in.Note.ProjectKey)
+		if reloadErr != nil {
+			d.Log.WarnContext(ctx, "team keys reload failed, last good table in use", logging.Err(reloadErr))
+		}
+		if !allowed {
+			outcome, code, body := "ignored", http.StatusAccepted, acceptedBody{Status: "ignored"}
+			if d.TeamClaims == config.TeamClaimsEnforce {
+				outcome, code = "refused", http.StatusForbidden
+			}
+			d.Log.WarnContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
+				"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "project", in.Note.ProjectKey, "owner", owner,
+				"reason", "project owned by another team")
+			if code == http.StatusForbidden {
+				httpx.WriteError(w, code, "project "+in.Note.ProjectKey+" belongs to another team")
+				return
+			}
+			httpx.WriteJSON(w, code, body)
+			return
+		}
+	}
 	// With the sources on, a repository exists for Almanach once it is a
 	// source repository: the baseline is its starting point and only the
 	// deltas after it are folded. A note for any other is answered and

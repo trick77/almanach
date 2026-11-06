@@ -43,15 +43,45 @@ func TestLoadAndLookup(t *testing.T) {
 	}
 }
 
+// An entry may be an object with the token and the projects the team may
+// write into beyond its own: looked up in any case, by team; a bare
+// string entry lists none.
+func TestAllowed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.json")
+	writeKeys(t, path, `{"platform": {"token": "tok-platform", "projects": [" Pay ", "shop"]}, "billing": "tok-billing"}`, t0)
+	k, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if team, _ := k.Lookup("tok-platform"); team != "platform" {
+		t.Errorf("Lookup of an object entry's token = %q", team)
+	}
+	for _, c := range []struct {
+		team, project string
+		want          bool
+	}{
+		{"platform", "PAY", true}, {"platform", "pay", true}, {"platform", "shop", true}, {"platform", "platform", false},
+		{"billing", "PAY", false}, {"nobody", "PAY", false}, {"platform", "", false},
+	} {
+		if got, err := k.Allowed(c.team, c.project); err != nil || got != c.want {
+			t.Errorf("Allowed(%q, %q) = %v, %v; want %v", c.team, c.project, got, err, c.want)
+		}
+	}
+}
+
 func TestLoadFailures(t *testing.T) {
 	cases := []struct {
 		name, content, want string
 	}{
 		{"duplicate token", `{"a": "tok", "b": "tok"}`, "share a token"},
+		{"duplicate token in an object", `{"a": {"token": "tok"}, "b": "tok"}`, "share a token"},
 		{"empty team", `{"": "tok"}`, "empty team or token"},
 		{"empty token", `{"a": "  "}`, "empty team or token"},
+		{"empty token in an object", `{"a": {"projects": ["x"]}}`, "empty team or token"},
+		{"empty project", `{"a": {"token": "tok", "projects": [" "]}}`, "empty project"},
 		{"no entries", `{}`, "no team keys"},
 		{"malformed", `{"a": `, "team keys"},
+		{"wrong shape", `{"a": 7}`, "team keys"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

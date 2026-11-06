@@ -370,8 +370,8 @@ func serve(log *slog.Logger) error {
 	// Readiness: the database, then the room on its disk: SQLite answers a
 	// ping from a full disk, and every write after a paid call then fails.
 	srv := httpapi.New(db.Ping, log, httpx.Check{Name: "disk", Run: diskFree})
-	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
-		Queue: queue, Metrics: metrics, DailyBudgetNanoUSD: app.Baseline.DailyBudgetNanoUSD, OIDC: oidcSvc, Sessions: sessions,
+	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, TeamClaims: app.TeamClaims, ProblemWindow: app.ProblemWindow,
+		Sources: sources, Queue: queue, Metrics: metrics, DailyBudgetNanoUSD: app.Baseline.DailyBudgetNanoUSD, OIDC: oidcSvc, Sessions: sessions,
 		RedirectURL: app.OIDC.RedirectURL, Log: log})
 
 	addr := app.Addr

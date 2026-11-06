@@ -52,8 +52,11 @@ type fakeStore struct {
 	daysAsked     []int
 	problemErr    error
 
-	sourceRepos  map[string]bool
-	sourceErr    error
+	sourceRepos map[string]bool
+	sourceErr   error
+	// owners is ProjectTeam's answer by key; ownerErr fails it.
+	owners       map[string]string
+	ownerErr     error
 	sourcedAsked []bool
 
 	renamed map[string]string
@@ -93,6 +96,10 @@ func (f *fakeStore) Spent(context.Context, time.Time) (*int64, int, error) {
 // Libraries answers libs by project key; graphErr fails it.
 func (f *fakeStore) Shared(_ context.Context, key, _ string) ([]store.SharedRepo, error) {
 	return f.libs[key], f.graphErr
+}
+
+func (f *fakeStore) ProjectTeam(_ context.Context, key string) (string, error) {
+	return f.owners[key], f.ownerErr
 }
 
 func (f *fakeStore) SourceRepoCount(_ context.Context, key string) (int, error) {
@@ -222,8 +229,14 @@ func (w *fakeWaker) Wake() { w.wakes++ }
 
 func keysFile(t *testing.T) *teamkeys.Keys {
 	t.Helper()
+	return keysFrom(t, `{"platform": "tok-platform", "billing": "tok-billing"}`)
+}
+
+// keysFrom is a team-keys table loaded from the given file content.
+func keysFrom(t *testing.T, content string) *teamkeys.Keys {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "keys.json")
-	if err := os.WriteFile(path, []byte(`{"platform": "tok-platform", "billing": "tok-billing"}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	k, err := teamkeys.Load(path)
@@ -235,9 +248,15 @@ func keysFile(t *testing.T) *teamkeys.Keys {
 
 func handler(t *testing.T, st *fakeStore, w *fakeWaker, mode config.AuthMode) http.Handler {
 	t.Helper()
+	return handlerWith(t, st, w, mode, config.TeamClaimsLog, keysFile(t))
+}
+
+// handlerWith is handler with the team-claims mode and the keys given.
+func handlerWith(t *testing.T, st *fakeStore, w *fakeWaker, mode config.AuthMode, claims config.TeamClaims, keys *teamkeys.Keys) http.Handler {
+	t.Helper()
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httpapi.New(func(context.Context) error { return nil }, discard)
-	Register(srv, Deps{Store: st, Keys: keysFile(t), Worker: w, AuthMode: mode, ProblemWindow: 90, Log: discard})
+	Register(srv, Deps{Store: st, Keys: keys, Worker: w, AuthMode: mode, TeamClaims: claims, ProblemWindow: 90, Log: discard})
 	return srv.Handler()
 }
 
@@ -374,6 +393,45 @@ func TestWebhook(t *testing.T) {
 		}
 		if st.stored[0].Team != "billing" {
 			t.Errorf("Team = %q", st.stored[0].Team)
+		}
+	})
+	t.Run("another team's project", func(t *testing.T) {
+		// PLAT belongs to platform's notes: billing's note for it is
+		// ignored and logged (log, the default), a 403 under enforce,
+		// stored in neither case; the team-keys file may let it in; the
+		// owner itself and an unowned project pass.
+		st := newFakeStore()
+		st.owners = map[string]string{"PLAT": "platform"}
+		w := &fakeWaker{}
+		h := handler(t, st, w, config.AuthNone)
+		code, body := do(t, h, "POST", "/webhooks/noergler", "tok-billing", validPayload(7), nil)
+		if code != 202 || field(t, body, "status") != "ignored" || len(st.stored) != 0 || w.wakes != 0 {
+			t.Errorf("log mode: %d %v stored %d wakes %d; want 202 ignored, nothing stored", code, body, len(st.stored), w.wakes)
+		}
+		if code, body := do(t, h, "POST", "/webhooks/noergler", "tok-platform", validPayload(7), nil); code != 202 || field(t, body, "status") != "accepted" {
+			t.Errorf("owner: %d %v", code, body)
+		}
+		st.owners = map[string]string{}
+		if code, body := do(t, h, "POST", "/webhooks/noergler", "tok-billing", validPayload(8), nil); code != 202 || field(t, body, "status") != "accepted" {
+			t.Errorf("unowned project: %d %v", code, body)
+		}
+		st.owners = map[string]string{"PLAT": "platform"}
+		st.ownerErr = errors.New("db down")
+		if code, _ := do(t, h, "POST", "/webhooks/noergler", "tok-billing", validPayload(7), nil); code != 500 {
+			t.Errorf("owner check failure = %d, want 500", code)
+		}
+		st.ownerErr = nil
+
+		enforce := handlerWith(t, st, w, config.AuthNone, config.TeamClaimsEnforce, keysFile(t))
+		code, body = do(t, enforce, "POST", "/webhooks/noergler", "tok-billing", validPayload(7), nil)
+		if code != 403 || !strings.Contains(field(t, body, "error"), "PLAT") || len(st.stored) != 2 {
+			t.Errorf("enforce: %d %v stored %d; want 403 naming the project, nothing more stored", code, body, len(st.stored))
+		}
+		// Listed for billing in the keys file: in, under enforce too.
+		listed := handlerWith(t, st, w, config.AuthNone, config.TeamClaimsEnforce,
+			keysFrom(t, `{"platform": "tok-platform", "billing": {"token": "tok-billing", "projects": ["plat"]}}`))
+		if code, body := do(t, listed, "POST", "/webhooks/noergler", "tok-billing", validPayload(9), nil); code != 202 || field(t, body, "status") != "accepted" {
+			t.Errorf("listed project: %d %v", code, body)
 		}
 	})
 	t.Run("500 persist failed", func(t *testing.T) {

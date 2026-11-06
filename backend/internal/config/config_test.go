@@ -321,6 +321,28 @@ func TestNoneModeRefusesOIDCVariables(t *testing.T) {
 	}
 }
 
+// The team-claims gate starts in log mode, takes enforce in any case, and
+// refuses anything else by name.
+func TestTeamClaims(t *testing.T) {
+	app, err := Load(lookup(minimal()))
+	if err != nil || app.TeamClaims != TeamClaimsLog {
+		t.Fatalf("default = %q, %v; want log", app.TeamClaims, err)
+	}
+	env := minimal()
+	env["BACKEND_TEAM_CLAIMS"] = "enforce"
+	strict, err := Load(lookup(env))
+	if err != nil || strict.TeamClaims != TeamClaimsEnforce {
+		t.Errorf("enforce = %+v, %v", strict, err)
+	}
+	if !strings.Contains(app.Summary(), "team_claims=log") {
+		t.Errorf("Summary = %q, want the mode in it", app.Summary())
+	}
+	env["BACKEND_TEAM_CLAIMS"] = "strict"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), `BACKEND_TEAM_CLAIMS: "strict", want one of log, enforce`) {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestProxyModeIsGone(t *testing.T) {
 	env := minimal()
 	env["BACKEND_AUTH_MODE"] = "proxy"

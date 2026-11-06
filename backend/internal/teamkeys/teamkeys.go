@@ -4,6 +4,12 @@
 // restart. The token IS the team's identity: nothing in a payload names a
 // team, and a lookup compares against every entry in constant time, so
 // timing reveals neither which team matched nor how many there are.
+//
+// An entry may be an object instead of the token alone,
+// {"token": "<token>", "projects": ["<key>", ...]}: the projects the team
+// may write into though another team owns them (a repository that changed
+// hands, two teams on one project). The operator's word; without it a
+// note for another team's project is refused (api, BACKEND_TEAM_CLAIMS).
 package teamkeys
 
 import (
@@ -23,9 +29,35 @@ type Keys struct {
 	path string
 	mu   sync.Mutex
 	mod  time.Time
-	// byToken is token -> team; teams is the sorted names, for the log.
-	byToken map[string]string
-	teams   []string
+	// byToken is token -> team; teams is the sorted names, for the log;
+	// projects is team -> the project keys it may write into beyond its
+	// own, folded to lower case (a key is one name in any case).
+	byToken  map[string]string
+	teams    []string
+	projects map[string][]string
+}
+
+// entry is one team's value in the file: the token alone, or an object
+// with it and the projects the team may write into.
+type entry struct {
+	Token    string   `json:"token"`
+	Projects []string `json:"projects"`
+}
+
+// UnmarshalJSON takes a bare string as the token.
+func (e *entry) UnmarshalJSON(raw []byte) error {
+	var token string
+	if err := json.Unmarshal(raw, &token); err == nil {
+		e.Token, e.Projects = token, nil
+		return nil
+	}
+	type plain entry
+	var p plain
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return err
+	}
+	*e = entry(p)
+	return nil
 }
 
 // Load reads the file once. An unreadable or empty file is a startup fault.
@@ -66,6 +98,25 @@ func (k *Keys) Lookup(token string) (team string, reloadErr error) {
 	return team, reloadErr
 }
 
+// Allowed reports whether the file lets team write into project, a key
+// in any case: the team's own projects need no entry, this is for
+// another team's. The file is re-read first when its mtime moved, as on
+// a lookup; a failed reload keeps the last good table.
+func (k *Keys) Allowed(team, project string) (allowed bool, reloadErr error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if st, err := os.Stat(k.path); err == nil && !st.ModTime().Equal(k.mod) {
+		reloadErr = k.reload()
+	}
+	want := strings.ToLower(strings.TrimSpace(project))
+	for _, p := range k.projects[team] {
+		if p == want {
+			return true, reloadErr
+		}
+	}
+	return false, reloadErr
+}
+
 // reload reads the file into the table; the caller holds the lock. A
 // malformed file is refused and the old table kept.
 func (k *Keys) reload() error {
@@ -77,14 +128,15 @@ func (k *Keys) reload() error {
 	if err != nil {
 		return fmt.Errorf("team keys: %w", err)
 	}
-	var byTeam map[string]string
+	var byTeam map[string]entry
 	if err := json.Unmarshal(raw, &byTeam); err != nil {
 		return fmt.Errorf("team keys: %s: %w", k.path, err)
 	}
 	byToken := make(map[string]string, len(byTeam))
+	projects := make(map[string][]string, len(byTeam))
 	var teams []string
-	for team, token := range byTeam {
-		team, token = strings.TrimSpace(team), strings.TrimSpace(token)
+	for team, e := range byTeam {
+		team, token := strings.TrimSpace(team), strings.TrimSpace(e.Token)
 		if team == "" || token == "" {
 			return fmt.Errorf("team keys: %s: an entry has an empty team or token", k.path)
 		}
@@ -93,6 +145,13 @@ func (k *Keys) reload() error {
 		}
 		byToken[token] = team
 		teams = append(teams, team)
+		for _, p := range e.Projects {
+			p = strings.ToLower(strings.TrimSpace(p))
+			if p == "" {
+				return fmt.Errorf("team keys: %s: team %s lists an empty project", k.path, team)
+			}
+			projects[team] = append(projects[team], p)
+		}
 	}
 	if len(byToken) == 0 {
 		// A rollout that wrote {} or null must not empty the table in
@@ -100,7 +159,7 @@ func (k *Keys) reload() error {
 		return fmt.Errorf("team keys: %s: no team keys", k.path)
 	}
 	sort.Strings(teams)
-	k.byToken, k.teams, k.mod = byToken, teams, st.ModTime()
+	k.byToken, k.teams, k.projects, k.mod = byToken, teams, projects, st.ModTime()
 	return nil
 }
 

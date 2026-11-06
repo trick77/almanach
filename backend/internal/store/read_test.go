@@ -72,6 +72,13 @@ func TestExists(t *testing.T) {
 	if err != nil || !ok || team != "alpha" {
 		t.Errorf("ProjectExists(PRJ) = %q, %v, %v; want alpha, true", team, ok, err)
 	}
+	// The team a project belongs to, by any name; none for an unknown one.
+	if team, err := s.ProjectTeam(ctx, "PRJ"); err != nil || team != "alpha" {
+		t.Errorf("ProjectTeam(PRJ) = %q, %v; want alpha", team, err)
+	}
+	if team, err := s.ProjectTeam(ctx, "NONE"); err != nil || team != "" {
+		t.Errorf("ProjectTeam(NONE) = %q, %v; want none", team, err)
+	}
 	if team, ok, err := s.ProjectExists(ctx, "NONE", false); err != nil || ok || team != "" {
 		t.Errorf("ProjectExists(NONE) = %q, %v, %v; want false", team, ok, err)
 	}
