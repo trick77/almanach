@@ -57,6 +57,8 @@ type fakeStore struct {
 	graphErr error
 	// libs is what Libraries answers, by project key.
 	libs map[string][]store.SharedRepo
+	// costs is the ledger by month and project.
+	costs []store.CostRow
 }
 
 // Dependencies answers graph; all false keeps its main edges only, as the
@@ -73,6 +75,12 @@ func (f *fakeStore) Dependencies(_ context.Context, all bool) (store.Graph, erro
 		}
 	}
 	return g, nil
+}
+
+func (f *fakeStore) Costs(context.Context, time.Time) ([]store.CostRow, error) { return f.costs, nil }
+func (f *fakeStore) Spent(context.Context, time.Time) (*int64, int, error) {
+	n := int64(1_284_000_000)
+	return &n, 23, nil
 }
 
 // Libraries answers libs by project key; graphErr fails it.

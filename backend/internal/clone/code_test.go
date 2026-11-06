@@ -228,12 +228,14 @@ func TestDescribe_RetriesAFailedRun(t *testing.T) {
 		"reconcile failed":           {failedAt(store.RunReconcile, 25*time.Hour), "d0", 1, month, "tools cli reconcile retry d0 h1"},
 		"full read failed, doc'd":    {failedAt(store.RunFull, 25*time.Hour), "d0", 1, month, "tools cli full retry  h1"},
 		"reconcile past the retries": {failedAt(store.RunReconcile, month+time.Hour), "d0", 4, month, "tools cli reconcile monthly d0 h1"},
-		"shorter interval":           {failedAt(store.RunReconcile, 3*time.Hour), "d0", 1, 2 * time.Hour, "tools cli reconcile retry d0 h1"},
-		"retry inside the interval":  {failedAt(store.RunReconcile, time.Hour), "d0", 1, 2 * time.Hour, ""},
-		"full read failed at head":   {failedAt(store.RunFull, 25*time.Hour), "h1", 1, month, "tools cli full retry  h1"},
-		"reconcile failed, off":      {failedAt(store.RunReconcile, 25*time.Hour), "d0", 1, 0, "tools cli reconcile retry d0 h1"},
-		"reconcile failed, no doc":   {failedAt(store.RunReconcile, 25*time.Hour), "", 1, month, "tools cli full retry  h1"},
-		"never ran":                  {store.BaselineRun{}, "", 0, month, "tools cli full first_ready  h1"},
+		// The interval is never shorter than the retry's day (its floor,
+		// config.MinReconcile): a failure three hours old waits the day out.
+		"interval at the floor":    {failedAt(store.RunReconcile, 3*time.Hour), "d0", 1, 24 * time.Hour, ""},
+		"retry at the floor's day": {failedAt(store.RunReconcile, 25*time.Hour), "d0", 1, 24 * time.Hour, "tools cli reconcile retry d0 h1"},
+		"full read failed at head": {failedAt(store.RunFull, 25*time.Hour), "h1", 1, month, "tools cli full retry  h1"},
+		"reconcile failed, off":    {failedAt(store.RunReconcile, 25*time.Hour), "d0", 1, 0, "tools cli reconcile retry d0 h1"},
+		"reconcile failed, no doc": {failedAt(store.RunReconcile, 25*time.Hour), "", 1, month, "tools cli full retry  h1"},
+		"never ran":                {store.BaselineRun{}, "", 0, month, "tools cli full first_ready  h1"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()

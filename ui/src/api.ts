@@ -22,6 +22,38 @@ export interface Project {
   repo: Repo | null;
 }
 
+/** Calls of one kind (merges or runs) and what they cost. */
+export interface CostSum {
+  calls: number;
+  /** Calls no one priced: their cost is unknown, not zero. */
+  unpriced: number;
+  cost_usd?: string;
+}
+
+export interface CostProject {
+  project: string;
+  cost_usd?: string;
+  calls: number;
+  merges: CostSum;
+  runs: CostSum;
+}
+
+export interface CostMonth {
+  /** YYYY-MM, UTC. */
+  month: string;
+  cost_usd?: string;
+  calls: number;
+  projects: CostProject[];
+}
+
+/** Almanach's own ledger by month and project, never noergler's. */
+export interface Costs {
+  months: CostMonth[];
+  /** BACKEND_DAILY_BUDGET_USD; absent when none is set. */
+  budget_usd?: string;
+  today: { cost_usd?: string; calls: number };
+}
+
 export interface Projects {
   projects: Project[];
 }
@@ -324,6 +356,9 @@ export interface Sources {
   enabled: boolean;
   /** BACKEND_BITBUCKET_HOST; "" when unset. */
   default_host: string;
+  /** BACKEND_BASELINE_MAX_CALLS: the model calls one run may make; every
+   *  repository of a new source gets a full run. 0 with the feature off. */
+  max_calls: number;
   sources: SourceSummary[];
 }
 
@@ -399,6 +434,8 @@ export interface Baseline {
 
 export interface SourceDetail {
   project_key: string;
+  /** BACKEND_BASELINE_MAX_CALLS: what a full run may cost in calls. */
+  max_calls: number;
   kind: SourceKind;
   host: string;
   has_token: boolean;
@@ -422,7 +459,8 @@ export type WaitReason =
   | "unavailable"
   | "busy"
   | "clone_busy"
-  | "placing";
+  | "placing"
+  | "budget";
 
 export type StepKind =
   | "catalogue"

@@ -333,7 +333,7 @@ func sourcesHandlerWith(t *testing.T, fs *fakeSources, st *fakeStore, w *fakeWak
 	}
 	nudger, checkouts := &fakeNudger{}, &fakeCheckouts{}
 	Register(srv, Deps{Store: st, Keys: keysFile(t), Worker: w, AuthMode: config.AuthNone, ProblemWindow: 90, Log: discard,
-		Sources: &SourcesDeps{Store: fs, Poller: nudger, Git: checkouts, Key: key, DefaultHost: "https://forge.example.invalid"}})
+		Sources: &SourcesDeps{Store: fs, Poller: nudger, Git: checkouts, Key: key, DefaultHost: "https://forge.example.invalid", MaxCalls: 16}})
 	return srv.Handler(), nudger, checkouts
 }
 

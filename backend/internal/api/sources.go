@@ -75,7 +75,10 @@ type SourcesDeps struct {
 	// Reconcile is the poller's reconcile interval (BACKEND_BASELINE_RECONCILE),
 	// zero for buttons only: whether a skipped part is retried on its own.
 	Reconcile time.Duration
-	sizes     sizeCache
+	// MaxCalls is the calls one run may make (BACKEND_BASELINE_MAX_CALLS):
+	// what the UI says a source or a full run may cost before the click.
+	MaxCalls int
+	sizes    sizeCache
 }
 
 // sizeCache remembers a project folder's size for a short while: the
@@ -166,9 +169,13 @@ type sourceSummaryBody struct {
 }
 
 type sourcesBody struct {
-	Enabled     bool                `json:"enabled"`
-	DefaultHost string              `json:"default_host"`
-	Sources     []sourceSummaryBody `json:"sources"`
+	Enabled     bool   `json:"enabled"`
+	DefaultHost string `json:"default_host"`
+	// MaxCalls is the model calls one baseline run may make: every
+	// repository of a new source gets a full run, so the create form says
+	// what it may cost. 0 with the feature off.
+	MaxCalls int                 `json:"max_calls"`
+	Sources  []sourceSummaryBody `json:"sources"`
 }
 
 func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +185,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
 	}
-	out.DefaultHost = d.Sources.DefaultHost
+	out.DefaultHost, out.MaxCalls = d.Sources.DefaultHost, d.Sources.MaxCalls
 	rows, err := d.Sources.Store.Sources(r.Context())
 	if err != nil {
 		httpx.ServerError(w, r, err, "sources")
@@ -281,6 +288,9 @@ type sourceDetailBody struct {
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`
 	Repos        []sourceRepoBody `json:"repos"`
+	// MaxCalls is the model calls one run may make: what a full run of a
+	// repository may cost, said before the click.
+	MaxCalls int `json:"max_calls"`
 }
 
 func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (sourceDetailBody, error) {
@@ -294,7 +304,7 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 	}
 	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
 		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError,
-		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos))}
+		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos)), MaxCalls: d.Sources.MaxCalls}
 	if dir, err := d.Sources.Git.ProjectDir(src.ProjectID); err == nil {
 		out.Dir, out.DiskBytes = dir, d.Sources.sizes.size(dir)
 	}

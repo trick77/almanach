@@ -84,6 +84,7 @@ const synced = new Date(2026, 9, 31, 9, 5).toISOString();
 const sources: Sources = {
   enabled: true,
   default_host: "",
+  max_calls: 16,
   sources: [
     {
       project_key: "SHOP",
@@ -128,6 +129,7 @@ const sources: Sources = {
 
 const detail: SourceDetail = {
   project_key: "werkzeuge",
+  max_calls: 16,
   kind: "static",
   host: "",
   has_token: false,
@@ -217,7 +219,9 @@ describe("SourcesPage", () => {
   });
 
   it("says when the feature is off", async () => {
-    serve({ sources: { enabled: false, default_host: "", sources: [] } });
+    serve({
+      sources: { enabled: false, default_host: "", max_calls: 0, sources: [] },
+    });
     render(<SourcesPage />);
     expect(await screen.findByText(/BACKEND_REPOS_DIR/)).toBeInTheDocument();
     expect(screen.queryByText("Neue Quelle")).not.toBeInTheDocument();
@@ -422,7 +426,16 @@ describe("SourcePage baseline", () => {
     await waitFor(() =>
       expect(screen.getByText("Neu beschreiben")).toBeEnabled(),
     );
+    // A full run is paid for whole: asked first, with what it may cost
+    // and what the last run cost.
     fireEvent.click(screen.getByText("Neu beschreiben"));
+    expect(writes).toHaveLength(1);
+    expect(
+      screen.getByText(
+        /acme-cli neu beschreiben\? .*bis zu 16 Modellaufrufe; der letzte Lauf kostete \$2\.42\./,
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText(S.baseline.yesFull));
     await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes).toEqual([
       {
@@ -436,6 +449,82 @@ describe("SourcePage baseline", () => {
         body: { mode: "full" },
       },
     ]);
+  });
+
+  it("keeps a row held while its request is out, whatever another row's answers", async () => {
+    const [cli] = detail.repos;
+    if (!cli) throw new Error("fixture");
+    const two = { ...detail, repos: [cli, { ...cli, slug: "acme-two" }] };
+    let release = () => {};
+    const out = new Promise<void>((resolve) => (release = resolve));
+    const answer = { ok: true, status: 202, text: async () => "{}" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if ((init?.method ?? "GET") === "GET") {
+          return { ok: true, status: 200, json: async () => two };
+        }
+        if (url.includes("acme-two/describe")) await out;
+        return answer;
+      }),
+    );
+    render(<SourcePage projectKey="werkzeuge" />);
+    const rowOf = async (slug: string) => {
+      const row = (await screen.findByText(slug)).closest("tr");
+      if (!row) throw new Error(slug);
+      return within(row);
+    };
+    const b = await rowOf("acme-two");
+    fireEvent.click(b.getByText(S.baseline.actions.full));
+    fireEvent.click(screen.getByText(S.baseline.yesFull));
+    await waitFor(() =>
+      expect(b.getByText(S.baseline.actions.reconcile)).toBeDisabled(),
+    );
+    // The other row's sync comes back first: the held row stays held.
+    const a = await rowOf("acme-cli");
+    fireEvent.click(a.getByText(S.sources.repoActions.sync));
+    await waitFor(() =>
+      expect(a.getByText(S.baseline.actions.reconcile)).toBeEnabled(),
+    );
+    expect(b.getByText(S.baseline.actions.reconcile)).toBeDisabled();
+    release();
+    await waitFor(() =>
+      expect(b.getByText(S.baseline.actions.reconcile)).toBeEnabled(),
+    );
+  });
+
+  it("closes the full run's question once the row's run is open", async () => {
+    const [cli] = detail.repos;
+    if (!cli?.baseline) throw new Error("fixture");
+    let shown: SourceDetail = detail;
+    const queued: SourceDetail = {
+      ...detail,
+      repos: [
+        { ...cli, baseline: { ...cli.baseline, state: "queued" } },
+        ...detail.repos.slice(1),
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if ((init?.method ?? "GET") === "GET") {
+          return { ok: true, status: 200, json: async () => shown };
+        }
+        shown = queued;
+        return { ok: true, status: 202, text: async () => "{}" };
+      }),
+    );
+    render(<SourcePage projectKey="werkzeuge" />);
+    const row = (await screen.findByText("acme-cli")).closest("tr");
+    if (!row) throw new Error("row");
+    fireEvent.click(within(row).getByText(S.baseline.actions.full));
+    expect(screen.getByText(S.baseline.yesFull)).toBeInTheDocument();
+    // The row's sync answers, and the reload finds a run queued (the
+    // poller's): the full run would be refused.
+    fireEvent.click(within(row).getByText(S.sources.repoActions.sync));
+    await waitFor(() =>
+      expect(screen.queryByText(S.baseline.yesFull)).not.toBeInTheDocument(),
+    );
   });
 
   it("shows a run under way, a partial and a failed one", async () => {
@@ -997,12 +1086,13 @@ describe("App with sources", () => {
       "Abhängigkeiten",
       "Quellen",
       "Warteschlange",
+      "Kosten",
     ]);
     unmount();
     vi.unstubAllGlobals();
     serve({
       me,
-      sources: { enabled: false, default_host: "", sources: [] },
+      sources: { enabled: false, default_host: "", max_calls: 0, sources: [] },
       projects: { projects: [] },
     });
     render(<App />);
@@ -1011,6 +1101,6 @@ describe("App with sources", () => {
     await waitFor(() =>
       expect(screen.queryByText("Quellen")).not.toBeInTheDocument(),
     );
-    expect(entries()).toEqual(["Projekte", "Warteschlange"]);
+    expect(entries()).toEqual(["Projekte", "Warteschlange", "Kosten"]);
   });
 });

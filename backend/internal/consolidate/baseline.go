@@ -166,6 +166,24 @@ var errStop = errors.New("stop the drain")
 // stepRun runs one step of the run. Reports whether the drain may go on.
 func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 	ctx = logging.With(ctx, "project", r.ProjectKey, "repo", r.Slug, "run_id", r.ID)
+	// The day's budget, asked before a run starts: one started goes on to
+	// its end, since its repository's notes wait for it (NextQueued) and a
+	// budget that held it would hold them for the day; so the budget may be
+	// overshot by one run's calls, never by a day's. The notes go on
+	// whatever it says.
+	if r.State == store.RunQueued {
+		over, err := w.overBudget(ctx)
+		if err != nil {
+			w.log.WarnContext(ctx, "baseline: spend read failed, drain paused", logging.Err(err))
+			return false
+		}
+		if over {
+			if w.setWait(r.ID, WaitBudget) {
+				w.log.InfoContext(ctx, "baseline: the day's budget is spent, runs wait for the next day")
+			}
+			return false
+		}
+	}
 	w.setBusy(Busy{Kind: KindRun, ProjectKey: r.ProjectKey, RepoSlug: r.Slug, RunID: r.ID})
 	defer w.clearBusy()
 	loaded := r
@@ -228,6 +246,22 @@ func (w *Worker) step(ctx context.Context, r *store.BaselineRun) (err error) {
 	default:
 		return fmt.Errorf("a run in state %q is not open", r.State)
 	}
+}
+
+// overBudget reports whether the worker's own calls of the UTC day have
+// cost the daily budget (BACKEND_DAILY_BUDGET_USD) or more; never with no
+// budget set. Unpriced calls count nothing: a budget needs a priced
+// gateway, the config says so.
+func (w *Worker) overBudget(ctx context.Context) (bool, error) {
+	budget := w.base.Limits.DailyBudgetNanoUSD
+	if budget <= 0 {
+		return false, nil
+	}
+	spent, _, err := w.store.Spent(ctx, store.DayStart(w.now()))
+	if err != nil {
+		return false, err
+	}
+	return spent != nil && *spent >= budget, nil
 }
 
 // ErrCloneBusy is a Code read that found the clone held by the poller: no

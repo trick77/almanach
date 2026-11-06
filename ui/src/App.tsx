@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Me, QueueCount, Sources } from "./api";
+import { CostsPage } from "./CostsPage";
 import { DepsPage } from "./DepsPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
@@ -9,6 +10,7 @@ import { RepoPage } from "./RepoPage";
 import { SourcePage } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import {
+  costsPath,
   depsPath,
   queuePath,
   routeFromPath,
@@ -122,11 +124,15 @@ function Shell({ me }: { me: Me }) {
           {nav(
             S.nav.projects,
             "/",
-            route.page !== "queue" && route.page !== "deps" && !inSources,
+            route.page !== "queue" &&
+              route.page !== "deps" &&
+              route.page !== "costs" &&
+              !inSources,
           )}
           {sourcesOn && nav(S.nav.deps, depsPath, route.page === "deps")}
           {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
           {nav(S.nav.queue, queuePath, route.page === "queue", queued)}
+          {nav(S.nav.costs, costsPath, route.page === "costs")}
         </nav>
         <span
           className="flex items-center gap-3 text-[13px] text-muted"
@@ -159,6 +165,7 @@ function Shell({ me }: { me: Me }) {
         {route.page === "sources" && <SourcesPage />}
         {route.page === "queue" && <QueuePage />}
         {route.page === "deps" && <DepsPage />}
+        {route.page === "costs" && <CostsPage />}
         {route.page === "source" && (
           <SourcePage key={route.key} projectKey={route.key} />
         )}

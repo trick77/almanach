@@ -19,6 +19,26 @@ export const S = {
     deps: "Abhängigkeiten",
     sources: "Quellen",
     queue: "Warteschlange",
+    costs: "Kosten",
+  },
+  costs: {
+    title: "Kosten",
+    failed: "Die Kosten konnten nicht geladen werden.",
+    lede: "Was die eigenen Modellaufrufe von Almanach kosten, nach Monat (UTC) und Projekt: die Notizen (ein Aufruf pro gemergtem Pull Request) getrennt von den Läufen (jeder andere Aufruf: ein Repository lesen oder seine Seiten neu fassen). Nur das eigene Hauptbuch; was noergler für seine Reviews zahlt, steht auf den Notizen.",
+    empty: "Noch kein Modellaufruf.",
+    tiles: {
+      today: "Heute ausgegeben (UTC)",
+      budget: "Tagesbudget",
+      noBudget:
+        "Kein Budget gesetzt (BACKEND_DAILY_BUDGET_USD, nur mit Quellen: es hält die Läufe)",
+      budgetNote: (spent: string, budget: string) =>
+        `${spent} von ${budget}; ausgeschöpft, warten die Läufe bis zum nächsten Tag (UTC), die Notizen nicht`,
+    },
+    headers: ["Projekt", "Notizen", "Läufe", "Aufrufe", "Kosten"],
+    monthTotal: "Summe",
+    unpriced: (n: number) =>
+      n === 1 ? "1 Aufruf ohne Preis" : `${n} Aufrufe ohne Preis`,
+    calls: (n: number) => (n === 1 ? "1 Aufruf" : `${n} Aufrufe`),
   },
   deps: {
     title: "Abhängigkeiten",
@@ -422,6 +442,10 @@ export const S = {
       userHint:
         "GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).",
       create: "Anlegen und synchronisieren",
+      // Every repository of a new source gets a full run: said before
+      // the click, with what one may cost.
+      costHint: (calls: number) =>
+        `Jedes Repository wird nach dem ersten Clone vollständig beschrieben: bis zu ${calls} Modellaufrufe pro Repository, bei einem Bitbucket-Projekt für jedes gelistete Repository.`,
       cancel: "Abbrechen",
       save: "Speichern",
       replace: "Ersetzen",
@@ -586,8 +610,8 @@ export const S = {
       "": "Grund nicht erfasst",
     } satisfies Record<SkipReason, string>,
     // Under the skipped parts: when they are read again, on its own (the
-    // poller, auto_retry: a day after the run, or the reconcile interval
-    // when shorter) or with the next run, sooner by the button.
+    // poller, auto_retry: a day after the run) or with the next run,
+    // sooner by the button.
     retryAuto: "Wird von selbst erneut gelesen.",
     retryManual: "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
     failedRun: "Beschreibung fehlgeschlagen:",
@@ -599,6 +623,11 @@ export const S = {
       reconcile: "Aktualisieren",
       full: "Neu beschreiben",
     },
+    // A full run is paid for whole: confirmed, with what the last one cost.
+    confirmFull: (slug: string, calls: number, last: string) =>
+      `${slug} neu beschreiben? Liest das ganze Repository erneut, bis zu ${calls} Modellaufrufe` +
+      (last === "" ? "." : `; der letzte Lauf kostete ${last}.`),
+    yesFull: "Ja, neu beschreiben",
   },
   queue: {
     title: "Warteschlange",
@@ -693,6 +722,7 @@ export const S = {
       busy: "Datenbank belegt",
       clone_busy: "Clone belegt",
       placing: "Git ordnet einen Merge-Commit ein",
+      budget: "Tagesbudget ausgeschöpft, Läufe warten bis morgen (UTC)",
     } satisfies Record<WaitReason, string>,
     until: (at: string, left: string) => `${at}, in ${left}`,
     soon: (s: number) => `in ≤ ${s} s`,

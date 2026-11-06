@@ -197,7 +197,7 @@ describe("DepsPage", () => {
   it("lists the shared repositories with their users and the ambiguous ones", async () => {
     serve({
       dependencies: graph,
-      sources: { enabled: true, sources: [], default_host: "" },
+      sources: { enabled: true, sources: [], default_host: "", max_calls: 16 },
     });
     render(<DepsPage />);
     const table = await screen.findByRole("table");
@@ -254,7 +254,7 @@ describe("DepsPage", () => {
   it("says when there is nothing to show, and when the sources are off", async () => {
     serve({
       dependencies: { repos: [], edges: [], ambiguous: [] },
-      sources: { enabled: true, sources: [], default_host: "" },
+      sources: { enabled: true, sources: [], default_host: "", max_calls: 16 },
     });
     const { unmount } = render(<DepsPage />);
     expect(
@@ -263,7 +263,7 @@ describe("DepsPage", () => {
     unmount();
     serve({
       dependencies: { repos: [], edges: [], ambiguous: [] },
-      sources: { enabled: false, sources: [], default_host: "" },
+      sources: { enabled: false, sources: [], default_host: "", max_calls: 0 },
     });
     render(<DepsPage />);
     expect(await screen.findByText(/BACKEND_REPOS_DIR/)).toBeInTheDocument();

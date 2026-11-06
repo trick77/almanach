@@ -513,13 +513,13 @@ func (p *Poller) guarded(j store.SyncJob, fn func()) (err error) {
 // run on a clone's first ready (its row had no head before) or on any
 // sync of a ready clone that has no run at all, a reconcile when the head
 // is off the documented commit and the last run is older than the
-// interval, and a failed run again, in its own mode, after retryAfter, at
+// interval, and a failed run again, in its own mode, after retryWait, at
 // most maxRetries times in a row; past that the failed repository is back
 // on the reconcile interval. A done run at the head that skipped parts (a
 // subject gone aside), or left the repository page without a map drawn
 // from its text (a page described before maps existed, a map step
 // skipped), is retried too: a reconcile at the same commit, which reads
-// the skipped parts again and draws the map, after retryAfter, while
+// the skipped parts again and draws the map, after retryWait, while
 // fewer than maxRetries retries ran in a row and the reconcile interval
 // is on (RetriesOnItsOwn). A head that moved waits for the interval, which
 // reads the skipped parts with the changes. Due is read from the rows,
@@ -571,7 +571,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 		}
 		since := p.Now().Sub(*last.FinishedAt)
 		switch {
-		case last.State == store.RunFailed && since >= p.retryAfter() && streak.Failed <= maxRetries:
+		case last.State == store.RunFailed && since >= retryWait && streak.Failed <= maxRetries:
 			// A failed run, first, reconcile or a button's, is tried again
 			// in its own mode whatever the head, a bounded number of
 			// times: a failure that is permanent (a repository too large
@@ -584,7 +584,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 				// afresh.
 				mode = store.RunFull
 			}
-		case last.State == store.RunDone && since >= p.retryAfter() && RetriesOnItsOwn(p.Describe.Reconcile, streak.Retried, doc.Commit, head) &&
+		case last.State == store.RunDone && since >= retryWait && RetriesOnItsOwn(p.Describe.Reconcile, streak.Retried, doc.Commit, head) &&
 			p.unfinished(ctx, last, key, slug):
 			// Skipped parts and a missing map are never left for a head
 			// that may not move again: the last run's skipped names are
@@ -614,7 +614,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 // prompts.ProjectEpoch) and nothing that reads the
 // code is due: a prompt change reaches stored pages one call a page, one
 // page at a time across the wiki, never a full read (user, 2026-11-04). A
-// failed restyle is queued again after retryAfter, while a page has fewer
+// failed restyle is queued again after retryWait, while a page has fewer
 // than store.RestyleTries failures an epoch (a project page's counted over
 // its project). Only with the reconcile interval on (zero: buttons only)
 // and a documented page to restyle.
@@ -623,7 +623,7 @@ func (p *Poller) restyle(ctx context.Context, key, slug string, doc store.Baseli
 		return
 	}
 	due, err := p.Store.RestyleDue(ctx, key, slug, store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch},
-		p.Now().Add(-p.retryAfter()))
+		p.Now().Add(-retryWait))
 	if err != nil {
 		p.logRunCheck(err, key, slug)
 		return
@@ -716,17 +716,9 @@ func leftParts(r store.BaselineRun) bool {
 }
 
 // retryWait is how long a failed run waits before it is queued again:
-// long enough for a gateway outage, short of the monthly reconcile.
+// long enough for a gateway outage, never past the reconcile interval,
+// whose floor it is (config.MinReconcile).
 const retryWait = 24 * time.Hour
-
-// retryAfter is retryWait, or the reconcile interval when that is shorter:
-// a failure must not slow the cadence it interrupted.
-func (p *Poller) retryAfter() time.Duration {
-	if r := p.Describe.Reconcile; r > 0 && r < retryWait {
-		return r
-	}
-	return retryWait
-}
 
 // RetryAt is when the poller queues a repository's failed run again at
 // the earliest (the first cycle after it), given when it finished and how
@@ -736,7 +728,7 @@ func (p *Poller) RetryAt(finished time.Time, failedInRow int) (time.Time, bool) 
 	if p.Describe.Wake == nil || failedInRow > maxRetries {
 		return time.Time{}, false
 	}
-	return finished.Add(p.retryAfter()), true
+	return finished.Add(retryWait), true
 }
 
 // RestyleRetryAt is when the poller queues a failed restyle again, its
@@ -747,7 +739,7 @@ func (p *Poller) RestyleRetryAt(finished time.Time, failed int) (time.Time, bool
 	if p.Describe.Wake == nil || p.Describe.Reconcile <= 0 || failed >= store.RestyleTries {
 		return time.Time{}, false
 	}
-	return finished.Add(p.retryAfter()), true
+	return finished.Add(retryWait), true
 }
 
 // maxRetries is how many times in a row the poller queues a failed run

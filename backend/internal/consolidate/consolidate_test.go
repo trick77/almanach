@@ -68,6 +68,10 @@ type fakeStore struct {
 	requeued   []string
 	requeueErr error
 	agedCalls  int
+	// callAt is when every recorded call was made, for Spent; spentErr
+	// fails that read.
+	callAt   time.Time
+	spentErr error
 }
 
 func (f *fakeStore) SourceRepoCount(_ context.Context, key string) (int, error) {
@@ -208,6 +212,31 @@ func (f *fakeStore) InsertRevision(_ context.Context, rev store.NewRevision) (in
 func (f *fakeStore) InsertLLMCall(_ context.Context, c store.LLMCall) (int64, error) {
 	f.calls = append(f.calls, c)
 	return f.insertCallID, nil
+}
+
+// Spent is the calls recorded since a time, every one counted, the priced
+// ones summed, as the store answers; spentErr fails it.
+func (f *fakeStore) Spent(_ context.Context, since time.Time) (*int64, int, error) {
+	if f.spentErr != nil {
+		return nil, 0, f.spentErr
+	}
+	var sum *int64
+	n := 0
+	for _, c := range f.calls {
+		if f.callAt.Before(since) {
+			continue
+		}
+		n++
+		if c.CostNanoUSD == nil {
+			continue
+		}
+		v := *c.CostNanoUSD
+		if sum != nil {
+			v += *sum
+		}
+		sum = &v
+	}
+	return sum, n, nil
 }
 
 // fakeMerger answers every call with one canned result and records the

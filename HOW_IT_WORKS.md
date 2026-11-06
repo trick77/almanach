@@ -286,6 +286,12 @@ themselves go oldest first, one to its end before the next begins.
 - `/api/projects/{key}.md` and `/api/projects/{key}/repos/{slug}.md`: a
   page as Markdown, for a coding agent (below).
 - `/api/sources` and below: the clones, read and written (section 4a).
+- `/api/costs`: Almanach's own ledger (`llm_calls`), the page Kosten: by
+  UTC month and project, the merges apart from the runs, with the calls no
+  one priced counted apart (their cost is unknown, not zero); beside it
+  the day's spend and the daily budget (`BACKEND_DAILY_BUDGET_USD`). Never
+  noergler's figures (`note_calls`), which a note page shows for its own
+  call.
 - `/api/queue`: the worker's queue, the page Warteschlange. The note or
   run step in flight, then the rest in the order the worker takes it (the
   notes it may fold, the started run's next step, the notes waiting for
@@ -747,6 +753,20 @@ spelling (Bitbucket) or is refused (a static folder), so the wiki shows
 one spelling. With the sources off, nothing changes:
 every note is taken and the wiki lists noergler's projects.
 
+**The day's budget.** With `BACKEND_DAILY_BUDGET_USD` set, the worker asks
+the ledger before a run starts what the UTC day's calls cost so far; at
+the budget or past it the run is not started, it waits (the queue page:
+`budget`) and the next poll asks again, the next day it goes on. A run
+already started goes on to its end: its repository's notes wait for it,
+and a budget that held it would hold them for the day; so the budget may
+be overshot by one run's calls, never by a day's. The notes never wait: a
+fold is one small call, and holding it would hold what a pull request
+taught. Only priced calls count. The UI says before
+the click what a source or a full run may cost (`max_calls` on the source
+bodies, the last run's cost on the confirm), since a Bitbucket project of
+two hundred repositories once queued two hundred full runs on its first
+sync. The intervals that drive spend have floors in the config.
+
 **Triggers.** Read from the rows after every sync, never from an event:
 the poller queues a full run (trigger `first_ready`) for a ready clone that
 has no run at all, so a run whose queueing was lost (a failed write, a
@@ -1082,7 +1102,8 @@ that skipped a part worth reading again (`baseline.LeftParts`: not a
 subject gone, nor a project left unchanged without a page), or left
 the repository page without a map answer for its text, gets a reconcile
 at the same commit (trigger `retry`) from the poller a day after it ended
-(the reconcile interval when shorter), at most three retries in a row,
+(the reconcile interval is never shorter: its floor), at most three
+retries in a row,
 a failed run's retries counted, and only with the interval on; it reads
 the skipped parts and the map, nothing else. A head that moved waits for
 the interval, which reads the skipped parts with the changes. The poller
@@ -1123,7 +1144,7 @@ nothing that reads the code is due (the failed and unfinished retries, a
 reconcile first), the reconcile interval on, a page documented; one restyle
 open in the whole wiki at a time, so a bump trickles through one page after
 another and never crowds out the notes. A failed one is queued again a day
-later (the interval when shorter), while a page has failed fewer than
+later, while a page has failed fewer than
 `store.RestyleTries` (4) times at the epoch; a project page's failures (a
 run that failed on its step) count over the project, whichever
 repository's run made them. What is due is one store answer

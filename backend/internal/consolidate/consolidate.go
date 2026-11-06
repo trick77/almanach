@@ -49,6 +49,9 @@ type Store interface {
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
 	InsertLLMCall(ctx context.Context, c store.LLMCall) (int64, error)
 	SourceRepoCount(ctx context.Context, key string) (int, error)
+	// Spent is what the worker's own calls since a time cost (nil: none
+	// priced), and how many: the day's spend against the budget.
+	Spent(ctx context.Context, since time.Time) (*int64, int, error)
 }
 
 // Merger is the model call.
