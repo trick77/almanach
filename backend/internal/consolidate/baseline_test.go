@@ -1338,7 +1338,7 @@ func TestRun_ReconcilePlacesACutFileAnOldPlanNeverKnew(t *testing.T) {
 	if !strings.Contains(x.models.prompts[0], "core/God.java\t100000\thead only") {
 		t.Errorf("placing listing lacks the cut file:\n%s", firstLines(x.models.prompts[0], 30))
 	}
-	if !strings.Contains(x.models.prompts[1], "<<<FILE core/God.java (the first 100000 bytes of a larger file)>>>") {
+	if !strings.Contains(x.models.prompts[1], "<<<FILE core/God.java (the first 12 bytes of a larger file)>>>") {
 		t.Errorf("describe prompt lacks the cut marker")
 	}
 	// A reconcile carries the documented run's coverage: the page's is the
@@ -1375,9 +1375,14 @@ func TestCoverage_DistinctFiles(t *testing.T) {
 		{Name: "Kern", Files: []baseline.File{{Path: "core/a.go", Size: 30}, {Path: "docs/a.md", Size: 5}}},
 		{Name: "Weg", Files: []baseline.File{{Path: "gone/x.go", Size: 100}}},
 		{Name: "Spaeter", Files: []baseline.File{{Path: "later/y.go", Size: 100}}},
-	}, Skipped: []string{"Weg"}}, Read: []string{"Doku", "Kern", "Weg"}, Docs: []baseline.File{readme}}
+	}, Skipped: []string{"Weg"}}, Read: []string{"Doku", "Kern", "Weg"}, Docs: []baseline.File{readme, {Path: "docs/b.md", Size: 7}}}
+	if got := coverage(p); got != 20+5+30+7 {
+		t.Errorf("coverage = %d, want 62", got)
+	}
+	// An overview whose patch the fold refused read its docs for nothing.
+	p.SkipStep(baseline.PartOverview, baseline.SkipFailed)
 	if got := coverage(p); got != 20+5+30 {
-		t.Errorf("coverage = %d, want 55", got)
+		t.Errorf("coverage, overview skipped = %d, want 55", got)
 	}
 }
 

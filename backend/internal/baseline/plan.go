@@ -303,10 +303,7 @@ const (
 // order (the files sorted first: a reconcile's unplaced come in diff
 // order), the root open.
 func buildTree(files []File) *treeNode {
-	if !sort.SliceIsSorted(files, func(i, j int) bool { return files[i].Path < files[j].Path }) {
-		files = append([]File(nil), files...)
-		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	}
+	files = inPathOrder(files)
 	root := &treeNode{how: open}
 	nodes := map[string]*treeNode{"": root}
 	for _, f := range files {
@@ -453,16 +450,23 @@ type index struct {
 // newIndex takes the files as Files returns them, in path order; another
 // order is sorted on a copy.
 func newIndex(files []File) index {
-	ix := index{byPath: make(map[string]File, len(files)), sorted: files}
+	ix := index{byPath: make(map[string]File, len(files)), sorted: inPathOrder(files)}
 	for _, f := range files {
 		ix.byPath[f.Path] = f
 	}
-	byPath := func(i, j int) bool { return ix.sorted[i].Path < ix.sorted[j].Path }
-	if !sort.SliceIsSorted(ix.sorted, byPath) {
-		ix.sorted = append([]File(nil), files...)
-		sort.Slice(ix.sorted, byPath)
-	}
 	return ix
+}
+
+// inPathOrder is files in path order: themselves when they are, else a
+// sorted copy, the caller's slice untouched.
+func inPathOrder(files []File) []File {
+	byPath := func(i, j int) bool { return files[i].Path < files[j].Path }
+	if sort.SliceIsSorted(files, byPath) {
+		return files
+	}
+	out := append([]File(nil), files...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }
 
 // resolve turns one path the model named into readable files: the file

@@ -483,6 +483,8 @@ func TestCode_ReadsAClone(t *testing.T) {
 	write("leak.go", "package main\n\nconst t = \"ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\"\n") // ship:allow-secret: invented fixture
 	// One line over the cap: no line's end to cut its head at.
 	write("min.js", strings.Repeat("a", baseline.FileMaxBytes+100))
+	// A Secret over the cap in kubectl's key order: its kind past the head.
+	write("bundle.yaml", "apiVersion: v1\ndata:\n"+strings.Repeat("  k: dmFsdWU=\n", baseline.FileMaxBytes/14+10)+"kind: Secret\n")
 	third := commit()
 	// Where the poller keeps tools/cli: its folder named by ids.
 	run(t, root, "clone", "-q", "--bare", work, filepath.Join(root, projectSeg(idOf("tools")), repoSeg(idOf("tools/cli"))))
@@ -529,9 +531,12 @@ func TestCode_ReadsAClone(t *testing.T) {
 		!strings.HasPrefix(string(b), "package big\n") || !strings.HasSuffix(string(b), "// x\n") {
 		t.Fatalf("cut read = %d bytes, want the first %d to a line's end", len(b), baseline.FileMaxBytes)
 	}
-	// A head with no line in it: left out, never sent cut mid-line.
-	if minified, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{{Path: "min.js", Size: baseline.FileMaxBytes, Cut: true}}); err != nil || len(minified) != 0 {
-		t.Fatalf("line-less head = %d files %v, want left out", len(minified), err)
+	// A head with no line in it, and a Secret whose kind sits past the
+	// head: left out, the redaction having seen the whole file.
+	if cut, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{
+		{Path: "min.js", Size: baseline.FileMaxBytes, Cut: true}, {Path: "bundle.yaml", Size: baseline.FileMaxBytes, Cut: true},
+	}); err != nil || len(cut) != 0 {
+		t.Fatalf("line-less head, Secret past the head = %d files %v, want both left out", len(cut), err)
 	}
 	secrets, err := code.ReadFiles(ctx, "tools", "cli", third, []baseline.File{{Path: "application.yaml"}, {Path: "secret.yaml"}, {Path: "leak.go"}, {Path: "main.go"}})
 	if err != nil {

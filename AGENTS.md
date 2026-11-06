@@ -59,8 +59,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   poller; repo failure on its row. Run due = read from rows each cycle, never from an event.
   UI copy: capital only if first char letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
   source key: from project URL, case-only rename.
-- Listing folds the tree where files are, never 2 fixed levels (Maven = one `src/main/` line). File
-  > 100 kB = head (cut at a line, ≤ 2 MB; past = data). `read_bytes` distinct, `bytes` = budget.
+- Listing folds where files are, never 2 fixed levels (Maven = one line). Big file = head, never left
+  out (god class is one); redacted whole, then cut.
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
   stored (user, 2026-10-30). Gate: key, slug any case (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept; repo page: PR statement

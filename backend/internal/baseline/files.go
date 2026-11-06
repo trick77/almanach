@@ -26,8 +26,8 @@ const (
 	FileMaxBytes = 100_000
 	// CutMaxBytes: a file over it is no source at all (a dump, a database,
 	// a dataset the name filters missed) and is refused by its size before
-	// a byte is read, as every large file once was: a head read still
-	// streams the whole blob out of git.
+	// a byte is read, as every large file once was: a head is cut from the
+	// whole file, read and redacted first.
 	CutMaxBytes = 2_000_000
 	// StepMaxBytes is the file content one step shows the model: about 70k
 	// tokens, which with a full page beside it fits a 128k context.

@@ -2478,7 +2478,11 @@ func coverage(plan runPlan) int64 {
 			}
 		}
 	}
-	count(plan.Docs)
+	// Docs is set once the overview call answers; a patch the fold then
+	// refused skips the step, and its docs were read for nothing.
+	if !plan.StepSkipped(baseline.PartOverview) {
+		count(plan.Docs)
+	}
 	for _, s := range plan.Subjects {
 		if read[s.Name] && !skipped[s.Name] {
 			count(s.Files)
@@ -2534,7 +2538,8 @@ func renderFiles(files []baseline.File, bodies map[string][]byte) string {
 		}
 		head := ""
 		if f.Cut {
-			head = fmt.Sprintf(" (the first %d bytes of a larger file)", baseline.FileMaxBytes)
+			// What was sent: the head is cut back to a line's end.
+			head = fmt.Sprintf(" (the first %d bytes of a larger file)", len(body))
 		}
 		fmt.Fprintf(&b, "<<<FILE %s%s>>>\n%s\n<<<END FILE %s>>>\n\n", f.Path, head, strings.TrimRight(string(body), "\n"), f.Path)
 	}

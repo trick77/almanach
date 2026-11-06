@@ -825,9 +825,9 @@ resumes after a restart. The run pins the clone's head when it starts.
    (`File.Cut`, the listing and the step's file marker say so), never left
    out, since the one class a repository turns on is as often as not such
    a file, up to 2 MB, past which it is data and refused by its size as
-   before; the head is cut at a line's end, so the redaction sees whole
-   lines, and a head with no line in it (minified, one-line data) is left
-   out. The first reconcile of a plan from before cut files (no `cuts` on
+   before; the file is read and redacted whole, so a Secret manifest whose
+   `kind` sits past the head is still left out, then cut at a line's end,
+   and a head with no line in it (minified, one-line data) is left out. The first reconcile of a plan from before cut files (no `cuts` on
    it) places the cut files it knows nothing of (`newlyReadable`), since
    unchanged they are in no diff; its own plan carries `cuts`, so a cut
    file left out then is like any other. A file a plan made knowing cut
