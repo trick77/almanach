@@ -161,7 +161,7 @@ function Body({ data }: { data: ProjectDetail }) {
         },
         {
           id: ids.revisions,
-          label: S.repo.revisions,
+          label: S.revision.list,
           tab: OVERVIEW,
           count: data.revisions.length,
         },
@@ -352,7 +352,7 @@ function Overview({
       </section>
 
       <section id={ids.revisions} className="scroll-mt-16">
-        <div className={eyebrow}>{S.repo.revisions}</div>
+        <div className={eyebrow}>{S.revision.list}</div>
         <Revisions
           projectKey={data.key}
           slug=""

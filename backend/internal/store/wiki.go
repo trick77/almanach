@@ -122,6 +122,15 @@ const (
 // Collection reports whether the page is a collection's.
 func (p Page) Collection() bool { return p.Shape == ShapeCollection }
 
+// ShapeMoves reports whether judging a page shaped before as after changes
+// what the page shows: another shape, but a system judged on a page
+// written before shapes ("", its NULL), which changes nothing but the
+// label. The worker writes a revision for a move alone; the revision view
+// names one.
+func ShapeMoves(before, after string) bool {
+	return after != before && (before != "" || after != ShapeSystem)
+}
+
 // MapStands reports whether the map step answered for a repository page's
 // description as it stands, a map drawn or none (a model that drew none
 // for this text is not asked again until it changes): then a run has
@@ -367,7 +376,9 @@ func (s *Store) CurrentPage(ctx context.Context, scope, project, repo string) (P
 
 // Revision is one revision of a page by its number, ok false when the page
 // or the number is unknown: the summary and statements as they stood, the
-// source that wrote them, when. No maps: a revision's view is its text.
+// source that wrote them, when, and a project page's map and shape: a
+// revision written for those alone says so. No repository map: the map
+// step sets that on the current revision in place, it writes none.
 // Any name the project or repository ever had finds it; the page carries
 // the current ones.
 func (s *Store) Revision(ctx context.Context, scope, project, repo string, n int) (Page, bool, error) {
@@ -376,14 +387,14 @@ func (s *Store) Revision(ctx context.Context, scope, project, repo string, n int
 		return Page{}, false, err
 	}
 	p := Page{Scope: scope}
-	var statements []byte
+	var statements, drawn []byte
 	err = s.db.QueryRowContext(ctx, `
 		SELECT pj.key, COALESCE(rp.slug, ''), r.id, r.revision, r.summary, r.statements, r.source_kind,
-		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), r.created_at
+		       COALESCE(r.source_pr_key, ''), COALESCE(r.source_commit, ''), r.created_at, r.map, COALESCE(r.shape, '')
 		  FROM revisions r JOIN projects pj ON pj.id = r.project_id LEFT JOIN repos rp ON rp.id = r.repo_id
 		 WHERE r.scope = ? AND r.project_id = ? AND COALESCE(r.repo_id, 0) = ? AND r.revision = ?`, scope, pid, rid, n).Scan(
 		&p.ProjectKey, &p.RepoSlug, &p.RevisionID, &p.Revision, &p.Summary, &statements, &p.SourceKind, &p.SourcePR,
-		&p.SourceCommit, timeAt(&p.UpdatedAt))
+		&p.SourceCommit, timeAt(&p.UpdatedAt), &drawn, &p.Shape)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Page{}, false, nil
 	}
@@ -395,6 +406,9 @@ func (s *Store) Revision(ctx context.Context, scope, project, repo string, n int
 	}
 	if p.Statements == nil {
 		p.Statements = []Statement{}
+	}
+	if p.Map, err = diagramOf(drawn); err != nil {
+		return Page{}, false, err
 	}
 	return p, true, nil
 }

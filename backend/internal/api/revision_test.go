@@ -16,9 +16,10 @@ func st(id, name, text string, files ...string) store.Statement {
 }
 
 // A revision answers as it stood with its diff against the one before:
-// added, changed (name, text, files or kind) and dropped by id, the
-// summary's change flagged; the first revision has everything added and
-// no previous; an unknown number, page or project is a 404.
+// added, changed (name, text, files, kind or diagram) and dropped by id,
+// the summary's change flagged; the first revision has everything added
+// and no previous; an unknown number, page or project is a 404, and so is
+// a number the client routes never write (a sign, a leading zero).
 func TestRepoRevision(t *testing.T) {
 	s := newFakeStore()
 	s.teams["PLAT"] = "platform"
@@ -34,7 +35,9 @@ func TestRepoRevision(t *testing.T) {
 	h := handler(t, s, nil, config.AuthNone)
 
 	for _, p := range []string{"/api/projects/PLAT/repos/nope/revisions/1", "/api/projects/PLAT/repos/files/revisions/9",
-		"/api/projects/PLAT/repos/files/revisions/0", "/api/projects/PLAT/repos/files/revisions/x"} {
+		"/api/projects/PLAT/repos/files/revisions/0", "/api/projects/PLAT/repos/files/revisions/x",
+		"/api/projects/PLAT/repos/files/revisions/02", "/api/projects/PLAT/repos/files/revisions/+2",
+		"/api/projects/PLAT/repos/files/revisions/-0"} {
 		if code, _ := do(t, h, http.MethodGet, p, "", "", nil); code != 404 {
 			t.Errorf("%s = %d, want 404", p, code)
 		}
@@ -46,8 +49,12 @@ func TestRepoRevision(t *testing.T) {
 		t.Fatalf("%d %v", code, body)
 	}
 	if string(body["added"]) != `[{"id":"s3","kind":"rule","name":"Drei"}]` || string(body["changed"]) != `[{"id":"s2","kind":"rule","name":"Zwei"}]` ||
-		string(body["dropped"]) != "[]" {
-		t.Errorf("diff = %s %s %s", body["added"], body["changed"], body["dropped"])
+		string(body["dropped"]) != "[]" || string(body["rechecked"]) != "[]" {
+		t.Errorf("diff = %s %s %s %s", body["added"], body["changed"], body["dropped"], body["rechecked"])
+	}
+	// A repository page's map is set in place, no revision of its own.
+	if string(body["map_changed"]) != "false" || string(body["shape_changed"]) != "false" {
+		t.Errorf("map, shape changed = %s %s on a repository revision", body["map_changed"], body["shape_changed"])
 	}
 	var desc map[string]json.RawMessage
 	if err := json.Unmarshal(body["description"], &desc); err != nil || string(desc["revision"]) != "2" || field(t, desc, "source_pr_key") != "PLAT/files#2" {
@@ -99,8 +106,47 @@ func TestProjectRevision(t *testing.T) {
 	if _, ok := body["repo_slug"]; ok {
 		t.Error("repo_slug present on a project revision")
 	}
+	if string(body["map_changed"]) != "false" || string(body["shape_changed"]) != "false" {
+		t.Errorf("first revision without a map: map, shape changed = %s %s", body["map_changed"], body["shape_changed"])
+	}
 	if code, _ := do(t, h, http.MethodGet, "/api/projects/NOPE/revisions/1", "", "", nil); code != 404 {
 		t.Errorf("unknown project = %d, want 404", code)
+	}
+
+	// A run writes a revision for a map, a shape or a check alone: the view
+	// names what moved, never "nothing changed". A system judged on a page
+	// from before shapes moves nothing.
+	m := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}}}
+	one := s.revisionPages[store.ScopeProject+"|PLAT||1"]
+	drawn, judged, system, checked := one, one, one, one
+	drawn.Revision, drawn.Map = 2, m
+	judged.Revision, judged.Map, judged.Shape = 3, m, store.ShapeCollection
+	system.Revision, system.Shape = 2, store.ShapeSystem
+	checked.Revision, checked.Map, checked.Shape = 4, m, store.ShapeCollection
+	checked.Statements = []store.Statement{st("s1", "Eins", "a")}
+	checked.Statements[0].Checked = "abc"
+	s.revisionPages[store.ScopeProject+"|PLAT||2"] = drawn
+	s.revisionPages[store.ScopeProject+"|PLAT||3"] = judged
+	s.revisionPages[store.ScopeProject+"|PLAT||4"] = checked
+	s.revisions = []store.RevisionRow{{Revision: 4}, {Revision: 3}, {Revision: 2}, {Revision: 1}}
+	for _, c := range []struct {
+		n                 string
+		mapMoved, shape   string
+		rechecked, others string
+	}{
+		{"2", "true", "false", "[]", "[]"},
+		{"3", "false", "true", "[]", "[]"},
+		{"4", "false", "false", `[{"id":"s1","kind":"rule","name":"Eins"}]`, "[]"},
+	} {
+		_, body := do(t, h, http.MethodGet, "/api/projects/PLAT/revisions/"+c.n, "", "", nil)
+		if string(body["map_changed"]) != c.mapMoved || string(body["shape_changed"]) != c.shape || string(body["rechecked"]) != c.rechecked ||
+			string(body["changed"]) != c.others || string(body["summary_changed"]) != "false" {
+			t.Errorf("revision %s = %v", c.n, body)
+		}
+	}
+	s.revisionPages[store.ScopeProject+"|PLAT||2"] = system
+	if _, body := do(t, h, http.MethodGet, "/api/projects/PLAT/revisions/2", "", "", nil); string(body["shape_changed"]) != "false" {
+		t.Errorf("a system judged on a page from before shapes: shape_changed = %s, want false", body["shape_changed"])
 	}
 
 	// A project of one: no revisions listed, the route a 404.
@@ -119,9 +165,9 @@ func TestProjectRevision(t *testing.T) {
 }
 
 func TestDiffStatements(t *testing.T) {
-	a, c, d := diffStatements(nil, nil)
-	if len(a)+len(c)+len(d) != 0 || a == nil || c == nil || d == nil {
-		t.Errorf("empty diff = %v %v %v, want empty lists", a, c, d)
+	e := diffStatements(nil, nil)
+	if len(e.added)+len(e.changed)+len(e.dropped)+len(e.rechecked) != 0 || e.added == nil || e.changed == nil || e.dropped == nil || e.rechecked == nil {
+		t.Errorf("empty diff = %+v, want empty lists", e)
 	}
 	kind := st("s4", "Vier", "d")
 	kind.Kind = "pitfall"
@@ -129,10 +175,17 @@ func TestDiffStatements(t *testing.T) {
 	// writes a revision for it.
 	drawn := st("s6", "Sechs", "f")
 	drawn.Diagram = &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}}}
-	a, c, d = diffStatements(
-		[]store.Statement{st("s1", "A", "t"), st("s2", "B", "t"), st("s3", "C", "t"), st("s4", "Vier", "d"), st("s6", "Sechs", "f")},
-		[]store.Statement{st("s5", "E", "t"), st("s2", "B", "t"), st("s1", "A", "t2"), kind, drawn})
-	if len(a) != 1 || a[0].ID != "s5" || len(c) != 3 || c[0].ID != "s1" || c[1].ID != "s4" || c[2].ID != "s6" || len(d) != 1 || d[0].ID != "s3" {
-		t.Errorf("diff = %+v %+v %+v", a, c, d)
+	// A check stamp alone is a recheck; with the text it is a change.
+	stamped := st("s7", "Sieben", "g")
+	stamped.Checked = "abc"
+	both := st("s1", "A", "t2")
+	both.Checked = "abc"
+	d := diffStatements(
+		[]store.Statement{st("s1", "A", "t"), st("s2", "B", "t"), st("s3", "C", "t"), st("s4", "Vier", "d"), st("s6", "Sechs", "f"), st("s7", "Sieben", "g")},
+		[]store.Statement{st("s5", "E", "t"), st("s2", "B", "t"), both, kind, drawn, stamped})
+	a, c, gone, re := d.added, d.changed, d.dropped, d.rechecked
+	if len(a) != 1 || a[0].ID != "s5" || len(c) != 3 || c[0].ID != "s1" || c[1].ID != "s4" || c[2].ID != "s6" || len(gone) != 1 || gone[0].ID != "s3" ||
+		len(re) != 1 || re[0].ID != "s7" {
+		t.Errorf("diff = %+v", d)
 	}
 }

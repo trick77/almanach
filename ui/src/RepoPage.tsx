@@ -211,7 +211,7 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
         },
         {
           id: ids.revisions,
-          label: S.repo.revisions,
+          label: S.revision.list,
           tab: HISTORY,
           count: data.revisions.length,
         },
@@ -463,7 +463,7 @@ function History({ data, current }: { data: RepoDetail; current: number }) {
       </section>
 
       <section id={ids.revisions} className="scroll-mt-16">
-        <div className={eyebrow}>{S.repo.revisions}</div>
+        <div className={eyebrow}>{S.revision.list}</div>
         <Revisions
           projectKey={data.project_key}
           slug={data.slug}

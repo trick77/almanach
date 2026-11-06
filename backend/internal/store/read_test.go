@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/trick77/almanach/internal/diagram"
 )
 
 // Projects and Repos count what was ingested and carry the last merge and
@@ -190,8 +192,21 @@ func TestRevisions_NewestFirstLimited(t *testing.T) {
 	if _, ok, err := s.Revision(ctx, ScopeProject, "NONE", "", 1); err != nil || ok {
 		t.Errorf("Revision of an unknown project: ok=%v err=%v", ok, err)
 	}
-	if p, ok, err := s.Revision(ctx, ScopeProject, "PRJ", "", 1); err != nil || !ok || p.SourcePR != "PRJ/svc#9" || p.RepoSlug != "" {
-		t.Errorf("project Revision(1) = %+v ok=%v err=%v", p, ok, err)
+	if p, ok, err := s.Revision(ctx, ScopeProject, "PRJ", "", 1); err != nil || !ok || p.SourcePR != "PRJ/svc#9" || p.RepoSlug != "" ||
+		p.Map != nil || p.Shape != "" {
+		t.Errorf("project Revision(1) = %+v ok=%v err=%v, want no map, no shape", p, ok, err)
+	}
+	// A project revision carries its map and shape: a revision written for
+	// those alone shows what it changed.
+	m := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR",
+		Nodes: []diagram.Node{{ID: "svc", Label: "svc", Shape: "step", Zone: "repositories"}},
+		Zones: []diagram.Zone{{ID: "repositories", Title: "Repositories"}}}
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeProject, ProjectKey: "PRJ", Summary: "p", SourceKind: FromBaseline, SourceCommit: "abc",
+		Map: m, Shape: ShapeCollection}); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok, err := s.Revision(ctx, ScopeProject, "PRJ", "", 2); err != nil || !ok || !diagram.Equal(p.Map, m) || p.Shape != ShapeCollection {
+		t.Errorf("project Revision(2) = %+v ok=%v err=%v, want the map and the collection", p, ok, err)
 	}
 }
 

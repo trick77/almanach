@@ -20,7 +20,7 @@ export function Revisions({
   revisions: Revision[];
   current: number;
 }) {
-  if (revisions.length === 0) return <Empty>{S.repo.noRevisions}</Empty>;
+  if (revisions.length === 0) return <Empty>{S.revision.none}</Empty>;
   return (
     <ol className="m-0 list-none p-0">
       {revisions.map((r) => (
@@ -35,7 +35,7 @@ export function Revisions({
             {r.revision}
           </Link>
           <span className="flex-1">
-            {S.repo.revisionFrom}{" "}
+            {S.revision.from}{" "}
             <SourceChip
               source={{
                 kind: r.source_kind,
@@ -44,13 +44,13 @@ export function Revisions({
               }}
             />
             <span className="ml-2 text-muted">
-              {S.repo.statements(r.statements)} {S.common.sep}{" "}
-              {S.repo.chars(r.chars)}
+              {S.revision.statements(r.statements)} {S.common.sep}{" "}
+              {S.revision.chars(r.chars)}
             </span>
           </span>
           {r.revision === current && (
             <span className="text-[11px] tracking-[.08em] text-ochre uppercase">
-              {S.repo.current}
+              {S.revision.marked}
             </span>
           )}
           <span className="whitespace-nowrap text-muted">

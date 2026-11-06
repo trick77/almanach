@@ -2569,7 +2569,7 @@ components:
 
     RevisionDetail:
       type: object
-      required: [scope, project_key, revision, current, previous, created_at, description, added, changed, dropped, summary_changed]
+      required: [scope, project_key, revision, current, previous, created_at, description, added, changed, dropped, rechecked, summary_changed, map_changed, shape_changed]
       properties:
         scope:
           type: string
@@ -2608,8 +2608,19 @@ components:
           description: Statements of the previous revision this one no longer holds, in the previous one's order.
           items:
             $ref: "#/components/schemas/StatementRef"
+        rechecked:
+          type: array
+          description: Statements a baseline run confirmed against the code with nothing else of them changed, in this one's order.
+          items:
+            $ref: "#/components/schemas/StatementRef"
         summary_changed:
           type: boolean
+        map_changed:
+          type: boolean
+          description: The project page's map differs from the previous revision's (on the first, it has one); always false on a repository page.
+        shape_changed:
+          type: boolean
+          description: What the project was judged to be (system, collection) moved against the previous revision; always false on a repository page.
 
     StatementRef:
       type: object

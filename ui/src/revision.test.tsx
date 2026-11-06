@@ -64,6 +64,9 @@ const revision: RevisionDetail = {
   added: [{ id: "s3", kind: "rule", name: "Grenze" }],
   changed: [{ id: "s1", kind: "component", name: "Auftragsannahme" }],
   dropped: [{ id: "s2", kind: "entity", name: "Beleg" }],
+  rechecked: [],
+  map_changed: false,
+  shape_changed: false,
 };
 
 describe("RevisionPage", () => {
@@ -86,7 +89,7 @@ describe("RevisionPage", () => {
     expect(links("Nächste ›")).toBe("/projects/PAY/repos/pay-api/revisions/3");
     expect(links("Aktuelle Seite")).toBe("/projects/PAY/repos/pay-api");
     expect(screen.getByText("PAY/pay-api#231")).toBeInTheDocument();
-    expect(screen.getByText("gegenüber Revision 1")).toBeInTheDocument();
+    expect(screen.getByText("Gegenüber Revision 1")).toBeInTheDocument();
     // The diff by kind of change, a dropped statement struck, unlinked.
     expect(screen.getByText("Überblick geändert")).toBeInTheDocument();
     expect(screen.getByText("Neu")).toBeInTheDocument();
@@ -121,9 +124,45 @@ describe("RevisionPage", () => {
     expect(
       await screen.findByText("Revision 3, die aktuelle"),
     ).toBeInTheDocument();
-    expect(screen.getByText("gegenüber Revision 2")).toBeInTheDocument();
+    expect(screen.getByText("Gegenüber Revision 2")).toBeInTheDocument();
     expect(screen.getByText(/Keine Aussage hinzugekommen/)).toBeInTheDocument();
     expect(screen.queryByText("Nächste ›")).toBeNull();
+  });
+
+  it("names a map, a shape or a check a run wrote the revision for alone", async () => {
+    serve({
+      "projects/PAY/revisions/3": {
+        ...revision,
+        scope: "project",
+        repo_slug: undefined,
+        revision: 3,
+        current: 3,
+        previous: 2,
+        summary_changed: false,
+        added: [],
+        changed: [],
+        dropped: [],
+        rechecked: [{ id: "s1", kind: "component", name: "Auftragsannahme" }],
+        map_changed: true,
+        shape_changed: true,
+      },
+    });
+    render(<RevisionPage projectKey="PAY" slug="" n={3} />);
+    expect(
+      await screen.findByText("Revision 3, die aktuelle"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Keine Aussage hinzugekommen/)).toBeNull();
+    expect(screen.getByText("Neu gezeichnet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Neu beurteilt: System oder Sammlung"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Bestätigt")).toBeInTheDocument();
+    expect(
+      screen
+        .getByText("Auftragsannahme", { selector: "dd span" })
+        .closest("li"),
+    ).not.toHaveClass("line-through");
+    expect(screen.queryByText("Überblick geändert")).toBeNull();
   });
 
   it("reads the first revision as all new, the summary with it, the current one so", async () => {
@@ -146,7 +185,7 @@ describe("RevisionPage", () => {
       await screen.findByText("Revision 1, die aktuelle"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("die erste Revision: alles neu"),
+      screen.getByText("Die erste Revision: alles neu"),
     ).toBeInTheDocument();
     expect(screen.getByText("Überblick geändert")).toBeInTheDocument();
     // A project page's entity reads as a shared one.

@@ -1642,7 +1642,7 @@ func (w *Worker) carriedRevision(ctx context.Context, r *store.BaselineRun, page
 // before shapes (its NULL), which changes nothing but the label and is set
 // in place (judgeInPlace).
 func shapeMoves(page store.Page, shape string) bool {
-	return shape != page.Shape && (page.Shape != "" || shape != store.ShapeSystem)
+	return store.ShapeMoves(page.Shape, shape)
 }
 
 // judgeInPlace sets a first judgment that moves nothing (shapeMoves) on the

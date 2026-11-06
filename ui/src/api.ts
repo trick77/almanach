@@ -214,7 +214,14 @@ export interface RevisionDetail {
   added: StatementRef[];
   changed: StatementRef[];
   dropped: StatementRef[];
+  /** Confirmed against the code by a baseline run, nothing else of them
+   *  changed. */
+  rechecked: StatementRef[];
   summary_changed: boolean;
+  /** A project page's map and judged shape moved; false on a
+   *  repository page. */
+  map_changed: boolean;
+  shape_changed: boolean;
 }
 
 export interface StatementRef {

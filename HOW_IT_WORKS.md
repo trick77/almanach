@@ -320,8 +320,12 @@ themselves go oldest first, one to its end before the next begins.
 - `/api/projects/{key}/revisions/{n}` and
   `/api/projects/{key}/repos/{slug}/revisions/{n}`: one revision as it
   stood (summary, statements, source, time) and what it changed against
-  revision n-1, by statement id: added, changed (name, text, files or
-  kind), dropped, the summary's change flagged. The diff is computed
+  revision n-1, by statement id: added, changed (name, text, files, kind
+  or diagram), dropped, rechecked (a baseline's check stamp alone), the
+  summary's change flagged, and on a project page the map's and the
+  judged shape's: a run writes a revision for a map, a shape or a check
+  alone, and the view names it instead of "nothing changed". The number
+  is the one the client routes write, no sign, no leading zero. The diff is computed
   from the two stored revisions on every read, nothing stored; the
   sources on each statement say which pull request or run did it. A
   project page's history is on `/api/projects/{key}` as `revisions`.

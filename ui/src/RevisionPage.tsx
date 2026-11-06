@@ -76,12 +76,21 @@ function Body({ d }: { d: RevisionDetail }) {
       ? projectPath(d.project_key)
       : repoPath(d.project_key, slug);
   const desc = d.description;
-  const changes = d.added.length + d.changed.length + d.dropped.length;
+  // A run writes a revision for a map, a shape or a check alone: each is
+  // named, "nothing" only when none moved.
+  const changes =
+    d.added.length +
+    d.changed.length +
+    d.dropped.length +
+    d.rechecked.length +
+    (d.summary_changed ? 1 : 0) +
+    (d.map_changed ? 1 : 0) +
+    (d.shape_changed ? 1 : 0);
   return (
     <>
       <h2 className={h2}>{S.revision.of(d.revision, d.current)}</h2>
       <p className={meta}>
-        {S.repo.revisionFrom}{" "}
+        {S.revision.from}{" "}
         <SourceChip
           source={{
             kind: desc.source_kind,
@@ -98,7 +107,7 @@ function Body({ d }: { d: RevisionDetail }) {
               to={revisionPath(d.project_key, slug, d.previous)}
               className="text-ink-dim hover:text-ink"
             >
-              ‹ {S.revision.previous}
+              {S.revision.previous}
             </Link>
             <Sep />
           </>
@@ -109,7 +118,7 @@ function Body({ d }: { d: RevisionDetail }) {
               to={revisionPath(d.project_key, slug, d.revision + 1)}
               className="text-ink-dim hover:text-ink"
             >
-              {S.revision.next} ›
+              {S.revision.next}
             </Link>
             <Sep />
           </>
@@ -125,17 +134,18 @@ function Body({ d }: { d: RevisionDetail }) {
           {d.previous === 0 ? S.revision.first : S.revision.against(d.previous)}
         </span>
       </div>
-      {changes === 0 && !d.summary_changed ? (
+      {changes === 0 ? (
         <Empty>{S.revision.nothing}</Empty>
       ) : (
         <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13.5px]">
           {d.summary_changed && (
-            <>
-              <dt className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
-                {S.rail.summary}
-              </dt>
-              <dd className="m-0 text-ink-dim">{S.revision.summaryChanged}</dd>
-            </>
+            <Flag label={S.rail.summary} text={S.revision.summaryChanged} />
+          )}
+          {d.map_changed && (
+            <Flag label={S.project.map} text={S.revision.mapChanged} />
+          )}
+          {d.shape_changed && (
+            <Flag label={S.revision.shape} text={S.revision.shapeChanged} />
           )}
           <Changed
             label={S.revision.added}
@@ -153,6 +163,11 @@ function Body({ d }: { d: RevisionDetail }) {
             project={d.scope === "project"}
             gone
           />
+          <Changed
+            label={S.revision.rechecked}
+            refs={d.rechecked}
+            project={d.scope === "project"}
+          />
         </dl>
       )}
 
@@ -162,6 +177,19 @@ function Body({ d }: { d: RevisionDetail }) {
         emptyHint=""
         pageRepo={d.scope === "repository" ? slug : undefined}
       />
+    </>
+  );
+}
+
+/** Flag is one row of the diff that names no statement: the summary, the
+ *  map or the shape moved. */
+function Flag({ label, text }: { label: string; text: string }) {
+  return (
+    <>
+      <dt className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
+        {label}
+      </dt>
+      <dd className="m-0 text-ink-dim">{text}</dd>
     </>
   );
 }
