@@ -53,6 +53,9 @@ export function CostsPage() {
 
 function Body({ c }: { c: Costs }) {
   const spent = c.today.calls === 0 ? S.queue.idle : money(c.today.cost_usd);
+  // Against the budget an amount always: no priced call yet is $0.00, as
+  // the budget counts priced calls only.
+  const againstBudget = money(c.today.cost_usd || "0");
   return (
     <>
       <Tiles>
@@ -66,7 +69,7 @@ function Body({ c }: { c: Costs }) {
           value={c.budget_usd ? money(c.budget_usd) : S.queue.idle}
           note={
             c.budget_usd
-              ? S.costs.tiles.budgetNote(spent, money(c.budget_usd))
+              ? S.costs.tiles.budgetNote(againstBudget, money(c.budget_usd))
               : S.costs.tiles.noBudget
           }
         />

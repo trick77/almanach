@@ -102,6 +102,14 @@ describe("CostsPage", () => {
     expect(screen.getByText(S.costs.tiles.noBudget)).toBeInTheDocument();
   });
 
+  it("counts nothing spent yet as $0.00 against the budget", async () => {
+    serve({ costs: { months: [], budget_usd: "5.000", today: { calls: 0 } } });
+    render(<CostsPage />);
+    expect(
+      await screen.findByText(S.costs.tiles.budgetNote("$0.00", "$5.00")),
+    ).toBeInTheDocument();
+  });
+
   it("says the page could not be loaded", async () => {
     serve({});
     render(<CostsPage />);

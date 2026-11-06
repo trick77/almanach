@@ -14,17 +14,15 @@ import (
 	"github.com/trick77/almanach/internal/store"
 )
 
-func nano(n int64) *int64 { return &n }
-
 // The costs page: months newest first, each project's merges apart from
 // its runs with their calls and unpriced count, the month summed; the
 // day's spend and the budget beside.
 func TestCosts(t *testing.T) {
 	st := newFakeStore()
 	st.costs = []store.CostRow{
-		{Month: "2026-11", ProjectKey: "PLAT", Merges: store.CostSum{Calls: 3, NanoUSD: nano(30_000_000)}, Runs: store.CostSum{Calls: 10, Unpriced: 2, NanoUSD: nano(1_200_000_000)}},
+		{Month: "2026-11", ProjectKey: "PLAT", Merges: store.CostSum{Calls: 3, NanoUSD: ptr[int64](30_000_000)}, Runs: store.CostSum{Calls: 10, Unpriced: 2, NanoUSD: ptr[int64](1_200_000_000)}},
 		{Month: "2026-11", ProjectKey: "ZED", Merges: store.CostSum{Calls: 1, Unpriced: 1}},
-		{Month: "2026-10", ProjectKey: "PLAT", Runs: store.CostSum{Calls: 4, NanoUSD: nano(500_000_000)}},
+		{Month: "2026-10", ProjectKey: "PLAT", Runs: store.CostSum{Calls: 4, NanoUSD: ptr[int64](500_000_000)}},
 	}
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httpapi.New(func(context.Context) error { return nil }, discard)

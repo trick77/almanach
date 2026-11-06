@@ -451,6 +451,48 @@ describe("SourcePage baseline", () => {
     ]);
   });
 
+  it("keeps a row held while its request is out, whatever another row's answers", async () => {
+    const [cli] = detail.repos;
+    if (!cli) throw new Error("fixture");
+    const two = { ...detail, repos: [cli, { ...cli, slug: "acme-two" }] };
+    let release = () => {};
+    const out = new Promise<void>((resolve) => (release = resolve));
+    const answer = { ok: true, status: 202, text: async () => "{}" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if ((init?.method ?? "GET") === "GET") {
+          return { ok: true, status: 200, json: async () => two };
+        }
+        if (url.includes("acme-two/describe")) await out;
+        return answer;
+      }),
+    );
+    render(<SourcePage projectKey="werkzeuge" />);
+    const rowOf = async (slug: string) => {
+      const row = (await screen.findByText(slug)).closest("tr");
+      if (!row) throw new Error(slug);
+      return within(row);
+    };
+    const b = await rowOf("acme-two");
+    fireEvent.click(b.getByText(S.baseline.actions.full));
+    fireEvent.click(screen.getByText(S.baseline.yesFull));
+    await waitFor(() =>
+      expect(b.getByText(S.baseline.actions.reconcile)).toBeDisabled(),
+    );
+    // The other row's sync comes back first: the held row stays held.
+    const a = await rowOf("acme-cli");
+    fireEvent.click(a.getByText(S.sources.repoActions.sync));
+    await waitFor(() =>
+      expect(a.getByText(S.baseline.actions.reconcile)).toBeEnabled(),
+    );
+    expect(b.getByText(S.baseline.actions.reconcile)).toBeDisabled();
+    release();
+    await waitFor(() =>
+      expect(b.getByText(S.baseline.actions.reconcile)).toBeEnabled(),
+    );
+  });
+
   it("shows a run under way, a partial and a failed one", async () => {
     const run = detail.repos[0]?.baseline;
     if (!run) throw new Error("fixture");

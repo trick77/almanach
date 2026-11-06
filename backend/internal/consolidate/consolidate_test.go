@@ -214,7 +214,8 @@ func (f *fakeStore) InsertLLMCall(_ context.Context, c store.LLMCall) (int64, er
 	return f.insertCallID, nil
 }
 
-// Spent is the priced calls recorded since a time; spentErr fails it.
+// Spent is the calls recorded since a time, every one counted, the priced
+// ones summed, as the store answers; spentErr fails it.
 func (f *fakeStore) Spent(_ context.Context, since time.Time) (*int64, int, error) {
 	if f.spentErr != nil {
 		return nil, 0, f.spentErr
@@ -222,10 +223,13 @@ func (f *fakeStore) Spent(_ context.Context, since time.Time) (*int64, int, erro
 	var sum *int64
 	n := 0
 	for _, c := range f.calls {
-		if c.CostNanoUSD == nil || f.callAt.Before(since) {
+		if f.callAt.Before(since) {
 			continue
 		}
 		n++
+		if c.CostNanoUSD == nil {
+			continue
+		}
 		v := *c.CostNanoUSD
 		if sum != nil {
 			v += *sum

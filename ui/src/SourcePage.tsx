@@ -178,15 +178,26 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
     }
   };
   const act = (fn: () => Promise<unknown>) => run(fn, setError);
-  // busyRow is the repository whose action is out: its row's buttons hold,
-  // so a confirm's request and a button's never race.
-  const [busyRow, setBusyRow] = useState<string | null>(null);
+  // busyRows are the repositories whose action is out, counted per row:
+  // their buttons hold, so a confirm's request and a button's never race,
+  // and one row's answer never frees another's.
+  const [busyRows, setBusyRows] = useState<ReadonlyMap<string, number>>(
+    new Map(),
+  );
+  const bump = (slug: string, by: number) =>
+    setBusyRows((cur) => {
+      const next = new Map(cur);
+      const n = (next.get(slug) ?? 0) + by;
+      if (n > 0) next.set(slug, n);
+      else next.delete(slug);
+      return next;
+    });
   const rowAct = async (slug: string, fn: () => Promise<unknown>) => {
-    setBusyRow(slug);
+    bump(slug, 1);
     try {
       await run(fn, (message) => setRowError({ slug, message }));
     } finally {
-      setBusyRow(null);
+      bump(slug, -1);
     }
   };
   const path = `sources/${encodeURIComponent(data.project_key)}`;
@@ -453,7 +464,7 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
             setRemoving(null);
             setFullOf(slug);
           }}
-          busy={busyRow}
+          busy={busyRows}
           deactivating={deactivating}
           onAskDeactivate={(slug) => {
             setRowError(null);
@@ -532,8 +543,8 @@ function ReposTable({
   onRenamed: () => void;
   fullOf: string | null;
   onAskFull: (slug: string | null) => void;
-  /** The repository whose action is out, its row's buttons held. */
-  busy: string | null;
+  /** The repositories whose action is out, their rows' buttons held. */
+  busy: ReadonlyMap<string, number>;
 }) {
   // What a row asks or reports opens under that row: below the table it
   // lands out of sight on a long listing, and the click looks dead.
@@ -633,7 +644,7 @@ function ReposTable({
                 onSync={() => onSync(r.slug)}
                 onDescribe={(mode) => onDescribe(r.slug, mode)}
                 onAskFull={() => onAskFull(r.slug)}
-                held={busy === r.slug}
+                held={busy.has(r.slug)}
                 onAskRemove={() => onAskRemove(r.slug)}
                 onAskRename={() => onAskRename(r.slug)}
                 onAskDeactivate={() => onAskDeactivate(r.slug)}

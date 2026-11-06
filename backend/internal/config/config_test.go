@@ -20,7 +20,8 @@ func minimal() map[string]string {
 }
 
 // The intervals that drive spend have floors: an hourly reconcile or a
-// sync of seconds is a fault, zero still means off or on demand.
+// sync of seconds is a fault, zero still means off or on demand; without
+// the sources neither is read, so neither is checked.
 func TestIntervalFloors(t *testing.T) {
 	for name, c := range map[string]struct{ value, fault string }{
 		"BACKEND_BASELINE_RECONCILE": {"1h", "at least 24h0m0s"},
@@ -28,6 +29,10 @@ func TestIntervalFloors(t *testing.T) {
 	} {
 		env := minimal()
 		env[name] = c.value
+		if _, err := Load(lookup(env)); err != nil {
+			t.Errorf("%s=%s without sources: error = %v, want none", name, c.value, err)
+		}
+		env["BACKEND_REPOS_DIR"] = t.TempDir()
 		if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), name+": "+c.fault) {
 			t.Errorf("%s=%s: error = %v", name, c.value, err)
 		}
@@ -40,7 +45,7 @@ func TestIntervalFloors(t *testing.T) {
 
 // A dollar amount is read as nano-USD by hand, never through a float.
 func TestParseUSD(t *testing.T) {
-	for in, want := range map[string]int64{"25": 25_000_000_000, "12.50": 12_500_000_000, "0.001": 1_000_000, ".5": 500_000_000, "7.": 7_000_000_000, "0.000000001": 1} {
+	for in, want := range map[string]int64{"25": 25_000_000_000, "12.50": 12_500_000_000, "0.001": 1_000_000, ".5": 500_000_000, "7.": 7_000_000_000, "0.000000001": 1, "0000000025": 25_000_000_000} {
 		if got, err := ParseUSD(in); err != nil || got != want {
 			t.Errorf("ParseUSD(%q) = %d, %v; want %d", in, got, err, want)
 		}

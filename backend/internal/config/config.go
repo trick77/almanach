@@ -284,7 +284,9 @@ func Load(lookup func(string) string) (*App, error) {
 	if app.Sources.SyncInterval < 0 {
 		r.Fail("BACKEND_SYNC_INTERVAL: must not be negative, got %s", app.Sources.SyncInterval)
 	}
-	if i := app.Sources.SyncInterval; i > 0 && i < MinSyncInterval {
+	// The floors only with sources on, like the host below: a stale value
+	// in an instance without clones costs no startup.
+	if i := app.Sources.SyncInterval; app.Sources.Enabled() && i > 0 && i < MinSyncInterval {
 		r.Fail("BACKEND_SYNC_INTERVAL: at least %s, or 0 for on demand only, got %s", MinSyncInterval, i)
 	}
 	// Absolute once: git runs in the clone's folder and would resolve a
@@ -316,7 +318,7 @@ func Load(lookup func(string) string) (*App, error) {
 	if app.Baseline.Reconcile < 0 {
 		r.Fail("BACKEND_BASELINE_RECONCILE: must not be negative, got %s", app.Baseline.Reconcile)
 	}
-	if i := app.Baseline.Reconcile; i > 0 && i < MinReconcile {
+	if i := app.Baseline.Reconcile; app.Sources.Enabled() && i > 0 && i < MinReconcile {
 		r.Fail("BACKEND_BASELINE_RECONCILE: at least %s (a paid read of every moved head), or 0 for the buttons only, got %s", MinReconcile, i)
 	}
 	if app.AuthMode == AuthOIDC {
@@ -455,8 +457,9 @@ func ParseUSD(s string) (int64, error) {
 			}
 		}
 	}
-	// Nine decimals: a million dollars is 1e15 nano, far under int64.
-	if len(whole) > 9 {
+	// At most nine whole digits, leading zeros aside: under 1e18 nano,
+	// within int64.
+	if len(strings.TrimLeft(whole, "0")) > 9 {
 		return 0, errors.New("too large")
 	}
 	var nano int64

@@ -543,7 +543,7 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 	x.queue(store.RunFull, "")
 	x.w.base.Limits.DailyBudgetNanoUSD = 1_000_000_000
 	x.st.callAt = mergedAt.Add(-time.Hour)
-	x.st.calls = []store.LLMCall{{CostNanoUSD: nano(600_000_000)}, {CostNanoUSD: nano(400_000_000)}}
+	x.st.calls = []store.LLMCall{{CostNanoUSD: i64(600_000_000)}, {CostNanoUSD: i64(400_000_000)}}
 	x.w.drain(context.Background())
 	if r := x.run(); r.State != store.RunQueued || len(x.models.prompts) != 0 {
 		t.Fatalf("over budget: run = %+v, calls %d; want untouched", r, len(x.models.prompts))
@@ -585,8 +585,6 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 		t.Errorf("spend read failed: run = %+v, calls %d", r, len(y.models.prompts))
 	}
 }
-
-func nano(n int64) *int64 { return &n }
 
 // A full run: the catalogue, the overview from the docs, a step per
 // subject, the project; every revision a baseline's, every statement it
