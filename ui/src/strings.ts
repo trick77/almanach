@@ -3,6 +3,7 @@
 // readers are German speaking, and the wiki itself is German.
 
 import type {
+  BriefState,
   Kind,
   QueueRun,
   SkippedPart,
@@ -24,7 +25,7 @@ export const S = {
   costs: {
     title: "Kosten",
     failed: "Die Kosten konnten nicht geladen werden.",
-    lede: "Was die eigenen Modellaufrufe von Almanach kosten, nach Monat (UTC) und Projekt: die Notizen (ein Aufruf pro gemergtem Pull Request) getrennt von den Läufen (jeder andere Aufruf: ein Repository lesen oder seine Seiten neu fassen). Nur das eigene Hauptbuch; was noergler für seine Reviews zahlt, steht auf den Notizen.",
+    lede: "Was die eigenen Modellaufrufe von Almanach kosten, nach Monat (UTC) und Projekt: die Notizen (ein Aufruf pro gemergtem Pull Request) getrennt von den Läufen (ein Repository lesen oder seine Seiten neu fassen) und den PROJECT.md (eine pro Klick in den Quellen). Nur das eigene Hauptbuch; was noergler für seine Reviews zahlt, steht auf den Notizen.",
     empty: "Noch kein Modellaufruf.",
     tiles: {
       today: "Heute ausgegeben (UTC)",
@@ -34,7 +35,7 @@ export const S = {
       budgetNote: (spent: string, budget: string) =>
         `${spent} von ${budget}; ausgeschöpft, warten die Läufe bis zum nächsten Tag (UTC), die Notizen nicht`,
     },
-    headers: ["Projekt", "Notizen", "Läufe", "Aufrufe", "Kosten"],
+    headers: ["Projekt", "Notizen", "Läufe", "PROJECT.md", "Aufrufe", "Kosten"],
     monthTotal: "Summe",
     unpriced: (n: number) =>
       n === 1 ? "1 Aufruf ohne Preis" : `${n} Aufrufe ohne Preis`,
@@ -698,6 +699,33 @@ export const S = {
       (last === "" ? "." : `; der letzte Lauf kostete ${last}.`),
     yesFull: "Ja, neu beschreiben",
   },
+  // A repository's .agents/PROJECT.md: written from its page, pushed to a
+  // branch of its own, the text to copy when the push is refused.
+  brief: {
+    action: "PROJECT.md erzeugen",
+    noPage: "Erst beschreiben: die PROJECT.md entsteht aus der Seite.",
+    state: {
+      requested: "PROJECT.md wird erzeugt",
+      failed: "PROJECT.md fehlgeschlagen",
+      pushing: "PROJECT.md wird gepusht",
+      pushed: "PROJECT.md gepusht",
+      unchanged: "PROJECT.md unverändert",
+      push_failed: "Push abgelehnt",
+    } satisfies Record<BriefState, string>,
+    pushedTo: (branch: string, sha: string) => `Nach ${branch} (${sha})`,
+    unchangedNote: "Der Standard-Branch hat sie schon.",
+    waitBudget: "Tagesbudget aufgebraucht, wartet auf den nächsten Tag.",
+    show: "Text anzeigen",
+    title: "PROJECT.md",
+    pushRefused: (branch: string, why: string) =>
+      `Der Push nach ${branch} wurde abgelehnt (${why}). Den Text in die Datei unten kopieren.`,
+    fromRevision: (path: string, revision: number) =>
+      `Für ${path}, aus Revision ${revision} der Seite.`,
+    copy: "Kopieren",
+    copied: "Kopiert",
+    copyFailed: "Kopieren nicht möglich, bitte von Hand markieren.",
+    failedLoad: "Der Text konnte nicht geladen werden.",
+  },
   queue: {
     title: "Warteschlange",
     failed: "Die Warteschlange konnte nicht geladen werden.",
@@ -733,6 +761,9 @@ export const S = {
       after: "Danach",
     },
     note: "Notiz",
+    // A repository's brief in flight: its call or its push.
+    brief: "PROJECT.md",
+    briefRunning: (since: string) => `erzeugt oder pusht seit ${since}`,
     run: (id: number) => `Run #${id}`,
     mode: {
       full: "Vollständig",

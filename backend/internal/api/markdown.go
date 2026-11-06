@@ -16,7 +16,7 @@ import (
 // the way it reads a repository's agent notes. Markdown is the frame only
 // (headings, file and PR lines, fenced diagrams); a statement's text goes
 // in as the paragraphs it is, never rewritten into Markdown, only a line
-// that would read as structure escaped (prose).
+// that would read as structure escaped (markup.Export).
 
 // markdownKinds is the export's order: what must not break and why first
 // (a public interface is what others rely on not breaking), where to
@@ -146,7 +146,7 @@ func renderMarkdown(title, scope string, p store.Page, found bool) string {
 	fmt.Fprintf(&b, "Revision %d, Stand %s.\n\n", p.Revision, p.UpdatedAt.UTC().Format("2006-01-02"))
 	// The summary under its own heading, its parts one level down, as the
 	// statements under their kinds: an outline that never skips a level.
-	if s := prose(p.Summary, "### "); s != "" {
+	if s := markup.Export(p.Summary, "### "); s != "" {
 		b.WriteString("## " + summaryHeading + "\n\n" + s + "\n\n")
 	}
 	// The sentinel is no map: asked for, not drawn.
@@ -228,7 +228,7 @@ const otherArea = "Weiteres"
 // writeStatement writes one statement, its name a level heading and its
 // text's sub-headings sub.
 func writeStatement(b *strings.Builder, s store.Statement, level, sub string) {
-	fmt.Fprintf(b, "%s%s\n\n%s\n\n", level, strings.Join(strings.Fields(s.Name), " "), prose(s.Text, sub))
+	fmt.Fprintf(b, "%s%s\n\n%s\n\n", level, strings.Join(strings.Fields(s.Name), " "), markup.Export(s.Text, sub))
 	if len(s.Files) > 0 {
 		files := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
@@ -267,79 +267,4 @@ func writeJSONBlock(b *strings.Builder, d *diagram.Diagram) {
 	j := strings.TrimSuffix(buf.String(), "\n")
 	fence := strings.Repeat("`", max(3, markup.LongestRun(j, '`')+1))
 	b.WriteString(fence + "json\n" + j + "\n" + fence + "\n\n")
-}
-
-// prose is model-written text in its stored layout (package markup) and
-// nothing more, never the export's structure. Each line loses its indent
-// (no code block). A "- " or "N. " list item stays as it is, a "#### "
-// sub-heading becomes sub, the level under the text's own heading (a
-// statement's #### under its ### name, a summary's ### under its ##); any
-// other line that would open a block as CommonMark
-// reads it (a heading of another level, quote, fence, * or + item, rule,
-// underline or HTML) gets a backslash before the marker: a backslashed
-// ASCII punctuation mark reads as itself. Text that opens nothing, "-5" or
-// "1.5 Sekunden", stays as written, for the agent reads the raw file.
-func prose(s, sub string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	for i, l := range lines {
-		t := strings.TrimLeft(l, " \t")
-		if title, ok := markup.StoredHeading(t); ok {
-			lines[i] = sub + title
-			continue
-		}
-		// An item's text is text again: "- # x" or "1. > y" opens nothing
-		// inside the item either.
-		if marker, text, ok := markup.StoredItem(t); ok {
-			lines[i] = marker + escapeBlock(text)
-			continue
-		}
-		lines[i] = escapeBlock(t)
-	}
-	return strings.Join(lines, "\n")
-}
-
-// escapeBlock is a line, its indent dropped, with a backslash before the
-// marker of any block it would open.
-func escapeBlock(t string) string {
-	if blockStart(t) {
-		return `\` + t
-	}
-	if n := len(t) - len(strings.TrimLeft(t, "0123456789")); n > 0 && n <= 9 && n < len(t) &&
-		(t[n] == '.' || t[n] == ')') && markerEnds(t[n+1:]) {
-		return t[:n] + `\` + t[n:]
-	}
-	return t
-}
-
-// blockStart reports whether a line, its indent dropped, opens a block
-// with its first character.
-func blockStart(t string) bool {
-	if t == "" {
-		return false
-	}
-	switch t[0] {
-	case '>':
-		return true
-	case '#':
-		n := len(t) - len(strings.TrimLeft(t, "#"))
-		return n <= 6 && markerEnds(t[n:])
-	case '`', '~':
-		// markup's fence rule: a code span Normalize wrote around a line with
-		// ``` in it opens no fence and keeps no backslash.
-		return markup.FenceOf(t) != ""
-	case '<':
-		return len(t) > 1 && (t[1] >= 'a' && t[1] <= 'z' || t[1] >= 'A' && t[1] <= 'Z' || strings.ContainsRune("/!?", rune(t[1])))
-	case '-', '+', '*':
-		if markerEnds(t[1:]) {
-			return true
-		}
-	}
-	// A rule or a heading's underline: nothing but -, *, _ or = and blanks.
-	return strings.Trim(t, "-*_= \t") == ""
-}
-
-// markerEnds reports whether what follows a block marker lets it open the
-// block: nothing, or a blank.
-func markerEnds(rest string) bool {
-	return rest == "" || rest[0] == ' ' || rest[0] == '\t'
 }

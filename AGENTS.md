@@ -57,6 +57,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
   2026-10-30). Clone paths `filepath.Rel`-checked before `RemoveAll`; removal: lock, folder, row. Token never in URL,
   stderr, response or log; sealed at rest; one origin only (static folder = one host).
+  One forge write: brief, only what code can't tell, size-capped (user: "reasonable in size", page rule not
+  for it); refused push = text to copy (user, 2026-11-06).
   Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
   poller; repo failure on its row. Run due = read from rows each cycle, never from an event.
   UI copy: capital only if first char letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket

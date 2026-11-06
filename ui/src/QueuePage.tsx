@@ -305,7 +305,11 @@ function Item({
         <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
           <KindChip item={item} />
           <span className="text-[15px] text-ink">
-            {run ? <Where item={item} /> : <NoteTitle item={item} />}
+            {run || item.kind === "brief" ? (
+              <Where item={item} />
+            ) : (
+              <NoteTitle item={item} />
+            )}
           </span>
           <span className="flex-1" />
           <span className="text-[12.5px] text-faint">
@@ -323,6 +327,8 @@ function Item({
         <div className="mt-0.5 text-[12.5px] text-faint">
           {run ? (
             <RunMeta run={run} attempts={item.attempts} now={now} />
+          ) : item.kind === "brief" ? (
+            item.since && S.queue.briefRunning(since(item.since, now))
           ) : (
             <NoteMeta item={item} now={now} />
           )}
@@ -351,7 +357,11 @@ function KindChip({ item }: { item: QueueItem }) {
           : "border-border text-muted")
       }
     >
-      {item.run ? S.queue.run(item.run.id) : S.queue.note}
+      {item.run
+        ? S.queue.run(item.run.id)
+        : item.kind === "brief"
+          ? S.queue.brief
+          : S.queue.note}
     </span>
   );
 }

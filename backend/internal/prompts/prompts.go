@@ -53,6 +53,15 @@ var Restyle string
 //go:embed almanach_project_restyle.txt
 var ProjectRestyle string
 
+// Brief writes a repository's .agents/PROJECT.md from its stored page,
+// without reading code: only what an agent working in the repository
+// cannot read from it (user, 2026-11-06). Asked for by a button, never by
+// a page's change, so a change here needs no epoch: the next request
+// writes under it.
+//
+//go:embed almanach_brief.txt
+var Brief string
+
 // RepoEpoch and ProjectEpoch are the prompts' generation for stored pages,
 // one per scope: a page restyled below its scope's is due one restyle run
 // (store.RunRestyle), one page at a time. Bump one, to Epoch+1, in the

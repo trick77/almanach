@@ -888,6 +888,60 @@ paths:
         "422":
           $ref: "#/components/responses/Invalid"
 
+  /api/sources/{key}/repos/{slug}/brief:
+    get:
+      tags: [sources]
+      summary: One repository's brief with its file
+      description: >-
+        The repository's .agents/PROJECT.md as last written: what an agent
+        working in the repository cannot read from its code, for its
+        AGENTS.md. The source page reads it when a push was refused, for the
+        reader to copy.
+      operationId: getSourceRepoBrief
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "200":
+          description: The brief.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BriefText"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [sources]
+      summary: Queue one repository's brief
+      description: >-
+        The worker writes the brief from the repository's stored page (one
+        model call, no code read) and pushes it as .agents/PROJECT.md to the
+        branch feature/repository-description-update, on top of the default
+        branch, with the source's token. A push the forge refuses (no write
+        access, a token expired) leaves the text to copy. A request already
+        waiting keeps its place. Wakes the worker.
+      operationId: requestSourceRepoBrief
+      parameters:
+        - $ref: "#/components/parameters/projectKey"
+        - $ref: "#/components/parameters/repoSlug"
+      responses:
+        "202":
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queued"
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+        "403":
+          $ref: "#/components/responses/CrossSite"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+
   /api/sources/{key}/repos/{slug}/deactivate:
     post:
       tags: [sources]
@@ -1188,7 +1242,7 @@ components:
                 type: array
                 items:
                   type: object
-                  required: [project, calls, merges, runs]
+                  required: [project, calls, merges, runs, briefs]
                   properties:
                     project:
                       type: string
@@ -1199,6 +1253,9 @@ components:
                     merges:
                       $ref: "#/components/schemas/CostSum"
                     runs:
+                      $ref: "#/components/schemas/CostSum"
+                    briefs:
+                      description: The repositories' PROJECT.md calls.
                       $ref: "#/components/schemas/CostSum"
         budget_usd:
           type: string
@@ -1339,7 +1396,7 @@ components:
 
     SourceRepo:
       type: object
-      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at, deactivated_at, dir, baseline]
+      required: [slug, clone_url, origin, branch, head_commit, state, last_synced_at, last_error, created_at, deactivated_at, dir, baseline, brief]
       properties:
         slug:
           type: string
@@ -1379,6 +1436,64 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Baseline"
             - type: "null"
+        brief:
+          description: The repository's brief, null before the first request.
+          oneOf:
+            - $ref: "#/components/schemas/Brief"
+            - type: "null"
+
+    Brief:
+      type: object
+      description: >-
+        A repository's .agents/PROJECT.md. state is the newest thing that
+        happened: a request waiting, a request failed (error says why), the
+        push due, done, not needed (the default branch holds the file) or
+        refused (error says why; the text is there to copy).
+      required: [state, waiting, error, has_text, page_revision, written_at, branch, pushed_commit, push_at]
+      properties:
+        state:
+          type: string
+          enum: [requested, failed, pushing, pushed, unchanged, push_failed]
+        waiting:
+          type: string
+          enum: ["", budget]
+          description: >-
+            Why a request is not taken yet: budget, the day's
+            BACKEND_DAILY_BUDGET_USD is spent and the worker takes it the next
+            UTC day.
+        error:
+          type: string
+        has_text:
+          type: boolean
+        page_revision:
+          type: integer
+          description: The page revision the brief was written from, 0 before the first.
+        written_at:
+          type: [string, "null"]
+          format: date-time
+        branch:
+          type: string
+        pushed_commit:
+          type: string
+          description: >-
+            The commit last pushed to the branch, kept through later states. A
+            push replaces the branch only while it still stands there; one
+            holding commits of anyone else is refused.
+        push_at:
+          type: [string, "null"]
+          format: date-time
+
+    BriefText:
+      allOf:
+        - $ref: "#/components/schemas/Brief"
+        - type: object
+          required: [markdown, path]
+          properties:
+            markdown:
+              type: string
+            path:
+              type: string
+              description: Where the file goes in the repository.
 
     Queue:
       type: object
@@ -1436,12 +1551,14 @@ components:
 
     QueueItem:
       type: object
-      description: A note or a run, with what it waits for.
+      description: >-
+        A note or a run, with what it waits for; as the current item also a
+        repository's brief (its call or its push), never queued here.
       required: [kind, project, repo, attempts]
       properties:
         kind:
           type: string
-          enum: [note, run]
+          enum: [note, run, brief]
         project:
           type: string
         repo:

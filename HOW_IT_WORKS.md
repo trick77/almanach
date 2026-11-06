@@ -690,8 +690,48 @@ entry. The UI section "Quellen" is the one read-write part of the SPA: the
 sources list with a create form, a source page with its repositories, their
 states, inline forms for the token and for adding a repository to a static
 source, and inline confirms for removals that name the folder that goes.
-It polls every three seconds while a clone or a baseline run is under way
-and otherwise not at all.
+It polls every three seconds while a clone, a baseline run or a brief is
+under way and otherwise not at all.
+
+### A repository's brief
+
+A repository's row offers "PROJECT.md erzeugen": a short brief for the
+repository's `.agents/PROJECT.md`, the root section a tool such as
+agents-md-sync folds into the repository's `AGENTS.md`. It holds only what
+an agent working in the repository cannot read from its code: what the
+repository is for and how it fits its project, who relies on it and on
+what, shared entities and their system of record, invariants and rules with
+their reasons, decisions with the alternatives they rejected, pitfalls. Never
+its structure, its files, its flows step by step, its build or commands:
+the agent has the code open. About 350 words, at most 2500 characters asked
+of the model; a longer one is logged and kept whole.
+
+The worker writes it with one call over the stored page (statements pull
+requests taught marked, as a restyle sees them), the project's page and the
+runtime edges to and from the repository, never the code; German like
+every page, redacted, titled `# <project>/<slug>` (the top of the
+`AGENTS.md`), its sub-headings `##`. Then
+it pushes it: a commit on top of the default branch as the clone last
+fetched it, built in the bare clone through a temporary index (no
+checkout), pushed to `feature/repository-description-update` with the
+source's token, under the clone's lock. The only write Almanach makes to a
+forge. The push replaces the branch only where the remote has none or
+still has the commit Almanach pushed there last, leased to what it read
+(`--force-with-lease`): a branch someone has committed to since is refused,
+never overwritten. A default branch already holding the file pushes
+nothing. A push the forge refuses (a token with read access only, an
+expired one, a branch someone works on) is no failure: the row says why,
+and the page opens the text in a dialog to copy. A source without a token,
+or a clone URL off the token's host, is refused before git runs. Requests
+and pushes are drained after the notes and before the runs, a due push
+first (it costs no call); a push whose clone the poller holds waits for
+the next drain, the runs going on. A request's attempt is counted before
+its call, so one the gateway or the store keeps failing is given up at the
+worker's bound; once the daily budget is spent it waits for the next day,
+and its row says so. The call is on the ledger as `brief`, its source the
+page, in a column of its own on the Kosten page; the queue page shows a
+brief in flight. A request asked again while one waits keeps its place; a
+failed one keeps the brief before it.
 
 ### Dependencies between repositories
 

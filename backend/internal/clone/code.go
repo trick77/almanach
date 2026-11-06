@@ -32,6 +32,9 @@ type Reads interface {
 type Code struct {
 	p     *Poller
 	reads Reads
+	// writes and sources take a brief's push (PushFile); nil: none.
+	writes  Writes
+	sources SourceLookup
 }
 
 // NewCode is the poller's clones for reading.

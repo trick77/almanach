@@ -8,7 +8,7 @@ import (
 // Every prompt that reads code or notes says what the redaction marker is.
 func TestPromptsStateTheRedactionMarker(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
-		"project departure": ProjectDeparture, "repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle} {
+		"project departure": ProjectDeparture, "repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle, "brief": Brief} {
 		if !strings.Contains(p, Redacted) {
 			t.Errorf("%s prompt lacks the redaction sentence %q", name, Redacted)
 		}
@@ -18,7 +18,8 @@ func TestPromptsStateTheRedactionMarker(t *testing.T) {
 // Every prompt that asks for German states the one spelling rule.
 func TestPromptsStateTheSpelling(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
-		"project departure": ProjectDeparture, "repo map": RepoMap, "diagrams": Diagrams, "restyle": Restyle, "project restyle": ProjectRestyle} {
+		"project departure": ProjectDeparture, "repo map": RepoMap, "diagrams": Diagrams, "restyle": Restyle, "project restyle": ProjectRestyle,
+		"brief": Brief} {
 		if !strings.Contains(p, Spelling) {
 			t.Errorf("%s prompt lacks the spelling rule %q", name, Spelling)
 		}
@@ -144,6 +145,17 @@ func TestPromptsStateTheFlowKind(t *testing.T) {
 		}
 		if !strings.Contains(p, "told in full in its `flow` statement") || strings.Contains(p, "flows, end to end") {
 			t.Errorf("%s prompt's summary still tells the flows itself", name)
+		}
+	}
+}
+
+// The brief holds only what an agent cannot read from the code, short,
+// in blocks, with every placeholder the worker fills.
+func TestBriefPromptKeepsToTheUnderivable(t *testing.T) {
+	for _, want := range []string{"only what the agent cannot learn from the code", "Never in the brief", "2500 characters",
+		Block, "{repo}", "{project}", "{project_description}", "{dependencies}", "{repo_description}", `{"brief": [<block>, ...]}`} {
+		if !strings.Contains(Brief, want) {
+			t.Errorf("brief prompt lacks %q", want)
 		}
 	}
 }

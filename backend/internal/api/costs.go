@@ -36,6 +36,8 @@ type costProjectBody struct {
 	Calls   int         `json:"calls"`
 	Merges  costSumBody `json:"merges"`
 	Runs    costSumBody `json:"runs"`
+	// Briefs is the repositories' PROJECT.md calls.
+	Briefs costSumBody `json:"briefs"`
 }
 
 type costSumBody struct {
@@ -64,9 +66,9 @@ func (d Deps) costs(w http.ResponseWriter, r *http.Request) {
 			out.Months = append(out.Months, costMonthBody{Month: row.Month, Projects: []costProjectBody{}})
 		}
 		m := &out.Months[len(out.Months)-1]
-		total := addNano(row.Merges.NanoUSD, row.Runs.NanoUSD)
-		p := costProjectBody{Project: row.ProjectKey, Merges: sumBody(row.Merges), Runs: sumBody(row.Runs),
-			Calls: row.Merges.Calls + row.Runs.Calls, CostUSD: usd(total)}
+		total := addNano(addNano(row.Merges.NanoUSD, row.Runs.NanoUSD), row.Briefs.NanoUSD)
+		p := costProjectBody{Project: row.ProjectKey, Merges: sumBody(row.Merges), Runs: sumBody(row.Runs), Briefs: sumBody(row.Briefs),
+			Calls: row.Merges.Calls + row.Runs.Calls + row.Briefs.Calls, CostUSD: usd(total)}
 		m.Projects = append(m.Projects, p)
 		m.Calls += p.Calls
 		monthTotal = addNano(monthTotal, total)

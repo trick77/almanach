@@ -41,6 +41,35 @@ type fakeSources struct {
 	cloned map[string]*store.ClonedElsewhereError
 	// activeErr fails a deactivation or an activation.
 	activeErr error
+	// briefs is each repository's brief by id; requested every request.
+	briefs    map[int64]store.Brief
+	requested []int64
+}
+
+func (f *fakeSources) RequestBrief(_ context.Context, repoID int64) error {
+	f.requested = append(f.requested, repoID)
+	if f.briefs == nil {
+		f.briefs = map[int64]store.Brief{}
+	}
+	b := f.briefs[repoID]
+	now := time.Now()
+	b.RequestedAt, b.FailedAt, b.Failed = &now, nil, ""
+	f.briefs[repoID] = b
+	return nil
+}
+func (f *fakeSources) RepoBrief(_ context.Context, repoID int64) (store.Brief, bool, error) {
+	b, ok := f.briefs[repoID]
+	return b, ok, nil
+}
+func (f *fakeSources) Briefs(_ context.Context, key string) (map[int64]store.Brief, error) {
+	out := map[int64]store.Brief{}
+	for _, r := range f.repos[key] {
+		if b, ok := f.briefs[f.id(key+"/"+r.Slug)]; ok {
+			b.Markdown = ""
+			out[f.id(key+"/"+r.Slug)] = b
+		}
+	}
+	return out, nil
 }
 
 func newFakeSources() *fakeSources {

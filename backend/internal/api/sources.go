@@ -48,6 +48,9 @@ type SourceStore interface {
 	DeactivateSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	DropQueuedRuns(ctx context.Context, key, slug string) error
 	ActivateSourceRepo(ctx context.Context, key, slug string) error
+	RequestBrief(ctx context.Context, repoID int64) error
+	RepoBrief(ctx context.Context, repoID int64) (store.Brief, bool, error)
+	Briefs(ctx context.Context, key string) (map[int64]store.Brief, error)
 }
 
 // Nudger starts the next sync cycle now.
@@ -125,6 +128,8 @@ func (d Deps) registerSources(s *httpapi.Server) {
 	s.HandleFunc("DELETE /api/sources/{key}/repos/{slug}", d.deleteRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/sync", d.syncRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/describe", d.describeRepo)
+	s.HandleFunc("GET /api/sources/{key}/repos/{slug}/brief", d.repoBrief)
+	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/brief", d.requestBrief)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/deactivate", d.deactivateRepo)
 	s.HandleFunc("POST /api/sources/{key}/repos/{slug}/activate", d.activateRepo)
 }
@@ -217,6 +222,9 @@ type sourceRepoBody struct {
 	// Baseline is the newest run and the commit last documented, null
 	// before the first run.
 	Baseline *baselineBody `json:"baseline"`
+	// Brief is the repository's .agents/PROJECT.md, null before the first
+	// request.
+	Brief *briefBody `json:"brief"`
 }
 
 // baselineBody is what the source page shows of a repository's runs.
@@ -310,6 +318,14 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 	if err != nil {
 		return sourceDetailBody{}, err
 	}
+	briefs, err := d.Sources.Store.Briefs(ctx, src.ProjectKey)
+	if err != nil {
+		return sourceDetailBody{}, err
+	}
+	budgetSpent, err := d.briefsOverBudget(ctx, briefs)
+	if err != nil {
+		return sourceDetailBody{}, err
+	}
 	out := sourceDetailBody{ProjectKey: src.ProjectKey, Kind: src.Kind, Host: src.Host, HasToken: src.HasToken(), TokenAuth: src.TokenAuth,
 		TokenUser: src.TokenUser, LastListedAt: src.LastListedAt, LastError: src.LastError,
 		CreatedAt: src.CreatedAt, UpdatedAt: src.UpdatedAt, Repos: make([]sourceRepoBody, 0, len(repos)), MaxCalls: d.Sources.MaxCalls}
@@ -321,6 +337,12 @@ func (d Deps) sourceDetail(ctx context.Context, src store.ProjectSource) (source
 			State: rp.State, LastSyncedAt: rp.LastSyncedAt, LastError: rp.LastError, CreatedAt: rp.CreatedAt, DeactivatedAt: rp.DeactivatedAt}
 		if dir, err := d.Sources.Git.Dir(rp.ProjectID, rp.RepoID); err == nil {
 			body.Dir = dir
+		}
+		if b, ok := briefs[rp.RepoID]; ok {
+			body.Brief = briefOf(b)
+			if body.Brief.State == briefRequested && budgetSpent {
+				body.Brief.Waiting = waitBudget
+			}
 		}
 		if rr, ok := runs[rp.Slug]; ok {
 			var err error

@@ -33,13 +33,15 @@ const costs: Costs = {
           cost_usd: "1.230",
           calls: 13,
           merges: { calls: 3, unpriced: 0, cost_usd: "0.030" },
-          runs: { calls: 10, unpriced: 2, cost_usd: "1.200" },
+          runs: { calls: 9, unpriced: 2, cost_usd: "1.193" },
+          briefs: { calls: 1, unpriced: 0, cost_usd: "0.007" },
         },
         {
           project: "ZED",
           calls: 1,
           merges: { calls: 1, unpriced: 1 },
           runs: { calls: 0, unpriced: 0 },
+          briefs: { calls: 0, unpriced: 0 },
         },
       ],
     },
@@ -54,6 +56,7 @@ const costs: Costs = {
           calls: 4,
           merges: { calls: 0, unpriced: 0 },
           runs: { calls: 4, unpriced: 0, cost_usd: "0.500" },
+          briefs: { calls: 0, unpriced: 0 },
         },
       ],
     },
@@ -76,6 +79,8 @@ describe("CostsPage", () => {
       "/projects/PLAT",
     );
     expect(within(nov).getByText("$0.03")).toBeInTheDocument();
+    // The briefs in their own column.
+    expect(within(nov).getByText("$0.01")).toBeInTheDocument();
     expect(
       within(nov).getByText(S.costs.unpriced(2), { exact: false }),
     ).toBeInTheDocument();

@@ -44,8 +44,9 @@ const (
 
 // Kinds of work in flight.
 const (
-	KindNote = "note"
-	KindRun  = "run"
+	KindNote  = "note"
+	KindRun   = "run"
+	KindBrief = "brief"
 )
 
 // Busy is the work in flight.

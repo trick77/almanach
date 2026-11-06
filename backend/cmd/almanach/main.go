@@ -350,7 +350,11 @@ func serve(log *slog.Logger) error {
 		git.WithTimeout(app.Sources.GitTimeout)
 		poller = clone.New(clone.Deps{Store: db, Git: git, Lister: lister, Key: key, Interval: app.Sources.SyncInterval, Log: log,
 			Describe: clone.Describe{Reconcile: app.Baseline.Reconcile, Wake: worker.Wake}, Manifests: clone.Manifests{Store: db, Reads: git}})
-		worker.WithBaseline(consolidate.Baseline{Store: db, Code: clone.NewCode(poller, git), Catalogue: catalogue, Describer: llm, Limits: app.Baseline})
+		// The clones take one write too: a repository's brief, pushed with
+		// the source's token.
+		code := clone.NewCode(poller, git).WithWrites(git, db)
+		worker.WithBaseline(consolidate.Baseline{Store: db, Code: code, Catalogue: catalogue, Describer: llm, Limits: app.Baseline,
+			Briefs: &consolidate.Briefs{Store: db, Model: llm, Push: code}})
 		poller.Start(context.WithoutCancel(ctx))
 		// Removals go through the poller, under its disk lock.
 		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: poller, Key: key, DefaultHost: app.Sources.BitbucketHost,

@@ -25,7 +25,7 @@ import {
 import { useFetch } from "./useFetch";
 
 /** CostsPage is Almanach's own ledger: what its model calls cost by month
- *  and project, the merges apart from the runs, with the day's spend
+ *  and project, the merges apart from the runs and the briefs, with the day's spend
  *  against the budget. Read only. */
 export function CostsPage() {
   const { data, failed } = useFetch<Costs>("costs");
@@ -97,7 +97,7 @@ export function monthName(ym: string): string {
 }
 
 function Month({ m }: { m: CostMonth }) {
-  const [hProject, hMerges, hRuns, hCalls, hCost] = S.costs.headers;
+  const [hProject, hMerges, hRuns, hBriefs, hCalls, hCost] = S.costs.headers;
   return (
     <section data-testid={`month-${m.month}`}>
       <div className={eyebrow}>{monthName(m.month)}</div>
@@ -108,6 +108,7 @@ function Month({ m }: { m: CostMonth }) {
               <th className={th}>{hProject}</th>
               <th className={thNum}>{hMerges}</th>
               <th className={thNum}>{hRuns}</th>
+              <th className={thNum}>{hBriefs}</th>
               <th className={thNum}>{hCalls}</th>
               <th className={thNum}>{hCost}</th>
             </tr>
@@ -124,6 +125,9 @@ function Month({ m }: { m: CostMonth }) {
                 <td className={tdNum}>
                   <Sum s={p.runs} />
                 </td>
+                <td className={tdNum}>
+                  <Sum s={p.briefs} />
+                </td>
                 <td className={tdNum}>{p.calls}</td>
                 <td className={tdNum}>
                   {p.cost_usd ? money(p.cost_usd) : S.queue.idle}
@@ -132,6 +136,7 @@ function Month({ m }: { m: CostMonth }) {
             ))}
             <tr className="font-medium text-ink">
               <td className={td}>{S.costs.monthTotal}</td>
+              <td className={tdNum} />
               <td className={tdNum} />
               <td className={tdNum} />
               <td className={tdNum}>{m.calls}</td>
