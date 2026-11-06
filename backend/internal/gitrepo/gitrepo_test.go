@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -306,6 +307,31 @@ func TestTerminateGroup_GoneIsDone(t *testing.T) {
 	}
 	if err := terminateGroup(cmd.Process.Pid); !errors.Is(err, os.ErrProcessDone) {
 		t.Errorf("terminateGroup of a reaped group = %v, want os.ErrProcessDone", err)
+	}
+}
+
+// A group that ignores SIGTERM, the leader and its child alike, is killed
+// after killGrace, not left holding what it held.
+func TestTerminateGroup_KillsWhatIgnoresTerm(t *testing.T) {
+	old := killGrace
+	killGrace = 100 * time.Millisecond
+	t.Cleanup(func() { killGrace = old })
+	cmd := exec.Command("sh", "-c", "trap '' TERM; sleep 30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Skip(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	time.Sleep(100 * time.Millisecond) // let sh set the trap
+	if err := terminateGroup(cmd.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		t.Fatal("a group ignoring SIGTERM outlived killGrace")
 	}
 }
 

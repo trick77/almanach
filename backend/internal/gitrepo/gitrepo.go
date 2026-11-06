@@ -376,13 +376,23 @@ func (c *Client) command(ctx context.Context, dir string, extra []string, args .
 	return cmd
 }
 
-// terminateGroup sends SIGTERM to the process group pgid. A group already
-// gone is os.ErrProcessDone, as exec's own cancel says it: any other error
-// fails a command that exited 0 just as the deadline fired.
+// killGrace is how long a terminated group gets before SIGKILL, inside
+// waitDelay: exec's own fallback kills git alone, and a helper that
+// ignored SIGTERM or sat in I/O would keep the socket and the pack lock.
+var killGrace = 5 * time.Second
+
+// terminateGroup sends SIGTERM to the process group pgid, SIGKILL after
+// killGrace to whatever is left of it (a group gone by then is ESRCH,
+// ignored; a pgid is not handed out again while any member lives). A group
+// already gone is os.ErrProcessDone, as exec's own cancel says it: any
+// other error fails a command that exited 0 just as the deadline fired.
 func terminateGroup(pgid int) error {
 	err := syscall.Kill(-pgid, syscall.SIGTERM)
 	if errors.Is(err, syscall.ESRCH) {
 		return os.ErrProcessDone
+	}
+	if err == nil {
+		time.AfterFunc(killGrace, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
 	}
 	return err
 }
