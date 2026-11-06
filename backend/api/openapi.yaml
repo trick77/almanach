@@ -2600,7 +2600,7 @@ components:
             $ref: "#/components/schemas/StatementRef"
         changed:
           type: array
-          description: Statements whose name, text, files or kind differ from the previous revision's, in this one's order.
+          description: Statements whose name, text, files, kind or diagram differ from the previous revision's, in this one's order.
           items:
             $ref: "#/components/schemas/StatementRef"
         dropped:

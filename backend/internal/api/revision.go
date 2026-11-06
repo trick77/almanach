@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strconv"
 	"time"
 
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/httpx"
 )
@@ -51,24 +53,29 @@ func (d Deps) projectRevision(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	key := r.PathValue("key")
-	_, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
+	ok, err := d.projectPaged(ctx, key)
 	if err != nil {
 		httpx.ServerError(w, r, err, "project")
 		return
-	}
-	if ok {
-		var alone bool
-		if alone, err = d.single(ctx, key); err != nil {
-			httpx.ServerError(w, r, err, "project source")
-			return
-		}
-		ok = !alone
 	}
 	if !ok {
 		httpx.WriteError(w, http.StatusNotFound, "unknown project")
 		return
 	}
 	d.revision(w, r, store.ScopeProject, key, "")
+}
+
+// projectPaged reports whether the project has a page on the wire: one
+// the routes serve (listed, a source with the sources on) and not one of
+// one, whose repository's page is the project's. The project route's own
+// gate, as the revision route reads it.
+func (d Deps) projectPaged(ctx context.Context, key string) (bool, error) {
+	_, ok, err := d.Store.ProjectExists(ctx, key, d.Sources != nil)
+	if err != nil || !ok {
+		return false, err
+	}
+	alone, err := d.single(ctx, key)
+	return !alone, err
 }
 
 // repoRevision answers GET /api/projects/{key}/repos/{slug}/revisions/{n}.
@@ -106,38 +113,42 @@ func (d Deps) revision(w http.ResponseWriter, r *http.Request, scope, key, slug 
 		httpx.WriteError(w, http.StatusNotFound, "unknown revision")
 		return
 	}
-	current, _, err := d.Store.CurrentPage(ctx, scope, key, slug)
+	// The page's current number is the newest revision's: the list's
+	// first row, no page read (its maps would be decoded for nothing).
+	newest, err := d.Store.Revisions(ctx, scope, key, slug, 1)
 	if err != nil {
-		httpx.ServerError(w, r, err, "page")
+		httpx.ServerError(w, r, err, "revisions")
 		return
 	}
+	if len(newest) == 0 {
+		httpx.WriteError(w, http.StatusNotFound, "unknown revision")
+		return
+	}
+	// The page's current names, as the page routes answer them.
+	out := revisionDetailBody{Scope: scope, ProjectKey: page.ProjectKey, RepoSlug: page.RepoSlug, Revision: page.Revision,
+		Current: newest[0].Revision, CreatedAt: page.UpdatedAt, Description: *describe(page, true)}
+	// Revisions are numbered one past the last and never deleted, so n-1
+	// is there; were it not, the view reads as a first one.
 	var prev store.Page
 	if n > 1 {
 		if prev, ok, err = d.Store.Revision(ctx, scope, key, slug, n-1); err != nil {
 			httpx.ServerError(w, r, err, "previous revision")
 			return
 		}
-		if !ok {
-			// A gap in the numbering: nothing to diff against, every
-			// statement reads as added.
-			prev = store.Page{}
+		if ok {
+			out.Previous = n - 1
 		}
 	}
-	// The page's current names, as the page routes answer them.
-	out := revisionDetailBody{Scope: scope, ProjectKey: page.ProjectKey, RepoSlug: page.RepoSlug, Revision: page.Revision,
-		Current: current.Revision, CreatedAt: page.UpdatedAt, Description: *describe(page, true)}
-	if n > 1 {
-		out.Previous = n - 1
-	}
 	out.Added, out.Changed, out.Dropped = diffStatements(prev.Statements, page.Statements)
-	out.SummaryChanged = n == 1 || prev.Summary != page.Summary
+	out.SummaryChanged = out.Previous == 0 || prev.Summary != page.Summary
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // diffStatements is what cur changed against prev, by id: added (in cur
-// but not prev), changed (both, with another name, text, files or kind),
-// dropped (in prev but not cur). Added and changed in cur's order,
-// dropped in prev's. Never nil: the wire shows lists.
+// but not prev), changed (both, with another name, text, files, kind or
+// diagram: what the fold writes a revision for), dropped (in prev but not
+// cur). Added and changed in cur's order, dropped in prev's. Never nil:
+// the wire shows lists.
 func diffStatements(prev, cur []store.Statement) (added, changed, dropped []statementRef) {
 	added, changed, dropped = []statementRef{}, []statementRef{}, []statementRef{}
 	before := make(map[string]store.Statement, len(prev))
@@ -152,7 +163,8 @@ func diffStatements(prev, cur []store.Statement) (added, changed, dropped []stat
 		switch {
 		case !ok:
 			added = append(added, ref)
-		case old.Name != s.Name || old.Text != s.Text || old.Kind != s.Kind || !slices.Equal(old.Files, s.Files):
+		case old.Name != s.Name || old.Text != s.Text || old.Kind != s.Kind || !slices.Equal(old.Files, s.Files) ||
+			!diagram.Equal(old.Diagram, s.Diagram):
 			changed = append(changed, ref)
 		}
 	}

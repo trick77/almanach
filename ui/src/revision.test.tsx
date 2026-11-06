@@ -104,7 +104,29 @@ describe("RevisionPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("says when a revision changed nothing, the first one that all is new, the current one so", async () => {
+  it("says when a later revision changed nothing", async () => {
+    serve({
+      "projects/PAY/repos/pay-api/revisions/3": {
+        ...revision,
+        revision: 3,
+        current: 3,
+        previous: 2,
+        summary_changed: false,
+        added: [],
+        changed: [],
+        dropped: [],
+      },
+    });
+    render(<RevisionPage projectKey="PAY" slug="pay-api" n={3} />);
+    expect(
+      await screen.findByText("Revision 3, die aktuelle"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("gegenüber Revision 2")).toBeInTheDocument();
+    expect(screen.getByText(/Keine Aussage hinzugekommen/)).toBeInTheDocument();
+    expect(screen.queryByText("Nächste ›")).toBeNull();
+  });
+
+  it("reads the first revision as all new, the summary with it, the current one so", async () => {
     serve({
       "projects/PAY/revisions/1": {
         ...revision,
@@ -113,8 +135,8 @@ describe("RevisionPage", () => {
         revision: 1,
         current: 1,
         previous: 0,
-        summary_changed: false,
-        added: [],
+        summary_changed: true,
+        added: [{ id: "s1", kind: "entity", name: "Auftrag" }],
         changed: [],
         dropped: [],
       },
@@ -126,13 +148,15 @@ describe("RevisionPage", () => {
     expect(
       screen.getByText("die erste Revision: alles neu"),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Keine Aussage hinzugekommen/)).toBeInTheDocument();
+    expect(screen.getByText("Überblick geändert")).toBeInTheDocument();
+    // A project page's entity reads as a shared one.
+    expect(screen.getByText("Geteilte Entität")).toBeInTheDocument();
     expect(screen.queryByText("‹ Vorherige")).toBeNull();
     expect(screen.queryByText("Nächste ›")).toBeNull();
     expect(
       screen.getByText("Aktuelle Seite").closest("a")?.getAttribute("href"),
     ).toBe("/projects/PAY");
-    // A project page's entity reads as a shared one; the crumbs end at the project.
+    // The crumbs end at the project.
     const crumbs = screen.getByRole("navigation", { name: "Pfad" });
     expect(
       within(crumbs).getByText("PAY").closest("a")?.getAttribute("href"),

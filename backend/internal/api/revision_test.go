@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -22,7 +23,8 @@ func TestRepoRevision(t *testing.T) {
 	s := newFakeStore()
 	s.teams["PLAT"] = "platform"
 	s.repos["PLAT"] = []store.RepoRow{{Slug: "files"}}
-	s.pages[store.ScopeRepository+"|PLAT|files"] = store.Page{Revision: 3, Summary: "Jetzt."}
+	// The current number is the newest listed revision's.
+	s.revisions = []store.RevisionRow{{Revision: 3}, {Revision: 2}, {Revision: 1}}
 	s.revisionPages[store.ScopeRepository+"|PLAT|files|1"] = store.Page{ProjectKey: "PLAT", RepoSlug: "files", Revision: 1, Summary: "Anfang.", SourcePR: "PLAT/files#1",
 		Statements: []store.Statement{st("s1", "Eins", "a"), st("s2", "Zwei", "b", "x.go")}}
 	s.revisionPages[store.ScopeRepository+"|PLAT|files|2"] = store.Page{ProjectKey: "PLAT", RepoSlug: "files", Revision: 2, Summary: "Anfang.", SourcePR: "PLAT/files#2", UpdatedAt: mergedAt,
@@ -63,6 +65,12 @@ func TestRepoRevision(t *testing.T) {
 		t.Errorf("revision 1 = %v", body)
 	}
 
+	// No revision listed at all: nothing current, a 404, never "von 0".
+	s.revisions = nil
+	if code, _ := do(t, h, http.MethodGet, "/api/projects/PLAT/repos/files/revisions/2", "", "", nil); code != 404 {
+		t.Errorf("no current revision = %d, want 404", code)
+	}
+	s.revisions = []store.RevisionRow{{Revision: 3}}
 	s.revisionErr = errors.New("boom")
 	if code, _ := do(t, h, http.MethodGet, "/api/projects/PLAT/repos/files/revisions/2", "", "", nil); code != 500 {
 		t.Errorf("store failure = %d, want 500", code)
@@ -117,10 +125,14 @@ func TestDiffStatements(t *testing.T) {
 	}
 	kind := st("s4", "Vier", "d")
 	kind.Kind = "pitfall"
+	// A diagram drawn beside an unchanged text is a change too: the fold
+	// writes a revision for it.
+	drawn := st("s6", "Sechs", "f")
+	drawn.Diagram = &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}}}
 	a, c, d = diffStatements(
-		[]store.Statement{st("s1", "A", "t"), st("s2", "B", "t"), st("s3", "C", "t"), st("s4", "Vier", "d")},
-		[]store.Statement{st("s5", "E", "t"), st("s2", "B", "t"), st("s1", "A", "t2"), kind})
-	if len(a) != 1 || a[0].ID != "s5" || len(c) != 2 || c[0].ID != "s1" || c[1].ID != "s4" || len(d) != 1 || d[0].ID != "s3" {
+		[]store.Statement{st("s1", "A", "t"), st("s2", "B", "t"), st("s3", "C", "t"), st("s4", "Vier", "d"), st("s6", "Sechs", "f")},
+		[]store.Statement{st("s5", "E", "t"), st("s2", "B", "t"), st("s1", "A", "t2"), kind, drawn})
+	if len(a) != 1 || a[0].ID != "s5" || len(c) != 3 || c[0].ID != "s1" || c[1].ID != "s4" || c[2].ID != "s6" || len(d) != 1 || d[0].ID != "s3" {
 		t.Errorf("diff = %+v %+v %+v", a, c, d)
 	}
 }
