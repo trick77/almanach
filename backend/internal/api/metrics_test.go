@@ -19,12 +19,34 @@ import (
 	"github.com/trick77/almanach/internal/store"
 )
 
+// fakeMetricsStore serves ledger rows by id: Ledger returns those past
+// afterID, summed by purpose and project.
 type fakeMetricsStore struct {
-	m   store.Metrics
-	err error
+	m      store.Metrics
+	err    error
+	ledger []ledgerFake
+	asked  []int64
 }
 
-func (f fakeMetricsStore) Metrics(context.Context) (store.Metrics, error) { return f.m, f.err }
+type ledgerFake struct {
+	id  int64
+	row store.LedgerRow
+}
+
+func (f *fakeMetricsStore) Metrics(context.Context) (store.Metrics, error) { return f.m, f.err }
+
+func (f *fakeMetricsStore) Ledger(_ context.Context, after int64) ([]store.LedgerRow, int64, error) {
+	f.asked = append(f.asked, after)
+	var out []store.LedgerRow
+	last := after
+	for _, l := range f.ledger {
+		if l.id > after {
+			out = append(out, l.row)
+			last = max(last, l.id)
+		}
+	}
+	return out, last, nil
+}
 
 type fakeMetricsWorker struct {
 	st   consolidate.Status
@@ -69,7 +91,7 @@ func getMetrics(h http.Handler, remote string, header http.Header) *httptest.Res
 func TestMetricsAccess(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
-	m := &MetricsDeps{Store: fakeMetricsStore{}, Worker: fakeMetricsWorker{}, Token: metricsToken}
+	m := &MetricsDeps{Store: &fakeMetricsStore{}, Worker: fakeMetricsWorker{}, Token: metricsToken}
 	h := metricsHandler(t, m, log)
 	bearer := func(tok string) http.Header { return http.Header{"Authorization": {"Bearer " + tok}} }
 	for _, tc := range []struct {
@@ -90,7 +112,7 @@ func TestMetricsAccess(t *testing.T) {
 			t.Errorf("%s: code = %d, want %d", tc.name, rec.Code, tc.want)
 		}
 	}
-	if !strings.Contains(buf.String(), "metrics: a bearer was refused") {
+	if !strings.Contains(buf.String(), `msg="metrics: a bearer was refused" ip=10.0.0.9`) {
 		t.Errorf("no Warn for a refused bearer: %s", buf.String())
 	}
 	if strings.Contains(buf.String(), metricsToken) {
@@ -98,7 +120,7 @@ func TestMetricsAccess(t *testing.T) {
 	}
 
 	// No token set: a bearer never opens it, loopback still does.
-	open := metricsHandler(t, &MetricsDeps{Store: fakeMetricsStore{}, Worker: fakeMetricsWorker{}}, log)
+	open := metricsHandler(t, &MetricsDeps{Store: &fakeMetricsStore{}, Worker: fakeMetricsWorker{}}, log)
 	if rec := getMetrics(open, "10.0.0.9:5000", bearer("")); rec.Code != http.StatusNotFound {
 		t.Errorf("empty token: code = %d, want 404", rec.Code)
 	}
@@ -110,15 +132,20 @@ func TestMetricsAccess(t *testing.T) {
 func TestMetricsBody(t *testing.T) {
 	merge := time.Unix(1_700_000_000, 0)
 	until := time.Unix(1_700_000_600, 0)
+	st := &fakeMetricsStore{
+		m: store.Metrics{Notes: 3, Runs: 1, LastMerge: &merge, Projects: map[int64]string{1: `we"ird\key`, 2: "ABC"}},
+		ledger: []ledgerFake{
+			{4, store.LedgerRow{Purpose: "merge", ProjectID: 1, Calls: 2, NanoUSD: 1500}},
+			{6, store.LedgerRow{Purpose: "catalogue", ProjectID: 2, Calls: 1, NanoUSD: 0}},
+		},
+	}
 	m := &MetricsDeps{
-		Store: fakeMetricsStore{m: store.Metrics{Notes: 3, Runs: 1, LastMerge: &merge, Calls: []store.CallTotal{
-			{Purpose: "merge", ProjectKey: `we"ird\key`, Calls: 2, NanoUSD: 1500},
-			{Purpose: "catalogue", ProjectKey: "ABC", Calls: 1, NanoUSD: 0},
-		}}},
+		Store:  st,
 		Worker: fakeMetricsWorker{st: consolidate.Status{HoldUntil: &until, HoldCause: consolidate.HoldRateLimit}, beat: time.Unix(1_700_000_100, 0)},
 		Sync:   fakeMetricsSync{c: clone.CycleStatus{Running: true, StartedAt: time.Unix(1_700_000_200, 0)}, beat: time.Unix(1_700_000_300, 0)},
 	}
-	rec := getMetrics(metricsHandler(t, m, slog.New(slog.NewTextHandler(io.Discard, nil))), "127.0.0.1:1", nil)
+	h := metricsHandler(t, m, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rec := getMetrics(h, "127.0.0.1:1", nil)
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != metricsType {
 		t.Fatalf("code %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
@@ -128,21 +155,47 @@ func TestMetricsBody(t *testing.T) {
 		"almanach_queue_runs 1\n",
 		"almanach_last_merge_seconds 1700000000\n",
 		"almanach_last_sync_seconds 0\n",
-		`almanach_worker_hold_until_seconds{cause="rate_limit"} 1700000600` + "\n",
+		"almanach_worker_hold_until_seconds 1700000600\n",
+		`almanach_worker_hold{cause="rate_limit"} 1` + "\n",
+		`almanach_worker_hold{cause="timeout"} 0` + "\n",
 		"almanach_worker_busy_since_seconds 0\n",
 		"almanach_worker_heartbeat_seconds 1700000100\n",
 		"almanach_poller_heartbeat_seconds 1700000300\n",
 		"almanach_poller_cycle_started_seconds 1700000200\n",
 		"almanach_poller_next_cycle_seconds 0\n",
+		`almanach_project_info{project_id="1",project="we\"ird\\key"} 1` + "\n",
+		`almanach_project_info{project_id="2",project="ABC"} 1` + "\n",
 		"# TYPE almanach_llm_calls_total counter\n",
-		`almanach_llm_calls_total{purpose="merge",project="we\"ird\\key"} 2` + "\n",
-		`almanach_llm_cost_nano_usd_total{purpose="merge",project="we\"ird\\key"} 1500` + "\n",
-		`almanach_llm_cost_nano_usd_total{purpose="catalogue",project="ABC"} 0` + "\n",
+		`almanach_llm_calls_total{purpose="merge",project_id="1"} 2` + "\n",
+		`almanach_llm_cost_nano_usd_total{purpose="merge",project_id="1"} 1500` + "\n",
+		`almanach_llm_cost_nano_usd_total{purpose="catalogue",project_id="2"} 0` + "\n",
 		`almanach_info{version="`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}
+	}
+
+	// The next scrape reads only the rows past the last one and adds them.
+	st.ledger = append(st.ledger, ledgerFake{9, store.LedgerRow{Purpose: "merge", ProjectID: 1, Calls: 1, NanoUSD: 500}})
+	body = getMetrics(h, "127.0.0.1:1", nil).Body.String()
+	if want := `almanach_llm_cost_nano_usd_total{purpose="merge",project_id="1"} 2000` + "\n"; !strings.Contains(body, want) {
+		t.Errorf("second scrape lacks %q:\n%s", want, body)
+	}
+	if len(st.asked) != 2 || st.asked[0] != 0 || st.asked[1] != 6 {
+		t.Errorf("ledger asked after %v, want [0 6]", st.asked)
+	}
+
+	// The hold over: every cause 0, the series still there.
+	m.Worker = fakeMetricsWorker{}
+	body = getMetrics(h, "127.0.0.1:1", nil).Body.String()
+	if !strings.Contains(body, `almanach_worker_hold{cause="rate_limit"} 0`) || !strings.Contains(body, "almanach_worker_hold_until_seconds 0\n") {
+		t.Errorf("no hold:\n%s", body)
+	}
+	// A cause the list does not know yet still shows.
+	m.Worker = fakeMetricsWorker{st: consolidate.Status{HoldUntil: &until, HoldCause: "write"}}
+	if body = getMetrics(h, "127.0.0.1:1", nil).Body.String(); !strings.Contains(body, `almanach_worker_hold{cause="write"} 1`) {
+		t.Errorf("unknown cause:\n%s", body)
 	}
 	// Every sample line is name[{labels}] integer.
 	for _, l := range strings.Split(strings.TrimSpace(body), "\n") {
@@ -163,7 +216,7 @@ func TestMetricsBody(t *testing.T) {
 }
 
 func TestMetricsStoreFailure(t *testing.T) {
-	m := &MetricsDeps{Store: fakeMetricsStore{err: errors.New("db down")}, Worker: fakeMetricsWorker{}}
+	m := &MetricsDeps{Store: &fakeMetricsStore{err: errors.New("db down")}, Worker: fakeMetricsWorker{}}
 	var buf bytes.Buffer
 	rec := getMetrics(metricsHandler(t, m, slog.New(slog.NewTextHandler(&buf, nil))), "127.0.0.1:1", nil)
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(buf.String(), "db down") {

@@ -5,10 +5,9 @@ import (
 	"time"
 )
 
-// Metrics is what /metrics reads of the store: the queue, the last
-// success of a merge and of a sync, and the ledger of Almanach's own
-// calls. From the rows, so a restart keeps it; note_calls (noergler's
-// ledger) is never in it.
+// Metrics is what /metrics reads of the store besides the ledger: the
+// queue, the last success of a merge and of a sync, the projects' current
+// keys. From the rows, so a restart keeps it.
 type Metrics struct {
 	// Notes is the notes not yet folded, Runs the open baseline runs.
 	Notes, Runs int
@@ -17,21 +16,12 @@ type Metrics struct {
 	LastMerge *time.Time
 	// LastSync is the newest successful sync of any source repository.
 	LastSync *time.Time
-	// Calls is the whole ledger by purpose and project.
-	Calls []CallTotal
+	// Projects is every project's current key by its id: the counters are
+	// labelled by id, which a rename never changes.
+	Projects map[int64]string
 }
 
-// CallTotal is one purpose's calls for one project, and what the priced
-// ones cost.
-type CallTotal struct {
-	Purpose    string
-	ProjectKey string
-	Calls      int64
-	NanoUSD    int64
-}
-
-// Metrics reads the store's side of /metrics. The ledger is summed whole
-// on every scrape: one GROUP BY over llm_calls, small next to the pages.
+// Metrics reads the store's side of /metrics but the ledger.
 func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 	var m Metrics
 	err := s.db.QueryRowContext(ctx, `
@@ -43,22 +33,60 @@ func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 	if err != nil {
 		return Metrics{}, err
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.purpose, p.key, COUNT(*), COALESCE(SUM(c.cost_nano_usd), 0)
-		  FROM llm_calls c JOIN repos r ON r.id = c.repo_id JOIN projects p ON p.id = r.project_id
-		 GROUP BY c.purpose, p.id
-		 ORDER BY c.purpose, p.key`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, key FROM projects`)
 	if err != nil {
 		return Metrics{}, err
 	}
 	defer func() { _ = rows.Close() }()
-	m.Calls = []CallTotal{}
+	m.Projects = map[int64]string{}
 	for rows.Next() {
-		var c CallTotal
-		if err := rows.Scan(&c.Purpose, &c.ProjectKey, &c.Calls, &c.NanoUSD); err != nil {
+		var id int64
+		var key string
+		if err := rows.Scan(&id, &key); err != nil {
 			return Metrics{}, err
 		}
-		m.Calls = append(m.Calls, c)
+		m.Projects[id] = key
 	}
 	return m, rows.Err()
+}
+
+// LedgerRow is one purpose's calls for one project, and what the priced
+// ones cost.
+type LedgerRow struct {
+	Purpose   string
+	ProjectID int64
+	Calls     int64
+	NanoUSD   int64
+}
+
+// Ledger is Almanach's own calls past the row afterID, by purpose and
+// project, and the newest row's id (afterID when there is none): /metrics
+// adds them to its totals, so a scrape reads only what came since the last
+// one, never the whole ledger. llm_calls is append-only and its ids grow
+// (rowid, nothing deleted), so no row is read twice or skipped.
+// note_calls, noergler's ledger, is never in it.
+func (s *Store) Ledger(ctx context.Context, afterID int64) ([]LedgerRow, int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.purpose, r.project_id, COUNT(*), COALESCE(SUM(c.cost_nano_usd), 0), MAX(c.id)
+		  FROM llm_calls c JOIN repos r ON r.id = c.repo_id
+		 WHERE c.id > ?
+		 GROUP BY c.purpose, r.project_id`, afterID)
+	if err != nil {
+		return nil, afterID, err
+	}
+	defer func() { _ = rows.Close() }()
+	out, last := []LedgerRow{}, afterID
+	for rows.Next() {
+		var r LedgerRow
+		var maxID int64
+		if err := rows.Scan(&r.Purpose, &r.ProjectID, &r.Calls, &r.NanoUSD, &maxID); err != nil {
+			return nil, afterID, err
+		}
+		last = max(last, maxID)
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, afterID, err
+	}
+	return out, last, nil
 }

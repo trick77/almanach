@@ -193,11 +193,6 @@ type App struct {
 	MetricsToken string
 }
 
-// minMetricsToken is the floor for BACKEND_METRICS_TOKEN, a bearer that
-// opens every project's spend from anywhere: as long as kit's floor for
-// the session secret.
-const minMetricsToken = 32
-
 // Load reads the environment through lookup (os.Getenv in production),
 // collecting every fault before failing.
 func Load(lookup func(string) string) (*App, error) {
@@ -231,8 +226,10 @@ func Load(lookup func(string) string) (*App, error) {
 		LogLevel:     r.String("BACKEND_LOG_LEVEL", "INFO"),
 		MetricsToken: r.String("BACKEND_METRICS_TOKEN", ""),
 	}
-	if n := len(app.MetricsToken); n > 0 && n < minMetricsToken {
-		r.Fail("BACKEND_METRICS_TOKEN: want at least %d bytes (openssl rand -base64 48), got %d", minMetricsToken, n)
+	// A bearer that opens every project's spend from anywhere: the session
+	// secret's floor.
+	if n := len(app.MetricsToken); n > 0 && n < minSessionSecret {
+		r.Fail("BACKEND_METRICS_TOKEN: want at least %d bytes (openssl rand -base64 48), got %d", minSessionSecret, n)
 	}
 	for _, old := range slices.Sorted(maps.Keys(renamed)) {
 		if strings.TrimSpace(lookup(old)) != "" {

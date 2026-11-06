@@ -1121,22 +1121,34 @@ the epoch: stored pages change as before.
   library). It carries every project's spend, so no team's bearer opens
   it: a direct loopback caller does, as on the probes, and the bearer
   `BACKEND_METRICS_TOKEN` names from anywhere; anyone else gets 404, a
-  bearer refused there a Warn line. Every value is an integer: times in
-  unix seconds, 0 for none, money in nano-USD. The queue (notes, open
-  runs), the last ok merge call (the call, not whether its patch then
-  applied) and the last successful sync come from the rows, so a restart
-  keeps them; the calls and their cost by purpose and project are the
-  whole `llm_calls` ledger (noergler's `note_calls` never in it). The hold
-  (until, cause), the item in flight and both loops' heartbeats are the
-  process's own. The heartbeats are metrics only, never a readiness check:
-  a worker holding on the gateway or a poller in a long clone is alive and
-  the wiki still reads. The worker stamps at each drain and before each
-  item: alert when it is older than the hold's remainder plus the call
-  timeout (10 min) and a minute. The poller stamps on each wake and before
-  each repository: between cycles it sleeps the interval, so its stamp
-  counts only while `almanach_poller_cycle_started_seconds` is set; alert
-  when a cycle runs and the stamp is older than the slowest clone you
-  expect.
+  bearer refused there a Warn line with its address. Loopback is the
+  probes' rule and suits a container; a proxy on the same host that
+  forwards from 127.0.0.1 without a forwarding header would open it to
+  whoever reaches the proxy: never route `/metrics` through one, or set
+  the token. Every value is an integer: times in unix seconds, 0 for
+  none, money in nano-USD. The queue (notes, open runs), the last ok merge
+  call (the call, not whether its patch then applied) and the last
+  successful sync come from the rows, so a restart keeps them. The calls
+  and their cost are counters by purpose and project id, never by key: a
+  key's case may change, an id never, and a counter that moved to a new
+  label would read as its whole history spent at once;
+  `almanach_project_info{project_id,project}` names the ids. Each scrape
+  adds only the `llm_calls` rows past the last one it read (append-only,
+  ids grow), so the ledger is read whole once per process, never per
+  scrape; noergler's `note_calls` is never in it. The hold (until; one
+  0-or-1 series per cause, so none appears or goes stale with a hold),
+  the item in flight and both loops' heartbeats are the process's own.
+  The heartbeats are metrics only, never a readiness check: a worker
+  holding on the gateway or a poller in a long clone is alive and the wiki
+  still reads. The worker stamps at each drain and after each item: alert
+  when `time() - almanach_worker_heartbeat_seconds` passes
+  `clamp_min(almanach_worker_hold_until_seconds - time(), 0)` plus the
+  call timeout (10 min) and a minute. The poller stamps on each wake,
+  before each source's listing and before each repository; between
+  cycles it sleeps the interval, so alert on a cycle that runs
+  (`almanach_poller_cycle_started_seconds` set) or is past due
+  (`almanach_poller_next_cycle_seconds` in the past) while the stamp is
+  older than the slowest clone you expect.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
   asked to stop and finishes the fold in flight, up to a grace of the call

@@ -250,9 +250,10 @@ func (w *Worker) drain(ctx context.Context) {
 		}
 	}()
 	w.saveFailed = nil
+	// Once per drain, a holding one too (it takes no item); then after
+	// every item.
 	w.heartbeat()
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
-		w.heartbeat()
 		note, run = nil, nil
 		q, ok, err := w.store.NextQueued(ctx)
 		if err != nil {
@@ -264,6 +265,7 @@ func (w *Worker) drain(ctx context.Context) {
 			if !w.foldOrIgnore(ctx, q) {
 				return
 			}
+			w.heartbeat()
 			continue
 		}
 		if w.base == nil {
@@ -282,6 +284,7 @@ func (w *Worker) drain(ctx context.Context) {
 		if !w.stepRun(ctx, r) {
 			return
 		}
+		w.heartbeat()
 	}
 }
 

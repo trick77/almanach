@@ -335,7 +335,6 @@ func (p *Poller) run(ctx context.Context) {
 				c.NextAt = &at
 			}
 		})
-		p.heartbeat()
 		if !p.wait(ctx, delay) {
 			return
 		}
@@ -380,6 +379,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		p.heartbeat()
 		if s.Kind == store.SourceBitbucket {
 			p.list(ctx, s.ProjectSource)
 		}

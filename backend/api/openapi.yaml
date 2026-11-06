@@ -79,13 +79,16 @@ paths:
         Every value an integer: times unix seconds (0 for none), money
         nano-USD. Series: `almanach_info{version}`, `almanach_queue_notes`,
         `almanach_queue_runs`, `almanach_last_merge_seconds`,
-        `almanach_last_sync_seconds`, `almanach_worker_hold_until_seconds{cause}`,
+        `almanach_last_sync_seconds`, `almanach_worker_hold_until_seconds`,
+        `almanach_worker_hold{cause}` (0 or 1, every cause),
         `almanach_worker_busy_since_seconds`, `almanach_worker_heartbeat_seconds`,
         with the sources on `almanach_poller_heartbeat_seconds`,
         `almanach_poller_cycle_started_seconds`,
-        `almanach_poller_next_cycle_seconds`, and the counters
-        `almanach_llm_calls_total{purpose,project}`,
-        `almanach_llm_cost_nano_usd_total{purpose,project}`.
+        `almanach_poller_next_cycle_seconds`, then
+        `almanach_project_info{project_id,project}` and the counters
+        `almanach_llm_calls_total{purpose,project_id}`,
+        `almanach_llm_cost_nano_usd_total{purpose,project_id}`, by id: a
+        key's case may change.
       operationId: metrics
       security:
         - {}
