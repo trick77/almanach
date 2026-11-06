@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/trick77/almanach/internal/urlorigin"
@@ -66,7 +67,31 @@ type Client struct {
 	// or local path to another clone on this disk, or an ssh:// with
 	// whatever key the process finds.
 	protocols string
+	// timeout bounds every command that reaches a remote (clone, fetch,
+	// ls-remote); zero is none. The poller's cycle is sequential, so one
+	// stalled fetch once held every source and every baseline step behind
+	// it, for good.
+	timeout time.Duration
 }
+
+// WithTimeout bounds the commands that reach a remote.
+func (c *Client) WithTimeout(d time.Duration) *Client {
+	c.timeout = d
+	return c
+}
+
+// lowSpeed is git's own stall guard, on every command (http.* touches only
+// the ones that reach a remote): a connection carrying nothing at all for
+// five minutes is cut, so one the other side forgot does not sit out the
+// whole timeout. Nothing, not slowly: with --quiet a server preparing a
+// large pack sends only its keep-alive packets, a few bytes every five
+// seconds, for minutes, and a rate floor cut a first clone of every big
+// repository.
+var lowSpeed = []string{"-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=300"}
+
+// errTimeout is the cause of a remote command the client's timeout cut,
+// told apart from a caller's own deadline.
+var errTimeout = errors.New("git timeout")
 
 // remoteProtocols are the transports a forge is reached by.
 const remoteProtocols = "https:http"
@@ -187,7 +212,7 @@ func (c *Client) EnsureCloned(ctx context.Context, dir, cloneURL string, a Acces
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
 		return fmt.Errorf("create project directory: %w", err)
 	}
-	if _, err := c.run(ctx, c.root, a.env(cloneURL), "clone", "--quiet", "--bare", cloneURL, dir); err != nil {
+	if _, err := c.remote(ctx, c.root, a.env(cloneURL), "clone", "--quiet", "--bare", cloneURL, dir); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, marker), nil, 0o600)
@@ -195,7 +220,7 @@ func (c *Client) EnsureCloned(ctx context.Context, dir, cloneURL string, a Acces
 
 // DefaultBranch asks the remote what HEAD points at. Never assume master.
 func (c *Client) DefaultBranch(ctx context.Context, cloneURL string, a Access) (string, error) {
-	out, err := c.run(ctx, c.root, a.env(cloneURL), "ls-remote", "--symref", cloneURL, "HEAD")
+	out, err := c.remote(ctx, c.root, a.env(cloneURL), "ls-remote", "--symref", cloneURL, "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -214,9 +239,26 @@ func (c *Client) DefaultBranch(ctx context.Context, cloneURL string, a Access) (
 // Fetch updates the remote-tracking refs and the tags, pruning what the
 // remote dropped, by explicit refspecs rather than the persisted config.
 func (c *Client) Fetch(ctx context.Context, dir, cloneURL string, a Access) error {
-	_, err := c.run(ctx, dir, a.env(cloneURL), "fetch", "--quiet", "--prune", cloneURL,
+	_, err := c.remote(ctx, dir, a.env(cloneURL), "fetch", "--quiet", "--prune", cloneURL,
 		"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
 	return err
+}
+
+// remote is run for a command that reaches a remote: under the client's
+// timeout. A deadline that fires says so and names the setting, where a
+// terminated child would say "signal: terminated": a clone that honestly
+// needs longer is cut, and redone from nothing, every cycle.
+func (c *Client) remote(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeoutCause(ctx, c.timeout, errTimeout)
+		defer cancel()
+	}
+	out, err := c.run(ctx, dir, extra, args...)
+	if err != nil && errors.Is(context.Cause(ctx), errTimeout) {
+		return out, fmt.Errorf("cut after %s (BACKEND_GIT_TIMEOUT): %w", c.timeout, err)
+	}
+	return out, err
 }
 
 // HeadSHA is the commit the branch points at on the remote-tracking side.
@@ -313,16 +355,74 @@ func (c *Client) readable(ctx context.Context, dir string) error {
 // started. core.quotePath is off for every command: by default git C-quotes
 // any path with a non-ASCII byte, and the quoted form is no path.
 func (c *Client) command(ctx context.Context, dir string, extra []string, args ...string) *exec.Cmd {
-	full := append([]string{"-c", "safe.directory=" + dir, "-c", "core.quotePath=false"}, args...)
+	full := append([]string{"-c", "safe.directory=" + dir, "-c", "core.quotePath=false"}, lowSpeed...)
+	full = append(full, args...)
 	cmd := exec.CommandContext(ctx, c.git, full...) //nolint:gosec // argv, no shell; paths come from validated segments
 	cmd.Dir = dir
 	cmd.WaitDelay = waitDelay
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL="+c.protocols)
+	// Its own process group, and a cancel that terminates the group: the
+	// default kills git alone, and git-remote-https, fetch-pack and
+	// index-pack went on with the socket, the pipes and a half-written
+	// pack past the deadline, until waitDelay cut the pipes. SIGTERM first,
+	// so git removes its tmp_pack_* and lock files; a stale lock would fail
+	// every later fetch while the marker kept the clone from being redone.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return terminateGroup(cmd.Process.Pid) }
+	cmd.Env = append(childEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL="+c.protocols)
 	if c.caFile != "" {
 		cmd.Env = append(cmd.Env, "GIT_SSL_CAINFO="+c.caFile)
 	}
 	cmd.Env = append(cmd.Env, extra...)
 	return cmd
+}
+
+// killGrace is how long a terminated group gets before SIGKILL, inside
+// waitDelay: exec's own fallback kills git alone, and a helper that
+// ignored SIGTERM or sat in I/O would keep the socket and the pack lock.
+var killGrace = 5 * time.Second
+
+// terminateGroup sends SIGTERM to the process group pgid, SIGKILL after
+// killGrace to whatever is left of it (a group gone by then is ESRCH,
+// ignored; a pgid is not handed out again while any member lives). A group
+// already gone is os.ErrProcessDone, as exec's own cancel says it: any
+// other error fails a command that exited 0 just as the deadline fired.
+func terminateGroup(pgid int) error {
+	err := syscall.Kill(-pgid, syscall.SIGTERM)
+	if errors.Is(err, syscall.ESRCH) {
+		return os.ErrProcessDone
+	}
+	if err == nil {
+		time.AfterFunc(killGrace, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+	}
+	return err
+}
+
+// envPassed is what of the process environment git and its helpers get:
+// the path and the home (gitconfig, the credential helpers it names), the
+// temp folders, the locale, the TLS roots, the proxies, and GIT_* (the
+// GIT_CONFIG_* a deployment sets, which Access.env appends after). The
+// process carries the gateway key, the token key, the session secret and
+// the OIDC client secret (compose's env_file hands it the whole .env), and
+// a child that could print its environment must not inherit them.
+var envPassed = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "TMPDIR": true, "TMP": true, "TEMP": true,
+	"XDG_CONFIG_HOME": true, "XDG_CACHE_HOME": true,
+	"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TZ": true,
+	"SSL_CERT_FILE": true, "SSL_CERT_DIR": true, "CURL_CA_BUNDLE": true,
+	"http_proxy": true, "https_proxy": true, "no_proxy": true, "all_proxy": true,
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true, "ALL_PROXY": true,
+}
+
+// childEnv is env reduced to envPassed and GIT_*.
+func childEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if envPassed[name] || strings.HasPrefix(name, "GIT_") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func exitCode(err error) int {

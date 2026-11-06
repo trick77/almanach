@@ -139,6 +139,11 @@ type Sources struct {
 	// GitCAFile is a PEM bundle for a forge behind an internal CA, handed
 	// to git as GIT_SSL_CAINFO; "" keeps the system store.
 	GitCAFile string
+	// GitTimeout bounds every git command that reaches a remote (a clone,
+	// a fetch, ls-remote): the poller's cycle is sequential, and one
+	// stalled fetch once held every source and every baseline step for
+	// good (BACKEND_GIT_TIMEOUT).
+	GitTimeout time.Duration
 	// BitbucketHost prefills the host of a new Bitbucket source, trailing
 	// slash trimmed; a source may still name another. "" prefills nothing.
 	BitbucketHost string
@@ -229,6 +234,7 @@ func Load(lookup func(string) string) (*App, error) {
 			SecretKey:     r.String("BACKEND_SOURCE_TOKEN_KEY", ""),
 			SyncInterval:  r.Duration("BACKEND_SYNC_INTERVAL", 30*time.Minute),
 			GitCAFile:     r.String("BACKEND_GIT_CA_FILE", ""),
+			GitTimeout:    r.Duration("BACKEND_GIT_TIMEOUT", time.Hour),
 			BitbucketHost: strings.TrimRight(r.String("BACKEND_BITBUCKET_HOST", ""), "/"),
 		},
 		Baseline: Baseline{
@@ -288,6 +294,9 @@ func Load(lookup func(string) string) (*App, error) {
 	// in an instance without clones costs no startup.
 	if i := app.Sources.SyncInterval; app.Sources.Enabled() && i > 0 && i < MinSyncInterval {
 		r.Fail("BACKEND_SYNC_INTERVAL: at least %s, or 0 for on demand only, got %s", MinSyncInterval, i)
+	}
+	if app.Sources.GitTimeout <= 0 {
+		r.Fail("BACKEND_GIT_TIMEOUT: must be positive (a stalled fetch holds every source), got %s", app.Sources.GitTimeout)
 	}
 	// Absolute once: git runs in the clone's folder and would resolve a
 	// relative path there, the listing and the startup check where the
@@ -489,8 +498,8 @@ func (a *App) Summary() string {
 		if catalogue == "" {
 			catalogue = a.Model
 		}
-		sources = fmt.Sprintf("{dir %s, interval %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
-			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.SecretKey != "", a.Sources.BitbucketHost,
+		sources = fmt.Sprintf("{dir %s, interval %s, git_timeout %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
+			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.GitTimeout, a.Sources.SecretKey != "", a.Sources.BitbucketHost,
 			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
 	}
 	mode := string(a.AuthMode)
