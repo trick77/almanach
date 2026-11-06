@@ -20,9 +20,9 @@ func depsGraph() store.Graph {
 	return store.Graph{
 		Repos: []store.RepoRef{fetch, loom, rongo, wire},
 		Edges: []store.Edge{
-			{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Version: "v0.2.0"},
-			{From: loom, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.8"},
-			{From: rongo, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6"},
+			{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Version: "v0.2.0", Scope: manifest.ScopeMain},
+			{From: loom, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.8", Scope: manifest.ScopeMain},
+			{From: rongo, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6", Scope: manifest.ScopeMain},
 		},
 		Ambiguous: []store.Ambiguous{{Coord: "npm:shared", Providers: []store.RepoRef{fetch, wire}, Twice: true}},
 	}
@@ -67,8 +67,8 @@ func TestDependencies_Route(t *testing.T) {
 	}
 }
 
-// The dependency page gets every scope, each edge saying its own (a row
-// before scopes main); a repository's uses and its export main ones only.
+// The dependency page gets every scope, each edge saying its own; a
+// repository's uses and its export main ones only.
 func TestDependencies_Scopes(t *testing.T) {
 	st := depsStore()
 	loom, rongo := store.RepoRef{ProjectKey: "apps", Slug: "loom"}, store.RepoRef{ProjectKey: "apps", Slug: "rongo"}

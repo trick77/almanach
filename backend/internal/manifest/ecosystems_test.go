@@ -67,7 +67,8 @@ func TestParse_GradleScopes(t *testing.T) {
 		{Coord: "maven:a:latest", Version: "1", Scope: ScopeMain},
 		{Coord: "maven:a:main", Version: "1", Scope: ScopeMain},
 		{Coord: "maven:a:processor", Version: "1", Scope: ScopeDev},
-		{Coord: "maven:a:provided", Version: "1", Scope: ScopeMain},
+		// Never on the runtime classpath.
+		{Coord: "maven:a:provided", Version: "1", Scope: ScopeDev},
 		{Coord: "maven:a:test", Version: "1", Scope: ScopeTest},
 		{Coord: "maven:a:variant", Version: "1", Scope: ScopeMain},
 		{Coord: "maven:a:wrapped-fixtures", Version: "1", Scope: ScopeTest},
@@ -106,6 +107,27 @@ func TestParse_PomInheritedPins(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v\nwant %+v", got.Requires, want)
+	}
+
+	// A module whose parent is no POM of this repository inherits nothing
+	// from the folder above.
+	got = Parse(map[string][]byte{
+		"pom.xml": []byte(`<project><groupId>com.acme</groupId><artifactId>aggregator</artifactId>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>com.acme</groupId><artifactId>testkit</artifactId><version>2.0</version><scope>test</scope></dependency>
+  </dependencies></dependencyManagement>
+</project>`),
+		"ext/pom.xml": []byte(`<project><parent><groupId>org.other</groupId><artifactId>base</artifactId><version>1</version></parent>
+  <groupId>com.acme</groupId><artifactId>ext</artifactId>
+  <dependencies><dependency><groupId>com.acme</groupId><artifactId>testkit</artifactId></dependency></dependencies>
+</project>`),
+	})
+	want = []Dep{
+		{Coord: "maven:com.acme:testkit", Version: "", Scope: ScopeMain},
+		{Coord: "maven:org.other:base", Version: "1", Scope: ScopeManaged},
+	}
+	if !reflect.DeepEqual(got.Requires, want) {
+		t.Fatalf("external parent: Requires = %+v\nwant %+v", got.Requires, want)
 	}
 }
 
@@ -178,6 +200,8 @@ git+https://example.invalid/x.git#egg=x
 acme-wire[async] @ git+https://git.example.invalid/acme/wire.git@v1
 `),
 		"requirements-dev.txt": []byte("pytest\nDjango\n"),
+		// A site builder's, no runtime's.
+		"docs/requirements.txt": []byte("sphinx-acme-theme\n"),
 	})
 	want := []Dep{
 		{Coord: "py:acme-core", Version: ">=1.2", Scope: ScopeMain},
@@ -186,6 +210,7 @@ acme-wire[async] @ git+https://git.example.invalid/acme/wire.git@v1
 		// A per-requirement option (--hash) is no part of the version.
 		{Coord: "py:django", Version: "==5.0", Scope: ScopeMain},
 		{Coord: "py:pytest", Version: "", Scope: ScopeDev},
+		{Coord: "py:sphinx-acme-theme", Version: "", Scope: ScopeDev},
 	}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v\nwant %+v", got.Requires, want)

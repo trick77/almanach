@@ -226,14 +226,16 @@ func TestDependencies_Scopes(t *testing.T) {
 		SourceRepo{ProjectKey: "libs", Slug: "kit", CloneURL: "https://forge.example.invalid/x/kit"},
 		SourceRepo{ProjectKey: "apps", Slug: "loom", CloneURL: "https://forge.example.invalid/x/loom"},
 	)
-	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:a/wiretest", "go:w", "go:w/testing"}})
+	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:a/wiretest", "go:v", "go:w", "go:w/testing"}})
 	saveRead(t, s, "libs", "kit", "1", manifest.Read{Provides: []string{"go:k"}})
 	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{
-		// Sorts first, but a test kit's version is not the main edge's.
+		// Sorts first, but a test kit's version is not the main edge's,
+		// even when the first main coordinate names none.
 		{Coord: "go:a/wiretest", Version: "v0.9", Scope: manifest.ScopeTest},
 		{Coord: "go:k", Version: "v1", Scope: manifest.ScopeTest},
+		{Coord: "go:v", Version: "", Scope: manifest.ScopeMain},
 		{Coord: "go:w", Version: "v2", Scope: manifest.ScopeMain},
-		{Coord: "go:w/testing", Version: "v2", Scope: manifest.ScopeTest},
+		{Coord: "go:w/testing", Version: "v3", Scope: manifest.ScopeTest},
 	}})
 	loom, wire, kit := RepoRef{"apps", "loom"}, RepoRef{"libs", "wire"}, RepoRef{"libs", "kit"}
 	g, err := s.Dependencies(ctx, true)
@@ -242,7 +244,7 @@ func TestDependencies_Scopes(t *testing.T) {
 	}
 	want := []Edge{
 		{From: loom, To: kit, Coords: []string{"go:k"}, Version: "v1", Scope: manifest.ScopeTest},
-		{From: loom, To: wire, Coords: []string{"go:a/wiretest", "go:w", "go:w/testing"}, Version: "v2", Scope: manifest.ScopeMain},
+		{From: loom, To: wire, Coords: []string{"go:a/wiretest", "go:v", "go:w", "go:w/testing"}, Version: "v2", Scope: manifest.ScopeMain},
 	}
 	if !reflect.DeepEqual(g.Edges, want) {
 		t.Fatalf("all edges = %+v\nwant %+v", g.Edges, want)
@@ -251,7 +253,7 @@ func TestDependencies_Scopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = []Edge{{From: loom, To: wire, Coords: []string{"go:w"}, Version: "v2", Scope: manifest.ScopeMain}}
+	want = []Edge{{From: loom, To: wire, Coords: []string{"go:v", "go:w"}, Version: "v2", Scope: manifest.ScopeMain}}
 	if !reflect.DeepEqual(g.Edges, want) {
 		t.Fatalf("main edges = %+v\nwant %+v", g.Edges, want)
 	}

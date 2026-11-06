@@ -319,6 +319,14 @@ describe("ProjectsPage", () => {
             to: { project: "llmwire", slug: "llmwire" },
             version: "v0.1.8",
             coords: [],
+            scope: "main",
+          },
+          {
+            from: { project: "loom", slug: "loom" },
+            to: { project: "testkit", slug: "testkit" },
+            version: "v1",
+            coords: [],
+            scope: "test",
           },
         ],
         ambiguous: [],
@@ -337,6 +345,8 @@ describe("ProjectsPage", () => {
     expect(within(tile).queryByText(/Zweck/)).toBeNull();
     expect(within(tile).getByText(/Revision 3/)).toBeInTheDocument();
     expect(within(tile).getByText("llmwire")).toBeInTheDocument();
+    // A test use is no use of the project's.
+    expect(within(tile).queryByText("testkit")).toBeNull();
     // No headings splitting projects: one grid.
     expect(screen.queryByText("Einzelne Repositories")).toBeNull();
   });

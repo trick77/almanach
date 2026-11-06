@@ -55,11 +55,13 @@ var scopeRank = map[string]int{ScopeMain: 0, ScopeManaged: 1, ScopeDev: 2, Scope
 // Stronger reports whether scope a outranks scope b.
 func Stronger(a, b string) bool { return scopeRank[Norm(a)] < scopeRank[Norm(b)] }
 
-// Norm is a stored scope as it counts: "" (a row read before scopes) is
-// main, as everything was then.
+// Norm is a scope as it counts, for ranking and the main filter: one
+// unknown is main, every parser naming its own.
 //
-// TRANSITIONAL(unscoped-requires): Remove when no repo_manifests row has
-// reader < 5 (each is read again at its repository's next sync).
+// TRANSITIONAL(unscoped-requires): a stored row read before scopes
+// (reader < 5) has none, main as everything was then. Remove this
+// paragraph, not Norm, when no repo_manifests row has reader < 5 (each is
+// read again at its repository's next sync).
 func Norm(s string) string {
 	if _, ok := scopeRank[s]; !ok {
 		return ScopeMain
@@ -253,7 +255,7 @@ func Parse(in map[string][]byte) Read {
 			prov, reqs = cargo(body, cargoWS.of(dirOf(p)))
 		default:
 			if scope, ok := requirementsScope(b); ok {
-				reqs = requirements(body, scope)
+				reqs = requirements(body, toolingScope(dirOf(p), scope))
 			} else {
 				reqs = gradleReqs[p]
 			}
@@ -361,9 +363,15 @@ func (d pomDep) version() string {
 // none of its own: a version and a scope (as written, "" for none).
 type pomPin struct{ version, scope string }
 
-// pomPinsByDir is each pom.xml's managed entries (BOM imports aside) by its
-// folder.
-type pomPinsByDir map[string]map[string]pomPin
+// pomPinned is one pom.xml's own coordinate, its parent's, and its managed
+// entries (BOM imports aside).
+type pomPinned struct {
+	self, parent string
+	pins         map[string]pomPin
+}
+
+// pomPinsByDir is each pom.xml's pomPinned by its folder.
+type pomPinsByDir map[string]pomPinned
 
 func pomPins(files map[string][]byte) pomPinsByDir {
 	out := pomPinsByDir{}
@@ -375,6 +383,12 @@ func pomPins(files map[string][]byte) pomPinsByDir {
 		if !ok {
 			continue
 		}
+		group := strings.TrimSpace(x.GroupID)
+		if group == "" {
+			group = strings.TrimSpace(x.Parent.GroupID)
+		}
+		self, _ := mavenCoord(group, x.ArtifactID)
+		parent, _ := mavenCoord(x.Parent.GroupID, x.Parent.ArtifactID)
 		pins := map[string]pomPin{}
 		for _, d := range x.Managed {
 			c, ok := mavenCoord(d.GroupID, d.ArtifactID)
@@ -383,25 +397,55 @@ func pomPins(files map[string][]byte) pomPinsByDir {
 			}
 			pins[c] = pomPin{version: d.version(), scope: strings.TrimSpace(d.Scope)}
 		}
-		out[dirOf(p)] = pins
+		out[dirOf(p)] = pomPinned{self: self, parent: parent, pins: pins}
 	}
 	return out
 }
 
-// of is the pin of a coordinate for a pom.xml in folder d: its own first,
-// then the nearest folder above's, as a multi-module build keeps them in
-// the parent POM at its root. False for none.
+// of is the pin of a coordinate for the pom.xml in folder d: its own
+// first, then its parent's up the chain, as Maven inherits them, each
+// parent the pom.xml of this repository with that coordinate (the nearest
+// folder above first); a parent from elsewhere ends the chain. False for
+// none.
 func (b pomPinsByDir) of(d string) func(coord string) (pomPin, bool) {
 	return func(coord string) (pomPin, bool) {
-		for at := d; ; at = dirOf(at) {
-			if pin, ok := b[at][coord]; ok {
+		seen := map[string]bool{}
+		for at, ok := d, true; ok && !seen[at]; {
+			seen[at] = true
+			cur := b[at]
+			if pin, found := cur.pins[coord]; found {
 				return pin, true
 			}
-			if at == "" {
-				return pomPin{}, false
-			}
+			at, ok = b.parentOf(at, cur.parent)
+		}
+		return pomPin{}, false
+	}
+}
+
+// parentOf is the folder of the pom.xml whose coordinate is parent: the
+// nearest folder above d holding it, else any in path order; false for
+// none.
+func (b pomPinsByDir) parentOf(d, parent string) (string, bool) {
+	if parent == "" {
+		return "", false
+	}
+	for at := d; at != ""; {
+		at = dirOf(at)
+		if b[at].self == parent {
+			return at, true
 		}
 	}
+	var dirs []string
+	for dir, p := range b {
+		if p.self == parent && dir != d {
+			dirs = append(dirs, dir)
+		}
+	}
+	if len(dirs) == 0 {
+		return "", false
+	}
+	sort.Strings(dirs)
+	return dirs[0], true
 }
 
 func (d pomDep) bomImport() bool {
@@ -426,8 +470,8 @@ func pomScope(s string) string {
 // runtime. So is a BOM its dependencyManagement imports
 // (`<type>pom</type>`, `<scope>import</scope>`); any other managed entry
 // is required by nothing and gives its version and scope to a dependency
-// naming none, its own or the nearest one's above (pinned), as Maven
-// inherits them from the parent. A coordinate built of a property
+// naming none, its own or its parent chain's within the repository
+// (pinned), as Maven inherits them. A coordinate built of a property
 // (`${...}`) is left out: unresolved, it would match nothing or the wrong
 // thing.
 func pom(body []byte, pinned func(coord string) (pomPin, bool)) ([]string, []Dep) {
@@ -500,7 +544,8 @@ func mavenCoord(group, artifact string) (string, bool) {
 }
 
 // packageJSON is a package.json's name and the keys of its dependencies:
-// dependencies, peer and optional ones Main, devDependencies Dev.
+// dependencies and peer ones Main; devDependencies Dev, and
+// optionalDependencies, as an extra elsewhere: none every install has.
 func packageJSON(body []byte) ([]string, []Dep) {
 	var p struct {
 		Name     string            `json:"name"`
@@ -520,7 +565,7 @@ func packageJSON(body []byte) ([]string, []Dep) {
 	for _, s := range []struct {
 		m     map[string]string
 		scope string
-	}{{p.Deps, ScopeMain}, {p.Peer, ScopeMain}, {p.Optional, ScopeMain}, {p.Dev, ScopeDev}} {
+	}{{p.Deps, ScopeMain}, {p.Peer, ScopeMain}, {p.Optional, ScopeDev}, {p.Dev, ScopeDev}} {
 		for name, v := range s.m {
 			if name = strings.TrimSpace(name); name != "" {
 				reqs = append(reqs, Dep{Coord: NPM + ":" + name, Version: v, Scope: s.scope})

@@ -3,6 +3,7 @@ package manifest
 import (
 	"bufio"
 	"bytes"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -160,6 +161,18 @@ func requirementsScope(base string) (string, bool) {
 		return ScopeTest, true
 	}
 	return "", false
+}
+
+// toolingScope is a requirements file's scope by its folder: one in docs,
+// doc or ci installs a site builder or a linter, Dev, never the runtime.
+func toolingScope(dir, scope string) string {
+	switch strings.ToLower(path.Base(dir)) {
+	case "docs", "doc", "ci":
+		if scope == ScopeMain {
+			return ScopeDev
+		}
+	}
+	return scope
 }
 
 // directReference reports whether a requirement is PEP 508's `name @ url`

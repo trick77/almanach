@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/httpx"
 )
@@ -83,7 +82,7 @@ func (d Deps) dependencies(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, e := range g.Edges {
 		out.Edges = append(out.Edges, edgeBody{From: refBody(e.From), To: refBody(e.To), Version: e.Version, Coords: e.Coords,
-			Scope: manifest.Norm(e.Scope)})
+			Scope: e.Scope})
 	}
 	for _, a := range g.Ambiguous {
 		p := make([]repoRefBody, 0, len(a.Providers))

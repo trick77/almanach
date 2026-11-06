@@ -176,11 +176,8 @@ func (s *Store) Dependencies(ctx context.Context, all bool) (Graph, error) {
 			// what runs, not its test kit's version.
 			switch {
 			case manifest.Stronger(d.Scope, e.Scope):
-				e.Scope = d.Scope
-				if d.Version != "" || e.Version == "" {
-					e.Version = d.Version
-				}
-			case e.Version == "":
+				e.Scope, e.Version = d.Scope, d.Version
+			case d.Scope == e.Scope && e.Version == "":
 				e.Version = d.Version
 			}
 		}

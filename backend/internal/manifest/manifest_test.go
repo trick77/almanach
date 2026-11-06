@@ -122,7 +122,8 @@ func TestParse_PackageJSONAndMonorepo(t *testing.T) {
 	want := Read{
 		Provides: []string{"npm:@acme/ui", "npm:@acme/web"},
 		Requires: []Dep{
-			{Coord: "npm:fsevents", Version: "2", Scope: ScopeMain},
+			// Optional: an extra's, none every install has.
+			{Coord: "npm:fsevents", Version: "2", Scope: ScopeDev},
 			{Coord: "npm:react", Version: "^19.0.0", Scope: ScopeMain},
 			{Coord: "npm:vitest", Version: "4.0.0", Scope: ScopeDev},
 			// Dev at the root, used by ui: the strongest counts, the first

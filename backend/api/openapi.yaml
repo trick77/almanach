@@ -2487,7 +2487,9 @@ components:
                 $ref: "#/components/schemas/RepoRef"
               version:
                 type: string
-                description: What `from` names for the first of the coordinates, as written; empty when none.
+                description: >-
+                  What `from` names for the first of the coordinates of the
+                  edge's `scope` that names one, as written; empty when none.
               coords:
                 type: array
                 description: >-

@@ -593,21 +593,26 @@ the version as written and what for. An ISO-8859-1 POM is read. A
 `${...}` coordinate is left out, a `${...}` version is empty.
 
 Each requirement has a scope, from the manifest's own words: `main` a use
-at runtime (Maven compile, runtime, provided; Gradle `implementation`,
-`api`, `compileOnly`, `runtimeOnly`; npm `dependencies`, peer and
-optional; Python `[project].dependencies`; Cargo `[dependencies]`);
-`test` tests only (Maven `test`, a Gradle test source set's configuration
-or `testFixtures(...)`, Cargo `[dev-dependencies]`, a Python group named
+at runtime (Maven compile, runtime, provided, the container's at
+runtime; Gradle `implementation`, `api`, `runtimeOnly`; npm
+`dependencies` and peer; Python `[project].dependencies`, a root or
+member `requirements.txt`; Cargo `[dependencies]`); `test` tests only
+(Maven `test`, a Gradle test source set's configuration or
+`testFixtures(...)`, Cargo `[dev-dependencies]`, a Python group named
 test); `dev` a build or check tool (an annotation processor, kapt, ksp,
-`developmentOnly`, npm `devDependencies`, Cargo `[build-dependencies]`, a
-Python extra, a Poetry or Cargo `optional = true`, or any other group);
+`compileOnly`, never on the runtime classpath, `developmentOnly`, npm
+`devDependencies` and `optionalDependencies`, Cargo
+`[build-dependencies]`, a Python extra, a Poetry or Cargo `optional =
+true`, any other group, a `requirements.txt` in a `docs`, `doc` or `ci`
+folder);
 `managed` a version pin (a POM's parent, a BOM imported by
 `dependencyManagement`, a Gradle `platform(...)` or `mavenBom`);
 `indirect` a go.mod's `// indirect`. A coordinate named twice counts as
 its strongest, in that order. A `dependencyManagement` entry that is no
 BOM import is no requirement: it only gives its version and scope to a
-dependency naming none, the POM's own or the nearest one's above, as a
-multi-module build pins them in its root POM. An edge shows the version
+dependency naming none, the POM's own or its parent chain's within the
+repository (a parent from elsewhere ends it), as a multi-module build pins
+them in its root POM. An edge shows the version
 of its strongest coordinates. Only main uses are the system: the maps, the
 prompts (`store.Shared`, the project step's build dependencies), a
 repository's `uses`, `used_by` and its export count them alone; the page

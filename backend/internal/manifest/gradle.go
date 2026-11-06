@@ -101,8 +101,8 @@ var gradleConfSuffixes = []string{"Implementation", "Api", "CompileOnly", "Runti
 // (platform(...), enforcedPlatform(...), mavenBom) Managed; a test source
 // set's (testImplementation, integrationTestRuntimeOnly, androidTestApi,
 // testFixturesApi, kaptTest) or a testFixtures(...) one's Test; an
-// annotation processor's, kapt's, ksp's or developmentOnly's Dev; the rest
-// (implementation, api, compileOnly, runtimeOnly, a variant's) Main.
+// annotation processor's, kapt's, ksp's, compileOnly's or developmentOnly's
+// Dev; the rest (implementation, api, runtimeOnly, a variant's) Main.
 // wrap is the text between the name and the coordinate.
 func gradleScope(name, wrap string) string {
 	switch {
@@ -129,8 +129,9 @@ func gradleScope(name, wrap string) string {
 	// "latest" is none).
 	case strings.HasPrefix(prefix, "test") || strings.Contains(prefix, "Test"):
 		return ScopeTest
-	case tool != "" || name == "annotationProcessor" || name == "developmentOnly" ||
-		strings.HasSuffix(name, "AnnotationProcessor"):
+	// compileOnly is never on the runtime classpath (Lombok, annotations).
+	case tool != "" || name == "annotationProcessor" || name == "developmentOnly" || name == "compileOnly" ||
+		strings.HasSuffix(name, "AnnotationProcessor") || strings.HasSuffix(name, "CompileOnly"):
 		return ScopeDev
 	}
 	return ScopeMain
