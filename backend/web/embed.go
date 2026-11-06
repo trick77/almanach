@@ -40,6 +40,7 @@ var routes = []*regexp.Regexp{
 	regexp.MustCompile(`^/queue$`),
 	regexp.MustCompile(`^/dependencies$`),
 	regexp.MustCompile(`^/costs$`),
+	regexp.MustCompile(`^/search$`),
 	regexp.MustCompile(`^/sources/[A-Za-z0-9._~-]+$`),
 }
 

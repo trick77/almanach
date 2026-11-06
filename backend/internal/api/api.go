@@ -46,6 +46,7 @@ type Store interface {
 	Repos(ctx context.Context, project string, sourced bool) ([]store.RepoRow, error)
 	RepoExists(ctx context.Context, project, slug string, sourced bool) (bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
+	CurrentPages(ctx context.Context, sourced bool) ([]store.Page, error)
 	Revisions(ctx context.Context, scope, project, repo string, limit int) ([]store.RevisionRow, error)
 	Notes(ctx context.Context, project, repo string, limit int) ([]store.NoteRow, error)
 	NoteByKey(ctx context.Context, project, repo string, prID int) (store.NoteDetail, bool, error)
@@ -113,6 +114,7 @@ func Register(s *httpapi.Server, d Deps) {
 	s.HandleFunc("GET /api/projects/{key}/repos/{slug}/notes/{pr}", d.note)
 	s.HandleFunc("GET /api/dependencies", d.dependencies)
 	s.HandleFunc("GET /api/costs", d.costs)
+	s.HandleFunc("GET /api/search", d.search)
 	if d.Queue != nil {
 		s.HandleFunc("GET /api/queue", d.queue)
 		s.HandleFunc("GET /api/queue/count", d.queueCount)

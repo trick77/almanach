@@ -309,6 +309,14 @@ themselves go oldest first, one to its end before the next begins.
   repository ever had (`*_names`). A statement dropped since is not
   listed.
 - `/api/projects/{key}/problems?days=90`: the problem areas of the window.
+- `/api/search?q=`: the pages whose text holds the phrase, the page
+  Suche. Every served page's summary and statements (name, text, area,
+  files) read in one query and matched in Go, case folded the Unicode way
+  (SQLite's LIKE and lower() fold ASCII alone; the embedded build has no
+  FTS5, and an index would have to follow every current revision): the
+  pages are a few hundred at most. Answered by page in the wiki's order,
+  each with the statements that matched and a snippet of the text around
+  the first hit; fifty pages, the rest counted.
 - `/api/projects/{key}.md` and `/api/projects/{key}/repos/{slug}.md`: a
   page as Markdown, for a coding agent (below).
 - `/api/sources` and below: the clones, read and written (section 4a).
@@ -1357,7 +1365,7 @@ one.
 | `internal/auth` | The oidc sign-in: kit's OIDC flow with discovery retried in the background, kit's signed session cookie, the gate in front of `/api`. | authroute, urlorigin, kit/auth |
 | `internal/authroute` | The sign-in's route names, a leaf so `config` checks the redirect URL without pulling in the OIDC client. | nothing |
 | `internal/urlorigin` | A URL's origin, the one normaliser wherever two are compared: the auth gate's browser check, the host a source's token is bound to. | nothing |
-| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
+| `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`, `/costs`, `/search`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
 | `internal/httpapi` | The mux with kit's probes, an access log per log class and panic recovery. net/http only. | kit/httpx |
 | `internal/heartbeat` | A loop's last sign of life, stamped by the worker's and the poller's goroutines, read by `/metrics`. | nothing |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
@@ -1855,7 +1863,9 @@ baseline step's patch never is: its bad items are left out one by one (see
   the statements it taught by these addresses; both page heads link the
   page's Markdown export and copy its address. The rail lists both tabs'
   sections, the kind being read with its areas; its search filters this
-  page's description (names, texts, files) in the browser. It never
+  page's description (names, texts, files) in the browser, while the
+  header's box searches the whole wiki on the server (`/search?q=`, the
+  phrase in the address, a hit linking to its statement). It never
   lists the project's repositories or a repository's dependencies: with
   both it ran to some thirty-five rows. A repository page's rail is
   headed by its project and one switch to the project's other

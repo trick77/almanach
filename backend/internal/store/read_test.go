@@ -344,6 +344,62 @@ func TestTaught_Renamed(t *testing.T) {
 	}
 }
 
+// CurrentPages lists the served pages with their text, a project's page
+// before its repositories', current revisions only; with the sources on,
+// only source projects and their source repositories.
+func TestCurrentPages(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("PRJ", "api", 1))
+	ingest(t, s, noteFor("ALPHA", "lib", 1))
+	rev := func(scope, project, repo, summary string, ids ...string) {
+		t.Helper()
+		var st []Statement
+		for _, id := range ids {
+			st = append(st, Statement{ID: id, Kind: "rule", Name: "N " + id, Text: "t"})
+		}
+		if _, err := s.InsertRevision(ctx, NewRevision{Scope: scope, ProjectKey: project, RepoSlug: repo, Summary: summary, SourcePR: project + "/x#1", Statements: st}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rev(ScopeRepository, "PRJ", "svc", "old svc", "s1")
+	rev(ScopeRepository, "PRJ", "svc", "svc", "s1", "s2")
+	rev(ScopeRepository, "PRJ", "api", "api")
+	rev(ScopeProject, "PRJ", "", "prj", "s1")
+	rev(ScopeRepository, "ALPHA", "lib", "lib", "s1")
+	pages, err := s.CurrentPages(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range pages {
+		got = append(got, p.Scope+" "+p.ProjectKey+"/"+p.RepoSlug+" r"+itoa(int64(p.Revision))+" "+p.Summary+" "+itoa(int64(len(p.Statements))))
+	}
+	want := []string{"repository ALPHA/lib r1 lib 1", "project PRJ/ r1 prj 1", "repository PRJ/api r1 api 0", "repository PRJ/svc r2 svc 2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("CurrentPages = %q\nwant %q", got, want)
+	}
+	// Sources on: PRJ a source with svc alone; ALPHA no source.
+	if err := s.CreateSource(ctx, staticSource("PRJ")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddSourceRepo(ctx, SourceRepo{ProjectKey: "PRJ", Slug: "svc", CloneURL: "https://example.invalid/svc.git"}); err != nil {
+		t.Fatal(err)
+	}
+	pages, err = s.CurrentPages(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	for _, p := range pages {
+		got = append(got, p.Scope+" "+p.ProjectKey+"/"+p.RepoSlug)
+	}
+	if want := []string{"project PRJ/", "repository PRJ/svc"}; !slices.Equal(got, want) {
+		t.Errorf("CurrentPages sourced = %q, want %q", got, want)
+	}
+}
+
 // NoteByKey carries the note and its latest call; a missing key is ok=false.
 func TestNoteByKey(t *testing.T) {
 	s := testStore(t)

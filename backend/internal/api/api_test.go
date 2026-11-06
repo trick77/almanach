@@ -34,10 +34,13 @@ type fakeStore struct {
 	calls      []*store.NoteCall
 	claims     [][]store.Claim
 
-	projects   []store.ProjectRow
-	teams      map[string]string
-	repos      map[string][]store.RepoRow
-	pages      map[string]store.Page
+	projects []store.ProjectRow
+	teams    map[string]string
+	repos    map[string][]store.RepoRow
+	pages    map[string]store.Page
+	// allPages is what CurrentPages answers, the search's; pagesErr fails it.
+	allPages   []store.Page
+	pagesErr   error
 	revisions  []store.RevisionRow
 	notes      []store.NoteRow
 	details    map[string]store.NoteDetail
@@ -94,6 +97,11 @@ func (f *fakeStore) SourceRepoCount(_ context.Context, key string) (int, error) 
 		return 1, nil
 	}
 	return len(f.repos[key]), nil
+}
+
+func (f *fakeStore) CurrentPages(_ context.Context, sourced bool) ([]store.Page, error) {
+	f.sourcedAsked = append(f.sourcedAsked, sourced)
+	return f.allPages, f.pagesErr
 }
 
 func (f *fakeStore) SingleRepos(context.Context) (map[string]store.RepoRow, error) {

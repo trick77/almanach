@@ -1,0 +1,153 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/store"
+)
+
+func searchPages() []store.Page {
+	return []store.Page{
+		{Scope: store.ScopeProject, ProjectKey: "PAY", Summary: "Das Projekt Payments.\n\nEin Auftrag durchläuft Zustände.",
+			Statements: []store.Statement{{ID: "s1", Kind: "flow", Name: "Upload", Text: "Vom Auftrag zur Datei.", Area: "Aufträge"}}},
+		{Scope: store.ScopeRepository, ProjectKey: "PAY", RepoSlug: "pay-api", Summary: "Der Zahlungsdienst.",
+			Statements: []store.Statement{
+				{ID: "s1", Kind: "component", Name: "Auftragsannahme", Text: "#### Eingang\n\nNimmt **Aufträge** an, jeden Auftrag einzeln.\n\n- Der Mandant kommt aus der Kopfzeile.", Files: []string{"internal/orders/intake.go"}, Area: "Aufträge"},
+				{ID: "s2", Kind: "rule", Name: "Gebühren", Text: "Die kleinere Grenze gilt.", Files: []string{"internal/fees/limit.go"}},
+			}},
+		{Scope: store.ScopeRepository, ProjectKey: "ALPHA", RepoSlug: "lib", Summary: "Eine Bibliothek.",
+			Statements: []store.Statement{{ID: "s1", Kind: "entity", Name: "Datei", Text: "Eine Datei im Eingang."}}},
+	}
+}
+
+// The search folds case the Unicode way, answers the pages in the store's
+// order with a snippet around the first hit of the text, the name alone
+// when only name, area or file matched, and the summary's snippet when it
+// matched; a short phrase answers no pages.
+func TestSearch(t *testing.T) {
+	st := newFakeStore()
+	st.allPages = searchPages()
+	h := handler(t, st, nil, config.AuthNone)
+	for _, q := range []string{"", "%20", "a", "%20a%20"} {
+		code, body := do(t, h, http.MethodGet, "/api/search?q="+q, "", "", nil)
+		if code != 200 || string(body["pages"]) != "[]" || string(body["more"]) != "0" {
+			t.Errorf("q=%q: %d %s", q, code, body["pages"])
+		}
+	}
+	if len(st.sourcedAsked) != 0 {
+		t.Errorf("a short phrase read the pages: %v", st.sourcedAsked)
+	}
+
+	code, body := do(t, h, http.MethodGet, "/api/search?q=auftrag", "", "", nil)
+	if code != 200 || field(t, body, "query") != "auftrag" || string(body["more"]) != "0" {
+		t.Fatalf("%d %v", code, body)
+	}
+	var pages []searchPageBody
+	if err := json.Unmarshal(body["pages"], &pages); err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("pages = %+v", pages)
+	}
+	if p := pages[0]; p.Scope != "project" || p.ProjectKey != "PAY" || p.RepoSlug != "" || p.Single ||
+		p.Summary != "Das Projekt Payments. Ein Auftrag durchläuft Zustände." ||
+		len(p.Statements) != 1 || p.Statements[0].Snippet != "Vom Auftrag zur Datei." || p.Statements[0].Area != "Aufträge" {
+		t.Errorf("project page = %+v", p)
+	}
+	if p := pages[1]; p.Scope != "repository" || p.RepoSlug != "pay-api" || p.Summary != "" || len(p.Statements) != 1 ||
+		p.Statements[0].ID != "s1" || p.Statements[0].Kind != "component" ||
+		// The layout is dropped: no heading mark, no bold, no item dash.
+		p.Statements[0].Snippet != "Eingang Nimmt Aufträge an, jeden Auftrag einzeln. Der Mandant kommt aus der Kopfzeile." {
+		t.Errorf("repository page = %+v", p)
+	}
+	if len(st.sourcedAsked) != 1 || st.sourcedAsked[0] {
+		t.Errorf("CurrentPages asked with sourced %v, want false without the sources", st.sourcedAsked)
+	}
+
+	// Umlauts fold: GEBÜHREN finds Gebühren, in the name alone (no
+	// snippet); a file path matches too.
+	_, body = do(t, h, http.MethodGet, "/api/search?q=GEB%C3%9CHREN", "", "", nil)
+	if err := json.Unmarshal(body["pages"], &pages); err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || len(pages[0].Statements) != 1 || pages[0].Statements[0].Name != "Gebühren" || pages[0].Statements[0].Snippet != "" {
+		t.Errorf("umlaut search = %+v", pages)
+	}
+	_, body = do(t, h, http.MethodGet, "/api/search?q=fees%2Flimit", "", "", nil)
+	if err := json.Unmarshal(body["pages"], &pages); err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || len(pages[0].Statements) != 1 || pages[0].Statements[0].ID != "s2" {
+		t.Errorf("file search = %+v", pages)
+	}
+	_, body = do(t, h, http.MethodGet, "/api/search?q=nirgends", "", "", nil)
+	if string(body["pages"]) != "[]" {
+		t.Errorf("no hit = %s", body["pages"])
+	}
+
+	st.pagesErr = errors.New("boom")
+	if code, _ := do(t, h, http.MethodGet, "/api/search?q=auftrag", "", "", nil); code != 500 {
+		t.Errorf("store failure = %d, want 500", code)
+	}
+}
+
+// With the sources on, a project of one has no project page in the
+// answer and its repository's page says single; the store is asked for
+// served pages; past searchMaxPages the rest are counted.
+func TestSearch_SourcesAndBound(t *testing.T) {
+	st := newFakeStore()
+	st.allPages = searchPages()
+	st.single = map[string]store.RepoRow{"PAY": {Slug: "pay-api"}}
+	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	_, body := do(t, h, http.MethodGet, "/api/search?q=auftrag", "", "", nil)
+	var pages []searchPageBody
+	if err := json.Unmarshal(body["pages"], &pages); err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || pages[0].Scope != "repository" || !pages[0].Single {
+		t.Errorf("project of one = %+v", pages)
+	}
+	if len(st.sourcedAsked) != 1 || !st.sourcedAsked[0] {
+		t.Errorf("CurrentPages asked with sourced %v, want true", st.sourcedAsked)
+	}
+
+	st.single = nil
+	st.allPages = nil
+	for i := 0; i < searchMaxPages+3; i++ {
+		st.allPages = append(st.allPages, store.Page{Scope: store.ScopeRepository, ProjectKey: "P", RepoSlug: fmt.Sprintf("r%03d", i), Summary: "Treffer hier."})
+	}
+	_, body = do(t, h, http.MethodGet, "/api/search?q=treffer", "", "", nil)
+	if err := json.Unmarshal(body["pages"], &pages); err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != searchMaxPages || string(body["more"]) != "3" || pages[0].RepoSlug != "r000" {
+		t.Errorf("bound: %d pages, more %s, first %s", len(pages), body["more"], pages[0].RepoSlug)
+	}
+}
+
+// A snippet is the plain text around the first hit, bounded, cut at the
+// ends only with an ellipsis for what is left out.
+func TestSnippet(t *testing.T) {
+	long := strings.Repeat("Wort ", 60) + "Treffer " + strings.Repeat("Wort ", 60)
+	s, ok := snippet(long, "treffer")
+	if !ok || !strings.HasPrefix(s, "… ") || !strings.HasSuffix(s, " …") || !strings.Contains(s, "Treffer") || len([]rune(s)) > snippetRunes+4 {
+		t.Errorf("long snippet = %q (%d runes)", s, len([]rune(s)))
+	}
+	if s, ok := snippet("Kurz und gut.", "gut"); !ok || s != "Kurz und gut." {
+		t.Errorf("short snippet = %q %v", s, ok)
+	}
+	if s, ok := snippet("Nichts.", "x"); ok || s != "" {
+		t.Errorf("no hit = %q %v", s, ok)
+	}
+	// The hit itself is never cut: at the text's end it is still whole.
+	s, ok = snippet(strings.Repeat("Wort ", 60)+"Schlussläufer", "schlussläufer")
+	if !ok || !strings.HasSuffix(s, "Schlussläufer") {
+		t.Errorf("hit at the end = %q", s)
+	}
+}

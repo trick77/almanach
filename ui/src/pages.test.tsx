@@ -1772,6 +1772,36 @@ describe("App", () => {
     expect(await screen.findByText("PAY")).toBeInTheDocument();
     await waitFor(() => expect(document.title).toContain("Projekte"));
   });
+
+  it("searches the wiki from the header, the phrase in the address", async () => {
+    serve({
+      me: anonymous,
+      projects,
+      "search?q=Geb%C3%BChren": { query: "Gebühren", pages: [], more: 0 },
+    });
+    window.history.replaceState({}, "", "/");
+    render(<App />);
+    const box = await screen.findByRole("searchbox", {
+      name: "Wiki durchsuchen",
+    });
+    fireEvent.change(box, { target: { value: " Gebühren " } });
+    fireEvent.submit(box.closest("form")!);
+    await waitFor(() =>
+      expect(window.location.pathname + window.location.search).toBe(
+        "/search?q=Geb%C3%BChren",
+      ),
+    );
+    expect(
+      await screen.findByText("Keine Treffer für «Gebühren»."),
+    ).toBeInTheDocument();
+    // The box shows the phrase searched; an empty one submits nothing.
+    expect(
+      screen.getByRole("searchbox", { name: "Wiki durchsuchen" }),
+    ).toHaveValue("Gebühren");
+    fireEvent.change(box, { target: { value: "  " } });
+    fireEvent.submit(box.closest("form")!);
+    expect(window.location.search).toBe("?q=Geb%C3%BChren");
+  });
 });
 
 const anonymous: Me = { mode: "none", user: "" };

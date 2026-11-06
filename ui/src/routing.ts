@@ -11,7 +11,8 @@ export type Route =
   | { page: "source"; key: string }
   | { page: "queue" }
   | { page: "deps" }
-  | { page: "costs" };
+  | { page: "costs" }
+  | { page: "search"; q: string };
 
 // A project key and a repository slug are what Bitbucket allows: letters,
 // digits, dot, dash, underscore, and the tilde of a personal project
@@ -32,6 +33,8 @@ export const queuePath = "/queue";
 
 export const costsPath = "/costs";
 
+export const searchPath = "/search";
+
 const PROJECT = new RegExp(`^${projectsPath}/(${KEY})$`);
 const REPO = new RegExp(`^${projectsPath}/(${KEY})/repos/(${SLUG})$`);
 const NOTE = new RegExp(
@@ -40,7 +43,11 @@ const NOTE = new RegExp(
 const PR_KEY = new RegExp(`^(${KEY})/(${SLUG})#(${PR})$`);
 const SOURCE = new RegExp(`^${sourcesPath}/(${KEY})$`);
 
-export function routeFromPath(path: string): Route {
+/** routeFromPath is the page an address names; search is the address's
+ *  query string, read for the search page's phrase alone. */
+export function routeFromPath(path: string, search = ""): Route {
+  if (path === searchPath)
+    return { page: "search", q: new URLSearchParams(search).get("q") ?? "" };
   let m = NOTE.exec(path);
   if (m) return { page: "note", key: m[1], slug: m[2], pr: Number(m[3]) };
   m = REPO.exec(path);
@@ -54,6 +61,11 @@ export function routeFromPath(path: string): Route {
   if (path === depsPath) return { page: "deps" };
   if (path === costsPath) return { page: "costs" };
   return { page: "projects" };
+}
+
+/** searchFor is the search page for a phrase. */
+export function searchFor(q: string): string {
+  return `${searchPath}?q=${encodeURIComponent(q)}`;
 }
 
 export function sourcePath(key: string): string {
@@ -131,7 +143,7 @@ export function replaceTo(path: string) {
 /** navigateTo pushes any app path. No duplicate history entry for the page
  *  you are already on. */
 export function navigateTo(path: string) {
-  if (window.location.pathname === path) return;
+  if (window.location.pathname + window.location.search === path) return;
   window.history.pushState({}, "", path);
   // Tell the shell, which otherwise only hears back/forward (popstate).
   window.dispatchEvent(new PopStateEvent("popstate"));
