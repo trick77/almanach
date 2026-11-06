@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
@@ -45,7 +46,10 @@ type QueueDeps struct {
 	Worker WorkerStatus
 	// Sync is nil with the sources off: no runs, no sync.
 	Sync SyncStatus
-	Now  func() time.Time
+	// Budget is BACKEND_DAILY_BUDGET_USD in nano-USD, 0 for none: spent,
+	// the departure runs are listed ahead of the waiting ones.
+	Budget int64
+	Now    func() time.Time
 }
 
 // recentWindow is how far back the page lists finished work and spend.
@@ -230,6 +234,19 @@ func (q *QueueDeps) now() time.Time {
 	return time.Now()
 }
 
+// spent reports whether the day's budget is spent, read only when a budget
+// is set and a run is queued.
+func (q *QueueDeps) spent(ctx context.Context, runs []store.BaselineRun) (bool, error) {
+	if q.Budget <= 0 || !slices.ContainsFunc(runs, func(r store.BaselineRun) bool { return r.State == store.RunQueued }) {
+		return false, nil
+	}
+	cost, _, err := q.Store.Spent(ctx, store.DayStart(q.now()))
+	if err != nil {
+		return false, err
+	}
+	return store.OverBudget(cost, q.Budget), nil
+}
+
 func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 	st := q.Worker.Status()
 	out := queueBody{Next: []queueItemBody{}, Recent: []recentBody{}, PollSeconds: int(st.Poll / time.Second),
@@ -245,8 +262,13 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 		}
 	}
 
-	// The worker's order, its own (consolidate.QueueOrder).
-	order := consolidate.QueueOrder(notes, runs, st.FoldDelay, q.now(), st.Wait != nil && st.Wait.Reason == consolidate.WaitBudget)
+	// The worker's order, its own (consolidate.QueueOrder), the budget by
+	// the worker's rule (store.OverBudget, over the same UTC day).
+	spent, err := q.spent(ctx, runs)
+	if err != nil {
+		return out, err
+	}
+	order := consolidate.QueueOrder(notes, runs, st.FoldDelay, q.now(), spent)
 	queued := order.Queued
 	var free, held, waiting []queueItemBody
 	for _, n := range order.Free {

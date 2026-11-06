@@ -152,9 +152,20 @@ func TestStatus_Wait(t *testing.T) {
 	if s := w.Status(); !s.Wait.Since.Equal(clock) || s.Wait.Reason != WaitPlace {
 		t.Errorf("another reason: %+v", s.Wait)
 	}
-	w.clearWait()
+	w.clearWait(store.BaselineRun{ID: 7})
 	if s := w.Status(); s.Wait != nil {
 		t.Errorf("cleared: %+v", s.Wait)
+	}
+	// A departure passing a spent budget leaves the passed run's wait; any
+	// other run's step clears it.
+	w.setWait(7, WaitBudget)
+	w.clearWait(store.BaselineRun{ID: 8, Trigger: store.TriggerDeparture})
+	if s := w.Status(); s.Wait == nil || s.Wait.RunID != 7 {
+		t.Errorf("departure stepped: %+v, want run 7 still waiting", s.Wait)
+	}
+	w.clearWait(store.BaselineRun{ID: 9})
+	if s := w.Status(); s.Wait != nil {
+		t.Errorf("another run stepped: %+v", s.Wait)
 	}
 }
 

@@ -365,7 +365,7 @@ func serve(log *slog.Logger) error {
 
 	// The queue page reads the worker's and the poller's state; no poller
 	// (sources off) is a nil interface, never a nil *Poller in one.
-	queue := &api.QueueDeps{Store: db, Worker: worker}
+	queue := &api.QueueDeps{Store: db, Worker: worker, Budget: app.Baseline.DailyBudgetNanoUSD}
 	metrics := &api.MetricsDeps{Store: db, Worker: worker, Token: app.MetricsToken}
 	if poller != nil {
 		queue.Sync = poller

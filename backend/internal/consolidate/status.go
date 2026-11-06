@@ -133,10 +133,16 @@ func (w *Worker) setWait(runID int64, reason string) bool {
 	return true
 }
 
-func (w *Worker) clearWait() {
+// clearWait ends the wait once run r took a step. A departure that passed a
+// spent budget leaves the wait of the run it passed: that one still waits,
+// since when it began.
+func (w *Worker) clearWait(r store.BaselineRun) {
 	w.smu.Lock()
+	defer w.smu.Unlock()
+	if r.Trigger == store.TriggerDeparture && w.waiting != nil && w.waiting.Reason == WaitBudget && w.waiting.RunID != r.ID {
+		return
+	}
 	w.waiting = nil
-	w.smu.Unlock()
 }
 
 func (w *Worker) setHold(until time.Time, cause string) {

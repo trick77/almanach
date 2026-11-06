@@ -176,10 +176,10 @@ func decodePlan(raw json.RawMessage) (runPlan, error) {
 // before a queued one starts. One started goes on to its end, since its
 // repository's notes wait for it (NextQueued) and a budget that held it
 // would hold them for the day; so the budget may be overshot by one run's
-// calls, never by a day's. Spent, a queued departure run still starts: one
-// call, no code read, and held it would keep a deactivated repository on
-// its project page for the day. The notes go on whatever it says. ok
-// false: nothing to step now.
+// calls. Spent, a queued departure run still starts: one call, no code
+// read, and held it would keep a deactivated repository on its project
+// page for the day; each deactivation past the budget costs that call. The
+// notes go on whatever it says. ok false: nothing to step now.
 func (w *Worker) nextRun(ctx context.Context) (store.BaselineRun, bool) {
 	r, ok, err := w.base.Store.NextRun(ctx)
 	if err != nil {
@@ -249,7 +249,7 @@ func (w *Worker) stepRun(ctx context.Context, r store.BaselineRun) bool {
 		w.setWait(r.ID, WaitPlace)
 		return false
 	}
-	w.clearWait()
+	w.clearWait(r)
 	if err != nil {
 		w.failRun(ctx, r, err.Error())
 	}

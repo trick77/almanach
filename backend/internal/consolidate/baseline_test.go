@@ -569,6 +569,9 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 	// and a budget that held it would hold them for the day.
 	x.st.runs[0].State, x.st.runs[0].Commit = store.RunCataloguing, head
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+	if r, ok := x.w.nextRun(context.Background()); !ok || r.ID != x.run().ID {
+		t.Fatalf("started run under a spent budget: nextRun = %+v %v, want it", r, ok)
+	}
 	if next := x.w.stepRun(context.Background(), x.run()); !next || x.run().State == store.RunCataloguing || len(x.models.prompts) != 1 {
 		t.Errorf("started run under a spent budget: next %v run %+v calls %d, want the step taken", next, x.run(), len(x.models.prompts))
 	}
@@ -583,6 +586,9 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 	}
 	// The calls of yesterday count nothing: the next day the run steps.
 	x.w.now = func() time.Time { return mergedAt.Add(24 * time.Hour) }
+	if r, ok := x.w.nextRun(context.Background()); !ok || r.ID != x.run().ID {
+		t.Fatalf("next day: nextRun = %+v %v, want the run", r, ok)
+	}
 	if next := x.w.stepRun(context.Background(), x.run()); !next || x.run().State != store.RunCataloguing {
 		t.Errorf("next day: next %v run = %+v, want started", next, x.run())
 	}

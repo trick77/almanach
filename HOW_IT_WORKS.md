@@ -943,13 +943,13 @@ every note is taken and the wiki lists noergler's projects.
 **The day's budget.** With `BACKEND_DAILY_BUDGET_USD` set, the worker asks
 the ledger before a run starts what the UTC day's calls cost so far; at
 the budget or past it the run is not started, it waits (the queue page:
-`budget`) and the next poll asks again, the next day it goes on. A
-departure run starts all the same, ahead of the older runs: one call, no
-code read, and held it would keep a deactivated repository on its project
-page for the day. A run
+`budget`) and the next poll asks again, the next day it goes on. A run
 already started goes on to its end: its repository's notes wait for it,
 and a budget that held it would hold them for the day; so the budget may
-be overshot by one run's calls, never by a day's. The notes never wait: a
+be overshot by one run's calls. A departure run starts all the same,
+ahead of the older runs: one call, no code read, and held it would keep a
+deactivated repository on its project page for the day; each deactivation
+past the budget costs that one call more. The notes never wait: a
 fold is one small call, and holding it would hold what a pull request
 taught. Only priced calls count. The UI says before
 the click what a source or a full run may cost (`max_calls` on the source

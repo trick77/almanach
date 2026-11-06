@@ -398,3 +398,27 @@ func TestQueue_MoreThanListed(t *testing.T) {
 		t.Errorf("listed %d, more %d; want %d and 5", len(out.Next), out.More, notesMax)
 	}
 }
+
+// The day's budget spent (the ledger's 1.284 USD), the departures are
+// listed ahead of the older waiting runs, as the worker takes them; with
+// budget left, oldest first.
+func TestQueue_SpentBudgetListsDeparturesFirst(t *testing.T) {
+	departure := queuedRun(3, "gone", -1)
+	departure.Trigger = store.TriggerDeparture
+	for _, c := range []struct {
+		budget int64
+		want   []int64
+	}{{1_000_000_000, []int64{3, 1, 2}}, {2_000_000_000, []int64{1, 2, 3}}, {0, []int64{1, 2, 3}}} {
+		st := &fakeQueueStore{open: []store.BaselineRun{queuedRun(1, "web", -5), queuedRun(2, "api", -3), departure}}
+		out := getQueue(t, &QueueDeps{Store: st, Worker: fakeWorkerStatus{}, Sync: fakeSync{}, Budget: c.budget})
+		got := []int64{}
+		for _, it := range out.Next {
+			if it.Run != nil {
+				got = append(got, it.Run.ID)
+			}
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("budget %d: runs %v, want %v", c.budget, got, c.want)
+		}
+	}
+}
