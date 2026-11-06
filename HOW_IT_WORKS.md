@@ -1865,9 +1865,8 @@ baseline step's patch never is: its bad items are left out one by one (see
   sections, the kind being read with its areas; its search filters this
   page's description (names, texts, files) in the browser, while the
   header's box searches the whole wiki on the server (`/search?q=`, the
-  phrase in the address, a hit linking to its statement as
-  `#description/statement-{id}`: the tab, then the element scrolled to
-  once on load). It never
+  phrase in the address, a hit linking to its statement by the
+  statement's own deep link, `#description/{id}`). It never
   lists the project's repositories or a repository's dependencies: with
   both it ran to some thirty-five rows. A repository page's rail is
   headed by its project and one switch to the project's other
