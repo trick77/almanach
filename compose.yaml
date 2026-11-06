@@ -95,8 +95,9 @@ services:
     restart: unless-stopped
     # Longer than serve's own shutdown: the HTTP drain (15 s), then the
     # worker's grace for the paid call in flight and its writes
-    # (inference.CallTimeout + 15 s = 10 min 15 s, cmd/almanach/main.go).
-    # Docker's default 10 s would SIGKILL that call and pay for nothing.
+    # (inference.CallTimeout + 15 s = 10 min 15 s), then the planner's
+    # refresh (5 s; cmd/almanach/main.go). Docker's default 10 s would
+    # SIGKILL that call and pay for nothing.
     stop_grace_period: 11m
     # Almanach is PID 1 in here and reaps only the git it runs itself. git
     # fetch forks a detached helper (gc --auto) that is orphaned to PID 1

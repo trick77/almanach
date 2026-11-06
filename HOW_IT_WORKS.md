@@ -1291,13 +1291,14 @@ the epoch: stored pages change as before.
   POSIX locks of one host. One replica.
 - `almanach backup <file>` is the backup: `VACUUM INTO` writes one
   transaction's view of every table, compacted, as a database of its own
-  (no `-wal`, no `-shm`), while `serve` runs on. It is written to a
-  `.part` file of its own name beside the target (two backups at once
-  never share one), fsynced (`VACUUM INTO` never syncs its output),
-  linked to the target, which fails when the target exists meanwhile,
-  and the folder synced: no half copy and no overwrite under the name.
-  An existing file and the database itself, sidecars included, are
-  refused, and so is a `BACKEND_DB_PATH` that names no file (the driver
+  (no `-wal`, no `-shm`), while `serve` runs on. The target is taken
+  first, empty and exclusively (a second backup to the name is refused
+  at once); the copy is written to a `.part` file of its own name beside
+  it, fsynced (`VACUUM INTO` never syncs its output), renamed over the
+  placeholder, and the folder synced: never a half database under the
+  name, a crash at most an empty placeholder the next run refuses as
+  existing. The database itself, sidecars included, is refused as a
+  target, and so is a `BACKEND_DB_PATH` that names no file (the driver
   would create an empty one and the copy of it read as success).
   Copying the folder by hand under live writes is not consistent: the
   file and its WAL are two moments. Needs `BACKEND_DB_PATH` alone; in
@@ -1374,8 +1375,9 @@ the epoch: stored pages change as before.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
   asked to stop and finishes the fold in flight, up to a grace of the call
-  timeout plus fifteen seconds; only then does the pool close. Size the
-  pod's termination grace above that sum plus the HTTP drain.
+  timeout plus fifteen seconds; then `PRAGMA optimize` on each open
+  connection, five seconds at most; only then does the pool close. Size
+  the pod's termination grace above that sum plus the HTTP drain.
 
 ## 6. Package layout
 

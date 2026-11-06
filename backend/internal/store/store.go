@@ -85,28 +85,41 @@ func (s *Store) Close() {
 	s.log.Info("SQLite database closed")
 }
 
-// Optimize runs PRAGMA optimize on every pooled connection: SQLite's
-// refresh of the planner's statistics from what each connection queried
-// (the pragma reads a connection's own history), kept in the file for
-// the next run. serve's shutdown runs it, nothing else: it may ANALYZE
-// under the write lock, which a backup or a migrate beside a running
-// serve must not take. A failure is a log line.
+// OpenExisting is Open of a database that is already there: a path that
+// names no file is refused rather than created (the driver would make an
+// empty database and a backup of it would read as success).
+func OpenExisting(ctx context.Context, path string, log *slog.Logger) (*Store, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	return open(ctx, path, log)
+}
+
+// Optimize runs PRAGMA optimize on each open connection of the pool:
+// SQLite's refresh of the planner's statistics from what that
+// connection queried (the pragma reads a connection's own history, so a
+// fresh one would learn nothing), kept in the file for the next run.
+// serve's shutdown runs it, nothing else: it may ANALYZE under the write
+// lock, which a backup or a migrate beside a running serve must not
+// take. A failure is a log line.
 func (s *Store) Optimize(ctx context.Context) {
-	// Every connection held at once, so each is a different one.
-	conns := make([]*sql.Conn, 0, maxConns)
+	// Every open connection held at once, so each is a different one; the
+	// pool has no lifetime and idles as many as it opens, so the open
+	// count is the ones with a history.
+	n := s.db.Stats().OpenConnections
+	conns := make([]*sql.Conn, 0, n)
 	defer func() {
 		for _, c := range conns {
 			_ = c.Close()
 		}
 	}()
-	for i := 0; i < maxConns; i++ {
+	for i := 0; i < n; i++ {
 		c, err := s.db.Conn(ctx)
-		if err != nil {
-			s.log.Warn("SQLite optimize: connection", "err", err.Error())
-			return
+		if err == nil {
+			conns = append(conns, c)
+			_, err = c.ExecContext(ctx, `PRAGMA optimize`)
 		}
-		conns = append(conns, c)
-		if _, err := c.ExecContext(ctx, `PRAGMA optimize`); err != nil {
+		if err != nil {
 			s.log.Warn("SQLite optimize failed", "err", err.Error())
 			return
 		}
@@ -117,24 +130,29 @@ func (s *Store) Optimize(ctx context.Context) {
 // INTO: one transaction's view of every table, compacted, no -wal or
 // -shm beside it, taken while serve runs on (a reader, not a lock on
 // writers). Copying the file and its WAL by hand under live writes is
-// not consistent, which is why this exists. The copy lands in a file of
-// its own name beside dest (CreateTemp: two backups at once never share
-// one), is synced (VACUUM INTO never fsyncs its output) and linked to
-// dest, which fails when dest exists meanwhile: no half copy and no
-// overwrite under the name, the folder synced after. dest must not be
-// the database or one of its sidecars. Returns the copy's size.
+// not consistent, which is why this exists. dest is taken first, empty,
+// created exclusively (two backups to one name: the second is refused
+// at once); the copy is written to a part file of its own name beside
+// it, synced (VACUUM INTO never fsyncs its output) and renamed over the
+// placeholder, the folder synced after. A crash leaves the empty
+// placeholder, which the next run refuses as existing: visible, never a
+// half database under the name. dest must not be the database or one
+// of its sidecars. Returns the copy's size.
 func (s *Store) Backup(ctx context.Context, dest string) (int64, error) {
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 		if sameFile(dest, s.path+suffix) {
 			return 0, fmt.Errorf("backup %s: is the database itself", dest)
 		}
 	}
-	if _, err := os.Stat(dest); err == nil {
-		return 0, fmt.Errorf("backup %s: exists", dest)
+	// A folder that does not exist, or takes no file, fails here too.
+	place, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the operator's target
+	if err != nil {
+		return 0, fmt.Errorf("backup %s: %w", dest, err)
 	}
-	// A folder that does not exist, or takes no file, fails here.
+	_ = place.Close()
 	part, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".*.part")
 	if err != nil {
+		_ = os.Remove(dest)
 		return 0, fmt.Errorf("backup %s: %w", dest, err)
 	}
 	tmp := part.Name()
@@ -142,14 +160,17 @@ func (s *Store) Backup(ctx context.Context, dest string) (int64, error) {
 	size, err := s.backupInto(ctx, tmp, dest)
 	if err != nil {
 		_ = os.Remove(tmp)
+		_ = os.Remove(dest)
 		return 0, fmt.Errorf("backup %s: %w", dest, err)
 	}
 	return size, nil
 }
 
 // backupInto fills tmp (an empty file, which VACUUM INTO accepts), syncs
-// it, links it to dest and drops the temporary name; the caller removes
-// tmp on failure.
+// it and renames it over dest, the placeholder of the caller's; a
+// failure before the rename leaves both for the caller to remove. Once
+// renamed the copy is whole: a folder sync that fails is a warning, not
+// a failed backup.
 func (s *Store) backupInto(ctx context.Context, tmp, dest string) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
 		return 0, err
@@ -157,16 +178,15 @@ func (s *Store) backupInto(ctx context.Context, tmp, dest string) (int64, error)
 	if err := syncFile(tmp); err != nil {
 		return 0, err
 	}
-	if err := os.Link(tmp, dest); err != nil {
-		return 0, err
-	}
-	_ = os.Remove(tmp)
-	if err := syncFile(filepath.Dir(dest)); err != nil {
-		return 0, err
-	}
-	info, err := os.Stat(dest)
+	info, err := os.Stat(tmp)
 	if err != nil {
 		return 0, err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		return 0, err
+	}
+	if err := syncFile(filepath.Dir(dest)); err != nil {
+		s.log.Warn("backup written, the folder's sync failed", "file", dest, "err", err.Error())
 	}
 	return info.Size(), nil
 }
@@ -182,17 +202,33 @@ func syncFile(path string) error {
 }
 
 // sameFile reports whether a and b name the same file: by the file system
-// when both exist (a path given two ways, a link), else by their absolute
-// cleaned paths, as b does not exist yet.
+// when both exist (a path given two ways, a link), else by their folders
+// resolved (a symlinked folder) and their cleaned names, as b need not
+// exist yet.
 func sameFile(a, b string) bool {
 	ia, errA := os.Stat(a)
 	ib, errB := os.Stat(b)
 	if errA == nil && errB == nil {
 		return os.SameFile(ia, ib)
 	}
-	absA, _ := filepath.Abs(a)
-	absB, _ := filepath.Abs(b)
-	return absA == absB
+	return resolved(a) == resolved(b)
+}
+
+// resolved is a path with its folder's symlinks followed and the whole
+// made absolute and clean; a folder that does not resolve stays as given.
+func resolved(path string) string {
+	dir, base := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	abs, err := filepath.Abs(filepath.Join(dir, base))
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return abs
 }
 
 // Migrate applies every pending migration in file order, exactly once, each

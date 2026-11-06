@@ -136,9 +136,10 @@ and the variable reads `/conf/ca.pem`.
 then `up -d`. In a checkout, `up -d --build` builds it instead. Needs
 Docker Compose 2.24.4 or later.
 
-The stop grace is 11 minutes: the worker waits up to the call timeout
-plus 15 s for a paid call in flight before it cuts it off, and Docker's
-default 10 s would kill it.
+The stop grace is 11 minutes: the HTTP drain (15 s), then the worker
+waits up to the call timeout plus 15 s for a paid call in flight before
+it cuts it off, then 5 s for the planner's refresh (`PRAGMA optimize`);
+Docker's default 10 s would kill the call.
 
 ## Commands
 

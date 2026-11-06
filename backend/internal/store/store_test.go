@@ -42,11 +42,10 @@ func storeAt(t *testing.T, path string, extra ...string) *Store {
 	return s
 }
 
-// The startup gate: an unmigrated database names what is pending, a
-// migrated one passes, and a second migrate applies nothing.
 // Backup writes a consistent, compacted copy that opens as a database of
-// its own with every row, while the original stays open; it refuses the
-// database itself and a file that exists, and leaves no part file behind.
+// its own with every row, while the original stays open and a writer
+// holds its lock; it refuses the database itself and a file that exists,
+// and leaves no part file behind.
 func TestBackup(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -54,22 +53,39 @@ func TestBackup(t *testing.T) {
 	ingest(t, s, noteFor("PRJ", "svc", 2))
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "copy.db")
+	// A writer mid-transaction on the same file: the copy is a reader's
+	// view and waits on nothing.
+	writer := storeAt(t, s.path, "_pragma=busy_timeout(50)")
+	tx, err := writer.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE notes SET pr_title = 'uncommitted'`); err != nil {
+		t.Fatal(err)
+	}
 	size, err := s.Backup(ctx, dest)
 	if err != nil || size <= 0 {
-		t.Fatalf("Backup = %d, %v", size, err)
+		t.Fatalf("Backup under a writer = %d, %v", size, err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
 	}
 	if parts, _ := filepath.Glob(filepath.Join(dir, "*.part")); len(parts) != 0 {
 		t.Errorf("part files left behind: %v", parts)
 	}
+	// No sidecars beside the copy (checked before anything opens it: an
+	// open in WAL mode makes them).
 	for _, p := range []string{dest + "-wal", dest + "-shm"} {
 		if _, err := os.Stat(p); err == nil {
 			t.Errorf("%s written beside the copy", p)
 		}
 	}
-	// The planner's refresh on the original: no error, the copy untouched.
-	s.Optimize(ctx)
-	// The copy stands on its own: migrated, every note there, writable.
+	// The copy stands on its own: migrated, every committed note there,
+	// nothing uncommitted, writable.
 	c := storeAt(t, dest)
+	if n := count(t, c, "notes", "pr_title = 'uncommitted'"); n != 0 {
+		t.Errorf("the copy holds %d uncommitted rows", n)
+	}
 	if err := c.SchemaCurrent(ctx); err != nil {
 		t.Errorf("copy's schema: %v", err)
 	}
@@ -94,26 +110,8 @@ func TestBackup(t *testing.T) {
 	if _, err := s.Backup(ctx, filepath.Join(dir, "nope", "copy.db")); err == nil {
 		t.Error("Backup into a missing folder succeeded")
 	}
-	// A file that appears while the copy is written is never overwritten:
-	// the link refuses, the part is removed.
-	late := filepath.Join(dir, "late.db")
-	if err := os.WriteFile(late, []byte("mine"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	part, err := os.CreateTemp(dir, "late.db.*.part")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = part.Close()
-	if _, err := s.backupInto(ctx, part.Name(), late); err == nil {
-		t.Error("backupInto overwrote a file that appeared meanwhile")
-	}
-	_ = os.Remove(part.Name())
-	if b, _ := os.ReadFile(late); string(b) != "mine" {
-		t.Errorf("late.db = %q, want untouched", b)
-	}
 	// A part file that is not empty is refused by SQLite itself: the copy
-	// fails, nothing is linked.
+	// fails, the placeholder is taken away, nothing under the name.
 	full := filepath.Join(dir, "full.db.part")
 	if err := os.WriteFile(full, []byte("not empty"), 0o600); err != nil {
 		t.Fatal(err)
@@ -122,14 +120,39 @@ func TestBackup(t *testing.T) {
 		t.Error("backupInto filled a part file that was not empty")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "full.db")); err == nil {
-		t.Error("full.db linked after a failed copy")
+		t.Error("full.db there after a failed copy")
 	}
-	// Optimize with a context already done: a log line, no panic.
+	// The database through a symlinked folder is still the database.
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Dir(s.path), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Backup(ctx, filepath.Join(link, filepath.Base(s.path)+"-wal")); err == nil || !strings.Contains(err.Error(), "database itself") {
+		t.Errorf("Backup onto a sidecar through a symlink = %v, want refused", err)
+	}
+	// OpenExisting refuses a path that names no file, and opens one that
+	// does.
+	if _, err := OpenExisting(ctx, filepath.Join(dir, "nope.db"), s.log); err == nil {
+		t.Error("OpenExisting opened a file that is not there")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "nope.db")); err == nil {
+		t.Error("OpenExisting created the file")
+	}
+	again, err := OpenExisting(ctx, dest, s.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again.Close()
+	// Optimize on a pool with a history, and with a context already done:
+	// a log line at most, no panic.
+	s.Optimize(ctx)
 	done, cancel := context.WithCancel(ctx)
 	cancel()
 	s.Optimize(done)
 }
 
+// The startup gate: an unmigrated database names what is pending, a
+// migrated one passes, and a second migrate applies nothing.
 func TestSchemaCurrent_FailsUntilMigrated(t *testing.T) {
 	s := emptyStore(t)
 	ctx := context.Background()

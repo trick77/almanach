@@ -75,6 +75,10 @@ func main() {
 
 const usage = "usage: almanach [serve|migrate|backup <file>|version|-healthcheck|-readycheck]"
 
+// optimizeGrace bounds PRAGMA optimize at shutdown: an ANALYZE of a few
+// tables, seconds at most; the stop grace counts it.
+const optimizeGrace = 5 * time.Second
+
 // withLog sets up logging before anything logs, names the build, then runs.
 // An unknown BACKEND_LOG_LEVEL still fails startup: logging starts at info so the
 // fault surfaces with the rest of the config's.
@@ -158,9 +162,9 @@ func openDB(ctx context.Context, path string, log *slog.Logger) (*store.Store, e
 
 // openFromEnv is the database of a command that needs BACKEND_DB_PATH and
 // nothing else (migrate, backup), after the log level gate every command
-// runs. With existing set, a path that names no file is refused: the
-// driver would create an empty database there and a backup of it would
-// read as success.
+// runs. With existing set, a path that names no file is refused
+// (store.OpenExisting): the driver would create an empty database there
+// and a backup of it would read as success.
 func openFromEnv(ctx context.Context, log *slog.Logger, existing bool) (*store.Store, error) {
 	if _, err := logging.ParseLevel(os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
 		return nil, fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
@@ -169,12 +173,13 @@ func openFromEnv(ctx context.Context, log *slog.Logger, existing bool) (*store.S
 	if path == "" {
 		return nil, errors.New("environment variable BACKEND_DB_PATH is not set")
 	}
-	if existing {
-		if _, err := os.Stat(path); err != nil { //nolint:gosec // the operator's configured path, by design
-			return nil, fmt.Errorf("BACKEND_DB_PATH: %w", err)
-		}
+	if err := writableDir("BACKEND_DB_PATH", filepath.Dir(path)); err != nil {
+		return nil, err
 	}
-	return openDB(ctx, path, log)
+	if existing {
+		return store.OpenExisting(ctx, path, log)
+	}
+	return store.Open(ctx, path, log)
 }
 
 // migrate applies pending migrations and exits: the init container's job.
@@ -378,8 +383,9 @@ func serve(log *slog.Logger) error {
 	}
 	worker.Stop(inference.CallTimeout + 15*time.Second)
 	// The planner's statistics, refreshed on the way out: ctx is done by
-	// now, so a bound of its own.
-	octx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// now, so a bound of its own, inside the stop grace (compose's
+	// stop_grace_period, sized for the drain, the worker's grace and this).
+	octx, cancel := context.WithTimeout(context.Background(), optimizeGrace)
 	db.Optimize(octx)
 	cancel()
 	if runErr != nil {
