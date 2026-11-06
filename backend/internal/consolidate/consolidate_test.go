@@ -46,8 +46,10 @@ type fakeStore struct {
 	calls       []store.LLMCall
 	nextQueuedN int
 	revisionErr error
-	// projectRevisionErr fails the project page's writes alone.
+	// projectRevisionErr fails the project page's writes alone;
+	// projectPanic panics on the project page's id read.
 	projectRevisionErr error
+	projectPanic       bool
 	pageErr            error
 	insertCallID       int64
 	// history is every statement id a page ever used beyond the current
@@ -73,6 +75,9 @@ func (f *fakeStore) SourceRepoCount(_ context.Context, key string) (int, error) 
 }
 
 func (f *fakeStore) NextStatementID(_ context.Context, scope, project, repo string) (int, error) {
+	if scope == store.ScopeProject && f.projectPanic {
+		panic("boom")
+	}
 	n := 1
 	bump := func(id string) {
 		var v int
@@ -343,6 +348,39 @@ func TestFoldPanicFailsTheNote(t *testing.T) {
 	if len(st.marked) != 0 || len(st.revisions) != 0 || st.failed[pageKey("PLAT", "files", "42")] != "panic: boom" {
 		t.Errorf("marked = %v, failed = %v, revisions = %d; want the note failed, no revision", st.marked, st.failed, len(st.revisions))
 	}
+
+	// A panic after the repository's revision was written: the note is
+	// done, failed it would fold the repository's patch twice.
+	st = newFakeStore()
+	st.projectPanic = true
+	m := &fakeMerger{result: okResult(
+		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
+		&inference.Description{Summary: "Das Projekt.", Statements: []inference.Statement{}})}
+	if next := newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42")); !next {
+		t.Errorf("Fold after a late panic = false, want the drain to go on")
+	}
+	if len(st.marked) != 1 || len(st.revisions) != 1 || len(st.failed) != 0 {
+		t.Errorf("late panic: marked = %v, failed = %v, revisions = %d; want consolidated, the repository's revision once", st.marked, st.failed, len(st.revisions))
+	}
+}
+
+// The project's patch refused costs only itself once the repository's
+// revision is written; with nothing written it fails the note, which
+// would otherwise be consolidated with its project knowledge lost.
+func TestFoldProjectRefused(t *testing.T) {
+	emptyProject := &inference.Description{Statements: []inference.Statement{{Kind: "rule", Name: "Quer", Text: "Über Repositories."}}}
+	st := newFakeStore()
+	newWorker(st, &fakeMerger{result: okResult(
+		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{}}, emptyProject)}).
+		Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.marked) != 1 || len(st.revisions) != 1 || len(st.failed) != 0 {
+		t.Errorf("after the repository's revision: marked %v revisions %d failed %v; want consolidated", st.marked, len(st.revisions), st.failed)
+	}
+	st = newFakeStore()
+	newWorker(st, &fakeMerger{result: okResult(nil, emptyProject)}).Fold(context.Background(), queued("PLAT/files#42"))
+	if len(st.marked) != 0 || len(st.revisions) != 0 || !strings.HasPrefix(st.failed["PLAT|files|42"], "project patch refused: ") {
+		t.Errorf("nothing written: marked %v revisions %d failed %v; want the note failed", st.marked, len(st.revisions), st.failed)
+	}
 }
 
 // A statement whose umlauts are only written in, where it had ae, oe, ue,
@@ -610,12 +648,12 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	}
 }
 
-// A drop is judged against the clone's tree at its head, where the head
-// holds the note's merge commit: a statement the code alone backs goes
-// only when its files left the tree, one a pull request taught on the
-// model's word (a newer pull request corrects an older one's fact). A
-// statement the patch does not name stays. Without a tree (the clone not
-// fetched to the merge, the sources off) every drop is the model's word.
+// A drop is judged against the clone's tree at its head: a statement the
+// code alone backs goes only when its files left the tree, one a pull
+// request taught on the model's word (a newer pull request corrects an
+// older one's fact). A statement the patch does not name stays. Without a
+// tree (the clone busy or treeless, the sources off) every drop is the
+// model's word.
 func TestFoldDropsJudgedByTheTree(t *testing.T) {
 	page := existingRepoPage()
 	page.Statements = append(page.Statements,
@@ -660,15 +698,20 @@ func TestFoldDropsJudgedByTheTree(t *testing.T) {
 		t.Errorf("tree read at %v, want the head h1", code.treesAt)
 	}
 
-	// The head lacks the merge commit (the clone not fetched to it yet):
-	// no tree, every drop taken.
-	st = newFakeStore()
-	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
-	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
-	code = &fakeCode{tree: tree, held: map[string]bool{"m42": false}}
-	newWorker(st, &fakeMerger{result: okResult(drop, nil)}).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
-	if len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s4"}) || len(code.treesAt) != 0 {
-		t.Errorf("clone behind: revisions = %+v trees %v, want s4 alone, no tree read", st.revisions, code.treesAt)
+	// The head not fetched to the merge commit yet, or the note without
+	// one: the head's tree all the same, a code-backed statement whose
+	// files it still has waits for the run of the new head.
+	for name, mergeCommit := range map[string]string{"clone behind": "m43", "no merge commit": ""} {
+		st = newFakeStore()
+		st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+		rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
+		code = &fakeCode{tree: tree, held: map[string]bool{"m43": false}}
+		behind := q
+		behind.MergeCommit = mergeCommit
+		newWorker(st, &fakeMerger{result: okResult(drop, nil)}).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), behind)
+		if len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s2", "s4"}) || !slices.Equal(code.treesAt, []string{"h1"}) {
+			t.Errorf("%s: revisions = %+v trees %v, want s2 and s4 kept by the head's tree", name, st.revisions, code.treesAt)
+		}
 	}
 
 	// No tree at the head either: the same.
@@ -1311,7 +1354,10 @@ func TestRender(t *testing.T) {
 	}
 	for _, want := range []string{"`files`", "`PLAT`", "PR PLAT/files#42, ticket none, kind unknown",
 		"Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
-		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram"} {
+		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram",
+		// A PR-taught statement is marked, the prompt naming the mark: a
+		// drop of one unmarked is judged by the tree.
+		"Files: internal/files/upload.go\n\nLearned from pull requests.\n", `not marked "Learned from pull requests."`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q", want)
 		}

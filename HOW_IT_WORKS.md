@@ -177,17 +177,19 @@ The answer is then held to rules the model cannot bend:
 - Drops: a pull request's note is the newest word on the code, so a
   statement an earlier pull request taught is dropped on the model's word
   (logged by id), and a statement the code alone backs (a baseline run's)
-  only when the tree no longer has any of its files. The tree is the
-  clone's at its head, where the head holds the note's merge commit: the
-  code with the pull request in it. Never the tree at the merge commit
-  itself, which lacks every file added since: a note folded late (failed
-  and queued again, or waiting out a run) would drop a later run's
-  statement on such a file. It is read after the call, only for a patch
-  that drops, under the clone's lock; with none to ask (the sources off,
-  no merge commit, the clone not fetched to the merge, busy or gone) a
-  drop is the model's word, as it was when the answer was the whole page.
-  A project drop is the model's word too: no one tree backs the project
-  page.
+  only when the tree no longer has any of its files. The prompt marks the
+  statements a pull request taught, and says so. The tree is the clone's
+  at its head. Never the tree at the merge commit itself, which lacks
+  every file added since: a note folded late (failed and queued again, or
+  waiting out a run) would drop a later run's statement on such a file. A
+  head not fetched to the merge yet, the usual state right after the
+  webhook, still has the files the pull request took away: a drop of a
+  statement on them waits for the run of the new head rather than let a
+  model's slip delete what the code backs. The tree is read after the
+  call, only for a patch that drops, under the clone's lock; with none to
+  ask (the sources off, the clone busy or gone) a drop is the model's
+  word, as it was when the answer was the whole page. A project drop is
+  the model's word too: no one tree backs the project page.
 - No ceiling: a description is system documentation, each statement as
   long as its subject needs, the page as long as its statements. No count,
   no size, no cap on a name or the file count; nothing is dropped or
@@ -212,10 +214,11 @@ note of a running repository waits for the run anyway. A note no run
 requeues (the sources off, a repository without runs) goes back a day
 after it failed, asked at the start of every drain (`RequeueFailedBefore`).
 The repository's patch is applied first, and refused it fails the note
-before anything is written; the project's patch refused after the
-repository's was written costs only itself, the note folded, or the retry
-would fold it into the repository page twice; a busy database there holds
-the worker but consolidates the note all the same. Past eight attempts in all
+before anything is written; the project's patch refused, busy or
+panicking after the repository's revision was written costs only itself,
+the note folded, or the retry would fold it into the repository page
+twice (a busy database holds the worker all the same). With no
+repository revision written, the project's patch refused fails the note. Past eight attempts in all
 it is given up and stays failed, so one note that always fails costs eight
 calls, not one a run. The queue page lists the failed notes with their
 reasons; a note delivered again starts afresh. Before, such a note was

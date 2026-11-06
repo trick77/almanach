@@ -57,9 +57,9 @@ func ApplyPatch(current []store.Statement, p inference.Patch, exists func(path s
 // earlier pull request taught is dropped or has its files changed on the
 // model's word, and a statement the code alone backs (a baseline run's) is
 // dropped only when the tree no longer has any of its files, exists the
-// clone's tree where it holds the note's merge commit. With no tree (nil:
-// the sources off, the clone behind the merge, busy or gone) every drop is
-// the model's word, as a whole-page rewrite's was. Edits never shed a file
+// tree at the clone's head. With no tree (nil: the sources off, the clone
+// busy or gone) every drop is the model's word, as a whole-page rewrite's
+// was. Edits never shed a file
 // here: the note may say the files moved.
 func ApplyMerge(current []store.Statement, p inference.Patch, exists func(path string) bool, valid func(inference.Statement) string) Applied {
 	return apply(current, p, exists, valid, true)
