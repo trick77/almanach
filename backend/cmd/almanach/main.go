@@ -310,13 +310,15 @@ func serve(log *slog.Logger) error {
 	// The queue page reads the worker's and the poller's state; no poller
 	// (sources off) is a nil interface, never a nil *Poller in one.
 	queue := &api.QueueDeps{Store: db, Worker: worker}
+	metrics := &api.MetricsDeps{Store: db, Worker: worker, Token: app.MetricsToken}
 	if poller != nil {
 		queue.Sync = poller
+		metrics.Sync = poller
 	}
 
 	srv := httpapi.New(db.Ping, log)
 	api.Register(srv, api.Deps{Store: db, Keys: keys, Worker: worker, AuthMode: app.AuthMode, ProblemWindow: app.ProblemWindow, Sources: sources,
-		Queue: queue, OIDC: oidcSvc, Sessions: sessions, RedirectURL: app.OIDC.RedirectURL, Log: log})
+		Queue: queue, Metrics: metrics, OIDC: oidcSvc, Sessions: sessions, RedirectURL: app.OIDC.RedirectURL, Log: log})
 
 	addr := app.Addr
 	log.Info("listening", "addr", addr, "auth", string(app.AuthMode))

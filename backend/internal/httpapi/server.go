@@ -19,7 +19,31 @@ type Server struct {
 	// 401 must reach the log line and whose reader the handlers name there.
 	inner    []func(http.Handler) http.Handler
 	patterns []string
+	// classify says at which level a request's access line goes; nil puts
+	// every request in LogRoutine.
+	classify func(*http.Request) LogClass
 }
+
+// LogClass is which access-line levels a request's line follows.
+type LogClass int
+
+const (
+	// LogRoutine is kit's default: a 2xx, a 401 and a 404 at Debug. Static
+	// files, and the reads the UI polls (every 3 s, every 15 s from every
+	// page), which at Info would bury the rest.
+	LogRoutine LogClass = iota
+	// LogRead is a reader's request: Info, so who read what is in the log
+	// at the default level.
+	LogRead
+	// LogBearer is a bearer route (the webhook, the ping, a Markdown
+	// export sent a bearer): a 401 at Warn, a wrong or guessed token is
+	// what an operator looks for; the rest at Info.
+	LogBearer
+)
+
+// Classify sets the rule that puts each request in a LogClass. Before
+// Handler.
+func (s *Server) Classify(f func(*http.Request) LogClass) { s.classify = f }
 
 // New builds the mux with the probes registered: /healthz is liveness,
 // /readyz asks the database.
@@ -63,9 +87,35 @@ const framePolicy = "frame-ancestors 'none'"
 // so a panic's log line and its 500 carry the request id; the security
 // headers outside the recovery, so a panic's 500 keeps them (kit's Recover
 // restores the headers it saw arrive), and outside the gate, so its 401
-// carries them; then what Use added.
+// carries them; then what Use added. kit's level rule sees the status
+// only, so each LogClass has its own access log around the same chain,
+// and the request picks one: one line, one request id.
 func (s *Server) Handler() http.Handler {
-	mws := append([]func(http.Handler) http.Handler{httpx.AccessLog(s.log, httpx.AccessLogOptions{}),
-		httpx.SecurityHeaders(framePolicy), httpx.Recover(s.log)}, s.inner...)
-	return httpx.Chain(s.mux, mws...)
+	h := httpx.Chain(s.mux, append([]func(http.Handler) http.Handler{httpx.SecurityHeaders(framePolicy), httpx.Recover(s.log)}, s.inner...)...)
+	routine := httpx.AccessLog(s.log, httpx.AccessLogOptions{})(h)
+	if s.classify == nil {
+		return routine
+	}
+	logs := map[LogClass]http.Handler{
+		LogRoutine: routine,
+		LogRead:    httpx.AccessLog(s.log, httpx.AccessLogOptions{RoutineLevel: slog.LevelInfo})(h),
+		LogBearer:  httpx.AccessLog(s.log, httpx.AccessLogOptions{Level: bearerLevel})(h),
+	}
+	classify := s.classify
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next, ok := logs[classify(r)]
+		if !ok {
+			next = routine
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// bearerLevel is a bearer route's access line: a refused token at Warn,
+// the rest as a reader's.
+func bearerLevel(status int) slog.Level {
+	if status == http.StatusUnauthorized {
+		return slog.LevelWarn
+	}
+	return httpx.StatusLevel(status, slog.LevelInfo)
 }

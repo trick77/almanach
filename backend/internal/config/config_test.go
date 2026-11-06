@@ -117,6 +117,36 @@ func TestBitbucketHost(t *testing.T) {
 	}
 }
 
+// The metrics token opens every project's spend from anywhere: a short one
+// is a fault, and the startup line says only whether one is set.
+func TestMetricsToken(t *testing.T) {
+	env := minimal()
+	env["BACKEND_METRICS_TOKEN"] = "short"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_METRICS_TOKEN: want at least 32 bytes") {
+		t.Errorf("short token: err = %v", err)
+	}
+	env["BACKEND_METRICS_TOKEN"] = "a passphrase with spaces in it, long enough"
+	if _, err := Load(lookup(env)); err == nil || !strings.Contains(err.Error(), "BACKEND_METRICS_TOKEN: want no space or tab") {
+		t.Errorf("token with spaces: err = %v", err)
+	}
+	const token = "metrics-token-metrics-token-metrics-token"
+	env["BACKEND_METRICS_TOKEN"] = token
+	app, err := Load(lookup(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.MetricsToken != token {
+		t.Errorf("MetricsToken = %q", app.MetricsToken)
+	}
+	if s := app.Summary(); strings.Contains(s, token) || !strings.Contains(s, "metrics_token=true") {
+		t.Errorf("Summary = %s", s)
+	}
+	delete(env, "BACKEND_METRICS_TOKEN")
+	if app, err := Load(lookup(env)); err != nil || app.MetricsToken != "" || !strings.Contains(app.Summary(), "metrics_token=false") {
+		t.Errorf("no token: %v, %+v", err, app)
+	}
+}
+
 const sessionSecret = "0123456789abcdef0123456789abcdef"
 
 func oidcEnv() map[string]string {

@@ -187,6 +187,10 @@ type App struct {
 	Sources         Sources
 	Baseline        Baseline
 	LogLevel        string
+	// MetricsToken is BACKEND_METRICS_TOKEN: a bearer that opens /metrics
+	// from anywhere; "" leaves it to a loopback caller. No team's bearer
+	// opens it: the metrics carry every project's spend.
+	MetricsToken string
 }
 
 // Load reads the environment through lookup (os.Getenv in production),
@@ -219,7 +223,18 @@ func Load(lookup func(string) string) (*App, error) {
 			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 4_000_000),
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
-		LogLevel: r.String("BACKEND_LOG_LEVEL", "INFO"),
+		LogLevel:     r.String("BACKEND_LOG_LEVEL", "INFO"),
+		MetricsToken: r.String("BACKEND_METRICS_TOKEN", ""),
+	}
+	// A bearer that opens every project's spend from anywhere: the session
+	// secret's floor.
+	if n := len(app.MetricsToken); n > 0 && n < minSessionSecret {
+		r.Fail("BACKEND_METRICS_TOKEN: want at least %d bytes (openssl rand -base64 48), got %d", minSessionSecret, n)
+	}
+	// kit's Bearer reads no token with a space or a tab in it: one would
+	// pass here and never open /metrics.
+	if strings.ContainsAny(app.MetricsToken, " \t") {
+		r.Fail("BACKEND_METRICS_TOKEN: want no space or tab, a bearer cannot carry one")
 	}
 	for _, old := range slices.Sorted(maps.Keys(renamed)) {
 		if strings.TrimSpace(lookup(old)) != "" {
@@ -394,7 +409,8 @@ func nonNegative(r *kitenv.Reader, name string, def int) int {
 }
 
 // Summary is the config as the startup log prints it: no secret (not the
-// token key, the client secret, the session secret); of the sign-in only
+// token key, the client secret, the session secret, the metrics token,
+// only whether it is set); of the sign-in only
 // the issuer and the client id, of the token key only whether it is set.
 func (a *App) Summary() string {
 	sources := "off"
@@ -411,7 +427,7 @@ func (a *App) Summary() string {
 	if a.AuthMode == AuthOIDC {
 		mode = fmt.Sprintf("{oidc issuer %s, client %s}", a.OIDC.Issuer, a.OIDC.ClientID)
 	}
-	return fmt.Sprintf("addr=%s auth=%s model=%s effort=%q limits={diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s",
+	return fmt.Sprintf("addr=%s auth=%s model=%s effort=%q limits={diagrams %d a page / %d nodes / %d edges} problem_window=%dd sources=%s metrics_token=%v",
 		a.Addr, mode, a.Model, a.ReasoningEffort,
-		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources)
+		a.Limits.MaxDiagrams, a.Limits.DiagramMaxNodes, a.Limits.DiagramMaxEdges, a.ProblemWindow, sources, a.MetricsToken != "")
 }

@@ -1108,6 +1108,56 @@ the epoch: stored pages change as before.
   not list the alias is a fault.
 - Logs are structured, one line per event. No secret, no token ever
   appears in them; the startup config line prints addresses, model and caps.
+- The access log writes one `http_request` line per request, its level by
+  route (`api.logClass`), since kit's level rule sees the status only: a
+  reader's `/api` request at Info, so who read what (`user`, `team`) is
+  in the log at the default level; a bearer route (the webhook, the ping,
+  a Markdown export sent a bearer) at Info and its 401 at Warn, a wrong or
+  guessed token being what an operator looks for; a read the UI repeats on
+  a timer (useFetch's refetch: the queue count from every page every 15 s,
+  the queue page and a running source's page every 3 s) and the static
+  files at Debug, which at Info would bury the rest. A refetch says so in
+  `X-Almanach-Poll`; a page's first load and a reload carry none, so the
+  reader's own view stays at Info, and a page that starts polling needs no
+  list kept in step on the server. The header only ever lowers a line, so
+  a caller sending it hides only its own routine reads. A 5xx is Error,
+  another 4xx Warn, everywhere.
+- `/metrics` is Prometheus's text format, written by hand (no client
+  library). It carries every project's spend, so no team's bearer opens
+  it: a direct loopback caller does, as on the probes, and the bearer
+  `BACKEND_METRICS_TOKEN` names from anywhere; anyone else gets 404, a
+  bearer refused there a Warn line with its address, at most one a minute
+  (a scanner, a scraper left with an old token). Loopback is the
+  probes' rule and suits a container; a proxy on the same host that
+  forwards from 127.0.0.1 without a forwarding header would open it to
+  whoever reaches the proxy: never route `/metrics` through one, or set
+  the token. Every value is an integer: times in unix seconds, 0 for
+  none, money in nano-USD. The queue (notes, open runs: the nav's count),
+  the last ok merge call (the call, not whether its patch then applied)
+  and the last successful sync come from the rows, so a restart keeps
+  them. The calls
+  and their cost are counters by purpose and project id, never by key: a
+  key's case may change, an id never, and a counter that moved to a new
+  label would read as its whole history spent at once;
+  `almanach_project_info{project_id,project}` names the ids. Each scrape
+  adds only the `llm_calls` rows past the last one it read, the last ok
+  merge among them (append-only, ids grow; one statement, one snapshot),
+  so the ledger is read whole once per process, never per scrape;
+  noergler's `note_calls` is never in it. The hold (until; one
+  0-or-1 series per cause, so none appears or goes stale with a hold),
+  the item in flight and both loops' heartbeats are the process's own.
+  The heartbeats are metrics only, never a readiness check: a worker
+  holding on the gateway or a poller in a long clone is alive and the wiki
+  still reads. The worker stamps at each drain and after each item: alert
+  when `time() - almanach_worker_heartbeat_seconds` passes
+  `clamp_min(almanach_worker_hold_until_seconds - time(), 0)` plus the
+  call timeout (10 min) and a minute. The poller stamps on each wake,
+  before each source's listing and before each repository; between
+  cycles it sleeps the interval, so alert on a cycle in flight
+  (`almanach_poller_cycle_started_seconds` set from the cycle's start, its
+  listings included, a nudged one too) or past due
+  (`almanach_poller_next_cycle_seconds` in the past) while the stamp is
+  older than the slowest clone you expect.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
   asked to stop and finishes the fold in flight, up to a grace of the call
@@ -1130,22 +1180,23 @@ one.
 | Package | Role | Depends on |
 | --- | --- | --- |
 | `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
-| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, and `/` handed to `web`. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | auth, baseline, clone, config, consolidate, diagram, gitrepo, httpapi, ingest, markup, secret, store, teamkeys, web |
+| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, `/metrics`, and `/` handed to `web`; which log class a request is. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | auth, baseline, clone, config, consolidate, diagram, gitrepo, httpapi, ingest, markup, secret, store, teamkeys, web |
 | `internal/auth` | The oidc sign-in: kit's OIDC flow with discovery retried in the background, kit's signed session cookie, the gate in front of `/api`. | authroute, urlorigin, kit/auth |
 | `internal/authroute` | The sign-in's route names, a leaf so `config` checks the redirect URL without pulling in the OIDC client. | nothing |
 | `internal/urlorigin` | A URL's origin, the one normaliser wherever two are compared: the auth gate's browser check, the host a source's token is bound to. | nothing |
 | `web` | The embedded UI: `go:embed` of `backend/web/dist`, kit's SPA handler with the client route allowlist (`/`, `/projects/{key}`, `.../repos/{slug}`, `.../notes/{pr}`, `/sources`, `/sources/{key}`, `/queue`, `/dependencies`); anything else is a 404, an unbuilt bundle a 503 with a placeholder. The allowlist mirrors `ui/src/routing.ts`. | kit/spa |
-| `internal/httpapi` | The mux with kit's probes, access log and panic recovery. net/http only. | kit/httpx |
+| `internal/httpapi` | The mux with kit's probes, an access log per log class and panic recovery. net/http only. | kit/httpx |
+| `internal/heartbeat` | A loop's last sign of life, stamped by the worker's and the poller's goroutines, read by `/metrics`. | nothing |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
 | `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | diagram, manifest, redact, urlorigin, ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |
-| `internal/consolidate` | The worker: loop, hold, fold, the baseline runs' steps, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | baseline, config, diagram, gitrepo, inference, lang, markup, prompts, store, llmwire (error classes) |
+| `internal/consolidate` | The worker: loop, hold, fold, the baseline runs' steps, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | baseline, config, diagram, gitrepo, heartbeat, inference, lang, markup, prompts, store, llmwire (error classes) |
 | `internal/baseline` | What a baseline run decides without I/O: the files worth reading, the docs, the catalogue's plan within budget, what a reconcile reads again, how a step's patch applies to a page without erasing what the PRs taught, the diagram validation. | diagram, gitrepo, inference, lang, store (types) |
 | `internal/inference` | The llmwire clients, one per profile: startup checks, one streamed call per fold or baseline step with its strict schema, answer parsing, cost extraction. | diagram, markup, llmwire |
 | `internal/prompts` | Every model prompt (`almanach_*.txt`: merge, catalogue, describe, project, repository map, restyle, departure, diagrams), compiled in with `go:embed`. Never configurable. | nothing |
 | `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | urlorigin |
 | `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only, trusting `BACKEND_GIT_CA_FILE` like git. | gitrepo (Access), store (types only) |
-| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it, the code reads of a baseline step. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | baseline, consolidate, gitrepo, manifest, prompts, redact, secret, store, urlorigin |
+| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it, the code reads of a baseline step. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | baseline, consolidate, gitrepo, heartbeat, manifest, prompts, redact, secret, store, urlorigin |
 | `internal/manifest` | `Parse`: a repository's go.mod, pom.xml, package.json and Gradle build as the coordinates it provides and requires. Pure, no I/O. | redact |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/redact` | Credential values out before anything leaves the machine: `File` for code a step shows the model, `Text` and `JSON` for prose and notes. By regex, never by prompt. | nothing |

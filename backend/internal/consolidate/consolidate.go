@@ -21,6 +21,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/heartbeat"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/markup"
@@ -110,6 +111,8 @@ type Worker struct {
 	waiting   *Wait
 	holdUntil time.Time
 	holdCause string
+	// beat is the loop's last heartbeat.
+	beat heartbeat.Beat
 }
 
 // WithBaseline gives the worker the baseline runs to drain after the
@@ -247,6 +250,9 @@ func (w *Worker) drain(ctx context.Context) {
 		}
 	}()
 	w.saveFailed = nil
+	// Once per drain, a holding one too (it takes no item); then after
+	// every item.
+	w.heartbeat()
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		note, run = nil, nil
 		q, ok, err := w.store.NextQueued(ctx)
@@ -259,6 +265,7 @@ func (w *Worker) drain(ctx context.Context) {
 			if !w.foldOrIgnore(ctx, q) {
 				return
 			}
+			w.heartbeat()
 			continue
 		}
 		if w.base == nil {
@@ -277,6 +284,7 @@ func (w *Worker) drain(ctx context.Context) {
 		if !w.stepRun(ctx, r) {
 			return
 		}
+		w.heartbeat()
 	}
 }
 

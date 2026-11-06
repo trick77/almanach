@@ -233,6 +233,21 @@ func (p panicSource) IsSourceRepo(ctx context.Context, key, slug string) (bool, 
 	return p.runStore.IsSourceRepo(ctx, key, slug)
 }
 
+// A drain stamps the heartbeat, an empty queue too: /metrics tells a
+// stuck loop from an idle one by it.
+func TestDrainBeats(t *testing.T) {
+	w := newWorker(newFakeStore(), &fakeMerger{})
+	if !w.Heartbeat().IsZero() {
+		t.Fatalf("Heartbeat before a drain = %v", w.Heartbeat())
+	}
+	at := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	w.now = func() time.Time { return at }
+	w.drain(context.Background())
+	if got := w.Heartbeat(); !got.Equal(at) {
+		t.Errorf("Heartbeat = %v, want %v", got, at)
+	}
+}
+
 // A panic outside a fold's own recover (the source check) takes the note
 // it was on off the queue and ends the drain, the process up; the next
 // drain goes on behind it.

@@ -63,8 +63,52 @@ tags:
       on the way in and never returned: `has_token` is all a body carries.
   - name: auth
     description: The OIDC sign-in of oidc mode and the UI's session check.
+  - name: operations
+    description: What a monitoring system scrapes.
 
 paths:
+  /metrics:
+    get:
+      tags: [operations]
+      summary: The worker, the poller, the queue and the spend, for a scraper
+      description: |
+        Prometheus's text format 0.0.4. Open to a direct loopback caller (no
+        forwarding header), as kit's probes are, and to the bearer
+        `BACKEND_METRICS_TOKEN` names, from anywhere; anyone else, a team's
+        bearer included, gets 404: the series carry every project's spend.
+        Every value an integer: times unix seconds (0 for none), money
+        nano-USD. Series: `almanach_info{version}`, `almanach_queue_notes`,
+        `almanach_queue_runs`, `almanach_last_merge_seconds`,
+        `almanach_last_sync_seconds`, `almanach_worker_hold_until_seconds`,
+        `almanach_worker_hold{cause}` (0 or 1, every cause),
+        `almanach_worker_busy_since_seconds`, `almanach_worker_heartbeat_seconds`,
+        with the sources on `almanach_poller_heartbeat_seconds`,
+        `almanach_poller_cycle_started_seconds`,
+        `almanach_poller_next_cycle_seconds`, then
+        `almanach_project_info{project_id,project}` and the counters
+        `almanach_llm_calls_total{purpose,project_id}`,
+        `almanach_llm_cost_nano_usd_total{purpose,project_id}`, by id: a
+        key's case may change.
+      operationId: metrics
+      security:
+        - {}
+        - metricsToken: []
+      responses:
+        "200":
+          description: The series.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Not a loopback caller and not the metrics token.
+        "500":
+          description: The store did not answer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /auth/ping:
     get:
       tags: [feed]
@@ -892,6 +936,10 @@ components:
       type: http
       scheme: bearer
       description: The team's token from the instance's team-keys file.
+    metricsToken:
+      type: http
+      scheme: bearer
+      description: BACKEND_METRICS_TOKEN, for /metrics only; no team's token opens it.
     session:
       type: apiKey
       in: cookie

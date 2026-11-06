@@ -20,6 +20,7 @@ import (
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/heartbeat"
 	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/secret"
@@ -137,6 +138,9 @@ type Poller struct {
 		sync.Mutex
 		byRepo map[string]verdict
 	}
+	// beat is the loop's last heartbeat; inCycle when the cycle in flight
+	// started, zero between cycles.
+	beat, inCycle heartbeat.Beat
 }
 
 // CycleStatus is the sync cycle at one instant: the repository in flight,
@@ -335,6 +339,7 @@ func (p *Poller) run(ctx context.Context) {
 		if !p.wait(ctx, delay) {
 			return
 		}
+		p.heartbeat()
 		if err := p.CycleOnce(ctx); err != nil && ctx.Err() == nil {
 			p.Log.Error("sync cycle failed", "err", err.Error())
 		}
@@ -367,6 +372,8 @@ func (p *Poller) wait(ctx context.Context, d time.Duration) bool {
 // failure is recorded on its row and the loop continues.
 func (p *Poller) CycleOnce(ctx context.Context) error {
 	started := time.Now()
+	p.inCycle.Stamp(p.Now())
+	defer p.inCycle.Clear()
 	sources, err := p.Store.Sources(ctx)
 	if err != nil {
 		return err
@@ -375,6 +382,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		p.heartbeat()
 		if s.Kind == store.SourceBitbucket {
 			p.list(ctx, s.ProjectSource)
 		}
@@ -412,6 +420,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		p.heartbeat()
 		repoStart := time.Now()
 		unlock := p.lockRepo(j.Repo.RepoID)
 		var head string
