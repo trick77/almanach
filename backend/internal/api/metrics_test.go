@@ -169,6 +169,7 @@ func TestMetricsBody(t *testing.T) {
 		"almanach_worker_hold_until_seconds 1700000600\n",
 		`almanach_worker_hold{cause="rate_limit"} 1` + "\n",
 		`almanach_worker_hold{cause="timeout"} 0` + "\n",
+		`almanach_worker_hold{cause="write"} 0` + "\n",
 		"almanach_worker_busy_since_seconds 0\n",
 		"almanach_worker_heartbeat_seconds 1700000100\n",
 		"almanach_poller_heartbeat_seconds 1700000300\n",
@@ -204,8 +205,8 @@ func TestMetricsBody(t *testing.T) {
 		t.Errorf("no hold:\n%s", body)
 	}
 	// A cause the list does not know yet still shows.
-	m.Worker = fakeMetricsWorker{st: consolidate.Status{HoldUntil: &until, HoldCause: "write"}}
-	if body = getMetrics(h, "127.0.0.1:1", nil).Body.String(); !strings.Contains(body, `almanach_worker_hold{cause="write"} 1`) {
+	m.Worker = fakeMetricsWorker{st: consolidate.Status{HoldUntil: &until, HoldCause: "later"}}
+	if body = getMetrics(h, "127.0.0.1:1", nil).Body.String(); !strings.Contains(body, `almanach_worker_hold{cause="later"} 1`) {
 		t.Errorf("unknown cause:\n%s", body)
 	}
 	// Every sample line is name[{labels}] integer.
