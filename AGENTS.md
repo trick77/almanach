@@ -20,10 +20,9 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 ## Everywhere
 
 - Bearer token IS the team, no payload names one; webhook: bearer only. Constant-time compare,
-  each entry. Project = first team whose note named it, set once; another team's note for it:
-  `BACKEND_TEAM_CLAIMS` log → stored + warn, enforce → 403 in the ingest tx (no first-claim
-  race, dedup first), unless the keys file lists the project for the sender (resolved to id in
-  the tx; shares, never transfers or claims). `claims` noergler sends: stored, never trusted.
+  each entry. Project = first team whose note named it, set once; other team's note: log →
+  stored + warn, enforce → 403, unless keys file lists it (shares, never claims). `claims`:
+  self-declared, never trusted.
 - `deliveries` append-only, keyed by dedup id; retry = `deduped`, never update. Persist failure =
   500, never swallowed.
 - Envelope strict; `note`, `review_totals` verbatim. Each 500 its own line; 401 access log only.

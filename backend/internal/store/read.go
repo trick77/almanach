@@ -38,12 +38,13 @@ type ProjectRow struct {
 // team is noergler's, shown when it has delivered for the key. With the
 // sources off, the wiki is noergler's projects and repositories, as before:
 // the rows noergler delivered for (first_seen set), not the ones only a
-// claim or a source registered.
+// claim or a source registered. Either way a project may have no team: a
+// listed team's note never claims one (Ingest).
 func projectsFrom(sourced bool) string {
 	if sourced {
 		return `(SELECT p.id, p.key, COALESCE(p.team, '') AS team FROM sources s JOIN projects p ON p.id = s.project_id)`
 	}
-	return `(SELECT id, key, team FROM projects WHERE first_seen IS NOT NULL)`
+	return `(SELECT id, key, COALESCE(team, '') AS team FROM projects WHERE first_seen IS NOT NULL)`
 }
 
 func reposFrom(sourced bool) string {

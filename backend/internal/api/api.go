@@ -294,14 +294,13 @@ func (d Deps) webhook(w http.ResponseWriter, r *http.Request) {
 	if !got.Accepted {
 		outcome = "deduped"
 	}
+	level, attrs := slog.LevelInfo, []any{"webhook_source", "noergler", "outcome", outcome, "team", team,
+		"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind}
 	if got.Owner != "" {
-		d.Log.WarnContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
-			"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind,
-			"project", in.Note.ProjectKey, "owner", got.Owner, "reason", "project owned by another team, stored under log mode")
-	} else {
-		d.Log.InfoContext(ctx, "webhook_processed", "webhook_source", "noergler", "outcome", outcome, "team", team,
-			"delivery_id", in.DeliveryID, "pr_key", in.Note.PRKey, "change_kind", in.Note.ChangeKind)
+		level, attrs = slog.LevelWarn, append(attrs, "project", in.Note.ProjectKey, "owner", got.Owner,
+			"reason", "project owned by another team, stored under log mode")
 	}
+	d.Log.Log(ctx, level, "webhook_processed", attrs...)
 	if got.Accepted && d.Worker != nil {
 		d.Worker.Wake()
 	}

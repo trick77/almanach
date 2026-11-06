@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -148,13 +150,16 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 	if err != nil {
 		return Ingested{}, err
 	}
-	listed, err := listedFor(ctx, tx, d.Listed, pid)
-	if err != nil {
-		return Ingested{}, err
-	}
 	var owner sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT team FROM projects WHERE id = ?`, pid).Scan(&owner); err != nil {
 		return Ingested{}, err
+	}
+	// The sender's own project: a listing changes nothing, not looked at.
+	listed := false
+	if !owner.Valid || owner.String != n.Team {
+		if listed, err = listedFor(ctx, tx, d.Listed, pid); err != nil {
+			return Ingested{}, err
+		}
 	}
 	got := Ingested{Accepted: true}
 	if owner.Valid && owner.String != n.Team && !listed {
@@ -248,19 +253,28 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 }
 
 // listedFor reports whether one of the listed keys names the project, by
-// any name it had in any case: a renamed project keeps its listing under
-// either name. A key no project ever had lists nothing.
+// any name it had in any case (a name in any case belongs to one project):
+// a renamed project keeps its listing under either name. One read of the
+// project's own names, folded in Go as ownersInAnyCase does.
 func listedFor(ctx context.Context, tx *sql.Tx, keys []string, pid int64) (bool, error) {
-	for _, key := range keys {
-		id, ok, err := projectIDAnyCase(ctx, tx, key)
-		if err != nil {
+	if len(keys) == 0 {
+		return false, nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT key FROM project_names WHERE project_id = ?`, pid)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			return false, err
 		}
-		if ok && id == pid {
+		if slices.ContainsFunc(keys, func(k string) bool { return strings.EqualFold(k, name) }) {
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, rows.Err()
 }
 
 func orEmpty(s []string) []string {

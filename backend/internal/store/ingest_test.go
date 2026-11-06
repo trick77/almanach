@@ -178,6 +178,21 @@ func TestIngest_ListedSharesNeverClaims(t *testing.T) {
 	if got, err := s.Ingest(ctx, d, stale, callFor(stale), nil); err != nil || !got.Accepted {
 		t.Errorf("listed under the new name = %+v, %v; want accepted", got, err)
 	}
+	// Sources off: a project only a listed team wrote into is delivered
+	// for and has no team; the reads take it as none.
+	shared := noteFor("SHARED", "svc", 1)
+	shared.Team = "beta"
+	d = deliveryFor(shared)
+	d.Listed = []string{"shared"}
+	if got, err := s.Ingest(ctx, d, shared, callFor(shared), nil); err != nil || !got.Accepted {
+		t.Fatalf("listed note for a new project = %+v, %v", got, err)
+	}
+	if rows, err := s.Projects(ctx, false); err != nil || len(rows) != 2 {
+		t.Errorf("Projects with an unowned project = %+v, %v; want both", rows, err)
+	}
+	if team, ok, err := s.ProjectExists(ctx, "SHARED", false); err != nil || !ok || team != "" {
+		t.Errorf("ProjectExists(SHARED) = %q, %v, %v; want listed, no team", team, ok, err)
+	}
 	unlisted := noteFor("NEW", "svc", 5)
 	unlisted.Team = "beta"
 	d = deliveryFor(unlisted)
