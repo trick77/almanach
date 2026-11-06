@@ -1296,16 +1296,22 @@ the epoch: stored pages change as before.
   at once); the copy is written to a `.part` file of its own name beside
   it, fsynced (`VACUUM INTO` never syncs its output), renamed over the
   placeholder, and the folder synced: never a half database under the
-  name, a crash at most an empty placeholder the next run refuses as
-  existing. The database itself, sidecars included, is refused as a
+  name. A failure, Ctrl-C or SIGTERM takes both files away; a kill or
+  crash mid-copy leaves the empty placeholder, which the next run
+  refuses as existing, and the `.part` beside it, to delete by hand. The
+  database itself, sidecars included (any case: APFS), is refused as a
   target, and so is a `BACKEND_DB_PATH` that names no file (the driver
-  would create an empty one and the copy of it read as success).
+  would create an empty one and the copy of it read as success) or a
+  database with no migration applied (one a mistyped path once made).
   Copying the folder by hand under live writes is not consistent: the
   file and its WAL are two moments. Needs `BACKEND_DB_PATH` alone; in
   compose, `docker compose run --rm migrate backup /data/almanach-$(date +%F).db`
   writes into the data folder (the migrate service has the volume and
   nothing else; the folder is uid 65532, mode 700, so the copy leaves
-  the host with `sudo cp`). On shutdown `serve` runs `PRAGMA optimize`
+  the host with `sudo cp`). A copy on the database's own disk guards
+  against nothing that takes the disk, and each one is the database's
+  size again: move it off the host, then delete it there; nothing
+  rotates them. On shutdown `serve` runs `PRAGMA optimize`
   on each pooled connection, SQLite's refresh of the planner's
   statistics from what that connection queried, kept in the file;
   `backup` and `migrate` do not, it may ANALYZE under the write lock a

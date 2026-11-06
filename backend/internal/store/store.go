@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	// Registers the "sqlite3" database/sql driver: SQLite as WASM, no cgo.
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -85,45 +86,63 @@ func (s *Store) Close() {
 	s.log.Info("SQLite database closed")
 }
 
-// OpenExisting is Open of a database that is already there: a path that
-// names no file is refused rather than created (the driver would make an
-// empty database and a backup of it would read as success).
+// OpenExisting is Open of a database that is already there and holds
+// Almanach's schema, one migration applied at least (not SchemaCurrent: a
+// backup before a migrate must work). A path that names no file is
+// refused by SQLite itself (mode=rw), never created; an empty or foreign
+// database, as a mistyped path once made, is refused too: a backup of it
+// would read as success.
 func OpenExisting(ctx context.Context, path string, log *slog.Logger) (*Store, error) {
-	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+	s, err := open(ctx, path, log, "mode=rw")
+	if err != nil {
+		return nil, err
 	}
-	return open(ctx, path, log)
+	var applied int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+migrate.Table).Scan(&applied); err != nil || applied == 0 {
+		s.Close()
+		return nil, fmt.Errorf("open %s: not an Almanach database, no migration applied", path)
+	}
+	return s, nil
 }
 
-// Optimize runs PRAGMA optimize on each open connection of the pool:
+// Optimize runs PRAGMA optimize on each idle connection of the pool:
 // SQLite's refresh of the planner's statistics from what that
 // connection queried (the pragma reads a connection's own history, so a
 // fresh one would learn nothing), kept in the file for the next run.
 // serve's shutdown runs it, nothing else: it may ANALYZE under the write
 // lock, which a backup or a migrate beside a running serve must not
-// take. A failure is a log line.
-func (s *Store) Optimize(ctx context.Context) {
-	// Every open connection held at once, so each is a different one; the
-	// pool has no lifetime and idles as many as it opens, so the open
-	// count is the ones with a history.
-	n := s.db.Stats().OpenConnections
+// take. A failure is one log line; it reports whether there was none.
+func (s *Store) Optimize(ctx context.Context) bool {
+	// The idle ones held at once, so each is a different one; the pool has
+	// no lifetime and idles as many as it opens. One still in use (a
+	// handler past the drain) is left alone: waiting for it would spend
+	// the grace on nothing.
+	n := s.db.Stats().Idle
 	conns := make([]*sql.Conn, 0, n)
 	defer func() {
 		for _, c := range conns {
 			_ = c.Close()
 		}
 	}()
+	failed := 0
+	var last error
 	for i := 0; i < n; i++ {
 		c, err := s.db.Conn(ctx)
-		if err == nil {
-			conns = append(conns, c)
-			_, err = c.ExecContext(ctx, `PRAGMA optimize`)
-		}
 		if err != nil {
-			s.log.Warn("SQLite optimize failed", "err", err.Error())
-			return
+			// ctx done or the pool closed: the rest would fail the same.
+			failed, last = failed+n-i, err
+			break
+		}
+		conns = append(conns, c)
+		if _, err := c.ExecContext(ctx, `PRAGMA optimize`); err != nil {
+			failed, last = failed+1, err
 		}
 	}
+	if last != nil {
+		s.log.Warn("SQLite optimize failed", "connections", failed, "of", n, "err", last.Error())
+		return false
+	}
+	return true
 }
 
 // Backup writes a consistent copy of the database to dest with VACUUM
@@ -134,10 +153,11 @@ func (s *Store) Optimize(ctx context.Context) {
 // created exclusively (two backups to one name: the second is refused
 // at once); the copy is written to a part file of its own name beside
 // it, synced (VACUUM INTO never fsyncs its output) and renamed over the
-// placeholder, the folder synced after. A crash leaves the empty
-// placeholder, which the next run refuses as existing: visible, never a
-// half database under the name. dest must not be the database or one
-// of its sidecars. Returns the copy's size.
+// placeholder, the folder synced after. A failure or a cancelled ctx
+// removes both. A kill or crash mid-copy leaves the empty placeholder,
+// which the next run refuses as existing, and the part file beside it:
+// visible, never a half database under the name. dest must not be the
+// database or one of its sidecars. Returns the copy's size.
 func (s *Store) Backup(ctx context.Context, dest string) (int64, error) {
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 		if sameFile(dest, s.path+suffix) {
@@ -204,14 +224,16 @@ func syncFile(path string) error {
 // sameFile reports whether a and b name the same file: by the file system
 // when both exist (a path given two ways, a link), else by their folders
 // resolved (a symlinked folder) and their cleaned names, as b need not
-// exist yet.
+// exist yet. The names compare in any case: on a case-insensitive file
+// system (APFS, NTFS) another spelling of a sidecar is the sidecar, and
+// on any other refusing that name costs nothing.
 func sameFile(a, b string) bool {
 	ia, errA := os.Stat(a)
 	ib, errB := os.Stat(b)
 	if errA == nil && errB == nil {
 		return os.SameFile(ia, ib)
 	}
-	return resolved(a) == resolved(b)
+	return strings.EqualFold(resolved(a), resolved(b))
 }
 
 // resolved is a path with its folder's symlinks followed and the whole

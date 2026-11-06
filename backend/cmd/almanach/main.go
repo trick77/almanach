@@ -152,19 +152,22 @@ func writableDir(env, dir string) error {
 }
 
 // openDB opens the database file after proving its folder takes the file
-// and its -wal and -shm beside it.
-func openDB(ctx context.Context, path string, log *slog.Logger) (*store.Store, error) {
+// and its -wal and -shm beside it. With existing set, a path that names
+// no Almanach database is refused (store.OpenExisting): the driver would
+// create an empty one there and a backup of it would read as success.
+func openDB(ctx context.Context, path string, log *slog.Logger, existing bool) (*store.Store, error) {
 	if err := writableDir("BACKEND_DB_PATH", filepath.Dir(path)); err != nil {
 		return nil, err
+	}
+	if existing {
+		return store.OpenExisting(ctx, path, log)
 	}
 	return store.Open(ctx, path, log)
 }
 
 // openFromEnv is the database of a command that needs BACKEND_DB_PATH and
 // nothing else (migrate, backup), after the log level gate every command
-// runs. With existing set, a path that names no file is refused
-// (store.OpenExisting): the driver would create an empty database there
-// and a backup of it would read as success.
+// runs.
 func openFromEnv(ctx context.Context, log *slog.Logger, existing bool) (*store.Store, error) {
 	if _, err := logging.ParseLevel(os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
 		return nil, fmt.Errorf("BACKEND_LOG_LEVEL: %w", err)
@@ -173,13 +176,7 @@ func openFromEnv(ctx context.Context, log *slog.Logger, existing bool) (*store.S
 	if path == "" {
 		return nil, errors.New("environment variable BACKEND_DB_PATH is not set")
 	}
-	if err := writableDir("BACKEND_DB_PATH", filepath.Dir(path)); err != nil {
-		return nil, err
-	}
-	if existing {
-		return store.OpenExisting(ctx, path, log)
-	}
-	return store.Open(ctx, path, log)
+	return openDB(ctx, path, log, existing)
 }
 
 // migrate applies pending migrations and exits: the init container's job.
@@ -207,7 +204,10 @@ func backup(log *slog.Logger) error {
 		return errors.New("backup: one argument, the file to write, e.g. almanach backup /data/almanach-2026-11-06.db")
 	}
 	dest := os.Args[2]
-	ctx := context.Background()
+	// Ctrl-C or a stop of the container cancels VACUUM INTO, and Backup
+	// takes its placeholder and part file away; only a kill leaves them.
+	ctx, stop := run.Context(context.Background())
+	defer stop()
 	db, err := openFromEnv(ctx, log, true)
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func serve(log *slog.Logger) error {
 	// Every check runs before the abort so the log names all the failures
 	// at once rather than one per restart. serve never migrates.
 	var checks []string
-	db, err := openDB(ctx, app.DBPath, log)
+	db, err := openDB(ctx, app.DBPath, log, false)
 	if err == nil {
 		defer db.Close()
 		err = db.SchemaCurrent(ctx)

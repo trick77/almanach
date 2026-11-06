@@ -130,25 +130,73 @@ func TestBackup(t *testing.T) {
 	if _, err := s.Backup(ctx, filepath.Join(link, filepath.Base(s.path)+"-wal")); err == nil || !strings.Contains(err.Error(), "database itself") {
 		t.Errorf("Backup onto a sidecar through a symlink = %v, want refused", err)
 	}
-	// OpenExisting refuses a path that names no file, and opens one that
-	// does.
+	// A sidecar that is not there, spelled in another case: on a
+	// case-insensitive file system it is the sidecar.
+	if _, err := s.Backup(ctx, strings.ToUpper(s.path)+"-JOURNAL"); err == nil || !strings.Contains(err.Error(), "database itself") {
+		t.Errorf("Backup onto the journal in another case = %v, want refused", err)
+	}
+	// A cancelled context (Ctrl-C, SIGTERM) fails the copy and takes the
+	// placeholder and the part file away.
+	done, cancel := context.WithCancel(ctx)
+	cancel()
+	gone := filepath.Join(dir, "cancelled.db")
+	if _, err := s.Backup(done, gone); err == nil {
+		t.Error("Backup with a cancelled context succeeded")
+	}
+	if _, err := os.Stat(gone); err == nil {
+		t.Error("cancelled.db there after a cancelled copy")
+	}
+	if parts, _ := filepath.Glob(filepath.Join(dir, "cancelled.db.*.part")); len(parts) != 0 {
+		t.Errorf("part files left after a cancelled copy: %v", parts)
+	}
+}
+
+// OpenExisting opens a migrated database and refuses a path that names no
+// file (never creating it) and an empty database, as one a mistyped path
+// once made.
+func TestOpenExisting(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	dir := t.TempDir()
 	if _, err := OpenExisting(ctx, filepath.Join(dir, "nope.db"), s.log); err == nil {
 		t.Error("OpenExisting opened a file that is not there")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "nope.db")); err == nil {
 		t.Error("OpenExisting created the file")
 	}
-	again, err := OpenExisting(ctx, dest, s.log)
+	empty := emptyStore(t)
+	if _, err := empty.db.ExecContext(ctx, `CREATE TABLE t (x)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExisting(ctx, empty.path, s.log); err == nil || !strings.Contains(err.Error(), "no migration applied") {
+		t.Errorf("OpenExisting of an unmigrated database = %v, want refused", err)
+	}
+	again, err := OpenExisting(ctx, s.path, s.log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	again.Close()
-	// Optimize on a pool with a history, and with a context already done:
-	// a log line at most, no panic.
-	s.Optimize(ctx)
+}
+
+// Optimize runs on every idle connection of a pool with a history and
+// says so; with a context already done it fails as one log line.
+func TestOptimize(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	var buf strings.Builder
+	s.log = slog.New(slog.NewTextHandler(&buf, nil))
+	if !s.Optimize(ctx) {
+		t.Errorf("Optimize on a live pool failed: %s", buf.String())
+	}
 	done, cancel := context.WithCancel(ctx)
 	cancel()
-	s.Optimize(done)
+	if s.Optimize(done) {
+		t.Error("Optimize with a cancelled context reported success")
+	}
+	if n := strings.Count(buf.String(), "SQLite optimize failed"); n != 1 {
+		t.Errorf("optimize warnings = %d, want 1: %s", n, buf.String())
+	}
 }
 
 // The startup gate: an unmigrated database names what is pending, a
