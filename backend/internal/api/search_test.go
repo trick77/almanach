@@ -144,6 +144,19 @@ func TestSearch_SourcesAndBound(t *testing.T) {
 	}
 }
 
+// A name and an area match as the page shows them, the text's rule: no
+// code-span backticks, spaces collapsed.
+func TestSearchPage_NameAsShown(t *testing.T) {
+	page := store.PageText{Statements: []store.StatementText{
+		{ID: "s1", Kind: "rule", Name: "Grenze aus `limit()`", Text: "Gilt.", Area: "Zwei  Teile"},
+	}}
+	for _, q := range []string{"aus limit()", "zwei teile"} {
+		if hit, ok := searchPage(page, phrase(q)); !ok || len(hit.Statements) != 1 || hit.Statements[0].Snippet != "" {
+			t.Errorf("%q: %+v %v", q, hit, ok)
+		}
+	}
+}
+
 // A snippet is the plain text around the first hit, bounded, cut at the
 // ends only with an ellipsis for what is left out.
 func TestSnippet(t *testing.T) {
@@ -152,6 +165,10 @@ func TestSnippet(t *testing.T) {
 	s, ok := snippet(long, q("treffer"))
 	if !ok || !strings.HasPrefix(s, "… ") || !strings.HasSuffix(s, " …") || !strings.Contains(s, "Treffer") || len([]rune(s)) > snippetRunes+4 {
 		t.Errorf("long snippet = %q (%d runes)", s, len([]rune(s)))
+	}
+	// Cut between words: no word in half at either edge.
+	if !strings.HasPrefix(s, "… Wort ") || !strings.HasSuffix(s, " Wort …") {
+		t.Errorf("long snippet cuts a word = %q", s)
 	}
 	if s, ok := snippet("Kurz und gut.", q("gut")); !ok || s != "Kurz und gut." {
 		t.Errorf("short snippet = %q %v", s, ok)
@@ -186,7 +203,7 @@ func TestSnippet(t *testing.T) {
 	}
 	// A hit near the end shows what comes before it, a full window.
 	s, ok = snippet(strings.Repeat("Wort ", 60)+"Treffer am Ende.", q("treffer"))
-	if !ok || len([]rune(s)) != snippetRunes+2 || !strings.HasSuffix(s, "Treffer am Ende.") {
+	if !ok || len([]rune(s)) < snippetRunes-4 || !strings.HasPrefix(s, "… Wort ") || !strings.HasSuffix(s, "Treffer am Ende.") {
 		t.Errorf("hit near the end = %q (%d runes)", s, len([]rune(s)))
 	}
 	// Code spans lose their backticks, the padding of one holding a

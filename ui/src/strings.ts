@@ -46,6 +46,7 @@ export const S = {
     placeholder: "Suchen",
     failed: "Die Suche konnte nicht ausgeführt werden.",
     tooShort: "Mindestens zwei Zeichen.",
+    tooLong: (n: number) => `Höchstens ${n} Zeichen, die Suche kürzer fassen.`,
     quoted: (q: string) => `«${q}»`,
     none: (q: string) => `Keine Treffer für «${q}».`,
     hits: (n: number, pages: number) =>

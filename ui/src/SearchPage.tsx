@@ -8,20 +8,24 @@ import { useFetch } from "./useFetch";
 import {
   Empty,
   Failed,
+  Inline,
   Link,
   Marked,
   Skeleton,
   column,
   eyebrow,
   h2,
+  kindLabelStyle,
   lede,
   mono,
   page,
 } from "./ui";
 
-/** The shortest phrase the server searches; a shorter one is said so
- *  here, without a request. */
+/** The shortest and the longest phrase the server searches (search.go's
+ *  searchMinRunes, searchMaxRunes); one outside is said so here, without
+ *  a request, never as "no hits". */
 const minChars = 2;
+const maxChars = 200;
 
 /** SearchPage is the hits of one phrase, grouped by page in the wiki's
  *  order: the page's name heads its hits, the summary's first, each a
@@ -48,6 +52,8 @@ export function SearchPage({ q }: { q: string }) {
         </h2>
         {[...phrase].length < minChars ? (
           <p className={lede}>{S.search.tooShort}</p>
+        ) : [...phrase].length > maxChars ? (
+          <p className={lede}>{S.search.tooLong(maxChars)}</p>
         ) : (
           <Results phrase={phrase} />
         )}
@@ -164,17 +170,14 @@ function Row({
   return (
     <li className="border-b border-border-soft py-2.5 text-[13.5px]">
       <div className="flex flex-wrap items-baseline gap-x-2">
-        {label !== "" && (
-          <span className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
-            {label}
-          </span>
-        )}
+        {label !== "" && <span className={kindLabelStyle}>{label}</span>}
+        {/* Name and area as the page shows them, a code span as code. */}
         <Link to={to} className="font-semibold text-ink hover:underline">
-          <Marked text={title} query={query} />
+          <Inline text={title} query={query} />
         </Link>
         {area !== undefined && area !== "" && (
           <span className="text-muted">
-            <Marked text={area} query={query} />
+            <Inline text={area} query={query} />
           </span>
         )}
       </div>

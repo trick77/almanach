@@ -13,6 +13,7 @@ import {
   Marked,
   Summary,
   eyebrow,
+  kindLabelStyle,
   matchesQuery,
   mono,
   useCopied,
@@ -373,7 +374,7 @@ export function StatementBlock({
           onPick={() => onAnchor?.(s.id)}
         />
       )}
-      <div className="text-[11px] font-medium tracking-[.1em] text-faint uppercase">
+      <div className={kindLabelStyle}>
         {kindLabel(s.kind, pageRepo === undefined)}
       </div>
       <h4 className="font-semibold text-ink">

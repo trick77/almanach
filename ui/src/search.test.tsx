@@ -165,6 +165,9 @@ describe("SearchPage", () => {
     unmount();
     render(<SearchPage q="a" />);
     expect(screen.getByText(S.search.tooShort)).toBeInTheDocument();
+    unmount();
+    render(<SearchPage q={"ä".repeat(201)} />);
+    expect(screen.getByText(S.search.tooLong(200))).toBeInTheDocument();
     expect(calls).toEqual(["/api/search?q=nirgends"]);
     unmount();
     render(<SearchPage q="boom" />);

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -122,7 +123,7 @@ func searchPage(p store.PageText, q phrase) (searchPageBody, bool) {
 		hit := searchHitBody{ID: s.ID, Kind: s.Kind, Name: s.Name, Area: s.Area}
 		if text, ok := snippet(s.Text, q); ok {
 			hit.Snippet = text
-		} else if !contains(s.Name, q) && !contains(s.Area, q) {
+		} else if !contains(words(s.Name), q) && !contains(words(s.Area), q) {
 			// Not the name alone, which the page shows with the area
 			// anyway: a file, or no hit.
 			if hit.File = firstFile(s.Files, q); hit.File == "" {
@@ -137,11 +138,12 @@ func searchPage(p store.PageText, q phrase) (searchPageBody, bool) {
 // snippet is the plain text around the phrase's first hit in a stored
 // text, ok false when none: snippetRunes of it, or the hit whole when
 // longer, the hit a third in, or further when the text ends sooner, an
-// ellipsis for what is left out. The layout (headings, items, bolds,
-// the code spans' backticks) is dropped first, as format.ts plain drops
-// it for the page's own search: a search box shows words.
+// ellipsis for what is left out, cut between words where the hit leaves
+// room. The layout (headings, items, bolds, the code spans' backticks)
+// is dropped first, as format.ts plain drops it for the page's own
+// search: a search box shows words.
 func snippet(text string, q phrase) (string, bool) {
-	plain := strings.Join(strings.Fields(untick(markup.Plain(text))), " ")
+	plain := words(markup.Plain(text))
 	hit := runeIndex(plain, q)
 	if hit < 0 {
 		return "", false
@@ -152,6 +154,21 @@ func snippet(text string, q phrase) (string, bool) {
 	lead := min(snippetRunes/3, width-n)
 	start := max(min(hit-lead, len(runes)-width), 0)
 	end := min(start+width, len(runes))
+	// No word cut in half at either edge: past the first blank before
+	// the hit, up to the last one after it.
+	if start > 0 && runes[start-1] != ' ' {
+		if i := slices.Index(runes[start:hit], ' '); i >= 0 {
+			start += i + 1
+		}
+	}
+	if end < len(runes) && runes[end] != ' ' {
+		for i := end - 1; i >= hit+n; i-- {
+			if runes[i] == ' ' {
+				end = i
+				break
+			}
+		}
+	}
 	s := string(runes[start:end])
 	if start > 0 {
 		s = "… " + s
@@ -175,6 +192,10 @@ func runeIndex(text string, q phrase) int {
 	}
 	return utf8.RuneCountInString(low[:at])
 }
+
+// words is a name or an area as the page shows it, matched as the text
+// is: its code spans' backticks gone, its spaces collapsed.
+func words(s string) string { return strings.Join(strings.Fields(untick(s)), " ") }
 
 func contains(text string, q phrase) bool {
 	return strings.Contains(strings.ToLower(text), string(q))

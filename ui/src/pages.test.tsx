@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -683,6 +684,27 @@ describe("ProjectPage", () => {
       await screen.findByRole("button", { name: "Kopiert" }),
     ).toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+
+  it("opens a statement's link followed while the page is open", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.replaceState({}, "", "/projects/PAY");
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    await screen.findByRole("tab", { name: /Übersicht/ });
+    // A search hit's link from the header, on the overview: the tab opens
+    // and the statement is scrolled to.
+    act(() => {
+      window.history.pushState({}, "", "/projects/PAY#description/s1");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    await waitFor(() =>
+      expect(scrolled.mock.contexts).toContain(document.getElementById("s1")),
+    );
+    expect(within(desc).getByText("Auftragsannahme")).toBeInTheDocument();
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
   });
 
   it("opens the start tab on a hash it does not know, a broken one too", async () => {
