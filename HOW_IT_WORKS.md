@@ -248,7 +248,9 @@ failed nor consolidated: its rewrite was once thrown away and the note
 marked folded. Its retry first counts the attempt, a write of its own:
 refused, the worker holds again and pays nothing; a failure of the call
 after it counts no second attempt; past eight the note is given up as
-failed. A run step's refused write counts the same, and a run's retry
+failed. Only the note whose own write was refused is counted so; another
+behind the same hold pays its call uncounted. A run step's refused write
+or save counts the same, eight in a row fail the run, and a run's retry
 first saves its progress as it stands. A revision that fails for its
 content (a constraint, a row that does not decode) would fail at every
 retry: its note fails as above, and a run step's write that fails so fails

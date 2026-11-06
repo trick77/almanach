@@ -285,10 +285,16 @@ func (w *Worker) save(ctx context.Context, r store.BaselineRun) error {
 		w.saveFailed = err
 		// A busy database is held off like a gateway: no next drain at
 		// once, into the same wait. Any other refusal holds longer each
-		// time: the step before the save was a paid call.
+		// time: the step before the save was a paid call, so the refusal
+		// counts toward maxFoldAttempts (runWritable).
 		w.holdStore(ctx, err)
+		if w.saveRun != r.ID {
+			w.saveRun, w.savesRefused = r.ID, 0
+		}
+		w.savesRefused++
 		return errStop
 	}
+	w.saveRun, w.savesRefused = 0, 0
 	w.writeOK()
 	if !ok {
 		w.log.InfoContext(ctx, "baseline: run gone (repository removed) or over, dropped")
@@ -313,12 +319,10 @@ func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.
 		return fmt.Errorf("%s step not written: %w", name, err)
 	}
 	why := "database busy"
-	if busy {
-		w.hold(ctx, HoldBusy, 0)
-	} else {
+	if !busy {
 		why = "write refused"
-		w.holdWrite(ctx, err)
 	}
+	w.holdStore(ctx, err)
 	if w.busyRun != r.ID {
 		w.busyRun, w.busyWrites = r.ID, 0
 	}
@@ -336,8 +340,17 @@ func (w *Worker) stepBusy(ctx context.Context, r *store.BaselineRun, prev store.
 
 // runWritable is the write a run held by a refused write takes before its
 // step's paid call: its progress saved as it stands. Refused again, the
-// worker holds again and pays nothing.
+// worker holds again and pays nothing. A run whose saves were refused
+// maxFoldAttempts times in a row, most after a paid step, fails instead of
+// paying for the step once more (its own re-save may fit where the step's
+// does not).
 func (w *Worker) runWritable(ctx context.Context, r store.BaselineRun) bool {
+	if w.saveRun == r.ID && w.savesRefused >= maxFoldAttempts {
+		n := w.savesRefused
+		w.saveRun, w.savesRefused = 0, 0
+		w.failRun(ctx, r, fmt.Sprintf("progress not saved after %d busy or refused database writes", n))
+		return false
+	}
 	if w.writeBackoff == 0 {
 		return true
 	}

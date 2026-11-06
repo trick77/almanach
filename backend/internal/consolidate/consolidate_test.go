@@ -38,9 +38,11 @@ type fakeStore struct {
 	queueErr error
 	markErr  error
 	deferErr error
-	attempts map[string]int
-	pages    map[string]store.Page
-	marked   []string
+	// deferReplaced answers a defer as for a note delivered again.
+	deferReplaced bool
+	attempts      map[string]int
+	pages         map[string]store.Page
+	marked        []string
 	// deliveries are the delivery ids the marks and defers named, in order.
 	deliveries  []string
 	revisions   []store.NewRevision
@@ -182,6 +184,9 @@ func (f *fakeStore) DeferFold(_ context.Context, project, repo string, prID int,
 	f.deliveries = append(f.deliveries, delivery)
 	if f.deferErr != nil {
 		return 0, f.deferErr
+	}
+	if f.deferReplaced {
+		return 0, nil
 	}
 	if f.attempts == nil {
 		f.attempts = map[string]int{}
@@ -1410,8 +1415,9 @@ func TestFoldBusyDatabaseDefers(t *testing.T) {
 		t.Fatalf("project busy, no repository patch: next %v marked %v attempts %v; want deferred", next, st.marked, st.attempts)
 	}
 	// The project's write refused by the file: after the repository's
-	// revision the note is done all the same, the worker under the write
-	// hold; with none written it stays queued, neither failed nor counted.
+	// revision the note is done all the same, the hold left to the mark
+	// (here written); with none written it stays queued under the write
+	// hold, neither failed nor counted.
 	st = newFakeStore()
 	st.pages[pageKey(store.ScopeProject, "PLAT", "")] = store.Page{Scope: store.ScopeProject, ProjectKey: "PLAT", RevisionID: 7, Revision: 1, Summary: "Das Projekt."}
 	st.projectRevisionErr = store.ErrFull
@@ -1420,9 +1426,9 @@ func TestFoldBusyDatabaseDefers(t *testing.T) {
 		&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}})}
 	w = newWorker(st, m)
 	w.now = func() time.Time { return mergedAt }
-	if next := w.Fold(ctx, queued("PLAT/files#42")); !next || len(st.marked) != 1 || len(st.revisions) != 1 || w.Status().HoldCause != HoldWrite {
-		t.Fatalf("project refused: next %v marked %v revisions %d cause %q; want consolidated, a write hold",
-			next, st.marked, len(st.revisions), w.Status().HoldCause)
+	if next := w.Fold(ctx, queued("PLAT/files#42")); !next || len(st.marked) != 1 || len(st.revisions) != 1 || w.holding() || w.writeBackoff != 0 {
+		t.Fatalf("project refused: next %v marked %v revisions %d holding %v backoff %s; want consolidated, no hold",
+			next, st.marked, len(st.revisions), w.holding(), w.writeBackoff)
 	}
 	st = newFakeStore()
 	st.projectRevisionErr = store.ErrFull
@@ -1656,7 +1662,7 @@ func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	// maxFoldAttempts, its last count taking the place of a call: failed,
 	// never consolidated, counted once.
 	st.attempts["PLAT|files|42"] = maxFoldAttempts - 1
-	w.writeBackoff = backoffMin
+	w.writeBackoff, w.heldNote = backoffMin, "d-PLAT/files#1"
 	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
 	calls := len(m.prompts)
 	w.drain(context.Background())
@@ -1679,7 +1685,7 @@ func TestRefusedWriteRetryCountsOnce(t *testing.T) {
 		st.queue = []store.QueuedNote{queued("PLAT/files#42")}
 		w := newWorker(st, &fakeMerger{result: res})
 		w.now = func() time.Time { return mergedAt }
-		w.writeBackoff = backoffMin
+		w.writeBackoff, w.heldNote = backoffMin, "d-PLAT/files#42"
 		w.drain(context.Background())
 		if st.attempts["PLAT|files|42"] != 1 || len(st.marked) != 0 {
 			t.Errorf("%s: attempts %v marked %v, want one attempt, unmarked", name, st.attempts, st.marked)
@@ -1696,10 +1702,36 @@ func TestRefusedWriteRetryCountsOnce(t *testing.T) {
 	st.attempts = map[string]int{"PLAT|files|42": maxFoldAttempts - 2}
 	w := newWorker(st, &fakeMerger{result: failed(inference.OutcomeError, errors.New("down"))})
 	w.now = func() time.Time { return mergedAt }
-	w.writeBackoff = backoffMin
+	w.writeBackoff, w.heldNote = backoffMin, "d-PLAT/files#42"
 	w.drain(context.Background())
 	if st.attempts["PLAT|files|42"] != maxFoldAttempts-1 || len(st.failed) != 0 {
 		t.Errorf("under the bound: attempts %v failed %v, want one more, kept", st.attempts, st.failed)
+	}
+
+	// A note that met no refusal of its own, behind a write hold a run's
+	// write or the disk check set, pays its call uncounted.
+	st = newFakeStore()
+	st.queue = []store.QueuedNote{queued("PLAT/files#42")}
+	m := &fakeMerger{result: okResult(nil, nil)}
+	w = newWorker(st, m)
+	w.now = func() time.Time { return mergedAt }
+	w.writeBackoff = backoffMin
+	w.drain(context.Background())
+	if st.attempts["PLAT|files|42"] != 0 || len(m.prompts) != 1 || len(st.marked) != 1 {
+		t.Errorf("other note: attempts %v calls %d marked %v, want folded uncounted", st.attempts, len(m.prompts), st.marked)
+	}
+
+	// The held note delivered again meanwhile: its count finds the new
+	// note, the old one is not paid for.
+	st = newFakeStore()
+	st.deferReplaced = true
+	st.queue = []store.QueuedNote{queued("PLAT/files#42")}
+	m = &fakeMerger{result: okResult(nil, nil)}
+	w = newWorker(st, m)
+	w.now = func() time.Time { return mergedAt }
+	w.writeBackoff, w.heldNote = backoffMin, "d-PLAT/files#42"
+	if counted, fold, next := w.noteWritable(context.Background(), queued("PLAT/files#42")); counted != 0 || fold || !next {
+		t.Errorf("replaced: counted %d fold %v next %v, want no fold, the drain going on", counted, fold, next)
 	}
 }
 
