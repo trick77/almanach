@@ -496,6 +496,19 @@ export interface QueueRecent {
   cost_usd?: string;
 }
 
+/** A note the merge call failed on: off the queue with its reason until
+ *  the next run of its repository, or for good once given up. */
+export interface QueueFailed {
+  project: string;
+  repo: string;
+  pr_key: string;
+  title?: string;
+  at: string;
+  reason: string;
+  attempts: number;
+  given_up: boolean;
+}
+
 export interface Queue {
   current: QueueItem | null;
   next: QueueItem[];
@@ -512,6 +525,7 @@ export interface Queue {
   } | null;
   spent: { cost_usd?: string; calls: number };
   recent: QueueRecent[];
+  failed: QueueFailed[];
   poll_seconds: number;
   /** The attempt an item is given up at. */
   max_attempts: number;

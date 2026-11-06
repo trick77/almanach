@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/trick77/almanach/internal/redact"
 )
 
 // The queue as the worker drains it: the notes it has not folded, the runs
@@ -40,7 +42,7 @@ func (s *Store) PendingNotes(ctx context.Context, limit int) ([]PendingNote, err
 		SELECT p.key, r.slug, n.pr_key, n.pr_title, COALESCE(n.change_kind, ''), n.received_at, n.fold_attempts,
 		       COALESCE((`+startedRunOfNote+` LIMIT 1), 0)
 		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
-		 WHERE n.consolidated_at IS NULL
+		 WHERE n.consolidated_at IS NULL AND n.fold_failed_at IS NULL
 		 ORDER BY n.received_at, n.pr_id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -115,12 +117,13 @@ func (s *Store) FinishedRuns(ctx context.Context, since time.Time, limit int) ([
 	return out, rows.Err()
 }
 
-// QueueCount is how many notes are unfolded and, with runs, how many runs
-// are open: the queue's size, for the nav.
+// QueueCount is how many notes are unfolded (a failed one waits for a run,
+// not the worker: not counted) and, with runs, how many runs are open: the
+// queue's size, for the nav.
 func (s *Store) QueueCount(ctx context.Context, runs bool) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(*) FROM notes WHERE consolidated_at IS NULL)
+		SELECT (SELECT COUNT(*) FROM notes WHERE consolidated_at IS NULL AND fold_failed_at IS NULL)
 		     + CASE WHEN ? THEN (SELECT COUNT(*) FROM baseline_runs WHERE state NOT IN ('done', 'failed')) ELSE 0 END`,
 		runs).Scan(&n)
 	return n, err
@@ -217,6 +220,43 @@ func (s *Store) FoldedNotes(ctx context.Context, since time.Time, limit int) ([]
 			return nil, err
 		}
 		n.PRTitle, _, _ = noteOut(n.PRTitle, nil, nil)
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// FailedNote is a note the merge call failed on, off the queue until the
+// repository's next run (RequeueFailed) or, at the worker's bound of
+// attempts, for good.
+type FailedNote struct {
+	ProjectKey string
+	RepoSlug   string
+	PRKey      string
+	PRTitle    string
+	FailedAt   time.Time
+	Reason     string
+	Attempts   int
+}
+
+// FailedNotes is the failed notes, newest failure first, at most limit.
+func (s *Store) FailedNotes(ctx context.Context, limit int) ([]FailedNote, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.key, r.slug, n.pr_key, n.pr_title, n.fold_failed_at, COALESCE(n.fold_failed, ''), n.fold_attempts
+		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
+		 WHERE n.fold_failed_at IS NOT NULL AND n.consolidated_at IS NULL
+		 ORDER BY n.fold_failed_at DESC, n.pr_id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FailedNote
+	for rows.Next() {
+		var n FailedNote
+		if err := rows.Scan(&n.ProjectKey, &n.RepoSlug, &n.PRKey, &n.PRTitle, timeAt(&n.FailedAt), &n.Reason, &n.Attempts); err != nil {
+			return nil, err
+		}
+		n.PRTitle, _, _ = noteOut(n.PRTitle, nil, nil)
+		n.Reason = redact.Text(n.Reason)
 		out = append(out, n)
 	}
 	return out, rows.Err()

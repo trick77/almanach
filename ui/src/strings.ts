@@ -713,6 +713,14 @@ export const S = {
       error: "Nicht gefaltet: Aufruf fehlgeschlagen",
       "": "Ohne Modellaufruf abgeschlossen",
     } as Record<string, string>,
+    failedNotes: "Nicht eingearbeitet",
+    failedHint:
+      "Der Modellaufruf ist an der Notiz gescheitert. Nach dem nächsten Lauf des Repositories, spätestens nach einem Tag, wird sie erneut eingearbeitet.",
+    givenUpHint:
+      "Eine aufgegebene Notiz wird erst mit einer neuen Lieferung wieder eingearbeitet.",
+    failedHeaders: ["Zeit", "Notiz", "Grund", "Versuche"],
+    failedAttempts: (n: number, max: number) => `${n} von ${max}`,
+    givenUp: "Aufgegeben",
   },
   auth: {
     checking: "Sitzung wird geprüft …",

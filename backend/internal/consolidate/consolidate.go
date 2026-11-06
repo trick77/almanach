@@ -26,6 +26,7 @@ import (
 	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/prompts"
+	"github.com/trick77/almanach/internal/redact"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
 	"github.com/trick77/toolkit/llmwire"
@@ -36,6 +37,13 @@ type Store interface {
 	NextQueued(ctx context.Context) (store.QueuedNote, bool, error)
 	MarkConsolidated(ctx context.Context, project, repo string, prID int, delivery string) error
 	DeferFold(ctx context.Context, project, repo string, prID int, delivery string) (int, error)
+	// MarkFoldFailed takes the note delivered by delivery off the queue as
+	// failed with its reason, with count an attempt counted, the attempts
+	// returned; RequeueFailed puts a repository's failed notes under
+	// maxFoldAttempts back on it.
+	MarkFoldFailed(ctx context.Context, project, repo string, prID int, delivery, reason string, count bool) (int, error)
+	RequeueFailed(ctx context.Context, project, repo string, maxAttempts int) (int, error)
+	RequeueFailedBefore(ctx context.Context, before time.Time, maxAttempts int) (int, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
 	NextStatementID(ctx context.Context, scope, project, repo string) (int, error)
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
@@ -237,7 +245,7 @@ func (w *Worker) stopping() bool {
 // QueueOrder lays the queue out in this order for the queue page: a
 // change here changes it too.
 func (w *Worker) drain(ctx context.Context) {
-	// The backstop: a fold's and a step's own panics mark their item (Fold,
+	// The backstop: a fold's and a step's own panics fail their item (Fold,
 	// step); one outside them (a source check, a run's failure write) ends
 	// the drain with a log line and takes the item it was on off the queue,
 	// so it never blocks the rest: none blocks the queue forever.
@@ -253,6 +261,7 @@ func (w *Worker) drain(ctx context.Context) {
 	// Once per drain, a holding one too (it takes no item); then after
 	// every item.
 	w.heartbeat()
+	w.requeueAged(ctx)
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		note, run = nil, nil
 		q, ok, err := w.store.NextQueued(ctx)
@@ -289,7 +298,7 @@ func (w *Worker) drain(ctx context.Context) {
 }
 
 // dropAfterPanic takes the item a drain panicked on off the queue: the
-// note marked, the run failed as it was loaded. A panic here too is only
+// note failed, the run failed as it was loaded. A panic here too is only
 // logged; the next drain meets the item again.
 func (w *Worker) dropAfterPanic(ctx context.Context, note *store.QueuedNote, run *store.BaselineRun, cause any) {
 	defer func() {
@@ -299,9 +308,7 @@ func (w *Worker) dropAfterPanic(ctx context.Context, note *store.QueuedNote, run
 	}()
 	switch {
 	case note != nil:
-		if err := w.store.MarkConsolidated(ctx, note.ProjectKey, note.RepoSlug, note.PRID, note.DeliveryID); err != nil {
-			w.log.WarnContext(ctx, "consolidate: mark after a panic failed", logging.Err(err))
-		}
+		w.failNote(ctx, *note, fmt.Sprintf("panic: %v", cause), false)
 	case run != nil:
 		w.failRun(ctx, *run, fmt.Sprintf("panicked: %v", cause))
 	}
@@ -367,28 +374,45 @@ func gatewayClass(res inference.Call) (gateway bool, retryAfter time.Duration) {
 	return true, 0
 }
 
-// Fold runs one note through the merge: the current pages in, the rewritten
-// ones out, each checked against the caps and written as a revision. The
-// note is marked consolidated whatever the model answered and after a
-// failure specific to this call; a gateway-class failure, or a database
-// that stayed busy past its timeout, leaves it queued with its attempt
-// counted and holds the worker, up to maxFoldAttempts.
+// Fold runs one note through the merge: the current pages in, a patch over
+// each out, applied under the rules of a step's and written as a revision.
+// The note is marked consolidated once the gateway answered and the patches
+// were applied, whatever they changed. A failure specific to this call (an
+// answer off the schema, cut by the output limit, a 4xx; a patch refused
+// whole) leaves the note off the queue as failed, with its reason, for the
+// repository's next run to queue again (failNote): the knowledge is not
+// lost, only late. A gateway-class failure, or a database that stayed busy
+// past its timeout, leaves it queued with its attempt counted and holds the
+// worker, up to maxFoldAttempts.
 // Reports whether the drain may go on: false after a deferred note or a
 // mark the store refused, so the same note is not paid for again in the
 // same lap.
 func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	ctx = logging.With(ctx, "team", q.Team, "pr_key", q.PRKey)
 	deferred := false
+	failed := ""
+	// repoWrote is set once the repository's revision is written: from then
+	// on the note is done whatever befalls the project's patch, as a retry
+	// would fold the repository's patch twice, its new statements under new
+	// ids.
+	repoWrote := false
 	defer func() {
-		// A panic is a failure specific to this note: marked, logged.
+		// A panic is a failure specific to this note: failed, logged.
 		// Uncaught it ends the process, and every restart meets the same
 		// oldest note again.
 		if r := recover(); r != nil {
-			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: %s not folded: panic: %v", q.PRKey, r), slog.String("stack", string(debug.Stack())))
-			deferred = false
+			w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: %s panicked: %v", q.PRKey, r), slog.String("stack", string(debug.Stack())))
+			deferred, failed = false, ""
+			if !repoWrote {
+				failed = fmt.Sprintf("panic: %v", r)
+			}
 		}
 		if deferred {
 			next = false
+			return
+		}
+		if failed != "" {
+			next = w.failNote(ctx, q, failed, false)
 			return
 		}
 		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID); err != nil {
@@ -399,26 +423,31 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		next = true
 	}()
 
+	// A read that fails before the call: a busy database defers the note,
+	// anything else fails it, never consolidated with nothing folded.
+	readFailed := func(what string, err error) {
+		w.log.WarnContext(ctx, "consolidate: "+what+" failed", logging.Err(err))
+		if deferred = w.deferBusy(ctx, q, err); !deferred {
+			failed = what + " failed: " + err.Error()
+		}
+	}
 	repoPage, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, q.ProjectKey, q.RepoSlug)
 	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: repository page read failed", logging.Err(err))
-		deferred = w.deferBusy(ctx, q, err)
+		readFailed("repository page read", err)
 		return
 	}
 	// A project of one has no project page: the prompt shows none and asks
 	// for null, and whatever comes is not folded.
 	alone, err := w.single(ctx, q.ProjectKey)
 	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: project source read failed", logging.Err(err))
-		deferred = w.deferBusy(ctx, q, err)
+		readFailed("project source read", err)
 		return
 	}
 	var projectPage store.Page
 	if !alone {
 		projectPage, _, err = w.store.CurrentPage(ctx, store.ScopeProject, q.ProjectKey, "")
 		if err != nil {
-			w.log.WarnContext(ctx, "consolidate: project page read failed", logging.Err(err))
-			deferred = w.deferBusy(ctx, q, err)
+			readFailed("project page read", err)
 			return
 		}
 	}
@@ -452,26 +481,178 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	case inference.OutcomeOK:
 	default:
 		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s", q.PRKey, res.Outcome), logging.Err(res.Err))
+		failed = res.Outcome.String()
+		if res.Err != nil {
+			failed += ": " + res.Err.Error()
+		}
 		return
 	}
 	var id *int64
 	if callID != 0 {
 		id = &callID
 	}
-	if err := w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, id); err != nil {
+	// The repository's patch first; refused, nothing is written and the note
+	// fails whole, so its retry folds it once. The project's patch after:
+	// once the repository's revision is written (repoWrote), refused or
+	// busy it costs only itself, the project step of the repository's next
+	// run folds the page anew anyway; with nothing written yet, the note is
+	// failed or deferred as before. The tree is read only for a patch that
+	// drops: it judges nothing else.
+	var tree func(string) bool
+	if p := res.Merge.Repository; p != nil && len(p.Drop) > 0 {
+		tree = w.dropTree(ctx, q)
+	}
+	repoWrote, refused, err := w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, id, tree)
+	if err != nil {
 		deferred = w.deferBusy(ctx, q, err)
+		return
+	}
+	if refused != "" {
+		failed = refused
 		return
 	}
 	if alone {
 		if res.Merge.Project != nil {
-			w.log.InfoContext(ctx, "consolidate: project rewrite left out, a project of one")
+			w.log.InfoContext(ctx, "consolidate: project patch left out, a project of one")
 		}
 		return
 	}
-	if err := w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, id); err != nil {
+	// The project has no one tree: a project drop is the model's word, as
+	// on the project step.
+	_, refused, err = w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, id, nil)
+	switch {
+	case err != nil && !repoWrote:
 		deferred = w.deferBusy(ctx, q, err)
+	case err != nil:
+		w.log.WarnContext(ctx, "consolidate: project page left unchanged, the repository's patch kept", logging.Err(err))
+		w.hold(ctx, HoldBusy, 0)
+	case refused != "" && !repoWrote:
+		failed = refused
 	}
 	return
+}
+
+// failedRetry is how long a failed note waits before it is queued again by
+// time alone, for a note no run requeues: the sources off, a repository
+// without runs, a project page another repository's run wrote.
+const failedRetry = 24 * time.Hour
+
+// requeueAged puts the failed notes older than failedRetry back on the
+// queue, those under the bound, at the start of every drain: one update
+// over an indexed few rows.
+func (w *Worker) requeueAged(ctx context.Context) {
+	n, err := w.store.RequeueFailedBefore(ctx, w.now().Add(-failedRetry), maxFoldAttempts)
+	if err != nil {
+		w.log.WarnContext(ctx, "consolidate: aged failed notes not queued again", logging.Err(err))
+		return
+	}
+	if n > 0 {
+		w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %s queued again after %s", plural(n, "failed note"), failedRetry))
+	}
+}
+
+// dropTree is the clone's tree a fold judges a drop against: the tree at
+// the clone's head, the code as it is. Holding the note's merge commit, a
+// file the pull request took away is one the tree lacks; a file added
+// after it, which a later run may have written a statement on, is still
+// there, so that statement stays even when a note folded late drops it.
+// Never the tree at the merge commit itself: it lacks every file added
+// since. A head not yet fetched to the merge (the usual state for a note
+// folded right after its webhook) still has the files the pull request
+// took away: a drop of a statement on them waits for the run of the new
+// head, rather than a model's slip deleting what the code backs. nil when
+// there is none to ask: the sources off, a clone without a head, busy or
+// gone; then a drop is the model's word (baseline.ApplyMerge), as it was
+// when the answer was the whole page. One git read under the clone's
+// lock, never across the call.
+func (w *Worker) dropTree(ctx context.Context, q store.QueuedNote) func(string) bool {
+	if w.base == nil {
+		return nil
+	}
+	none := func(why string, err error) func(string) bool {
+		if errors.Is(err, ErrCloneBusy) {
+			w.log.DebugContext(ctx, "consolidate: clone busy, drops on the model's word")
+		} else {
+			w.log.InfoContext(ctx, "consolidate: "+why+", drops on the model's word", logging.Err(err))
+		}
+		return nil
+	}
+	repos, err := w.base.Store.SourceRepos(ctx, q.ProjectKey)
+	if err != nil {
+		return none("source repos read failed", err)
+	}
+	head := ""
+	for _, rp := range repos {
+		if rp.Slug == q.RepoSlug {
+			head = rp.HeadCommit
+		}
+	}
+	if head == "" {
+		return none("the clone has no head", nil)
+	}
+	tree, err := w.base.Code.Tree(ctx, q.ProjectKey, q.RepoSlug, head)
+	if err != nil {
+		return none("no tree at the clone's head", err)
+	}
+	return baseline.Exists(tree)
+}
+
+// failNote takes a note the call failed off the queue as failed, its reason
+// kept, the attempt counted: the repository's next run queues it again
+// (requeueFailed), so the knowledge the note carries is folded late, not
+// lost. Past maxFoldAttempts in all it is given up, logged. counted is an
+// attempt DeferFold counted already, the last a gateway failed: counted
+// twice, the note would show one more than was made. Reports whether the
+// drain may go on: false when the store refused the mark, so the same note
+// is not paid for again in the same lap.
+func (w *Worker) failNote(ctx context.Context, q store.QueuedNote, reason string, counted bool) bool {
+	// Redacted before the cut: a credential cut short is shorter than its
+	// shape, and the store's redaction would miss it.
+	reason = truncate(redact.Text(reason), reasonMaxRunes)
+	attempts, err := w.store.MarkFoldFailed(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID, reason, !counted)
+	if err != nil {
+		w.log.WarnContext(ctx, "consolidate: failure mark failed, drain paused", logging.Err(err))
+		return false
+	}
+	if attempts == 0 {
+		w.log.InfoContext(ctx, "consolidate: "+q.PRKey+" consolidated or replaced meanwhile, failure not marked")
+		return true
+	}
+	if attempts >= maxFoldAttempts {
+		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s given up after %d failed attempts: %s", q.PRKey, attempts, reason))
+		return true
+	}
+	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s not folded: %s, attempt %d of %d, queued again by the repository's next run",
+		q.PRKey, reason, attempts, maxFoldAttempts))
+	return true
+}
+
+// reasonMaxRunes bounds a failure's reason as stored and shown: an error
+// may carry a gateway's whole body.
+const reasonMaxRunes = 300
+
+// truncate cuts s to at most n runes, an ellipsis last.
+func truncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:n-1]) + "…"
+}
+
+// requeueFailed puts a repository's failed notes back on the queue, those
+// under maxFoldAttempts, after one of its runs ended: the page they failed
+// on has been written anew, and its run is over, so they fold next. A store
+// that refuses is logged; the next run tries again.
+func (w *Worker) requeueFailed(ctx context.Context, project, repo string) {
+	n, err := w.store.RequeueFailed(ctx, project, repo, maxFoldAttempts)
+	if err != nil {
+		w.log.WarnContext(ctx, "consolidate: failed notes not queued again", logging.Err(err))
+		return
+	}
+	if n > 0 {
+		w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %s queued again after the run", plural(n, "failed note")))
+	}
 }
 
 // single reports whether a project is a project of one: its source holds
@@ -496,8 +677,10 @@ const collectionProject = "_This project is a collection: repositories that each
 	"holds; then the summary alone, `statements` and `added` empty._"
 
 // deferNote leaves a note queued with its failed attempt counted, after a
-// hold; reports whether it stays queued: false once maxFoldAttempts is
-// reached (the note is then marked, with a log line).
+// hold. Once maxFoldAttempts is reached the note is given up: off the queue
+// as failed with its reason (failNote), never consolidated, so what its
+// pull request taught is not thrown away for a gateway's bad day. Always
+// true: the worker holds, the drain ends either way.
 func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome string, cause error) bool {
 	attempts, err := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID)
 	if err != nil {
@@ -516,14 +699,18 @@ func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome stri
 			q.PRKey, outcome, attempts, maxFoldAttempts), logging.Err(cause))
 		return true
 	}
-	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s given up after %d failed attempts: %s", q.PRKey, attempts, outcome), logging.Err(cause))
-	return false
+	reason := outcome
+	if cause != nil {
+		reason += ": " + cause.Error()
+	}
+	w.failNote(ctx, q, reason, true)
+	return true
 }
 
 // deferBusy is a store error met during a fold. A database that stayed
 // busy past its timeout is temporary, like a gateway failure: the worker
 // holds and the note is tried again, its attempt counted. Anything else
-// ends the note's fold as before (reports false: the note is marked).
+// reports false: the caller fails the note.
 func (w *Worker) deferBusy(ctx context.Context, q store.QueuedNote, err error) bool {
 	if !store.IsBusy(err) {
 		return false
@@ -532,50 +719,73 @@ func (w *Worker) deferBusy(ctx context.Context, q store.QueuedNote, err error) b
 	return w.deferNote(ctx, q, "database busy", err)
 }
 
-// apply checks one rewritten description and writes it as a revision, or
-// logs why not. nil = the model wants no change. The error is only ever a
-// busy database's (store.IsBusy): the caller defers the note; any other
-// failure is logged here and the page stays.
-func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, d *inference.Description, callID *int64) error {
-	if d == nil {
+// apply takes one description's patch under the rules of a fold
+// (baseline.ApplyMerge: an item that breaks a rule costs only itself) and
+// writes the page as a revision, or logs why not. nil = the model wants no
+// change. exists is the tree a drop is judged against, nil for none.
+// refused is why the patch as a whole could not be taken (a page left
+// without a summary; a store failure; a bug past ApplyMerge), the page
+// unchanged, the note failed. The error is only ever a busy database's
+// (store.IsBusy): the caller defers the note. wrote reports a revision
+// written.
+func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, p *inference.Patch, callID *int64,
+	exists func(string) bool) (wrote bool, refused string, err error) {
+	if p == nil {
 		w.log.InfoContext(ctx, "consolidate: "+scope+" description unchanged")
-		return nil
+		return false, "", nil
 	}
-	answer := *d
+	at := "consolidate: " + scope
+	patch := *p
 	// A collection's page is its summary alone: code holds what the prompt
 	// says (collectionProject).
 	if scope == store.ScopeProject && current.Collection() {
-		if n := len(d.Statements) + len(d.Added); n > 0 {
-			w.log.WarnContext(ctx, "consolidate: statements of a collection left out", slog.Int("statements", n))
+		if n := len(patch.Statements) + len(patch.Added) + len(patch.Drop); n > 0 {
+			w.log.WarnContext(ctx, at+": statements of a collection left out", slog.Int("statements", n))
 		}
-		answer.Statements, answer.Added = []inference.Statement{}, nil
+		patch.Statements, patch.Added, patch.Drop = []inference.Statement{}, nil, nil
 	}
-	answer.Statements, answer.Added = w.asNew(ctx, "consolidate: "+scope, current.Statements, answer.Statements, answer.Added)
+	patch.Statements, patch.Added = w.asNew(ctx, at, current.Statements, patch.Statements, patch.Added)
 	// A bugfix note is a pitfall's evidence on the merge path; any other
 	// note backs none.
 	if q.ChangeKind != "bugfix" {
-		answer.Added = unbackedPitfalls(ctx, w.log, "consolidate: "+scope, answer.Added)
+		patch.Added = unbackedPitfalls(ctx, w.log, at, patch.Added)
 	}
-	d = &answer
+	applied := baseline.ApplyMerge(current.Statements, patch, exists, validFor(scope))
+	if len(applied.Unknown) > 0 {
+		w.log.WarnContext(ctx, at+": unknown ids left out", slog.Any("ids", applied.Unknown))
+	}
 	next, err := w.store.NextStatementID(ctx, scope, q.ProjectKey, repo)
 	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: "+scope+" statement id read failed, page unchanged", logging.Err(err))
-		return busyOnly(err)
+		w.log.WarnContext(ctx, at+" statement id read failed, page unchanged", logging.Err(err))
+		return storeFailed(scope+" statement id read", err)
 	}
-	statements, leftOut, reason := attachDescription(scope, current.Statements, d, store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}, next, limitsOf(w.limits))
-	summary := proseSummary(d.Summary)
-	chars, emptyReason := check(summary, statements)
-	if reason == "" {
-		reason = emptyReason
-	}
+	src := store.Source{PRKey: q.PRKey, TicketKey: q.TicketKey, MergedAt: q.MergedAt, Commit: q.MergeCommit}
+	// ApplyMerge left out what attach would refuse, so a reason here is a
+	// bug, and costs the fold.
+	statements, leftOut, reason := attach(scope, current.Statements, applied.Statements, src, next, limitsOf(w.limits))
 	if reason != "" {
-		w.log.WarnContext(ctx, fmt.Sprintf("consolidate: %s rewrite rejected (%s), page unchanged", scope, reason))
-		return nil
+		w.log.WarnContext(ctx, fmt.Sprintf("%s: patch refused (%s), page unchanged", at, reason))
+		return false, scope + " patch refused: " + reason, nil
 	}
-	logLeftOut(ctx, w.log, "consolidate: "+scope, leftOut)
+	leftOut.badEdits = append(applied.BadEdits, leftOut.badEdits...)
+	leftOut.badNew, leftOut.badDrops = applied.BadNew, applied.BadDrops
+	summary := current.Summary
+	if applied.Summary != nil {
+		summary = proseSummary(*applied.Summary)
+	}
+	// A page needs a summary, the one thing a description must have: a
+	// first page whose patch brings none is refused, the note failed, so
+	// the repository's run writes the summary and the note folds after.
+	chars, emptyReason := check(summary, statements)
+	if emptyReason != "" {
+		w.log.WarnContext(ctx, fmt.Sprintf("%s: patch refused (%s), page unchanged", at, emptyReason))
+		return false, scope + " patch refused: " + emptyReason, nil
+	}
+	w.logDropped(ctx, at, current.Statements, applied.Statements)
+	logLeftOut(ctx, w.log, at, leftOut)
 	if current.Summary == summary && sameStatements(current.Statements, statements) {
-		w.log.InfoContext(ctx, "consolidate: "+scope+" description identical, no revision")
-		return nil
+		w.log.InfoContext(ctx, at+" description identical, no revision")
+		return false, "", nil
 	}
 	// The map is the baseline project step's alone: a note's fold carries
 	// the project's forward unchanged (a repository page has none).
@@ -584,21 +794,46 @@ func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo stri
 		Chars: chars, SourcePR: q.PRKey, LLMCallID: callID, Map: current.Map,
 	})
 	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: "+scope+" revision write failed", logging.Err(err))
-		return busyOnly(err)
+		w.log.WarnContext(ctx, at+" revision write failed", logging.Err(err))
+		return storeFailed(scope+" revision write", err)
 	}
-	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: %s description revision %d (%d statements, %d chars) from %s",
-		scope, n, len(statements), chars, q.PRKey))
-	return nil
+	w.log.InfoContext(ctx, fmt.Sprintf("%s description revision %d (%d statements, %d chars) from %s",
+		at, n, len(statements), chars, q.PRKey))
+	return true, "", nil
 }
 
-// busyOnly passes a busy database's error on and swallows the rest, which
-// the caller has logged.
-func busyOnly(err error) error {
-	if store.IsBusy(err) {
-		return err
+// logDropped names what a fold's patch took off the page: how many, and
+// the ones a pull request taught, dropped on the model's word.
+func (w *Worker) logDropped(ctx context.Context, at string, before []store.Statement, after []inference.Statement) {
+	kept := make(map[string]bool, len(after))
+	for _, s := range after {
+		if s.ID != nil {
+			kept[*s.ID] = true
+		}
 	}
-	return nil
+	var gone, taught []string
+	for _, s := range before {
+		if kept[s.ID] {
+			continue
+		}
+		gone = append(gone, s.ID)
+		if baseline.FromPR(s) {
+			taught = append(taught, s.ID)
+		}
+	}
+	if len(gone) > 0 {
+		w.log.InfoContext(ctx, at+": statements dropped", slog.Any("ids", gone), slog.Any("taught_by_pull_requests", taught))
+	}
+}
+
+// storeFailed is apply's answer to a store failure the caller has logged:
+// a busy database's error passed on (the note deferred), anything else a
+// refusal (the note failed, never consolidated with nothing written).
+func storeFailed(what string, err error) (wrote bool, refused string, _ error) {
+	if store.IsBusy(err) {
+		return false, "", err
+	}
+	return false, what + " failed: " + err.Error(), nil
 }
 
 // The statement kinds a page of each scope may hold: a project page no
@@ -618,9 +853,8 @@ func kindSet(list []string) map[string]bool {
 
 // unbackedPitfalls leaves out the new pitfalls a fold or step had no
 // evidence for (a bugfix note, a problem area): the prompts say so, code
-// holds it. Only new ones: an existing pitfall was backed when written, and
-// on the merge path a statement not returned is dropped. Each left out is
-// logged by name; the rest of the answer stands.
+// holds it. Only new ones: an existing pitfall was backed when written. Each
+// left out is logged by name; the rest of the answer stands.
 func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added []inference.Statement) []inference.Statement {
 	kept := make([]inference.Statement, 0, len(added))
 	for _, s := range added {
@@ -637,8 +871,8 @@ func unbackedPitfalls(ctx context.Context, log *slog.Logger, where string, added
 // statements: there is nothing to edit there, so an edit is the model
 // numbering what it writes, the mistake the empty page's note warns of (an
 // eval's project step was refused whole for "unknown statement id s2" so).
-// Its edits join the new statements, their ids cleared by Proposed and
-// ApplyPatch, logged; an edit repeating a new statement's or an earlier
+// Its edits join the new statements, their ids cleared by ApplyPatch,
+// logged; an edit repeating a new statement's or an earlier
 // edit's kind and name (Swiss) is that statement twice and goes, logged.
 // With nothing on the page an edit could delete, an id used twice moves
 // too. On a page with statements nothing moves. Every path that applies an
@@ -669,21 +903,10 @@ func (w *Worker) asNew(ctx context.Context, where string, current []store.Statem
 	return []inference.Statement{}, append(moved, added...)
 }
 
-// attachDescription is attach over a whole description's edits and new
-// statements; an edit without an id rejects it like an invented one (on a
-// page without statements asNew has made every edit new before).
-func attachDescription(scope string, current []store.Statement, d *inference.Description, src store.Source, next int, dl diagramLimits) ([]store.Statement, leftOutParts, string) {
-	proposed, reason := d.Proposed()
-	if reason != "" {
-		return nil, leftOutParts{}, reason
-	}
-	return attach(scope, current, proposed, src, next, dl)
-}
-
 // validFor is the check a statement as returned must pass to stand on a
 // scope's page, "" when it does: a kind the page holds, a name and a text.
-// A step's patch leaves a statement that fails it out (baseline.ApplyPatch);
-// a merge's rewrite is refused over one (attach).
+// A patch leaves a statement that fails it out (baseline.ApplyPatch,
+// ApplyMerge); attach refuses over one, which is then a bug.
 func validFor(scope string) func(inference.Statement) string {
 	return func(p inference.Statement) string {
 		if !kinds[scope][p.Kind] {
@@ -1050,7 +1273,9 @@ func renderWith(tmpl string, q store.QueuedNote, repoPage store.Page, projectDes
 		"{pr_key}", q.PRKey,
 		"{ticket_key}", ticket,
 		"{change_kind}", kind,
-		"{repo_description}", describe(repoPage),
+		// Marked where a pull request taught a statement: a drop of one
+		// unmarked is judged by the tree (dropTree), and the prompt says so.
+		"{repo_description}", describeTaught(repoPage),
 		"{project_description}", projectDescription,
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{note}", string(q.Body),
@@ -1091,10 +1316,12 @@ func diagramChange(l config.Limits) string {
 // An empty page as the prompts show it, saying in so many words that every
 // statement is new: shown nothing, a model numbers its new statements, and
 // an id the page does not have is invented and rejects the rewrite. The
-// schema keeps new statements in `added`, where no id can be written.
+// schema keeps new statements in `added`, where no id can be written. A
+// patch's summary may be null to keep the stored one: with none stored,
+// null leaves the page without one, and it is refused.
 const (
 	allNew          = "every statement you write is new and goes in `added`; `statements` stays empty"
-	noneYet         = "_None yet: " + allNew + "._"
+	noneYet         = "_None yet: write the summary, never `null`; " + allNew + "._"
 	noStatementsYet = "\n_No statements yet: " + allNew + "._\n"
 )
 

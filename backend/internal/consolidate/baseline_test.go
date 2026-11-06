@@ -304,9 +304,12 @@ type fakeCode struct {
 	asked       int
 	readErr     error
 	read        [][]string
+	// treesAt is every commit a tree was asked at.
+	treesAt []string
 }
 
-func (c *fakeCode) Tree(ctx context.Context, _, _, _ string) ([]gitrepo.Entry, error) {
+func (c *fakeCode) Tree(ctx context.Context, _, _, sha string) ([]gitrepo.Entry, error) {
+	c.treesAt = append(c.treesAt, sha)
 	if ctx.Err() != nil {
 		// What a git child killed by the cancel answers: no context error.
 		return nil, errors.New("git ls-tree: signal: killed")
@@ -415,8 +418,19 @@ func (m *fakeModels) Patch(_ context.Context, prompt string) inference.PatchResu
 func (m *fakeModels) Describe(_ context.Context, prompt string) inference.DescriptionResult {
 	m.prompts = append(m.prompts, prompt)
 	res := m.project
-	res.Description = answered(res.Description)
+	res.Description = described(res.Description)
 	return res
+}
+
+// described is a project fixture in the model's shape: a new statement
+// written without an id among the rest split off into Added.
+func described(d *inference.Description) *inference.Description {
+	if d == nil || d.Added != nil {
+		return d
+	}
+	c := *d
+	c.Statements, c.Added = split(d.Statements)
+	return &c
 }
 
 var called = inference.Call{Outcome: inference.OutcomeOK, Cost: inference.CallCost{Model: "m", Answered: true}}
@@ -545,6 +559,10 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	r := x.run()
 	if r.State != store.RunDone || r.Commit != head || r.Calls != 6 || r.Skipped != 0 || r.Steps != 4 || r.FinishedAt == nil {
 		t.Fatalf("run = %+v", r)
+	}
+	// The run over, the repository's failed notes go back on the queue.
+	if !slices.Equal(x.st.requeued, []string{"tools/svc"}) {
+		t.Errorf("requeued = %v, want the repository's failed notes once the run is done", x.st.requeued)
 	}
 	if r.Bytes != 5+20+30+40 {
 		t.Errorf("bytes = %d, want the docs and both subjects", r.Bytes)

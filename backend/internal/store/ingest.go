@@ -161,7 +161,8 @@ func writeDelivery(ctx context.Context, tx *sql.Tx, d Delivery, n Note, call *No
 		    merge_commit = EXCLUDED.merge_commit, merged_at = EXCLUDED.merged_at, run_id = EXCLUDED.run_id,
 		    model_label = EXCLUDED.model_label, issues_posted = EXCLUDED.issues_posted,
 		    suggestions_posted = EXCLUDED.suggestions_posted, delivery_id = EXCLUDED.delivery_id,
-		    received_at = EXCLUDED.received_at, consolidated_at = NULL, fold_attempts = 0`,
+		    received_at = EXCLUDED.received_at, consolidated_at = NULL, fold_attempts = 0,
+		    fold_failed_at = NULL, fold_failed = NULL`,
 		rid, n.PRID, n.Team, n.PRKey, n.PRTitle, n.TicketKey, n.IssueType, n.ChangeKind,
 		jsonOrNull(n.Bugfix), n.BugfixArea, n.BugfixComponent, jsonText(n.Body), n.ReviewedCommit, n.SourceCommit, n.MergeCommit,
 		stamp(n.MergedAt), n.RunID, n.ModelLabel, n.IssuesPosted, n.Suggestions, d.ID, now); err != nil {

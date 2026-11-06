@@ -305,9 +305,20 @@ func TestDiagramSchemas(t *testing.T) {
 	if !slices.Contains(props["map"].(map[string]any)["type"].([]any), any("null")) {
 		t.Errorf("map not nullable: %v", props["map"])
 	}
-	// The merge's description has no map: the merge never draws one.
-	if _, ok := description(true, RepoKinds)["properties"].(map[string]any)["map"]; ok {
-		t.Error("the merge's description carries a map")
+	// The merge's patch has no map (the merge never draws one), no
+	// confirmation (a fold reads no code), a drop and a nullable summary.
+	merge := mergePatch(true, RepoKinds)["properties"].(map[string]any)
+	if _, ok := merge["map"]; ok {
+		t.Error("the merge's patch carries a map")
+	}
+	if _, ok := merge["confirmed"]; ok {
+		t.Error("the merge's patch offers a confirmation")
+	}
+	if _, ok := merge["drop"]; !ok {
+		t.Error("the merge's patch offers no drop")
+	}
+	if !slices.Contains(merge["summary"].(map[string]any)["type"].([]any), any("null")) {
+		t.Errorf("merge summary not nullable: %v", merge["summary"])
 	}
 	zone := mapSchema()["properties"].(map[string]any)["nodes"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["zone"].(map[string]any)
 	if !slices.Equal(zone["enum"].([]any), []any{"clients", "entry", "repositories", "stores", "external"}) {
@@ -363,7 +374,7 @@ func TestNoDiagramsSchemas(t *testing.T) {
 	}
 	for name, st := range map[string]map[string]any{
 		"patch":   patchFormat(false).Schema["properties"].(map[string]any)["statements"].(map[string]any),
-		"merge":   description(false, RepoKinds)["properties"].(map[string]any)["statements"].(map[string]any),
+		"merge":   mergePatch(false, RepoKinds)["properties"].(map[string]any)["statements"].(map[string]any),
 		"project": projectDescription(false)["properties"].(map[string]any)["statements"].(map[string]any),
 	} {
 		if _, ok := statementProps(st)["diagram"]; ok {
@@ -411,19 +422,15 @@ func TestSchemaEditsAndAdded(t *testing.T) {
 			t.Errorf("%s: added lacks the statement's fields", name)
 		}
 	}
-	// Both halves parse; Proposed lists the edits, then the new ones with
-	// any id the answer gave cleared.
+	// Both halves parse, an id a new statement carries with them: the code
+	// clears it (baseline.ApplyPatch).
 	var d Description
 	if !parse(`{"summary": "s", "statements": [{"id": "s2", "kind": "rule", "name": "a", "text": "b", "files": []}],
 		"added": [{"id": "s36", "kind": "rule", "name": "c", "text": "d", "files": []}]}`, &d) {
 		t.Fatal("description did not parse")
 	}
-	got, reason := d.Proposed()
-	if reason != "" || len(got) != 2 || got[0].ID == nil || *got[0].ID != "s2" || got[1].ID != nil || got[1].Name != "c" {
-		t.Errorf("Proposed = %+v, %q", got, reason)
-	}
-	if _, reason := Proposed([]Statement{{Name: "x"}}, nil); reason == "" {
-		t.Error("an edit without an id was taken")
+	if len(d.Statements) != 1 || d.Statements[0].ID == nil || *d.Statements[0].ID != "s2" || len(d.Added) != 1 || d.Added[0].Name != "c" {
+		t.Errorf("Description = %+v", d)
 	}
 }
 

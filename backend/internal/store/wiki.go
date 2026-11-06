@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/redact"
 )
 
 // Scopes of a description.
@@ -166,11 +167,11 @@ type QueuedNote struct {
 	DeliveryID string
 }
 
-// NextQueued is the oldest note not yet consolidated, ok false when none. A
-// note of a repository whose baseline run has started waits for the run:
-// the run pins its commit when it starts, and no step may read a page
-// holding facts newer than that commit. A run still queued holds nothing; a
-// long queue of runs must not hold the notes for hours.
+// NextQueued is the oldest note not yet consolidated nor failed, ok false
+// when none. A note of a repository whose baseline run has started waits
+// for the run: the run pins its commit when it starts, and no step may read
+// a page holding facts newer than that commit. A run still queued holds
+// nothing; a long queue of runs must not hold the notes for hours.
 func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 	var q QueuedNote
 	var bugfix, note []byte
@@ -183,7 +184,7 @@ func (s *Store) NextQueued(ctx context.Context) (QueuedNote, bool, error) {
 		       n.bugfix, n.bugfix_area, n.bugfix_component, n.note, n.reviewed_commit, n.source_commit, n.merge_commit,
 		       n.merged_at, n.run_id, n.model_label, n.issues_posted, n.suggestions_posted, n.received_at, n.delivery_id
 		  FROM notes n JOIN repos r ON r.id = n.repo_id JOIN projects p ON p.id = r.project_id
-		 WHERE n.consolidated_at IS NULL
+		 WHERE n.consolidated_at IS NULL AND n.fold_failed_at IS NULL
 		   AND NOT EXISTS (`+startedRunOfNote+`)
 		 ORDER BY n.received_at, n.pr_id LIMIT 1`).Scan(
 		&q.ProjectKey, &q.RepoSlug, &q.PRID, &q.Team, &q.PRKey, &q.PRTitle, &ticket, &issueType, &kind,
@@ -270,6 +271,58 @@ func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID
 	_, err = s.db.ExecContext(ctx, `UPDATE notes SET consolidated_at = ? WHERE repo_id = ? AND pr_id = ? AND delivery_id = ?`,
 		nowStamp(), rid, prID, delivery)
 	return err
+}
+
+// MarkFoldFailed takes the note delivered by delivery off the queue as
+// failed, with its reason, with count the attempt counted (false: DeferFold
+// counted it), the attempts returned: not folded, not consolidated, kept
+// for RequeueFailed. A note consolidated or replaced
+// meanwhile is left alone, 0 returned: the fold read the old one. The
+// reason is redacted on the way in, as on the way out: an error may echo
+// what the call carried.
+func (s *Store) MarkFoldFailed(ctx context.Context, project, repo string, prID int, delivery, reason string, count bool) (int, error) {
+	rid, ok, err := repoID(ctx, s.db, project, repo)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, sql.ErrNoRows
+	}
+	add := 0
+	if count {
+		add = 1
+	}
+	var n int
+	err = s.db.QueryRowContext(ctx, `UPDATE notes SET fold_failed_at = ?, fold_failed = ?, fold_attempts = fold_attempts + ?
+		WHERE repo_id = ? AND pr_id = ? AND delivery_id = ? AND consolidated_at IS NULL RETURNING fold_attempts`,
+		nowStamp(), redact.Text(reason), add, rid, prID, delivery).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
+}
+
+// RequeueFailed puts a repository's failed notes back on the queue, those
+// under maxAttempts; returns how many. The worker calls it when one of the
+// repository's runs ended: the page was written anew, the note may fold now.
+func (s *Store) RequeueFailed(ctx context.Context, project, repo string, maxAttempts int) (int, error) {
+	rid, ok, err := repoID(ctx, s.db, project, repo)
+	if err != nil || !ok {
+		return 0, err
+	}
+	n, err := affected(s.db.ExecContext(ctx, `UPDATE notes SET fold_failed_at = NULL, fold_failed = NULL
+		WHERE repo_id = ? AND fold_failed_at IS NOT NULL AND consolidated_at IS NULL AND fold_attempts < ?`, rid, maxAttempts))
+	return int(n), err
+}
+
+// RequeueFailedBefore puts every failed note that failed before a time
+// back on the queue, those under maxAttempts; returns how many. The worker
+// calls it on every drain with a day's age: a note no run requeues (the
+// sources off, a repository without runs) is tried again by time.
+func (s *Store) RequeueFailedBefore(ctx context.Context, before time.Time, maxAttempts int) (int, error) {
+	n, err := affected(s.db.ExecContext(ctx, `UPDATE notes SET fold_failed_at = NULL, fold_failed = NULL
+		WHERE fold_failed_at < ? AND fold_failed_at IS NOT NULL AND consolidated_at IS NULL AND fold_attempts < ?`, stamp(before), maxAttempts))
+	return int(n), err
 }
 
 // CurrentPage is the published description of one scope, ok false when

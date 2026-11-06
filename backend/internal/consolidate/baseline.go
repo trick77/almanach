@@ -2229,6 +2229,7 @@ func (w *Worker) repoMapStep(ctx context.Context, r *store.BaselineRun, plan run
 		return w.finish(ctx, r, plan)
 	}
 	w.stepWritten()
+	w.requeueFailed(ctx, r.ProjectKey, r.Slug)
 	return nil
 }
 
@@ -2307,12 +2308,17 @@ func (w *Worker) markDone(ctx context.Context, r *store.BaselineRun, plan runPla
 	return nil
 }
 
-// finish ends a run done and saves it.
+// finish ends a run done and saves it; the repository's failed notes go
+// back on the queue after it (requeueFailed).
 func (w *Worker) finish(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
 	if err := w.markDone(ctx, r, plan); err != nil {
 		return err
 	}
-	return w.save(ctx, *r)
+	if err := w.save(ctx, *r); err != nil {
+		return err
+	}
+	w.requeueFailed(ctx, r.ProjectKey, r.Slug)
+	return nil
 }
 
 // sameChecks reports whether a's statements carry b's last checks, by id:
