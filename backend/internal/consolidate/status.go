@@ -26,6 +26,9 @@ const (
 	HoldUnavailable = "unavailable"
 	// HoldBusy is the database's write lock taken past its timeout.
 	HoldBusy = "busy"
+	// HoldWrite is a write the store refused for another reason: a full
+	// disk, a read-only file.
+	HoldWrite = "write"
 )
 
 // Why a run step waits without a hold.

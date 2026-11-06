@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -46,11 +47,31 @@ const (
 func (s *Server) Classify(f func(*http.Request) LogClass) { s.classify = f }
 
 // New builds the mux with the probes registered: /healthz is liveness,
-// /readyz asks the database.
-func New(ready func(context.Context) error, log *slog.Logger) *Server {
+// /readyz asks the database, then more, in order.
+func New(ready func(context.Context) error, log *slog.Logger, more ...httpx.Check) *Server {
 	s := &Server{log: log, mux: http.NewServeMux()}
-	httpx.Health(s.mux, log, httpx.Check{Name: "database", Run: ready})
+	httpx.Health(s.mux, log, append([]httpx.Check{{Name: "database", Run: ready}}, more...)...)
 	return s
+}
+
+// MinFreeBytes is the room the data folder must have for /readyz to say
+// ready: SQLite answers a ping from a full disk, and the worker's writes
+// then fail one after another, each after a paid model call.
+const MinFreeBytes = 64 << 20
+
+// DiskFree is a readiness check that the filesystem holding dir has at
+// least minFree bytes free.
+func DiskFree(dir string, minFree uint64) func(context.Context) error {
+	return func(context.Context) error {
+		free, err := freeBytes(dir)
+		if err != nil {
+			return fmt.Errorf("statfs %s: %w", dir, err)
+		}
+		if free < minFree {
+			return fmt.Errorf("%s: %d bytes free, under %d", dir, free, minFree)
+		}
+		return nil
+	}
 }
 
 // Handle registers a pattern on the mux.

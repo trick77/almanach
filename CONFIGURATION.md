@@ -148,4 +148,4 @@ default 10 s would kill it.
 | `almanach migrate` | Apply pending migrations to `BACKEND_DB_PATH` and exit. |
 | `almanach version` | Print the version. |
 | `almanach -healthcheck` | Probe `/healthz` on loopback, exit 0 on a 2xx. |
-| `almanach -readycheck` | Probe `/readyz`: the database answers. |
+| `almanach -readycheck` | Probe `/readyz`: the database answers and its disk has 64 MB free. |

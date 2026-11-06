@@ -178,7 +178,7 @@ func (m *MetricsDeps) addLedger(ctx context.Context) error {
 // holdCauses are the hold series' labels, every one always written (0 or
 // 1), so a series never appears or goes stale with a hold.
 var holdCauses = []string{consolidate.HoldTimeout, consolidate.HoldRateLimit, consolidate.HoldKeyRefused,
-	consolidate.HoldUnavailable, consolidate.HoldBusy}
+	consolidate.HoldUnavailable, consolidate.HoldBusy, consolidate.HoldWrite}
 
 // write renders the series. A time is unix seconds, 0 for none.
 func (m *MetricsDeps) write(b *strings.Builder, st store.Metrics) {

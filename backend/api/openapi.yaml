@@ -1376,8 +1376,8 @@ components:
           properties:
             reason:
               type: string
-              enum: [timeout, rate_limit, key_refused, unavailable, busy, clone_busy, placing, budget]
-              description: A hold of the whole worker (the first five, `until` set) or a run step that waits (`since` set; `budget` is the day's budget spent, every run waits for the next UTC day).
+              enum: [timeout, rate_limit, key_refused, unavailable, busy, write, clone_busy, placing, budget]
+              description: A hold of the whole worker (the first six, `until` set; `write` is the store refusing writes, a full disk) or a run step that waits (`since` set; `budget` is the day's budget spent, every run waits for the next UTC day).
             until:
               type: string
               format: date-time

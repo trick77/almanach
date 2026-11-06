@@ -7,6 +7,7 @@ package consolidate
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,7 +82,21 @@ type Worker struct {
 	// that gets through resets both.
 	retryAt time.Time
 	backoff time.Duration
-	now     func() time.Time
+	// writeBackoff is the hold after a write the store refused for a
+	// reason that is not its lock (a full disk, a read-only file), doubling
+	// like backoff and reset by a write that got through: without it the
+	// drain paused and the next poll, thirty seconds on, paid the same
+	// model call again, without end. Its own counter: a call that gets
+	// through clears the gateway's, and the write after it fails again.
+	writeBackoff time.Duration
+	// heldNote is the delivery of the note whose own write the store
+	// refused, "" for none: only its retry counts an attempt before the
+	// call (noteWritable). Worker-wide, a hold from a run's write or the
+	// disk check would charge a note that never met a refusal.
+	heldNote string
+	// diskCheck is the room on the store's disk, nil for no check.
+	diskCheck func() error
+	now       func() time.Time
 	// base is the baseline runs, nil with the sources off. saveFailed is
 	// set when a run's progress could not be written: the drain pauses
 	// rather than pay for the same step again.
@@ -110,11 +125,15 @@ type Worker struct {
 	libs     string
 	siblings string
 	// busyRun and busyWrites count the step writes of one run a busy
-	// database refused in a row; a written step resets them. In memory:
-	// the row's attempts are the gateway's, reset by every answered call,
-	// and a busy database would refuse the count's own write.
-	busyRun    int64
-	busyWrites int
+	// database or the file refused in a row; a written step resets them.
+	// In memory: the row's attempts are the gateway's, reset by every
+	// answered call, and a busy database would refuse the count's own
+	// write. saveRun and savesRefused count its refused saves (save) the
+	// same, reset by a save that got through.
+	busyRun      int64
+	busyWrites   int
+	saveRun      int64
+	savesRefused int
 	// smu guards what Status reads from another goroutine: the work in
 	// flight, the step that waits, the hold as the queue page shows it.
 	smu       sync.Mutex
@@ -161,6 +180,78 @@ func (w *Worker) hold(ctx context.Context, cause string, retryAfter time.Duratio
 	w.setHold(w.retryAt, cause)
 	w.log.WarnContext(ctx, fmt.Sprintf("consolidate: hold (%s) for %s, no fold until then", cause, wait))
 }
+
+// holdWrite pauses the worker after a write the store refused for a
+// reason that is not its lock: the next write would meet the same disk,
+// and the fold before it is a paid call. From backoffMin, doubling to
+// backoffMax, reset by writeOK. At Error level: a database that refuses
+// writes is an outage, not a note's failure. Where the item can be taken
+// off the queue instead (a page write, a step's), only a refusal holds
+// (store.IsRefused) and any other error is the item's failure; a mark, a
+// defer or a run's save has no such way out, and holds on any error.
+func (w *Worker) holdWrite(ctx context.Context, err error) {
+	// A write cut by the shutdown is no refusal: no hold, no error line.
+	if ctx.Err() != nil {
+		return
+	}
+	if w.writeBackoff == 0 {
+		w.writeBackoff = backoffMin
+	} else {
+		w.writeBackoff = min(w.writeBackoff*2, backoffMax)
+	}
+	until := w.now().Add(w.writeBackoff)
+	// Never shorter than a hold already on: a rate limit's ask, a gateway
+	// backoff past this one, keeps its end and its cause.
+	if until.After(w.retryAt) {
+		w.retryAt = until
+		w.setHold(w.retryAt, HoldWrite)
+	}
+	w.log.ErrorContext(ctx, fmt.Sprintf("consolidate: the store refused a write, hold for %s, no fold until then", w.retryAt.Sub(w.now())), logging.Err(err))
+}
+
+// WithDiskCheck gives the worker a check of the room on the store's disk
+// (httpapi.DiskFree), asked before every item it found (an idle worker
+// neither holds nor logs): a full disk is found by a
+// free syscall, not by a paid call whose write then fails. Before Start.
+func (w *Worker) WithDiskCheck(check func() error) *Worker {
+	w.diskCheck = check
+	return w
+}
+
+// diskLow reports a disk without room, held like a refused write.
+func (w *Worker) diskLow(ctx context.Context) bool {
+	if w.diskCheck == nil {
+		return false
+	}
+	err := w.diskCheck()
+	if err == nil {
+		return false
+	}
+	w.holdWrite(ctx, fmt.Errorf("the store's disk: %w", err))
+	return true
+}
+
+// holdStore holds the worker after a mark, a defer or a save the store
+// refused: a busy one like a gateway, any other under the write hold.
+func (w *Worker) holdStore(ctx context.Context, err error) {
+	if store.IsBusy(err) {
+		w.log.WarnContext(ctx, "consolidate: a write met a busy database", logging.Err(err))
+		w.hold(ctx, HoldBusy, 0)
+		return
+	}
+	w.holdWrite(ctx, err)
+}
+
+// holdNote is holdStore after a write of note q's own, the note kept
+// queued: its retry counts its attempt before the call (heldNote).
+func (w *Worker) holdNote(ctx context.Context, q store.QueuedNote, err error) {
+	w.holdStore(ctx, err)
+	w.heldNote = q.DeliveryID
+}
+
+// writeOK forgets the write hold's backoff, and the note it held, once a
+// write got through.
+func (w *Worker) writeOK() { w.writeBackoff, w.heldNote = 0, "" }
 
 // holding reports whether a gateway hold is still on.
 func (w *Worker) holding() bool { return w.now().Before(w.retryAt) }
@@ -288,7 +379,7 @@ func (w *Worker) drain(ctx context.Context) {
 			w.log.WarnContext(ctx, "baseline: run queue read failed", logging.Err(err))
 			return
 		}
-		if !ok {
+		if !ok || w.diskLow(ctx) || !w.runWritable(ctx, r) {
 			return
 		}
 		loaded := r
@@ -333,13 +424,58 @@ func (w *Worker) foldOrIgnore(ctx context.Context, q store.QueuedNote) bool {
 		if !known {
 			w.log.InfoContext(ctx, "consolidate: "+q.PRKey+" ignored: no source repository "+q.ProjectKey+"/"+q.RepoSlug)
 			if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID); err != nil {
-				w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
+				w.holdStore(ctx, err)
 				return false
 			}
+			w.writeOK()
 			return true
 		}
 	}
-	return w.Fold(ctx, q)
+	// Before the paid call only: an ignored note costs a mark alone.
+	if w.diskLow(ctx) {
+		return false
+	}
+	counted, fold, next := w.noteWritable(ctx, q)
+	if !fold {
+		return next
+	}
+	return w.fold(ctx, q, counted)
+}
+
+// noteWritable is the write a note held by a refused write takes before
+// its paid call: its attempt counted (DeferFold). Refused again, the worker
+// holds again and pays nothing; through, the fold goes on with that count
+// as its attempt (counted, 0 for none), so a failure of the call after it
+// counts nothing more; a note whose writes the store keeps refusing is
+// given up at maxFoldAttempts like one the gateway keeps failing: failed,
+// never consolidated. Only the note whose own write was refused (heldNote)
+// is counted so: another, behind a hold a run's write or the disk check
+// set, pays its call uncounted. fold false: next is whether the drain may
+// go on.
+func (w *Worker) noteWritable(ctx context.Context, q store.QueuedNote) (counted int, fold, next bool) {
+	if w.writeBackoff == 0 || w.heldNote != q.DeliveryID {
+		return 0, true, true
+	}
+	attempts, err := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// No row to count against (delivery_id is NOT NULL: the repository
+		// renamed or removed meanwhile): the fold's own writes tell.
+		return 0, true, true
+	case err != nil:
+		w.holdNote(ctx, q, err)
+		return 0, false, false
+	case attempts == 0:
+		// Delivered again meanwhile: the new note is queued with no attempt
+		// against it, and folding the old one would buy nothing.
+		w.log.InfoContext(ctx, "consolidate: "+q.PRKey+" delivered again meanwhile, the new note folded instead")
+		return 0, false, true
+	case attempts < maxFoldAttempts:
+		// The backoff stays: a page write refused after it holds longer.
+		return attempts, true, true
+	}
+	// failNote logs the give-up.
+	return 0, false, w.failNote(ctx, q, "the store refused its writes", true)
 }
 
 // maxFoldAttempts bounds how often one note is tried against a gateway
@@ -386,11 +522,18 @@ func gatewayClass(res inference.Call) (gateway bool, retryAfter time.Duration) {
 // repository's next run to queue again (failNote): the knowledge is not
 // lost, only late. A gateway-class failure, or a database that stayed busy
 // past its timeout, leaves it queued with its attempt counted and holds the
-// worker, up to maxFoldAttempts.
+// worker, up to maxFoldAttempts. A write the file refuses (store.IsRefused:
+// a full disk) leaves it queued too, under the write hold, its attempt
+// counted at the retry, before its call (noteWritable).
 // Reports whether the drain may go on: false after a deferred note or a
 // mark the store refused, so the same note is not paid for again in the
 // same lap.
-func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
+func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) { return w.fold(ctx, q, 0) }
+
+// fold is Fold with the attempt noteWritable counted already (counted, 0
+// for none): a failure of this fold counts none more, or one retry after a
+// refused write would cost the note two of its maxFoldAttempts.
+func (w *Worker) fold(ctx context.Context, q store.QueuedNote, counted int) (next bool) {
 	ctx = logging.With(ctx, "team", q.Team, "pr_key", q.PRKey)
 	deferred := false
 	failed := ""
@@ -415,22 +558,26 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 			return
 		}
 		if failed != "" {
-			next = w.failNote(ctx, q, failed, false)
+			next = w.failNote(ctx, q, failed, counted > 0)
 			return
 		}
 		if err := w.store.MarkConsolidated(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID); err != nil {
-			w.log.WarnContext(ctx, "consolidate: mark failed, drain paused", logging.Err(err))
+			// A mark the store refuses: the paid fold would be made again
+			// at the next poll, so the worker holds, longer each time.
+			w.holdNote(ctx, q, err)
 			next = false
 			return
 		}
+		w.writeOK()
 		next = true
 	}()
 
-	// A read that fails before the call: a busy database defers the note,
-	// anything else fails it, never consolidated with nothing folded.
+	// A read that fails before the call: a busy database defers the note, a
+	// file that refuses holds it, anything else fails it, never consolidated
+	// with nothing folded.
 	readFailed := func(what string, err error) {
 		w.log.WarnContext(ctx, "consolidate: "+what+" failed", logging.Err(err))
-		if deferred = w.deferBusy(ctx, q, err); !deferred {
+		if deferred = w.deferStore(ctx, q, err, counted); !deferred {
 			failed = what + " failed: " + err.Error()
 		}
 	}
@@ -470,12 +617,14 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 		OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
 	})
 	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: call row failed", logging.Err(err))
+		// No hold here: the gateway's answer below would clear it. On a
+		// full disk the page write or the mark after it holds.
+		w.log.ErrorContext(ctx, "consolidate: call row failed", logging.Err(err))
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res.Call); gateway {
 		w.hold(ctx, gatewayCause(res.Call), retryAfter)
-		deferred = w.deferNote(ctx, q, res.Outcome.String(), res.Err)
+		deferred = w.deferNote(ctx, q, res.Outcome.String(), res.Err, counted)
 		return
 	}
 	// The gateway answered: whatever it said, the hold is over.
@@ -496,18 +645,19 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	}
 	// The repository's patch first; refused, nothing is written and the note
 	// fails whole, so its retry folds it once. The project's patch after:
-	// once the repository's revision is written (repoWrote), refused or
-	// busy it costs only itself, the project step of the repository's next
-	// run folds the page anew anyway; with nothing written yet, the note is
-	// failed or deferred as before. The tree is read only for a patch that
-	// drops: it judges nothing else.
+	// once the repository's revision is written (repoWrote), refused, busy
+	// or its write refused by the file it costs only itself (the worker
+	// holds), the project step of the repository's next run folds the page
+	// anew anyway; with nothing written yet, the note is failed, deferred or
+	// held as before. The tree is read only for a patch that drops: it
+	// judges nothing else.
 	var tree func(string) bool
 	if p := res.Merge.Repository; p != nil && len(p.Drop) > 0 {
 		tree = w.dropTree(ctx, q)
 	}
 	repoWrote, refused, err := w.apply(ctx, q, store.ScopeRepository, q.RepoSlug, repoPage, res.Merge.Repository, id, tree)
 	if err != nil {
-		deferred = w.deferBusy(ctx, q, err)
+		deferred = w.deferStore(ctx, q, err, counted)
 		return
 	}
 	if refused != "" {
@@ -525,10 +675,15 @@ func (w *Worker) Fold(ctx context.Context, q store.QueuedNote) (next bool) {
 	_, refused, err = w.apply(ctx, q, store.ScopeProject, "", projectPage, res.Merge.Project, id, nil)
 	switch {
 	case err != nil && !repoWrote:
-		deferred = w.deferBusy(ctx, q, err)
+		deferred = w.deferStore(ctx, q, err, counted)
 	case err != nil:
 		w.log.WarnContext(ctx, "consolidate: project page left unchanged, the repository's patch kept", logging.Err(err))
-		w.hold(ctx, HoldBusy, 0)
+		// A busy one holds; a refused one leaves the hold to the mark after
+		// it, which meets the same file: held here too, one fold would
+		// double the write backoff twice.
+		if store.IsBusy(err) {
+			w.hold(ctx, HoldBusy, 0)
+		}
 	case refused != "" && !repoWrote:
 		failed = refused
 	}
@@ -614,9 +769,12 @@ func (w *Worker) failNote(ctx context.Context, q store.QueuedNote, reason string
 	reason = truncate(redact.Text(reason), reasonMaxRunes)
 	attempts, err := w.store.MarkFoldFailed(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID, reason, !counted)
 	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: failure mark failed, drain paused", logging.Err(err))
+		// A mark has no way out: the worker holds, or the next poll pays the
+		// same call again; the retry counts its attempt first (noteWritable).
+		w.holdNote(ctx, q, err)
 		return false
 	}
+	w.writeOK()
 	if attempts == 0 {
 		w.log.InfoContext(ctx, "consolidate: "+q.PRKey+" consolidated or replaced meanwhile, failure not marked")
 		return true
@@ -682,13 +840,26 @@ const collectionProject = "_This project is a collection: repositories that each
 // deferNote leaves a note queued with its failed attempt counted, after a
 // hold. Once maxFoldAttempts is reached the note is given up: off the queue
 // as failed with its reason (failNote), never consolidated, so what its
-// pull request taught is not thrown away for a gateway's bad day. Always
-// true: the worker holds, the drain ends either way.
-func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome string, cause error) bool {
-	attempts, err := w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID)
-	if err != nil {
-		w.log.WarnContext(ctx, "consolidate: defer failed, drain paused", logging.Err(err))
-		return true
+// pull request taught is not thrown away for a gateway's bad day. counted
+// is the attempt noteWritable counted for this fold already, 0 for none:
+// then no second count. Always true: the worker holds, the drain ends
+// either way.
+func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome string, cause error, counted int) bool {
+	attempts := counted
+	if attempts == 0 {
+		var err error
+		attempts, err = w.store.DeferFold(ctx, q.ProjectKey, q.RepoSlug, q.PRID, q.DeliveryID)
+		if errors.Is(err, sql.ErrNoRows) {
+			// No row to count against (no delivery id, the repository
+			// removed meanwhile): nothing refused, the hold already on stands.
+			w.log.WarnContext(ctx, "consolidate: defer found no note to count", logging.Err(err))
+			return true
+		}
+		if err != nil {
+			w.holdNote(ctx, q, err)
+			return true
+		}
+		w.writeOK()
 	}
 	if attempts == 0 {
 		// A later delivery replaced the note while it was folded: that one
@@ -710,16 +881,25 @@ func (w *Worker) deferNote(ctx context.Context, q store.QueuedNote, outcome stri
 	return true
 }
 
-// deferBusy is a store error met during a fold. A database that stayed
+// deferStore is a store error met during a fold. A database that stayed
 // busy past its timeout is temporary, like a gateway failure: the worker
-// holds and the note is tried again, its attempt counted. Anything else
-// reports false: the caller fails the note.
-func (w *Worker) deferBusy(ctx context.Context, q store.QueuedNote, err error) bool {
-	if !store.IsBusy(err) {
+// holds and the note is tried again, its attempt counted. A write the file
+// refused (store.IsRefused: a full disk) keeps the note queued, neither
+// failed nor consolidated, under the write hold, the attempt counted at the
+// retry, before its call (noteWritable; here the count would be refused
+// too): marked then, its paid rewrite was once thrown away. Anything else
+// (a constraint, a row that does not decode) reports false: the caller
+// fails the note.
+func (w *Worker) deferStore(ctx context.Context, q store.QueuedNote, err error, counted int) bool {
+	busy := store.IsBusy(err)
+	if !busy && !store.IsRefused(err) {
 		return false
 	}
-	w.hold(ctx, HoldBusy, 0)
-	return w.deferNote(ctx, q, "database busy", err)
+	w.holdNote(ctx, q, err)
+	if busy {
+		return w.deferNote(ctx, q, "database busy", err, counted)
+	}
+	return true
 }
 
 // apply takes one description's patch under the rules of a fold
@@ -729,8 +909,8 @@ func (w *Worker) deferBusy(ctx context.Context, q store.QueuedNote, err error) b
 // refused is why the patch as a whole could not be taken (a page left
 // without a summary; a store failure; a bug past ApplyMerge), the page
 // unchanged, the note failed. The error is only ever a busy database's
-// (store.IsBusy): the caller defers the note. wrote reports a revision
-// written.
+// or one the file refused (storeFailed): the caller defers or holds the
+// note (deferStore). wrote reports a revision written.
 func (w *Worker) apply(ctx context.Context, q store.QueuedNote, scope, repo string, current store.Page, p *inference.Patch, callID *int64,
 	exists func(string) bool) (wrote bool, refused string, err error) {
 	if p == nil {
@@ -830,10 +1010,11 @@ func (w *Worker) logDropped(ctx context.Context, at string, before []store.State
 }
 
 // storeFailed is apply's answer to a store failure the caller has logged:
-// a busy database's error passed on (the note deferred), anything else a
+// a busy database's error, or one the file refused (store.IsRefused),
+// passed on (the note deferred or held, deferStore), anything else a
 // refusal (the note failed, never consolidated with nothing written).
 func storeFailed(what string, err error) (wrote bool, refused string, _ error) {
-	if store.IsBusy(err) {
+	if store.IsBusy(err) || store.IsRefused(err) {
 		return false, "", err
 	}
 	return false, what + " failed: " + err.Error(), nil

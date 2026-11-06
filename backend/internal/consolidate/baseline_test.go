@@ -983,8 +983,23 @@ func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
 		y.w.retryAt = time.Time{}
 		y.w.drain(context.Background())
 	}
-	if r := y.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "busy database writes") || r.Step != 0 {
+	if r := y.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "busy or refused database writes") || r.Step != 0 {
 		t.Fatalf("busy %d times: %+v, want the run failed at its step", maxFoldAttempts, r)
+	}
+
+	// A step write the file refuses is counted the same, under the write
+	// hold: every hold's end would pay the step again.
+	z := newWorld(t, 16)
+	z.queue(store.RunFull, "")
+	z.models.catalogue = subjects
+	z.st.applyErr = store.ErrFull
+	for i := 0; i < maxFoldAttempts; i++ {
+		z.models.patches = []inference.PatchResult{patch}
+		z.w.retryAt = time.Time{}
+		z.w.drain(context.Background())
+	}
+	if r := z.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "busy or refused database writes") {
+		t.Fatalf("refused %d times: %+v, want the run failed", maxFoldAttempts, r)
 	}
 }
 
@@ -1232,6 +1247,25 @@ func TestRun_Failures(t *testing.T) {
 	v.w.drain(context.Background())
 	if r := v.run(); r.State != store.RunQueued {
 		t.Fatalf("store down: %+v, want the run left as it was", r)
+	}
+	// A save the store refuses holds the worker like a gateway failure,
+	// with the write hold's own backoff: the next poll would pay the step
+	// again.
+	if s := v.w.Status(); !v.w.holding() || s.HoldCause != HoldWrite || v.w.writeBackoff != backoffMin {
+		t.Errorf("store down: holding %v cause %q backoff %s, want a write hold of %s", v.w.holding(), s.HoldCause, v.w.writeBackoff, backoffMin)
+	}
+	// Each refused save is counted; at maxFoldAttempts in a row the run
+	// fails before its next paid step, even where its own re-save fits.
+	if v.w.saveRun != v.run().ID || v.w.savesRefused != 1 {
+		t.Fatalf("store down: saves refused %d of run %d, want 1 of run %d", v.w.savesRefused, v.w.saveRun, v.run().ID)
+	}
+	v.st.saveErr = nil
+	v.w.savesRefused = maxFoldAttempts
+	v.w.retryAt = time.Time{}
+	calls := len(v.models.prompts)
+	v.w.drain(context.Background())
+	if r := v.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "progress not saved") || len(v.models.prompts) != calls {
+		t.Fatalf("saves refused %d times: %+v, calls %d; want the run failed with no call", maxFoldAttempts, r, len(v.models.prompts)-calls)
 	}
 }
 

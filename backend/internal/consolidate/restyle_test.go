@@ -3,6 +3,7 @@ package consolidate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -237,9 +238,17 @@ func TestRestyle_FailedCallFailsTheRun(t *testing.T) {
 }
 
 // A store that does not answer pauses the drain: the run stays open, no
-// page moves to the epoch, nothing is paid twice after.
+// page moves to the epoch, nothing is paid twice after. A step write that
+// fails for its content fails the run: every retry would pay and fail.
 func TestRestyle_HoldsOnAStoreThatDoesNotAnswer(t *testing.T) {
-	down := errors.New("database down")
+	x := restyleWorld(t)
+	x.st.applyErr = errors.New("CHECK constraint failed")
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "restyle step not written") || x.w.holding() {
+		t.Fatalf("content refused: run = %+v holding %v, want failed, no hold", r, x.w.holding())
+	}
+
+	down := fmt.Errorf("database down: %w", store.ErrFull)
 	for name, fail := range map[string]func(x world){
 		"epochs":               func(x world) { x.st.epochErr = down },
 		"page":                 func(x world) { x.st.pageErr = down },
