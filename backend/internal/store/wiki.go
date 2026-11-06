@@ -274,12 +274,13 @@ func (s *Store) MarkConsolidated(ctx context.Context, project, repo string, prID
 }
 
 // MarkFoldFailed takes the note delivered by delivery off the queue as
-// failed, with its reason, the attempt counted (returned): not folded, not
-// consolidated, kept for RequeueFailed. A note consolidated or replaced
+// failed, with its reason, with count the attempt counted (false: DeferFold
+// counted it), the attempts returned: not folded, not consolidated, kept
+// for RequeueFailed. A note consolidated or replaced
 // meanwhile is left alone, 0 returned: the fold read the old one. The
 // reason is redacted on the way in, as on the way out: an error may echo
 // what the call carried.
-func (s *Store) MarkFoldFailed(ctx context.Context, project, repo string, prID int, delivery, reason string) (int, error) {
+func (s *Store) MarkFoldFailed(ctx context.Context, project, repo string, prID int, delivery, reason string, count bool) (int, error) {
 	rid, ok, err := repoID(ctx, s.db, project, repo)
 	if err != nil {
 		return 0, err
@@ -287,10 +288,14 @@ func (s *Store) MarkFoldFailed(ctx context.Context, project, repo string, prID i
 	if !ok {
 		return 0, sql.ErrNoRows
 	}
+	add := 0
+	if count {
+		add = 1
+	}
 	var n int
-	err = s.db.QueryRowContext(ctx, `UPDATE notes SET fold_failed_at = ?, fold_failed = ?, fold_attempts = fold_attempts + 1
+	err = s.db.QueryRowContext(ctx, `UPDATE notes SET fold_failed_at = ?, fold_failed = ?, fold_attempts = fold_attempts + ?
 		WHERE repo_id = ? AND pr_id = ? AND delivery_id = ? AND consolidated_at IS NULL RETURNING fold_attempts`,
-		nowStamp(), redact.Text(reason), rid, prID, delivery).Scan(&n)
+		nowStamp(), redact.Text(reason), add, rid, prID, delivery).Scan(&n)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}

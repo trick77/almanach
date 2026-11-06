@@ -41,13 +41,15 @@ type fakeStore struct {
 	pages    map[string]store.Page
 	marked   []string
 	// deliveries are the delivery ids the marks and defers named, in order.
-	deliveries   []string
-	revisions    []store.NewRevision
-	calls        []store.LLMCall
-	nextQueuedN  int
-	revisionErr  error
-	pageErr      error
-	insertCallID int64
+	deliveries  []string
+	revisions   []store.NewRevision
+	calls       []store.LLMCall
+	nextQueuedN int
+	revisionErr error
+	// projectRevisionErr fails the project page's writes alone.
+	projectRevisionErr error
+	pageErr            error
+	insertCallID       int64
 	// history is every statement id a page ever used beyond the current
 	// page and the revisions written in the test: what NextStatementID
 	// reads off the revisions table.
@@ -124,7 +126,7 @@ func (f *fakeStore) MarkConsolidated(_ context.Context, project, repo string, pr
 
 // MarkFoldFailed records the failed note with its reason; RequeueFailed
 // clears the repository's failed notes under the bound and counts them.
-func (f *fakeStore) MarkFoldFailed(_ context.Context, project, repo string, prID int, delivery, reason string) (int, error) {
+func (f *fakeStore) MarkFoldFailed(_ context.Context, project, repo string, prID int, delivery, reason string, count bool) (int, error) {
 	f.deliveries = append(f.deliveries, delivery)
 	if f.failErr != nil {
 		return 0, f.failErr
@@ -137,7 +139,9 @@ func (f *fakeStore) MarkFoldFailed(_ context.Context, project, repo string, prID
 	if f.attempts == nil {
 		f.attempts = map[string]int{}
 	}
-	f.attempts[k]++
+	if count {
+		f.attempts[k]++
+	}
 	return f.attempts[k], nil
 }
 
@@ -188,6 +192,9 @@ func (f *fakeStore) CurrentPage(_ context.Context, scope, project, repo string) 
 func (f *fakeStore) InsertRevision(_ context.Context, rev store.NewRevision) (int, error) {
 	if f.revisionErr != nil {
 		return 0, f.revisionErr
+	}
+	if rev.Scope == store.ScopeProject && f.projectRevisionErr != nil {
+		return 0, f.projectRevisionErr
 	}
 	f.revisions = append(f.revisions, rev)
 	return len(f.revisions), nil
@@ -603,12 +610,12 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	}
 }
 
-// A drop is judged against the clone's tree at the note's merge commit: a
-// statement the code alone backs goes only when its files left the tree,
-// one a pull request taught on the model's word (a newer pull request
-// corrects an older one's fact). A statement the patch does not name
-// stays. Without a tree (the clone not fetched to the merge, the sources
-// off) every drop is the model's word.
+// A drop is judged against the clone's tree at its head, where the head
+// holds the note's merge commit: a statement the code alone backs goes
+// only when its files left the tree, one a pull request taught on the
+// model's word (a newer pull request corrects an older one's fact). A
+// statement the patch does not name stays. Without a tree (the clone not
+// fetched to the merge, the sources off) every drop is the model's word.
 func TestFoldDropsJudgedByTheTree(t *testing.T) {
 	page := existingRepoPage()
 	page.Statements = append(page.Statements,
@@ -647,16 +654,55 @@ func TestFoldDropsJudgedByTheTree(t *testing.T) {
 		!strings.Contains(logs.String(), `taught_by_pull_requests=[s1]`) {
 		t.Errorf("drops not logged:\n%s", logs.String())
 	}
+	// The tree read is the head's, never the merge commit's: a file added
+	// after the merge, which a later run wrote s2 on, is in it.
+	if !slices.Equal(code.treesAt, []string{"h1"}) {
+		t.Errorf("tree read at %v, want the head h1", code.treesAt)
+	}
 
-	// The clone not fetched to the merge commit: git has no tree there,
-	// every drop taken.
+	// The head lacks the merge commit (the clone not fetched to it yet):
+	// no tree, every drop taken.
 	st = newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
 	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
-	code = &fakeCode{tree: tree, readErr: errors.New("git ls-tree: fatal: not a tree object")}
+	code = &fakeCode{tree: tree, held: map[string]bool{"m42": false}}
+	newWorker(st, &fakeMerger{result: okResult(drop, nil)}).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
+	if len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s4"}) || len(code.treesAt) != 0 {
+		t.Errorf("clone behind: revisions = %+v trees %v, want s4 alone, no tree read", st.revisions, code.treesAt)
+	}
+
+	// No tree at the head either: the same.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
+	code = &fakeCode{tree: tree, held: map[string]bool{"m42": true}, readErr: errors.New("git ls-tree: fatal: not a tree object")}
 	newWorker(st, &fakeMerger{result: okResult(drop, nil)}).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
 	if len(st.revisions) != 1 || !slices.Equal(ids(st.revisions[0]), []string{"s4"}) {
-		t.Errorf("clone behind: revisions = %+v, want s4 alone", st.revisions)
+		t.Errorf("no tree: revisions = %+v, want s4 alone", st.revisions)
+	}
+
+	// The clone without a head, or its repos unread: the same.
+	for name, rs := range map[string]*runStore{
+		"no head":     {fakeStore: newFakeStore()},
+		"repos error": {fakeStore: newFakeStore(), reposErr: errors.New("busy")},
+	} {
+		rs.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+		code = &fakeCode{tree: tree, held: map[string]bool{"m42": true}}
+		newWorker(rs.fakeStore, &fakeMerger{result: okResult(drop, nil)}).WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
+		if len(rs.revisions) != 1 || !slices.Equal(ids(rs.revisions[0]), []string{"s4"}) || len(code.treesAt) != 0 {
+			t.Errorf("%s: revisions = %+v trees %v, want s4 alone", name, rs.revisions, code.treesAt)
+		}
+	}
+
+	// A patch that drops nothing reads no tree.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
+	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
+	code = &fakeCode{tree: tree, held: map[string]bool{"m42": true}}
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst, neu.", Statements: []inference.Statement{}}, nil)}).
+		WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
+	if len(code.treesAt) != 0 || code.asked != 0 {
+		t.Errorf("no drop: trees %v contains asked %d, want no git read", code.treesAt, code.asked)
 	}
 
 	// A busy clone: the same, and the call is made all the same.
@@ -1038,6 +1084,16 @@ func TestFoldCallSpecificFailureFailsTheNote(t *testing.T) {
 	if r := cut.failed["PLAT|files|42"]; utf8.RuneCountInString(r) != reasonMaxRunes || !strings.HasSuffix(r, "…") {
 		t.Errorf("long reason stored as %d runes, want %d with an ellipsis", utf8.RuneCountInString(r), reasonMaxRunes)
 	}
+	// Redacted before the cut: a token the cut would leave too short for
+	// its shape is still taken out.
+	cut = newFakeStore()
+	token := "abcdef0123456789abcdef0123456789abcdef01"
+	pad := strings.Repeat("x", reasonMaxRunes-len("error: : Authorization: Bearer ")-len(llmwire.ErrBadRequest.Error())-10)
+	secret := failed(inference.OutcomeError, fmt.Errorf("%w: %sAuthorization: Bearer %s", llmwire.ErrBadRequest, pad, token))
+	newWorker(cut, &fakeMerger{result: secret}).Fold(context.Background(), queued("PLAT/files#42"))
+	if r := cut.failed["PLAT|files|42"]; strings.Contains(r, token[:8]) || !strings.HasPrefix(r, "error: ") {
+		t.Errorf("reason with a token cut short stored as %q", r)
+	}
 	for i := 1; i < maxFoldAttempts; i++ {
 		w.Fold(context.Background(), queued("PLAT/files#42"))
 	}
@@ -1139,7 +1195,9 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 			t.Errorf("attempt %d: next = %v, want the drain ended by the hold", i, next)
 		}
 	}
-	if len(st.marked) != 0 || st.attempts["PLAT|files|42"] != maxFoldAttempts+1 || len(st.revisions) != 0 || st.failed["PLAT|files|42"] != "error: down" {
+	// The last attempt is counted once: the defer counted it, the failure
+	// mark does not again.
+	if len(st.marked) != 0 || st.attempts["PLAT|files|42"] != maxFoldAttempts || len(st.revisions) != 0 || st.failed["PLAT|files|42"] != "error: down" {
 		t.Errorf("after %d attempts: marked %v attempts %v revisions %d failed %v; want given up as failed", maxFoldAttempts, st.marked, st.attempts, len(st.revisions), st.failed)
 	}
 	// Every defer and the mark named the delivery the fold read, so a note
@@ -1164,7 +1222,9 @@ func TestFoldGatewayFailureHoldsTheWorker(t *testing.T) {
 
 // A database busy past its timeout is temporary, like the gateway: the
 // paid fold's note stays queued with its attempt counted and the worker
-// holds. Any other write failure ends the note as before: marked.
+// holds. Any other store failure fails the note, never consolidated with
+// nothing written. A busy project write after the repository's patch was
+// written consolidates the note: its retry would fold that patch twice.
 func TestFoldBusyDatabaseDefers(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
@@ -1183,10 +1243,46 @@ func TestFoldBusyDatabaseDefers(t *testing.T) {
 		t.Fatalf("after the hold: next %v marked %v revisions %d", next, st.marked, len(st.revisions))
 	}
 
-	// Another write failure: logged, the note marked, no hold.
+	// Another write failure: logged, the note failed with its reason, no
+	// hold.
 	st.revisionErr = errors.New("disk full")
-	if next := w.Fold(ctx, queued("PLAT/files#43")); !next || len(st.marked) != 2 || w.holding() {
-		t.Fatalf("disk full: next %v marked %v holding %v; want marked, no hold", next, st.marked, w.holding())
+	if next := w.Fold(ctx, queued("PLAT/files#43")); !next || len(st.marked) != 1 || w.holding() ||
+		st.failed["PLAT|files|42"] != "repository revision write failed: disk full" {
+		t.Fatalf("disk full: next %v marked %v holding %v failed %v; want failed, no hold", next, st.marked, w.holding(), st.failed)
+	}
+
+	// A page read failing otherwise than busy fails the note too, unpaid.
+	st = newFakeStore()
+	st.pageErr = errors.New("malformed row")
+	m = &fakeMerger{result: okResult(nil, nil)}
+	w = newWorker(st, m)
+	if next := w.Fold(ctx, queued("PLAT/files#42")); !next || len(st.marked) != 0 || len(m.prompts) != 0 ||
+		st.failed["PLAT|files|42"] != "repository page read failed: malformed row" {
+		t.Fatalf("page read failed: next %v marked %v calls %d failed %v", next, st.marked, len(m.prompts), st.failed)
+	}
+
+	// The project's write busy after the repository's revision: the note
+	// consolidated, the repository's patch written once, the worker held.
+	st = newFakeStore()
+	st.pages[pageKey(store.ScopeProject, "PLAT", "")] = store.Page{Scope: store.ScopeProject, ProjectKey: "PLAT", RevisionID: 7, Revision: 1, Summary: "Das Projekt."}
+	st.projectRevisionErr = store.ErrBusy
+	m = &fakeMerger{result: okResult(
+		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
+		&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}})}
+	w = newWorker(st, m)
+	w.now = func() time.Time { return mergedAt }
+	if next := w.Fold(ctx, queued("PLAT/files#42")); !next || len(st.marked) != 1 || len(st.revisions) != 1 || st.attempts["PLAT|files|42"] != 0 || !w.holding() {
+		t.Fatalf("project busy: next %v marked %v revisions %d attempts %v holding %v; want consolidated, held",
+			next, st.marked, len(st.revisions), st.attempts, w.holding())
+	}
+	// With no repository patch nothing is written twice: deferred.
+	st = newFakeStore()
+	st.projectRevisionErr = store.ErrBusy
+	m = &fakeMerger{result: okResult(nil, &inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}})}
+	w = newWorker(st, m)
+	w.now = func() time.Time { return mergedAt }
+	if next := w.Fold(ctx, queued("PLAT/files#42")); next || len(st.marked) != 0 || st.attempts["PLAT|files|42"] != 1 {
+		t.Fatalf("project busy, no repository patch: next %v marked %v attempts %v; want deferred", next, st.marked, st.attempts)
 	}
 
 	// A busy page read before the call defers too, and pays for nothing.

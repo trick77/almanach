@@ -33,16 +33,14 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   (user, 2026-11-01); bad path: off file list.
 - Provenance is code's: `sources` carried by id, current PR/run appended on text change; departure
   run neither credits nor adds (removal teaches nothing; user, 2026-11-02), restyle never credits. Bad item
-  (unknown/repeated id, bad kind, empty): merge (whole page) rejected; step's patch never, item
-  left out, logged, stored kept (user, 2026-11-01). New statements in id-less `added`; ids never reissued.
+  (unknown/repeated id, bad kind, empty): left out of patch, logged, stored kept (user, 2026-11-01).
+  New statements in id-less `added`; ids never reissued.
 - Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
   evidence only. `.md` export: bearer opens only it.
-- One worker, serial, oldest first. Merge = patch (`ApplyMerge`), never whole page: forgotten
-  statement vanished, output limit cut big pages. Drop: PR-taught = model's word; code-backed only
-  with files gone from clone head holding merge commit, no tree = model's word. Call-specific
-  failure: note `fold_failed_at`+reason, off queue, back after repo's run done, ≤ `maxFoldAttempts`;
-  never consolidated (PR knowledge lost once). `gatewayClass`: worker holds, note kept, ≤
-  `maxFoldAttempts`: none blocks queue forever. Failed mark pauses drain (else one paid call per lap).
+- One worker, serial, oldest first. Merge = patch (page forgot statements, hit output cap); repo
+  page written = note done (refold dups). Code drop: files gone at head, not merge tree (lacks later
+  files). Call failure: note failed+requeued, never consolidated. `gatewayClass`: hold, note kept.
+  Both ≤ `maxFoldAttempts`: none blocks queue forever. Failed mark pauses drain (else one paid call per lap).
 - One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
   schema, no in-call retry.
 - Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.

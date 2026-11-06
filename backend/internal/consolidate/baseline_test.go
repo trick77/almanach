@@ -304,9 +304,12 @@ type fakeCode struct {
 	asked       int
 	readErr     error
 	read        [][]string
+	// treesAt is every commit a tree was asked at.
+	treesAt []string
 }
 
-func (c *fakeCode) Tree(ctx context.Context, _, _, _ string) ([]gitrepo.Entry, error) {
+func (c *fakeCode) Tree(ctx context.Context, _, _, sha string) ([]gitrepo.Entry, error) {
+	c.treesAt = append(c.treesAt, sha)
 	if ctx.Err() != nil {
 		// What a git child killed by the cancel answers: no context error.
 		return nil, errors.New("git ls-tree: signal: killed")

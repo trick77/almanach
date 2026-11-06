@@ -113,7 +113,7 @@ func TestMarkConsolidated_RedeliveredDuringFoldStaysQueued(t *testing.T) {
 		}
 	}
 	// A failed mark of the replaced note is no mark either.
-	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, first.DeliveryID, "too_long"); err != nil || n != 0 {
+	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, first.DeliveryID, "too_long", true); err != nil || n != 0 {
 		t.Fatalf("MarkFoldFailed of the replaced note = %d, %v; want 0, nil", n, err)
 	}
 	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
@@ -130,7 +130,7 @@ func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
 	ctx := context.Background()
 	ingest(t, s, noteFor("PRJ", "svc", 1))
 	ingest(t, s, noteFor("PRJ", "svc", 2))
-	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "too_long"); err != nil || n != 1 {
+	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "too_long", true); err != nil || n != 1 {
 		t.Fatalf("MarkFoldFailed = %d, %v; want attempt 1", n, err)
 	}
 	if q, ok, err := s.NextQueued(ctx); err != nil || !ok || q.PRID != 2 {
@@ -160,16 +160,23 @@ func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
 	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
 		t.Fatalf("FailedNotes after the requeue = %+v, %v", failed, err)
 	}
-	// At the bound a run leaves it failed.
-	for i := 0; i < 8; i++ {
-		if _, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "unparseable"); err != nil {
+	// At the bound a run leaves it failed. An attempt DeferFold counted
+	// already is not counted again.
+	for i := 0; i < 6; i++ {
+		if _, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "unparseable", true); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if n, err := s.DeferFold(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1"); err != nil || n != 8 {
+		t.Fatalf("DeferFold = %d, %v; want attempt 8", n, err)
+	}
+	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1", "timed_out", false); err != nil || n != 8 {
+		t.Fatalf("MarkFoldFailed of a counted attempt = %d, %v; want 8", n, err)
 	}
 	if n, err := s.RequeueFailed(ctx, "PRJ", "svc", 8); err != nil || n != 0 {
 		t.Fatalf("RequeueFailed at the bound = %d, %v; want none", n, err)
 	}
-	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 1 || failed[0].Attempts != 9 {
+	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 1 || failed[0].Attempts != 8 {
 		t.Fatalf("FailedNotes at the bound = %+v, %v", failed, err)
 	}
 	// Delivered again (a reopened PR merged again): queued afresh.
@@ -189,7 +196,7 @@ func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
 	if err := s.MarkConsolidated(ctx, "PRJ", "svc", 2, "d-PRJ-svc-2"); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 2, "d-PRJ-svc-2", "late"); err != nil || n != 0 {
+	if n, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 2, "d-PRJ-svc-2", "late", true); err != nil || n != 0 {
 		t.Fatalf("MarkFoldFailed on a consolidated note = %d, %v; want 0", n, err)
 	}
 	if failed, err := s.FailedNotes(ctx, 10); err != nil || len(failed) != 0 {
@@ -197,7 +204,7 @@ func TestFoldFailed_LeavesTheQueueUntilRequeued(t *testing.T) {
 	}
 	// The reason is redacted, in and out; the aged requeue takes a note
 	// that failed before a time, under the bound.
-	if _, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1-again", "bad request: Authorization: Bearer abcdef0123456789abcdef"); err != nil {
+	if _, err := s.MarkFoldFailed(ctx, "PRJ", "svc", 1, "d-PRJ-svc-1-again", "bad request: Authorization: Bearer abcdef0123456789abcdef", true); err != nil {
 		t.Fatal(err)
 	}
 	failed, err = s.FailedNotes(ctx, 10)
