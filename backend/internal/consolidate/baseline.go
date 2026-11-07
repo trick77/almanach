@@ -21,6 +21,7 @@ import (
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/markup"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
@@ -46,6 +47,7 @@ type RunStore interface {
 	IsSourceRepo(ctx context.Context, key, slug string) (bool, error)
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
+	Messaging(ctx context.Context) (store.Messages, error)
 	InnerEdges(ctx context.Context, key string) ([]store.Edge, error)
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 	DepartedRepos(ctx context.Context, key string) ([]string, error)
@@ -887,7 +889,13 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		if err != nil {
 			return err
 		}
+		msgs, err := w.base.Store.Messaging(ctx)
+		if err != nil {
+			w.log.WarnContext(ctx, "baseline: topics read failed, drain paused", logging.Err(err))
+			return errStop
+		}
 		w.libsRun, w.libs, w.siblings = r.ID, sharedRepos(libs, false), siblingInterfaces(repos, r.Slug)
+		w.topics = topicsShown(msgs, store.RepoRef{ProjectKey: r.ProjectKey, Slug: r.Slug}, r.Commit)
 	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
@@ -915,7 +923,8 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		problems = problemsFor(w.problems, read)
 	}
 	focus := w.focus(plan, page, newer)
-	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, w.siblings, newer)
+	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, w.siblings,
+		w.topics, newer)
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
@@ -2720,10 +2729,10 @@ func renderProblems(problems []store.RepoProblem) string {
 	return b.String()
 }
 
-func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs, siblings string,
-	newer map[string]string) string {
+func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs, siblings,
+	topics string, newer map[string]string) string {
 	return strings.NewReplacer(
-		"{problem_areas}", problems, "{shared}", libs, "{sibling_interfaces}", siblings,
+		"{problem_areas}", problems, "{shared}", libs, "{sibling_interfaces}", siblings, "{topics}", topics,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps),
 		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
@@ -2891,6 +2900,46 @@ func lead(text string) string {
 
 // numbered is a numbered list item's start, as markup.FromBlocks writes it.
 var numbered = regexp.MustCompile(`^\d+\. `)
+
+// topicsShown is the topics a repository's code sends to and receives
+// from, read by code (store.Messaging), each with the repositories on the
+// far side, and the schemas it defines: what a describe step's messaging
+// statements name. "_None._" without any. Read at another commit than the
+// run's (the poller moved on mid-run): none shown, a run is pinned to its
+// commit and its files would not bear them out.
+func topicsShown(m store.Messages, ref store.RepoRef, commit string) string {
+	if c := m.Commit(ref); c != "" && c != commit {
+		return "_Not read at this run's commit: name only the topics the files below show._"
+	}
+	var b strings.Builder
+	far := func(refs []store.RepoRef) string {
+		var names []string
+		for _, p := range refs {
+			names = append(names, "`"+p.ProjectKey+"/"+p.Slug+"`")
+		}
+		if len(names) == 0 {
+			return "none of this wiki's repositories"
+		}
+		return strings.Join(names, ", ")
+	}
+	for _, t := range m.RepoTopics(ref) {
+		switch t.Direction {
+		case messaging.Produces:
+			fmt.Fprintf(&b, "- sends to `%s`, received by %s\n", t.Name, far(t.Peers))
+		case messaging.Consumes:
+			fmt.Fprintf(&b, "- receives from `%s`, sent by %s\n", t.Name, far(t.Peers))
+		default:
+			fmt.Fprintf(&b, "- names `%s` (the code does not say which way)\n", t.Name)
+		}
+	}
+	for _, s := range m.Of(ref).Schemas {
+		fmt.Fprintf(&b, "- defines the %s schema `%s` (`%s`)\n", s.Kind, s.Name, s.File)
+	}
+	if b.Len() == 0 {
+		return "_None._"
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 // siblingInterfaces names the interfaces and entities the project's other
 // repositories offer, for a describe step: a call this part's code makes

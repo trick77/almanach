@@ -169,6 +169,7 @@ const project: ProjectDetail = {
   ],
   problem_window_days: 90,
   revisions: [],
+  topics: [],
   recent_notes: [
     {
       pr_id: 231,
@@ -212,6 +213,8 @@ const repo: RepoDetail = {
   map_declined: false,
   uses: [],
   used_by: [],
+  // A repository's messages: messaging.test.tsx.
+  messaging: { topics: [], schemas: [] },
 };
 
 /** openTab switches a page to one of its tabs, as a reader does. */
@@ -388,6 +391,45 @@ describe("ProjectPage", () => {
     expect(document.title).toContain("PAY");
     // The start tab has no hash.
     expect(window.location.hash).toBe("");
+  });
+
+  it("lists the project's topics with who sends and who receives, another project's too", async () => {
+    const topics: ProjectDetail["topics"] = [
+      {
+        name: "pay.booked.v1",
+        producers: [{ project: "PAY", slug: "pay-clearing" }],
+        consumers: [
+          { project: "PAY", slug: "pay-api" },
+          { project: "LEDGER", slug: "ledger-core" },
+        ],
+        declared: [],
+      },
+    ];
+    serve({ "projects/PAY": { ...project, topics } });
+    render(<ProjectPage projectKey="PAY" />);
+    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    const row = within(overview).getByText("pay.booked.v1").closest("tr")!;
+    expect(
+      within(row)
+        .getByRole("link", { name: "pay-clearing" })
+        .getAttribute("href"),
+    ).toBe("/projects/PAY/repos/pay-clearing");
+    expect(
+      within(row)
+        .getByRole("link", { name: "LEDGER/ledger-core" })
+        .getAttribute("href"),
+    ).toBe("/projects/LEDGER/repos/ledger-core");
+    const rail = screen.getByRole("navigation", { name: "Inhalt" });
+    expect(
+      within(rail).getByText("Messaging").closest("a")?.getAttribute("href"),
+    ).toBe("#messages");
+  });
+
+  it("has no messages section for a project whose code names no topic", async () => {
+    serve({ "projects/PAY": project });
+    render(<ProjectPage projectKey="PAY" />);
+    await screen.findByRole("tabpanel", { name: "Übersicht" });
+    expect(screen.queryByText("Messaging")).toBeNull();
   });
 
   it("lists the project page's revisions on the overview, each a link", async () => {

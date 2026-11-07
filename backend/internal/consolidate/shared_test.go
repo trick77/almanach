@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -59,6 +60,55 @@ func TestRun_LibrariesAsContext(t *testing.T) {
 	}
 	if x.st.libReads["svc"] != 1 {
 		t.Errorf("the repository's libraries read %d times, want once a run", x.st.libReads["svc"])
+	}
+}
+
+// Every describe step reads what the repository's code sends and
+// receives, with the far side, and the schemas it defines.
+func TestTopicsShown(t *testing.T) {
+	svc, cli := store.RepoRef{ProjectKey: "tools", Slug: "svc"}, store.RepoRef{ProjectKey: "tools", Slug: "cli"}
+	tp := func(name, dir string) messaging.Topic { return messaging.Topic{Name: name, Direction: dir} }
+	m := store.NewMessages(map[store.RepoRef]messaging.Read{
+		svc: {Topics: []messaging.Topic{tp("jobs", messaging.Produces), tp("done", messaging.Consumes), tp("audit", messaging.Declares)},
+			Schemas: []messaging.Schema{{Name: "ex.Job", Kind: "avro", File: "job.avsc"}}},
+		cli: {Topics: []messaging.Topic{tp("jobs", messaging.Consumes)}},
+	})
+	want := "- sends to `jobs`, received by `tools/cli`\n- receives from `done`, sent by none of this wiki's repositories\n" +
+		"- names `audit` (the code does not say which way)\n- defines the avro schema `ex.Job` (`job.avsc`)"
+	if got := topicsShown(m, svc, "c1"); got != want {
+		t.Errorf("topicsShown =\n%s\nwant\n%s", got, want)
+	}
+	if got := topicsShown(m, store.RepoRef{ProjectKey: "tools", Slug: "web"}, "c1"); got != "_None._" {
+		t.Errorf("without topics: %q", got)
+	}
+	// Read at a commit the run is not pinned to: none shown.
+	later := store.NewMessagesAt(map[store.RepoRef]messaging.Read{svc: {Topics: []messaging.Topic{tp("jobs", messaging.Produces)}}},
+		map[store.RepoRef]string{svc: "c2"})
+	if got := topicsShown(later, svc, "c1"); !strings.HasPrefix(got, "_Not read at this run's commit") {
+		t.Errorf("another commit's topics: %q", got)
+	}
+
+	x := newWorld(t, 16)
+	x.st.messages = map[store.RepoRef]messaging.Read{svc: {Topics: []messaging.Topic{tp("jobs", messaging.Produces)}}}
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}},
+	}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{stmt(nil, "component", "Dienst", "Der Dienst.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.models.repoMap = inference.RepoMapResult{Call: called, Map: drawnRepoMap()}
+	x.w.drain(context.Background())
+	shown := 0
+	for _, p := range x.models.prompts {
+		if strings.Contains(p, "## Topics this repository's code sends and receives\n\n- sends to `jobs`, received by none of this wiki's repositories") {
+			shown++
+		}
+	}
+	if shown != 2 {
+		t.Errorf("describe prompts with the topics: %d, want both steps", shown)
 	}
 }
 

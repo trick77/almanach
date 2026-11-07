@@ -9,6 +9,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/manifest"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/redact"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -19,16 +20,21 @@ import (
 // graph the store joins at read time. Code, no model call, so the graph is
 // current after every sync, not after the next run.
 
-// ManifestStore is what reading the manifests needs of the store.
+// ManifestStore is what reading the manifests, and the messages beside
+// them, needs of the store.
 type ManifestStore interface {
 	ManifestCommit(ctx context.Context, repoID int64) (string, bool, error)
 	SaveManifests(ctx context.Context, repoID int64, commit string, read manifest.Read) error
+	TopicsCommit(ctx context.Context, repoID int64) (string, bool, error)
+	SaveTopics(ctx context.Context, repoID int64, commit string, read messaging.Read) error
 }
 
-// ManifestReads is what reading the manifests needs of gitrepo.
+// ManifestReads is what reading the manifests and messages needs of
+// gitrepo.
 type ManifestReads interface {
 	ListEntries(ctx context.Context, dir, sha string) ([]gitrepo.Entry, error)
 	NewReader(ctx context.Context, dir string) (*gitrepo.Reader, error)
+	GrepFiles(ctx context.Context, dir, sha, pattern string) ([]string, error)
 }
 
 // Manifests is the store and the reads; either nil: no manifests are read.
@@ -186,12 +192,116 @@ func (p *Poller) ReadManifestsNow(ctx context.Context, key, slug, head string) e
 	}
 	defer unlock()
 	j := store.SyncJob{Source: store.ProjectSource{ProjectID: pid, ProjectKey: key}, Repo: store.SourceRepo{ProjectID: pid, RepoID: rid, ProjectKey: key, Slug: slug}}
+	// Each when due, on its own: manifests current at head leave topics a
+	// newer reader wants still to read.
+	if topics, ok := p.syncedTopics(ctx, j, head); ok {
+		p.saveTopics(ctx, j, head, topics)
+	}
 	read, ok := p.syncedManifests(ctx, j, head)
 	if !ok {
 		return fmt.Errorf("repository %s/%s: manifests not read", key, slug)
 	}
 	p.saveManifests(ctx, j, head, read)
 	return nil
+}
+
+// topicsDue reports whether the clone's messages are to be read at head:
+// never read, read at another commit, or by an older messaging.Version.
+func (p *Poller) topicsDue(ctx context.Context, j store.SyncJob, head string) bool {
+	m := p.Manifests
+	if m.Store == nil || m.Reads == nil || head == "" {
+		return false
+	}
+	at, ok, err := m.Store.TopicsCommit(ctx, j.Repo.RepoID)
+	if err != nil {
+		p.Log.Warn("topics_check_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "err", err.Error())
+		return false
+	}
+	return !ok || at != head
+}
+
+// syncedTopics is what the clone's code says of its messages at head, read
+// when due; false when not due or not read (logged: the next cycle tries
+// again). The clone's lock is the caller's.
+func (p *Poller) syncedTopics(ctx context.Context, j store.SyncJob, head string) (messaging.Read, bool) {
+	if !p.topicsDue(ctx, j, head) {
+		return messaging.Read{}, false
+	}
+	dir, err := p.Dir(j.Repo.ProjectID, j.Repo.RepoID)
+	var read messaging.Read
+	if err == nil {
+		read, err = p.readTopics(ctx, dir, head)
+	}
+	if err != nil {
+		if ctx.Err() == nil {
+			p.Log.Warn("topics_read_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "err", err.Error())
+		}
+		return messaging.Read{}, false
+	}
+	return read, true
+}
+
+// readTopics reads what messaging.Parse needs at head: the files git finds
+// a topic or Kafka in, the schemas and the application properties, each
+// readable whole, none a test or a generator's output. Bodies pass
+// redact.Text, as the manifests' do; only names leave Parse.
+func (p *Poller) readTopics(ctx context.Context, dir, head string) (messaging.Read, error) {
+	entries, err := p.Manifests.Reads.ListEntries(ctx, dir, head)
+	if err != nil {
+		return messaging.Read{}, err
+	}
+	hits, err := p.Manifests.Reads.GrepFiles(ctx, dir, head, messaging.GrepPattern)
+	if err != nil {
+		return messaging.Read{}, err
+	}
+	hit := make(map[string]bool, len(hits))
+	for _, h := range hits {
+		hit[h] = true
+	}
+	var want []gitrepo.Entry
+	for _, e := range entries {
+		if !baseline.Readable(e) || e.Size > baseline.FileMaxBytes || baseline.TestFile(e.Path) {
+			continue
+		}
+		if messaging.SchemaFile(e.Path) || messaging.Config(e.Path) || hit[e.Path] && messaging.Source(e.Path) {
+			want = append(want, e)
+		}
+	}
+	files := map[string][]byte{}
+	if len(want) > 0 {
+		r, err := p.Manifests.Reads.NewReader(ctx, dir)
+		if err != nil {
+			return messaging.Read{}, err
+		}
+		defer func() { _ = r.Close() }()
+		for _, e := range want {
+			body, err := r.ReadFile(head, e.Path, baseline.FileMaxBytes)
+			if ctx.Err() != nil {
+				return messaging.Read{}, ctx.Err()
+			}
+			if errors.Is(err, gitrepo.ErrReaderBroken) || errors.Is(err, gitrepo.ErrBadSHA) {
+				return messaging.Read{}, err
+			}
+			if err == nil && !baseline.Binary(body) && !baseline.Generated(body) {
+				files[e.Path] = []byte(redact.Text(string(body)))
+			}
+		}
+	}
+	return messaging.Parse(files), nil
+}
+
+// saveTopics stores what was read; a failure is logged, never the
+// repository's.
+func (p *Poller) saveTopics(ctx context.Context, j store.SyncJob, head string, read messaging.Read) {
+	err := p.Manifests.Store.SaveTopics(ctx, j.Repo.RepoID, head, read)
+	switch {
+	case errors.Is(err, store.ErrNoRepo):
+	case err != nil:
+		p.Log.Warn("topics_save_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "err", err.Error())
+	default:
+		p.Log.Info("topics_read", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head),
+			"topics", len(read.Topics), "schemas", len(read.Schemas))
+	}
 }
 
 // saveManifests stores what was read; a failure is logged, never the

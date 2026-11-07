@@ -20,6 +20,7 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/manifest"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
 )
@@ -69,6 +70,12 @@ type fakeStore struct {
 	libs map[string][]store.SharedRepo
 	// costs is the ledger by month and project.
 	costs []store.CostRow
+	// messages is what Messaging answers, by repository; graphErr fails it.
+	messages map[store.RepoRef]messaging.Read
+}
+
+func (f *fakeStore) Messaging(context.Context) (store.Messages, error) {
+	return store.NewMessages(f.messages), f.graphErr
 }
 
 // Dependencies answers graph; all false keeps its main edges only, as the

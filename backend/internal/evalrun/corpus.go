@@ -48,6 +48,15 @@ type Labels struct {
 	NeverRead []Glob     `yaml:"never_read"`
 	Generated []Glob     `yaml:"generated"`
 	Questions []Question `yaml:"questions"`
+	// Topics are the topics the code sends to and receives from, with the
+	// way: what the code-read messaging is held to, no judge asked.
+	Topics []TopicLabel `yaml:"topics"`
+}
+
+// TopicLabel is one topic and its way: produces, consumes or declares.
+type TopicLabel struct {
+	Name      string `yaml:"name"`
+	Direction string `yaml:"direction"`
 }
 
 // MustRead is a file a reader of the repository has to see.

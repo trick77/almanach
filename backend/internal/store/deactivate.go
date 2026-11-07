@@ -81,6 +81,9 @@ func (s *Store) DeactivateSourceRepo(ctx context.Context, key, slug string) (boo
 		if _, err := tx.ExecContext(ctx, `DELETE FROM repo_manifests WHERE repo_id = ?`, rid); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM repo_topics WHERE repo_id = ?`, rid); err != nil {
+			return err
+		}
 		var page bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pages WHERE scope = 'project' AND project_id = ? AND repo_id = 0)`,
 			pid).Scan(&page); err != nil {

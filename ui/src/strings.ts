@@ -99,6 +99,29 @@ export const S = {
     otherVersion: "Andere Version als bei den übrigen Nutzern",
     noVersion: "–",
   },
+  // Topics and schemas, read from the code by the poller, joined at read.
+  msg: {
+    title: "Messaging",
+    hint: "Aus dem Code gelesen, kein Modell: Topics, die ein Listener, ein Producer, Kafka Streams oder eine Binding-Konfiguration nennt, und die Schemas (Avro, Protobuf). Ein Topic-Name, den der Code nur zur Laufzeit kennt, fehlt.",
+    topic: "Topic",
+    direction: "Rolle",
+    peers: "Gegenstelle",
+    producers: "Producer",
+    consumers: "Consumer",
+    declared: "Genannt von",
+    produces: "Producer",
+    consumes: "Consumer",
+    declares: "Genannt",
+    noPeer: "Keine unter den Quellen",
+    schemas: "Schemas",
+    schema: "Schema",
+    kind: "Art",
+    file: "Datei",
+    // The rail: topics · schemas.
+    count: (topics: number, schemas: number) => `${topics} · ${schemas}`,
+    tooLarge: (n: number) =>
+      `${n} Knoten sind zu viele für ein Bild; die Tabelle zeigt alle.`,
+  },
   common: {
     loading: "Lädt …",
     none: "keine",
@@ -215,6 +238,14 @@ export const S = {
     depZones: {
       users: "Nutzer",
       shared: "Verwendet",
+    } as Record<string, string>,
+    // A repository's messages, left to right.
+    msgZones: {
+      from: "Producer",
+      in: "Konsumiert",
+      self: "Repository",
+      out: "Produziert",
+      to: "Consumer",
     } as Record<string, string>,
     // A repository map's zones by id, the same rule.
     repoZones: {

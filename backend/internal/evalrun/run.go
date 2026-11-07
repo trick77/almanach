@@ -18,6 +18,7 @@ import (
 	"github.com/trick77/almanach/internal/consolidate"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/redact"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -177,6 +178,8 @@ type RepoResult struct {
 	// Picked is every file the run's read parts held, docs included, by
 	// path; Sizes their bytes.
 	Picked map[string]int64
+	// Topics is what the poller read of the repository's messages.
+	Topics []messaging.Topic
 }
 
 // cloneURL is the address a repository is registered under: never
@@ -342,6 +345,11 @@ func collect(ctx context.Context, db *store.Store, key, slug string) (RepoResult
 	if ok {
 		rr.Page = &page
 	}
+	msgs, err := db.Messaging(ctx)
+	if err != nil {
+		return rr, err
+	}
+	rr.Topics = msgs.Of(store.RepoRef{ProjectKey: key, Slug: slug}).Topics
 	return rr, nil
 }
 

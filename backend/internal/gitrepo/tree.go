@@ -160,6 +160,29 @@ func (c *Client) IsAncestor(ctx context.Context, dir, ancestor, descendant strin
 	return false, err
 }
 
+// GrepFiles lists the text files at a commit whose content matches an
+// extended regular expression, case aside: what is worth reading of a
+// large tree, found by git without streaming every blob out of it. Exit 1
+// is "none".
+func (c *Client) GrepFiles(ctx context.Context, dir, sha, pattern string) ([]string, error) {
+	if err := checkSHA(sha); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, dir, inRepo(dir), "grep", "-z", "-l", "-I", "-i", "-E", "-e", pattern, sha, "--")
+	if exitCode(err) == 1 {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{}
+	for _, f := range nulFields(out) {
+		// <sha>:<path>, the commit named as given.
+		paths = append(paths, strings.TrimPrefix(f, sha+":"))
+	}
+	return paths, nil
+}
+
 // HasCommit reports whether the clone holds sha as a commit: a documented
 // commit of a rewritten branch may be gone after a prune. --verify --quiet
 // exits 1 with no output when the commit is simply absent; anything else,

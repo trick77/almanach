@@ -87,7 +87,18 @@ func (d Deps) projectMarkdown(w http.ResponseWriter, r *http.Request, key string
 		httpx.ServerError(w, r, err, "project page")
 		return
 	}
-	writeMarkdown(w, renderMarkdown("Projekt "+key, store.ScopeProject, page, found))
+	// The flows name repositories by the project's current key.
+	ck, _, err := d.Store.ProjectKeyOf(ctx, key)
+	if err != nil {
+		httpx.ServerError(w, r, err, "project key")
+		return
+	}
+	msgs, err := d.messages(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "messaging")
+		return
+	}
+	writeMarkdown(w, renderMarkdown("Projekt "+key, store.ScopeProject, page, found)+markdownFlows(projectFlows(msgs, ck)))
 }
 
 // repoMarkdown serves GET /api/projects/{key}/repos/{slug}.md: 404 for an
@@ -120,7 +131,13 @@ func (d Deps) repoMarkdown(w http.ResponseWriter, r *http.Request, key, slug str
 		return
 	}
 	uses, usedBy := usesOf(g, store.RepoRef{ProjectKey: ck, Slug: cs})
-	writeMarkdown(w, renderMarkdown("Repository "+slug+" (Projekt "+key+")", store.ScopeRepository, page, found)+markdownDeps(uses, usedBy))
+	msgs, err := d.messages(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "messaging")
+		return
+	}
+	writeMarkdown(w, renderMarkdown("Repository "+slug+" (Projekt "+key+")", store.ScopeRepository, page, found)+
+		markdownMessaging(repoMessaging(msgs, store.RepoRef{ProjectKey: ck, Slug: cs}))+markdownDeps(uses, usedBy))
 }
 
 func writeMarkdown(w http.ResponseWriter, body string) {

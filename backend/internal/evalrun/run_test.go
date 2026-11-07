@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/trick77/toolkit/llmwire/llmwiretest"
 
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -180,6 +182,29 @@ func TestMeansOverRuns(t *testing.T) {
 	}
 	if means(nil) != nil {
 		t.Error("means of no run: want nil")
+	}
+}
+
+// The code-read topics are held to the labels' by name and way: found,
+// missed, or beyond them; no labels, no score.
+func TestTopicScore(t *testing.T) {
+	var rep RepoReport
+	topicScore(&rep, []TopicLabel{{Name: "a", Direction: "produces"}, {Name: "b", Direction: "consumes"}},
+		[]messaging.Topic{{Name: "a", Direction: "produces"}, {Name: "b", Direction: "produces"}})
+	if rep.TopicRecall == nil || *rep.TopicRecall != 0.5 || !reflect.DeepEqual(rep.TopicsMissed, []string{"b consumes"}) ||
+		!reflect.DeepEqual(rep.TopicsExtra, []string{"b produces"}) {
+		t.Errorf("rep = %+v", rep)
+	}
+	rep = RepoReport{Labelled: true}
+	topicScore(&rep, nil, []messaging.Topic{{Name: "a", Direction: "produces"}})
+	if rep.TopicRecall != nil {
+		t.Error("no topic labels: want no score")
+	}
+	half := 0.5
+	r := &Report{Projects: []ProjectReport{{Key: "p", Repos: []RepoReport{{Slug: "a", Labelled: true, TopicRecall: &half,
+		TopicsMissed: []string{"b consumes"}, TopicsExtra: []string{"c produces"}}}}}}
+	if md := r.Markdown(); !strings.Contains(md, "topics found: 50%; missed: b consumes; beyond the labels: c produces") {
+		t.Errorf("markdown = %s", md)
 	}
 }
 

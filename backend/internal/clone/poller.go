@@ -22,6 +22,7 @@ import (
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/heartbeat"
 	"github.com/trick77/almanach/internal/manifest"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
@@ -443,6 +444,8 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		// after, the lock is for the disk only.
 		var read manifest.Read
 		var readOK bool
+		var topics messaging.Read
+		var topicsOK bool
 		// A panic in the sync is this repository's failure, on its row
 		// like any other; one reading the manifests after a good sync is
 		// a log line, the manifests left unread like any failed read.
@@ -453,6 +456,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		}
 		if err == nil {
 			_ = p.guarded(j, func() { read, readOK = p.syncedManifests(jobCtx, j, head) })
+			_ = p.guarded(j, func() { topics, topicsOK = p.syncedTopics(jobCtx, j, head) })
 		}
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()
@@ -486,6 +490,9 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		_ = p.guarded(j, func() {
 			if readOK {
 				p.saveManifests(ctx, j, head, read)
+			}
+			if topicsOK {
+				p.saveTopics(ctx, j, head, topics)
 			}
 			p.describe(ctx, j, head)
 		})

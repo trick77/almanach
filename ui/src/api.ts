@@ -189,6 +189,8 @@ export interface ProjectDetail {
   /** The project page's history, newest first; empty for a project of
    *  one. */
   revisions: Revision[];
+  /** The topics the project's repositories touch, read from the code. */
+  topics: TopicFlow[];
 }
 
 export interface Revision {
@@ -255,6 +257,39 @@ export interface RepoDetail {
   uses: Use[];
   /** The source repositories that use this one. */
   used_by: DependencyEnd[];
+  /** The topics and schemas its code names, read by the poller. */
+  messaging: RepoMessaging;
+}
+
+/** What a repository's code says of its messages: never a model's. */
+export interface RepoMessaging {
+  topics: RepoTopic[];
+  schemas: MessageSchema[];
+}
+
+/** One topic a repository touches one way; declares is named without the
+ *  code saying which way. peers are the source repositories on the far
+ *  side. */
+export interface RepoTopic {
+  name: string;
+  direction: "produces" | "consumes" | "declares";
+  files: string[];
+  peers: RepoRef[];
+}
+
+export interface MessageSchema {
+  name: string;
+  kind: "avro" | "proto";
+  file: string;
+}
+
+/** A topic a project's repositories touch, with every source repository on
+ *  each side, another project's included. */
+export interface TopicFlow {
+  name: string;
+  producers: RepoRef[];
+  consumers: RepoRef[];
+  declared: RepoRef[];
 }
 
 /** One end of a dependency: version is what the user's manifest names, as

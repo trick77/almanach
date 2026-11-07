@@ -2636,7 +2636,7 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes, revisions]
+      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes, revisions, topics]
       properties:
         key:
           type: string
@@ -2712,6 +2712,15 @@ components:
           description: The project page's history, newest first, fifty at most; empty for a project of one.
           items:
             $ref: "#/components/schemas/Revision"
+        topics:
+          type: array
+          description: >-
+            The topics the project's source repositories touch, by name, each
+            with every source repository on its sides, another project's
+            included: read by code from the repositories (never a model's),
+            joined at read. Empty with the sources off.
+          items:
+            $ref: "#/components/schemas/TopicFlow"
 
     RevisionDetail:
       type: object
@@ -2808,7 +2817,7 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by]
+      required: [project_key, slug, description, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by, messaging]
       properties:
         project_key:
           type: string
@@ -2859,6 +2868,8 @@ components:
           description: The source repositories that use this one at runtime (main scope).
           items:
             $ref: "#/components/schemas/DependencyEnd"
+        messaging:
+          $ref: "#/components/schemas/RepoMessaging"
 
     DependencyEnd:
       type: object
@@ -2899,6 +2910,81 @@ components:
           type: string
         used_by:
           type: array
+          items:
+            $ref: "#/components/schemas/RepoRef"
+
+    RepoMessaging:
+      type: object
+      description: >-
+        What the repository's code says of its messages, read by the poller
+        (never a model): the topics it sends to or receives from, each with
+        the source repositories on the far side, and the schemas it defines.
+        Empty lists with the sources off or before a first read.
+      required: [topics, schemas]
+      properties:
+        topics:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoTopic"
+        schemas:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageSchema"
+
+    RepoTopic:
+      type: object
+      required: [name, direction, files, peers]
+      properties:
+        name:
+          type: string
+        direction:
+          type: string
+          enum: [produces, consumes, declares]
+          description: declares is a topic the code names without saying which way.
+        files:
+          type: array
+          description: The files that say so.
+          items:
+            type: string
+        peers:
+          type: array
+          description: >-
+            The source repositories on the far side: the consumers of a
+            topic it produces, the producers of one it consumes; none for
+            declares.
+          items:
+            $ref: "#/components/schemas/RepoRef"
+
+    MessageSchema:
+      type: object
+      required: [name, kind, file]
+      properties:
+        name:
+          type: string
+          description: The schema's full name (namespace and name).
+        kind:
+          type: string
+          enum: [avro, proto]
+        file:
+          type: string
+
+    TopicFlow:
+      type: object
+      required: [name, producers, consumers, declared]
+      properties:
+        name:
+          type: string
+        producers:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoRef"
+        consumers:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoRef"
+        declared:
+          type: array
+          description: Those that name it without code saying which way.
           items:
             $ref: "#/components/schemas/RepoRef"
 
