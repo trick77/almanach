@@ -5,18 +5,21 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  Queue,
-  QueueFailed,
-  QueueItem,
-  QueueRecent,
-  QueueRun,
-  RunStep,
+import {
+  send,
+  type Queue,
+  type QueueFailed,
+  type QueueItem,
+  type QueueRecent,
+  type QueueRun,
+  type RunReason,
+  type RunStep,
 } from "./api";
 import { bytes, changeLabel, clock, dayTime, money, shortSHA } from "./format";
 import { notePathFor, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import {
+  btn,
   column,
   Empty,
   eyebrow,
@@ -45,18 +48,26 @@ import { useFetch } from "./useFetch";
 const pollEvery = 3000;
 const idleEvery = 15000;
 
-/** busy reports whether the queue has work or a sync runs. */
+/** busy reports whether the queue has work it takes or a sync runs: a
+ *  paused queue's waiting items do not move. */
 export function queueBusy(q: Queue | null): boolean {
   return (
-    q !== null && (q.current !== null || q.next.length > 0 || !!q.sync?.running)
+    q !== null &&
+    (q.current !== null ||
+      (q.paused === null && q.next.length > 0) ||
+      !!q.sync?.running)
   );
 }
+
+/** queueChanged is the window event a pause or resume sends, so the nav's
+ *  count reads at once. */
+export const queueChanged = "almanach:queue";
 
 /** QueuePage is every model call the worker has in hand: the one in flight,
  *  the rest in the order it takes them, why the next one waits, and what
  *  it finished lately. Read only. */
 export function QueuePage() {
-  const { data, failed } = useFetch<Queue>("queue", (d) =>
+  const { data, failed, reload } = useFetch<Queue>("queue", (d) =>
     queueBusy(d) ? pollEvery : idleEvery,
   );
 
@@ -70,8 +81,71 @@ export function QueuePage() {
         <h2 className={h2}>{S.queue.title}</h2>
         {failed && !data && <Failed message={S.queue.failed} />}
         {!failed && !data && <Skeleton />}
+        {data && <PauseBar q={data} reload={reload} />}
         {data && <Body q={data} />}
       </div>
+    </div>
+  );
+}
+
+/** PauseBar is the queue's pause: while on, since when, what it holds,
+ *  and the resume; while off, the pause. A pause asks nothing: it is
+ *  harmless and undone in one click. Who paused is the log's. */
+function PauseBar({ q, reload }: { q: Queue; reload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const act = async (path: string) => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      await send("POST", path);
+      reload();
+      // The nav's badge reads the count on its own clock: told now.
+      window.dispatchEvent(new Event(queueChanged));
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-3">
+      {q.paused ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-ui border border-ochre bg-ochre-wash px-3.5 py-2.5"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-medium text-ink">
+              {S.queue.paused(dayTime(q.paused.at))}
+            </div>
+            <div className="text-[12.5px] text-muted">{S.queue.pausedHint}</div>
+          </div>
+          <button
+            type="button"
+            className={btn}
+            disabled={busy}
+            onClick={() => void act("queue/resume")}
+          >
+            {S.queue.resume}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={btn}
+          disabled={busy}
+          title={S.queue.pauseHint}
+          onClick={() => void act("queue/pause")}
+        >
+          {S.queue.pause}
+        </button>
+      )}
+      {failed && (
+        <p className="mt-2 text-[13px] text-danger-ink">
+          {S.queue.pauseFailed}
+        </p>
+      )}
     </div>
   );
 }
@@ -143,7 +217,13 @@ function Body({ q }: { q: Queue }) {
           <Tile
             label={S.queue.tiles.spent}
             value={q.spent.calls === 0 ? S.queue.idle : money(q.spent.cost_usd)}
-            note={S.queue.calls(q.spent.calls)}
+            note={[
+              S.queue.calls(q.spent.calls),
+              q.spent.unpriced > 0 ? S.queue.unpriced(q.spent.unpriced) : "",
+            ]
+              .filter((s) => s !== "")
+              .join(` ${S.common.sep} `)}
+            noteTitle={q.spent.unpriced > 0 ? S.queue.unpricedHint : undefined}
           />
           {q.sync && (
             <Tile
@@ -333,6 +413,14 @@ function Item({
             <NoteMeta item={item} now={now} />
           )}
         </div>
+        {run?.reason && reasonText(run.reason) !== "" && (
+          <div
+            className="mt-0.5 text-[12.5px] text-muted"
+            data-testid="run-reason"
+          >
+            {S.queue.why} {reasonText(run.reason)}
+          </div>
+        )}
         {item.wait && <WaitLine wait={item.wait} now={now} />}
         {item.held_by && (
           <div className="mt-2 rounded-ui-sm bg-active px-2.5 py-1.5 text-[13px] text-muted">
@@ -442,6 +530,42 @@ function NoteMeta({ item, now }: { item: QueueItem; now: number }) {
       )}
     </>
   );
+}
+
+/** reasonText is why a run was queued, worded: the facts its queuer
+ *  recorded, a restyle's page levels with what each stands for. */
+export function reasonText(r: RunReason): string {
+  const R = S.queue.reason;
+  switch (r.kind) {
+    case "first":
+      return R.first;
+    case "retry":
+      return R.retry(r.attempt ?? 0, r.of ?? 0, r.last_error ?? "");
+    case "unfinished":
+      return R.unfinished;
+    case "interval":
+      return r.from
+        ? R.interval(r.days ?? 0, shortSHA(r.from), shortSHA(r.to ?? ""))
+        : R.intervalFull(r.days ?? 0);
+    case "restyle":
+      return [
+        r.repo_epoch ? R.repoLevel(r.repo_epoch) : "",
+        r.project_epoch ? R.projectLevel(r.project_epoch) : "",
+      ]
+        .filter((s) => s !== "")
+        .join(R.levelSep);
+    case "manual":
+      return R.manual;
+    case "returned":
+      return r.from
+        ? R.returned(shortSHA(r.from), shortSHA(r.to ?? ""))
+        : R.returnedFull;
+    case "departure":
+      return R.departure;
+    default:
+      // A kind this page does not know yet: no line rather than a guess.
+      return "";
+  }
 }
 
 function RunMeta({
@@ -749,7 +873,8 @@ function RecentResult({ r }: { r: QueueRecent }) {
   if (r.state === "done")
     return (
       <span className="text-online">
-        {S.queue.runDone}
+        {/* A restyle rewrote the page's layout; it described nothing. */}
+        {r.mode === "restyle" ? S.queue.runRestyled : S.queue.runDone}
         {r.skipped ? `, ${S.baseline.skipped(r.skipped)}` : ""}
       </span>
     );

@@ -56,9 +56,11 @@ type Store interface {
 	InsertRevision(ctx context.Context, rev store.NewRevision) (int, error)
 	InsertLLMCall(ctx context.Context, c store.LLMCall) (int64, error)
 	SourceRepoCount(ctx context.Context, key string) (int, error)
-	// Spent is what the worker's own calls since a time cost (nil: none
-	// priced), and how many: the day's spend against the budget.
-	Spent(ctx context.Context, since time.Time) (*int64, int, error)
+	// Spent is what the worker's own calls since a time cost: the day's
+	// spend against the budget (Spend.Budgeted).
+	Spent(ctx context.Context, since time.Time) (store.Spend, error)
+	// WorkerPause is the queue's pause, nil when none is on.
+	WorkerPause(ctx context.Context) (*store.Pause, error)
 }
 
 // Merger is the model call.
@@ -357,6 +359,19 @@ func (w *Worker) Stop(grace time.Duration) {
 	}
 }
 
+// paused reports whether a reader paused the queue (store.WorkerPause):
+// read before every item, so a pause stops the drain after the item in
+// flight, and a resume (which wakes the loop) is seen at once. A store
+// that cannot say is taken for a pause: no call is paid while unsure.
+func (w *Worker) paused(ctx context.Context) bool {
+	p, err := w.store.WorkerPause(ctx)
+	if err != nil {
+		w.log.WarnContext(ctx, "consolidate: pause read failed, drain paused", logging.Err(err))
+		return true
+	}
+	return p != nil
+}
+
 // stopping reports whether Stop was called.
 func (w *Worker) stopping() bool {
 	select {
@@ -404,7 +419,13 @@ func (w *Worker) drain(ctx context.Context) {
 	briefsWait := false
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		notes, run, brief = nil, nil, nil
+		// A folded note's mark is a store write, no call: taken paused too,
+		// or a redeploy during the pause would lose it and pay the fold
+		// again.
 		if len(w.unmarked) > 0 && !w.markFolded(ctx, w.unmarked) {
+			return
+		}
+		if w.paused(ctx) {
 			return
 		}
 		q, ok, err := w.store.NextQueued(ctx, w.now().Add(-w.foldDelay))
@@ -430,7 +451,7 @@ func (w *Worker) drain(ctx context.Context) {
 					return
 				}
 				w.heartbeat()
-				if left == 0 || laps <= 0 || ctx.Err() != nil || w.stopping() || w.holding() {
+				if left == 0 || laps <= 0 || ctx.Err() != nil || w.stopping() || w.holding() || w.paused(ctx) {
 					break
 				}
 				if batch, left, err = w.batchOf(ctx, q, false); err == nil && len(batch) == 0 {
@@ -759,7 +780,7 @@ func (w *Worker) fold(ctx context.Context, batch []store.QueuedNote, counted int
 	callID, err := w.store.InsertLLMCall(ctx, store.LLMCall{
 		ProjectKey: q.ProjectKey, RepoSlug: q.RepoSlug, SourcePR: q.PRKey, Outcome: res.Outcome.String(),
 		Model: res.Cost.Model, InputTokens: res.Cost.InputTokens, CachedTokens: res.Cost.CachedTokens,
-		OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, BatchPRKeys: foldKeys(batch),
+		OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, Streamed: res.Cost.Streamed, BatchPRKeys: foldKeys(batch),
 	})
 	if err != nil {
 		// No hold here: the gateway's answer below would clear it. On a

@@ -3,11 +3,13 @@ package inference
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,5 +117,73 @@ func TestLogCutKeepsTheTail(t *testing.T) {
 	c.logCut("id", "Authorization: Bearer abcdefghijKLMNOPQRSTuvwxyz0123456789"+strings.Repeat(" b", 190))
 	if got := logs.String(); strings.Contains(got, "0123456789") {
 		t.Errorf("a value whose key fell before the tail was logged: %q", got)
+	}
+}
+
+// A loop is the same stretch at the answer's end over loopSpan chars; an
+// answer that only repeats its structure, or repeats briefly, is none.
+func TestLooping(t *testing.T) {
+	para := func(s string) string { return `{"kind": "paragraph", "text": "` + s + `"}, ` }
+	var varied strings.Builder
+	for i := range 400 {
+		varied.WriteString(para(fmt.Sprintf("Schritt %d liest die Datei und schreibt den Eintrag %d.", i, i*7)))
+	}
+	for name, c := range map[string]struct {
+		s    string
+		want bool
+	}{
+		"a phrase again and again":    {"Der Ablauf geht " + strings.Repeat("so weiter so fort ", 120), true},
+		"a heading and its paragraph": {strings.Repeat(`{"kind": "heading", "text": "Zwei Einstiege"}, `+para("Zwei Einstiege."), 30), true},
+		"three paragraphs in turn":    {strings.Repeat(para("Die Struktur:")+para("Sie besteht aus Teilen:")+para("Das ist die Struktur."), 12), true},
+		"varied statements":           {varied.String(), false},
+		"a short repeat":              {"Anfang " + strings.Repeat("ab ", 200), false},
+		"a separator row":             {"| a | b |\n" + strings.Repeat("|---", 300), false},
+		"empty":                       {"", false},
+	} {
+		if got := looping([]byte(c.s)); got != c.want {
+			t.Errorf("%s: looping = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+// A streamed answer that loops is cut by the guard well before the cap:
+// too long, the call's own, its tail logged. Reasoning alike: a model can
+// think in circles without a word of answer.
+func TestLoopGuardCutsTheStream(t *testing.T) {
+	for field, want := range map[string]string{"content": "the answer repeated itself", "reasoning_content": "the reasoning repeated itself"} {
+		t.Run(field, func(t *testing.T) {
+			var frames atomic.Int64
+			gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for r.Context().Err() == nil && frames.Load() < 100_000 {
+					frames.Add(1)
+					_, _ = io.WriteString(w, "data: "+`{"model": "sol", "choices": [{"index": 0, "delta": {"`+field+`": "so weiter so fort "}, "finish_reason": null}]}`+"\n\n")
+					w.(http.Flusher).Flush()
+				}
+			}))
+			t.Cleanup(gw.Close)
+			env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
+			lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+			var logs strings.Builder
+			wire, err := llmwire.FromEnv("mimo-v2.6-pro", llmwire.Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Lookup: lookup,
+				CallTimeout: time.Minute, IdleTimeout: time.Minute})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := &Client{wire: wire, model: "mimo-v2.6-pro", log: slog.New(slog.NewTextHandler(&logs, nil))}
+			res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
+			if res.Outcome != OutcomeTooLong || res.Err == nil || !strings.Contains(res.Err.Error(), want) {
+				t.Fatalf("Outcome = %s, err %v, want too long, %q", res.Outcome, res.Err, want)
+			}
+			if frames.Load() >= 100_000 {
+				t.Error("the stream ran on: want it cut by the guard")
+			}
+			if !res.Cost.Streamed || res.Cost.NanoUSD != nil {
+				t.Errorf("cost = %+v, want streamed, unpriced: billed without a price", res.Cost)
+			}
+			if !strings.Contains(logs.String(), "answer cut") {
+				t.Errorf("no tail logged: %q", logs.String())
+			}
+		})
 	}
 }

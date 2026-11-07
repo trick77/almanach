@@ -656,10 +656,13 @@ export function Tile({
   label,
   value,
   note,
+  noteTitle,
 }: {
   label: string;
   value: ReactNode;
   note?: string;
+  /** What the note's words mean, on hover. */
+  noteTitle?: string;
 }) {
   return (
     <div className="rounded-ui border border-border bg-panel px-3.5 py-3">
@@ -670,7 +673,12 @@ export function Tile({
         {value}
       </div>
       {note && (
-        <div className="text-[12px] text-muted wrap-break-word">{note}</div>
+        <div
+          className="text-[12px] text-muted wrap-break-word"
+          title={noteTitle}
+        >
+          {note}
+        </div>
       )}
     </div>
   );

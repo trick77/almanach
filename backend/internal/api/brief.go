@@ -61,11 +61,11 @@ func (d Deps) briefsOverBudget(ctx context.Context, briefs map[int64]store.Brief
 	if !waiting {
 		return false, nil
 	}
-	spent, _, err := d.Store.Spent(ctx, store.DayStart(d.now()))
+	spent, err := d.Store.Spent(ctx, store.DayStart(d.now()))
 	if err != nil {
 		return false, err
 	}
-	return store.OverBudget(spent, budget), nil
+	return store.OverBudget(spent.Budgeted(), budget), nil
 }
 
 // briefOf is the row's brief, its state the newest thing that happened: a

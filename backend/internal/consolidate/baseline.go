@@ -293,11 +293,11 @@ func (w *Worker) overBudget(ctx context.Context) (bool, error) {
 	if budget <= 0 {
 		return false, nil
 	}
-	spent, _, err := w.store.Spent(ctx, store.DayStart(w.now()))
+	spent, err := w.store.Spent(ctx, store.DayStart(w.now()))
 	if err != nil {
 		return false, err
 	}
-	return store.OverBudget(spent, budget), nil
+	return store.OverBudget(spent.Budgeted(), budget), nil
 }
 
 // ErrCloneBusy is a Code read that found the clone held by the poller: no
@@ -487,7 +487,7 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 	if _, err := w.store.InsertLLMCall(ctx, store.LLMCall{
 		ProjectKey: r.ProjectKey, RepoSlug: r.Slug, SourceKind: store.FromBaseline, SourceCommit: r.Commit, Purpose: purpose,
 		BaselineRunID: &runID, Step: step, Outcome: res.Outcome.String(), Model: res.Cost.Model, InputTokens: res.Cost.InputTokens,
-		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
+		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, Streamed: res.Cost.Streamed,
 	}); err != nil {
 		// No hold here: the gateway's answer below would clear it. On a
 		// full disk the step's write or the save after it holds.

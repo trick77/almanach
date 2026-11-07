@@ -42,15 +42,17 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 		reconcile  time.Duration
 		baseline   bool
 		want       string
+		why        store.RunReason
 	}{
-		"first ready":         {src, "", "h1", "", nil, month, true, "tools cli full first_ready  h1"},
-		"baseline off":        {src, "", "h1", "", nil, month, false, ""},
-		"due":                 {src, "h0", "h1", "d0", &long, month, true, "tools cli reconcile monthly d0 h1"},
-		"not yet":             {src, "h0", "h1", "d0", &recent, month, true, ""},
-		"head is documented":  {src, "h0", "d0", "d0", &long, month, true, ""},
-		"ready, never queued": {src, "h0", "h1", "", nil, month, true, "tools cli full first_ready  h1"},
-		"buttons only":        {src, "h0", "h1", "d0", &long, 0, true, ""},
-		"last run still open": {src, "h0", "h1", "d0", nil, month, true, ""},
+		"first ready":  {src, "", "h1", "", nil, month, true, "tools cli full first_ready  h1", store.RunReason{Kind: store.ReasonFirst}},
+		"baseline off": {src, "", "h1", "", nil, month, false, "", store.RunReason{}},
+		"due": {src, "h0", "h1", "d0", &long, month, true, "tools cli reconcile monthly d0 h1",
+			store.RunReason{Kind: store.ReasonInterval, From: "d0", To: "h1", Days: 30}},
+		"not yet":             {src, "h0", "h1", "d0", &recent, month, true, "", store.RunReason{}},
+		"head is documented":  {src, "h0", "d0", "d0", &long, month, true, "", store.RunReason{}},
+		"ready, never queued": {src, "h0", "h1", "", nil, month, true, "tools cli full first_ready  h1", store.RunReason{Kind: store.ReasonFirst}},
+		"buttons only":        {src, "h0", "h1", "d0", &long, 0, true, "", store.RunReason{}},
+		"last run still open": {src, "h0", "h1", "d0", nil, month, true, "", store.RunReason{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
@@ -77,6 +79,9 @@ func TestDescribe_QueuesWhatIsDue(t *testing.T) {
 			got := strings.Join(s.enqueued, "|")
 			if got != c.want || (c.want != "") != (wakes == 1) {
 				t.Fatalf("queued %q, wakes %d; want %q", got, wakes, c.want)
+			}
+			if c.want != "" && s.reasons[1] != c.why {
+				t.Errorf("reason = %+v, want %+v", s.reasons[1], c.why)
 			}
 			// A done last run is the documented one: one query a cycle.
 			if s.docAsked != 0 {
@@ -131,13 +136,16 @@ func TestDescribe_QueuesARestyle(t *testing.T) {
 			if got := strings.Join(s.enqueued, "|"); got != c.want {
 				t.Fatalf("queued %q, want %q", got, c.want)
 			}
+			if c.want == restyle && s.reasons[1] != (store.RunReason{Kind: store.ReasonRestyle, RepoEpoch: prompts.RepoEpoch}) {
+				t.Errorf("restyle reason = %+v, want the repository page lifted", s.reasons[1])
+			}
 			if (len(s.restyleAsked) > 0) != c.asked {
-				t.Fatalf("RestyleDue asked %v, want asked %v", s.restyleAsked, c.asked)
+				t.Fatalf("RestyleState asked %v, want asked %v", s.restyleAsked, c.asked)
 			}
 			if c.asked {
 				want := fmt.Sprintf("%d/%d %s", prompts.RepoEpoch, prompts.ProjectEpoch, now.Add(-retryWait).Format(time.RFC3339))
 				if s.restyleAsked[0] != want {
-					t.Errorf("RestyleDue asked %q, want %q", s.restyleAsked[0], want)
+					t.Errorf("RestyleState asked %q, want %q", s.restyleAsked[0], want)
 				}
 			}
 		})
@@ -174,9 +182,10 @@ func TestDescribe_ReactivatedReconciles(t *testing.T) {
 	for name, c := range map[string]struct {
 		documented string
 		want       string
+		why        store.RunReason
 	}{
-		"documented":       {"d0", "tools cli reconcile first_ready d0 h1"},
-		"never documented": {"", "tools cli full first_ready  h1"},
+		"documented":       {"d0", "tools cli reconcile first_ready d0 h1", store.RunReason{Kind: store.ReasonReturned, From: "d0", To: "h1"}},
+		"never documented": {"", "tools cli full first_ready  h1", store.RunReason{Kind: store.ReasonReturned}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, g := newFakeStore(), newFakeGit()
@@ -197,7 +206,34 @@ func TestDescribe_ReactivatedReconciles(t *testing.T) {
 			if got := strings.Join(s.enqueued, "|"); got != c.want {
 				t.Fatalf("queued %q, want %q", got, c.want)
 			}
+			if got := s.reasons[1]; got != c.why {
+				t.Errorf("reason = %+v, want %+v: back, not never read", got, c.why)
+			}
 		})
+	}
+}
+
+// A retry says which attempt it is and what failed, the error's first line.
+func TestDescribe_RetryReason(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	s, g := newFakeStore(), newFakeGit()
+	s.last = store.BaselineRun{ID: 2, Mode: store.RunFull, State: store.RunFailed, FinishedAt: ptr(now.Add(-25 * time.Hour)),
+		Error: "the call failed: too_long\nmore detail"}
+	s.failed = 2
+	s.jobs = []store.SyncJob{job("tools", "cli", "https://x/cli.git", "main", "h0", store.ProjectSource{Kind: store.SourceStatic})}
+	g.origins[dirOf("tools", "cli")] = "https://x/cli.git"
+	g.heads[dirOf("tools", "cli")+"@main"] = "h1"
+	p := New(Deps{Store: s, Git: g, Lister: &fakeLister{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Describe: Describe{Reconcile: 30 * 24 * time.Hour, Wake: func() {}}, Now: func() time.Time { return now }})
+	if err := p.CycleOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := store.RunReason{Kind: store.ReasonRetry, Attempt: 2, Of: maxRetries, LastError: "the call failed: too_long"}
+	if s.reasons[1] != want {
+		t.Errorf("reason = %+v, want %+v", s.reasons[1], want)
+	}
+	if got := firstLine(strings.Repeat("ä", 150), 201); !strings.HasSuffix(got, "…") || len(got) > 204 {
+		t.Errorf("firstLine cut = %q", got)
 	}
 }
 

@@ -190,11 +190,60 @@ func TestRunsCallsAndSpend(t *testing.T) {
 	if costs, err := s.RunCosts(ctx, nil); err != nil || len(costs) != 0 {
 		t.Errorf("RunCosts of none = %v, %v", costs, err)
 	}
-	cost, n, err := s.Spent(ctx, before)
-	if err != nil || n != 3 || cost == nil || *cost != 3_000_000 {
-		t.Errorf("Spent = %v %d %v", cost, n, err)
+	// The timed-out call got no answer: no price, and nothing billed.
+	sp, err := s.Spent(ctx, before)
+	if err != nil || sp.Calls != 3 || sp.NanoUSD == nil || *sp.NanoUSD != 3_000_000 || sp.Unpriced != 0 || sp.Dearest != 2_000_000 {
+		t.Errorf("Spent = %+v %v", sp, err)
 	}
-	if cost, n, err := s.Spent(ctx, time.Now().Add(time.Minute)); err != nil || n != 0 || cost != nil {
-		t.Errorf("Spent after now = %v %d %v", cost, n, err)
+	if b := sp.Budgeted(); b == nil || *b != 3_000_000 {
+		t.Errorf("Budgeted = %v, want the priced sum", b)
+	}
+	if sp, err := s.Spent(ctx, time.Now().Add(time.Minute)); err != nil || sp.Calls != 0 || sp.NanoUSD != nil || sp.Budgeted() != nil {
+		t.Errorf("Spent after now = %+v %v", sp, err)
+	}
+	// A loop cut: answered in part, billed, no price came back. The budget
+	// counts it as the dearest priced call.
+	cut := LLMCall{Purpose: PurposeSubject, Step: &step, Outcome: "too_long", ProjectKey: "PRJ", RepoSlug: "b",
+		SourceKind: FromBaseline, SourceCommit: "c0ffee"}
+	if _, err := s.InsertLLMCall(ctx, cut); err != nil {
+		t.Fatal(err)
+	}
+	sp, err = s.Spent(ctx, before)
+	if err != nil || sp.Calls != 4 || sp.Unpriced != 1 {
+		t.Errorf("Spent with a cut = %+v %v, want it unpriced", sp, err)
+	}
+	if b := sp.Budgeted(); b == nil || *b != 5_000_000 {
+		t.Errorf("Budgeted = %v, want 3 milli + the dearest 2", b)
+	}
+	// A stall mid-answer was billed too: streamed, whatever its outcome.
+	stall := cut
+	stall.Outcome, stall.Streamed = "timed_out", true
+	if _, err := s.InsertLLMCall(ctx, stall); err != nil {
+		t.Fatal(err)
+	}
+	if sp, err := s.Spent(ctx, before); err != nil || sp.Unpriced != 2 {
+		t.Errorf("Spent with a stall = %+v %v, want two unpriced", sp, err)
+	}
+	// A day of unpriced calls alone still has the dearest of the month.
+	sp, err = s.Spent(ctx, time.Now().Add(time.Minute))
+	if err != nil || sp.Calls != 0 || sp.Dearest != 2_000_000 {
+		t.Errorf("Spent of a later day = %+v %v, want the month's dearest", sp, err)
+	}
+}
+
+func TestSpend_Budgeted(t *testing.T) {
+	for _, c := range []struct {
+		sp   Spend
+		want *int64
+	}{
+		{Spend{}, nil},
+		{Spend{Unpriced: 2}, nil},
+		{Spend{Unpriced: 2, Dearest: 5}, i64(10)},
+		{Spend{NanoUSD: i64(7)}, i64(7)},
+	} {
+		got := c.sp.Budgeted()
+		if (got == nil) != (c.want == nil) || got != nil && *got != *c.want {
+			t.Errorf("%+v.Budgeted() = %v, want %v", c.sp, got, c.want)
+		}
 	}
 }

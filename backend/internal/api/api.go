@@ -64,7 +64,7 @@ type Store interface {
 	// Costs is Almanach's own ledger by month and project, the costs page;
 	// Spent the calls since a time, the page's "today".
 	Costs(ctx context.Context, now time.Time) ([]store.CostRow, error)
-	Spent(ctx context.Context, since time.Time) (*int64, int, error)
+	Spent(ctx context.Context, since time.Time) (store.Spend, error)
 }
 
 // Waker is poked when a note was queued.
@@ -125,6 +125,8 @@ func Register(s *httpapi.Server, d Deps) {
 	if d.Queue != nil {
 		s.HandleFunc("GET /api/queue", d.queue)
 		s.HandleFunc("GET /api/queue/count", d.queueCount)
+		s.HandleFunc("POST /api/queue/pause", d.pauseQueue)
+		s.HandleFunc("POST /api/queue/resume", d.resumeQueue)
 	}
 	d.registerSources(s)
 	d.registerAuth(s)

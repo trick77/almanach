@@ -611,6 +611,17 @@ func TestRun_BudgetHoldsTheRuns(t *testing.T) {
 	if r := y.run(); r.State != store.RunQueued || len(y.models.prompts) != 0 {
 		t.Errorf("spend read failed: run = %+v, calls %d", r, len(y.models.prompts))
 	}
+	// A call cut before its price came counts as the dearest priced one:
+	// 0.6 + 0.6 reaches the budget the priced 0.6 alone would not.
+	z := newWorld(t, 16)
+	z.queue(store.RunFull, "")
+	z.w.base.Limits.DailyBudgetNanoUSD = 1_000_000_000
+	z.st.callAt = mergedAt.Add(-time.Hour)
+	z.st.calls = []store.LLMCall{{CostNanoUSD: i64(600_000_000)}, {Outcome: "too_long"}}
+	z.w.drain(context.Background())
+	if r := z.run(); r.State != store.RunQueued || len(z.models.prompts) != 0 {
+		t.Errorf("unpriced cut: run = %+v, calls %d, want held by the budget", r, len(z.models.prompts))
+	}
 }
 
 // A spent budget still lets a queued departure run start, even behind an

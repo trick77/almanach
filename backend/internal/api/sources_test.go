@@ -25,6 +25,9 @@ type fakeSources struct {
 	sources map[string]store.ProjectSource
 	repos   map[string][]store.SourceRepo
 	synced  []string
+	// reasons is why each queued run was, by id; reasonErr fails its write.
+	reasons   map[int64]store.RunReason
+	reasonErr error
 	// runs is by slug; enqueued records "key slug mode trigger base commit".
 	runs       map[string]store.RepoRuns
 	enqueued   []string
@@ -309,6 +312,15 @@ func (f *fakeSources) EnqueueRun(_ context.Context, key, slug, mode, trigger, ba
 	}
 	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, mode, trigger, base, commit}, " "))
 	return int64(len(f.enqueued)), nil
+}
+
+// SetRunReason records why run id was queued; reasonErr fails it.
+func (f *fakeSources) SetRunReason(_ context.Context, id int64, r store.RunReason) error {
+	if f.reasons == nil {
+		f.reasons = map[int64]store.RunReason{}
+	}
+	f.reasons[id] = r
+	return f.reasonErr
 }
 
 type fakeNudger struct{ nudges int }

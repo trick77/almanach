@@ -287,7 +287,9 @@ func TestBatch_RefusedMarkIsRetriedNotRefolded(t *testing.T) {
 	if len(m.prompts) != 1 || len(w.unmarked) != 2 || !w.holding() {
 		t.Fatalf("calls %d unmarked %d holding %v", len(m.prompts), len(w.unmarked), w.holding())
 	}
+	// Paused meanwhile: the mark is a store write, no call, and is taken.
 	st.markErr, w.retryAt = nil, time.Time{}
+	st.pause = &store.Pause{At: mergedAt}
 	w.drain(context.Background())
 	if len(m.prompts) != 1 || len(st.marked) != 2 || len(w.unmarked) != 0 {
 		t.Errorf("calls %d marked %v unmarked %d, want both marked without a second call", len(m.prompts), st.marked, len(w.unmarked))
@@ -321,5 +323,22 @@ func TestBatchOf_Bytes(t *testing.T) {
 	w.foldDelay = 0
 	if batch, left, _ := w.batchOf(context.Background(), batchNote(5, "feature"), true); len(batch) != 1 || left != 0 {
 		t.Errorf("no delay: %v, %d left", batch, left)
+	}
+}
+
+// A pause during a repository's first batch stops the drain after it: the
+// batches past it wait like any other item.
+func TestBatchOf_PausedBetweenBatches(t *testing.T) {
+	big := func(n int) store.QueuedNote {
+		q := batchNote(n, "feature")
+		q.Body = json.RawMessage(`"` + strings.Repeat("x", FoldBatchBytes/2) + `"`)
+		return q
+	}
+	m := &fakeMerger{result: okResult(nil, nil)}
+	w, st := batchWorker(mergedAt.Add(25*time.Hour), m, big(1), big(2), big(3))
+	m.onCall = func() { st.pause = &store.Pause{At: mergedAt} }
+	w.drain(context.Background())
+	if len(m.prompts) != 1 || len(st.marked) != 1 {
+		t.Errorf("calls %d marked %v, want the first batch alone", len(m.prompts), st.marked)
 	}
 }

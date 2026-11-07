@@ -35,11 +35,11 @@ func epochs(s *Store, slug string) (repo, project int, err error) {
 
 func restyleDue(t *testing.T, s *Store, slug string, epoch int, before time.Time) bool {
 	t.Helper()
-	due, err := s.RestyleDue(context.Background(), "tools", slug, Epochs{Repo: epoch, Project: epoch}, before)
+	st, err := s.RestyleState(context.Background(), "tools", slug, Epochs{Repo: epoch, Project: epoch}, before)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return due
+	return st.Queue()
 }
 
 // A restyle is queued at the page's commit with its epoch and the plan
@@ -111,7 +111,7 @@ func TestRestyle_InvisibleToTheRunHistory(t *testing.T) {
 // page where one is written and the project has more than one repository;
 // held while a restyle is open anywhere; a failed one waits for the
 // retry's time and stops at the cap, per epoch.
-func TestRestyleDue(t *testing.T) {
+func TestRestyleState_Queue(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	sourceRepo(t, s, "tools", "svc")

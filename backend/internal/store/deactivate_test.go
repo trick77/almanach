@@ -138,7 +138,8 @@ func TestDeactivateSourceRepo_DepartureRun(t *testing.T) {
 		t.Fatalf("deactivate: queued=%v err=%v", queued, err)
 	}
 	next, ok, err := s.NextRun(ctx)
-	if err != nil || !ok || next.Trigger != TriggerDeparture || next.Slug != "svc" || next.Commit != "aaa" || string(next.Plan) != `{"departure":true}` {
+	if err != nil || !ok || next.Trigger != TriggerDeparture || next.Slug != "svc" || next.Commit != "aaa" || string(next.Plan) != `{"departure":true}` ||
+		next.Reason == nil || next.Reason.Kind != ReasonDeparture {
 		t.Fatalf("the departure run: %+v ok=%v err=%v", next, ok, err)
 	}
 	// What a spent budget still starts: the departure, past an older

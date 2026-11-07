@@ -163,7 +163,7 @@ func (w *Worker) writeBrief(ctx context.Context, j store.BriefJob) briefStep {
 	if _, err := w.store.InsertLLMCall(ctx, store.LLMCall{
 		ProjectKey: j.ProjectKey, RepoSlug: j.Slug, SourceKind: store.FromPage, Purpose: store.PurposeBrief, Outcome: res.Outcome.String(),
 		Model: res.Cost.Model, InputTokens: res.Cost.InputTokens, CachedTokens: res.Cost.CachedTokens,
-		OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
+		OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, Streamed: res.Cost.Streamed,
 	}); err != nil {
 		w.log.WarnContext(ctx, "brief: call row failed", logging.Err(err))
 	}

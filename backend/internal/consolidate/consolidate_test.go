@@ -85,6 +85,9 @@ type fakeStore struct {
 	// fails that read.
 	callAt   time.Time
 	spentErr error
+	// pause is the queue's pause; pauseErr fails its read.
+	pause    *store.Pause
+	pauseErr error
 }
 
 func (f *fakeStore) SourceRepoCount(_ context.Context, key string) (int, error) {
@@ -264,29 +267,38 @@ func (f *fakeStore) InsertLLMCall(_ context.Context, c store.LLMCall) (int64, er
 	return f.insertCallID, f.callErr
 }
 
+// WorkerPause answers pause; pauseErr fails it.
+func (f *fakeStore) WorkerPause(context.Context) (*store.Pause, error) {
+	return f.pause, f.pauseErr
+}
+
 // Spent is the calls recorded since a time, every one counted, the priced
-// ones summed, as the store answers; spentErr fails it.
-func (f *fakeStore) Spent(_ context.Context, since time.Time) (*int64, int, error) {
+// ones summed, a cut one (too long) unpriced, as the store answers;
+// spentErr fails it.
+func (f *fakeStore) Spent(_ context.Context, since time.Time) (store.Spend, error) {
 	if f.spentErr != nil {
-		return nil, 0, f.spentErr
+		return store.Spend{}, f.spentErr
 	}
-	var sum *int64
-	n := 0
+	var out store.Spend
 	for _, c := range f.calls {
 		if f.callAt.Before(since) {
 			continue
 		}
-		n++
+		out.Calls++
 		if c.CostNanoUSD == nil {
+			if c.Streamed || c.Outcome == "too_long" {
+				out.Unpriced++
+			}
 			continue
 		}
 		v := *c.CostNanoUSD
-		if sum != nil {
-			v += *sum
+		out.Dearest = max(out.Dearest, v)
+		if out.NanoUSD != nil {
+			v += *out.NanoUSD
 		}
-		sum = &v
+		out.NanoUSD = &v
 	}
-	return sum, n, nil
+	return out, nil
 }
 
 // fakeMerger answers every call with one canned result and records the
@@ -294,10 +306,15 @@ func (f *fakeStore) Spent(_ context.Context, since time.Time) (*int64, int, erro
 type fakeMerger struct {
 	result  inference.MergeResult
 	prompts []string
+	// onCall, when set, runs after each call: what happens meanwhile.
+	onCall func()
 }
 
 func (m *fakeMerger) Merge(_ context.Context, req inference.MergeRequest) inference.MergeResult {
 	m.prompts = append(m.prompts, req.Prompt)
+	if m.onCall != nil {
+		m.onCall()
+	}
 	return m.result
 }
 
@@ -1854,6 +1871,30 @@ func TestDrainOldestFirst(t *testing.T) {
 	}
 	if len(st.queue) != 0 {
 		t.Errorf("queue left = %+v", st.queue)
+	}
+}
+
+// A paused queue takes nothing, a store that cannot say counts as paused;
+// lifted, the notes fold.
+func TestDrainPaused(t *testing.T) {
+	st := newFakeStore()
+	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	st.pause = &store.Pause{At: time.Now()}
+	m := &fakeMerger{result: okResult(nil, nil)}
+	w := newWorker(st, m)
+	w.drain(context.Background())
+	if len(m.prompts) != 0 || st.nextQueuedN != 0 {
+		t.Fatalf("paused: folded %d after %d reads, want nothing taken", len(m.prompts), st.nextQueuedN)
+	}
+	st.pause, st.pauseErr = nil, errors.New("database is locked")
+	w.drain(context.Background())
+	if len(m.prompts) != 0 {
+		t.Fatalf("pause unreadable: folded %d, want none", len(m.prompts))
+	}
+	st.pauseErr = nil
+	w.drain(context.Background())
+	if len(m.prompts) != 1 {
+		t.Errorf("resumed: folded %d, want the note", len(m.prompts))
 	}
 }
 

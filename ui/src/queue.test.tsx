@@ -1,7 +1,13 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { duration, QueuePage } from "./QueuePage";
+import {
+  duration,
+  QueuePage,
+  queueBusy,
+  queueChanged,
+  reasonText,
+} from "./QueuePage";
 import type { Me, Queue, QueueItem, QueueRun, RunStep } from "./api";
 import { dayTime } from "./format";
 import { S } from "./strings";
@@ -39,6 +45,7 @@ function run(over: Partial<QueueRun> = {}): QueueRun {
     queued_at: iso(-20),
     started_at: iso(-9),
     cost_usd: "0.412",
+    reason: null,
     steps: [
       {
         kind: "catalogue",
@@ -129,6 +136,7 @@ function note(pr: number, over: Partial<QueueItem> = {}): QueueItem {
 
 function queue(over: Partial<Queue> = {}): Queue {
   return {
+    paused: null,
     current: null,
     next: [],
     sync: {
@@ -138,7 +146,7 @@ function queue(over: Partial<Queue> = {}): Queue {
       finished_at: null,
       next_at: iso(30),
     },
-    spent: { cost_usd: "1.284", calls: 23 },
+    spent: { cost_usd: "1.284", calls: 23, unpriced: 2 },
     recent: [],
     failed: [],
     poll_seconds: 20,
@@ -207,6 +215,9 @@ describe("QueuePage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(S.queue.polling(3))).toBeInTheDocument();
     expect(screen.getByText("$1.28")).toBeInTheDocument();
+    // The calls without a price are said beside the count, explained.
+    const spentNote = screen.getByText("23 Aufrufe · 2 ohne Preis");
+    expect(spentNote.getAttribute("title")).toBe(S.queue.unpricedHint);
   });
 
   it("names a departure run by its trigger alone, no mode", async () => {
@@ -282,6 +293,66 @@ describe("QueuePage", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("says why a run was queued, under its meta line", async () => {
+    serve({
+      queue: queue({
+        current: {
+          ...runItem(
+            run({
+              reason: {
+                kind: "retry",
+                attempt: 2,
+                of: 3,
+                last_error: "the call failed: too_long",
+              },
+            }),
+          ),
+          since: iso(-1),
+        },
+      }),
+    });
+    render(<QueuePage />);
+    expect(await screen.findByTestId("run-reason")).toHaveTextContent(
+      `${S.queue.why} ${S.queue.reason.retry(2, 3, "the call failed: too_long")}`,
+    );
+  });
+
+  it("words every reason", () => {
+    const R = S.queue.reason;
+    expect(reasonText({ kind: "first" })).toBe(R.first);
+    expect(reasonText({ kind: "unfinished" })).toBe(R.unfinished);
+    expect(reasonText({ kind: "retry", attempt: 1, of: 3 })).toBe(
+      "Neuer Versuch 1 von 3.",
+    );
+    expect(
+      reasonText({
+        kind: "interval",
+        from: "abcdef1234",
+        to: "1234abcdef",
+        days: 31,
+      }),
+    ).toBe(R.interval(31, "abcdef1", "1234abc"));
+    expect(reasonText({ kind: "interval", days: 40 })).toBe(R.intervalFull(40));
+    expect(reasonText({ kind: "restyle", project_epoch: 2 })).toBe(
+      "Projektseite auf Regelstand 2 (Projektseite nur Verdrahtung, als System oder Sammlung beurteilt)",
+    );
+    expect(
+      reasonText({ kind: "restyle", repo_epoch: 1, project_epoch: 3 }),
+    ).toBe("Repository-Seite auf Regelstand 1; Projektseite auf Regelstand 3");
+    expect(reasonText({ kind: "manual" })).toBe("Von Hand ausgelöst.");
+    expect(
+      reasonText({ kind: "returned", from: "abcdef1234", to: "1234abcdef" }),
+    ).toBe("Wieder aktiviert; Abgleich von abcdef1 bis 1234abc.");
+    expect(reasonText({ kind: "returned" })).toBe(R.returnedFull);
+    expect(reasonText({ kind: "departure" })).toBe(R.departure);
+    // A kind from a newer server: no line.
+    expect(
+      reasonText({ kind: "later" } as unknown as Parameters<
+        typeof reasonText
+      >[0]),
+    ).toBe("");
+  });
+
   it("puts a hold on the next item, its cause and its end", async () => {
     serve({
       queue: queue({
@@ -339,6 +410,15 @@ describe("QueuePage", () => {
             cost_usd: "0.204",
           },
           {
+            kind: "run",
+            at: iso(-35),
+            project: "shop",
+            repo: "cart",
+            run_id: 38,
+            mode: "restyle",
+            state: "done",
+          },
+          {
             kind: "note",
             at: iso(-40),
             project: "pay",
@@ -363,6 +443,8 @@ describe("QueuePage", () => {
     ).toBeInTheDocument();
     expect(screen.queryByTestId("timeline")).not.toBeInTheDocument();
     expect(screen.queryByText(S.queue.polling(3))).not.toBeInTheDocument();
+    // A restyle done reads as what it did, never "described".
+    expect(screen.getByText(S.queue.runRestyled)).toBeInTheDocument();
     expect(
       screen.getByText(/Erneut automatisch frühestens/),
     ).toBeInTheDocument();
@@ -508,6 +590,82 @@ describe("QueuePage", () => {
 });
 
 describe("the queue's entry", () => {
+  it("pauses and resumes the queue, says since when, tells the nav", async () => {
+    let paused: Queue["paused"] = null;
+    const posts: string[] = [];
+    let told = 0;
+    const tell = () => told++;
+    window.addEventListener(queueChanged, tell);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = url.replace("/api/", "");
+        if (init?.method === "POST") {
+          posts.push(path);
+          paused = path === "queue/pause" ? { at: iso(-2) } : null;
+          return { ok: true, status: 204, text: async () => "" };
+        }
+        return { ok: true, status: 200, json: async () => queue({ paused }) };
+      }),
+    );
+    render(<QueuePage />);
+    (await screen.findByRole("button", { name: S.queue.pause })).click();
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent(S.queue.paused(dayTime(paused!.at)));
+    expect(banner).toHaveTextContent(S.queue.pausedHint);
+    within(banner).getByRole("button", { name: S.queue.resume }).click();
+    expect(
+      await screen.findByRole("button", { name: S.queue.pause }),
+    ).toBeInTheDocument();
+    expect(posts).toEqual(["queue/pause", "queue/resume"]);
+    expect(told).toBe(2);
+    window.removeEventListener(queueChanged, tell);
+  });
+
+  it("is idle while paused with only waiting items", () => {
+    const waiting = queue({ next: [note(812)] });
+    expect(queueBusy(waiting)).toBe(true);
+    expect(queueBusy({ ...waiting, paused: { at: iso(-1) } })).toBe(false);
+    expect(
+      queueBusy({
+        ...waiting,
+        paused: { at: iso(-1) },
+        current: { ...runItem(run()), since: iso(-1) },
+      }),
+    ).toBe(true);
+  });
+
+  it("says when a pause cannot be set", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "POST"
+          ? { ok: false, status: 500, text: async () => '{"error":"x"}' }
+          : { ok: true, status: 200, json: async () => queue() },
+      ),
+    );
+    render(<QueuePage />);
+    (await screen.findByRole("button", { name: S.queue.pause })).click();
+    expect(await screen.findByText(S.queue.pauseFailed)).toBeInTheDocument();
+  });
+
+  it("marks the nav entry while paused", async () => {
+    window.history.replaceState({}, "", "/queue");
+    const me: Me = { mode: "none", user: "" };
+    serve({
+      me,
+      "auth/me": me,
+      projects: { projects: [] },
+      sources: { enabled: false, default_host: "", max_calls: 0, sources: [] },
+      queue: queue({ paused: { at: iso(-5) } }),
+      "queue/count": { count: 0, paused: true },
+    });
+    render(<App />);
+    expect(await screen.findByTestId("queue-paused")).toHaveTextContent(
+      S.queue.pausedBadge,
+    );
+  });
+
   it("counts the work in the nav and opens the page", async () => {
     window.history.replaceState({}, "", "/queue");
     const me: Me = { mode: "none", user: "" };
@@ -520,7 +678,7 @@ describe("the queue's entry", () => {
         current: { ...runItem(run()), since: iso(-1) },
         next: [note(812)],
       }),
-      "queue/count": { count: 2 },
+      "queue/count": { count: 2, paused: false },
     });
     render(<App />);
     expect(await screen.findByTestId("queue-count")).toHaveTextContent("2");

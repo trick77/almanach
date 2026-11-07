@@ -41,10 +41,12 @@ type fakeStore struct {
 	pageAsked  int
 	// page is the repository page, none when its scope is "".
 	page store.Page
-	// restyleDue is what RestyleDue answers; restyleAsked is its questions
+	// restyleDue is what RestyleState answers; restyleAsked is its questions
 	// ("epoch failedBefore").
 	restyleDue   bool
 	restyleAsked []string
+	// reasons is why each queued run was, by its id (len(enqueued)).
+	reasons map[int64]store.RunReason
 	// conflicts is what ApplyListing reports left out; listedAt whether a
 	// listing's time was recorded, by key.
 	conflicts []string
@@ -124,11 +126,24 @@ func (f *fakeStore) EnqueueRestyle(_ context.Context, key, slug, commit string, 
 	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, store.RunRestyle, store.TriggerEpoch, commit, fmt.Sprint(epoch)}, " "))
 	return int64(len(f.enqueued)), nil
 }
-func (f *fakeStore) RestyleDue(_ context.Context, _, _ string, e store.Epochs, failedBefore time.Time) (bool, error) {
+
+// RestyleState answers restyleDue as the repository page's being due.
+func (f *fakeStore) RestyleState(_ context.Context, _, _ string, e store.Epochs, failedBefore time.Time) (store.RestyleState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restyleAsked = append(f.restyleAsked, fmt.Sprintf("%d/%d %s", e.Repo, e.Project, failedBefore.UTC().Format(time.RFC3339)))
-	return f.restyleDue, f.runErr
+	return store.RestyleState{RepoDue: f.restyleDue}, f.runErr
+}
+
+// SetRunReason records why run id was queued.
+func (f *fakeStore) SetRunReason(_ context.Context, id int64, r store.RunReason) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reasons == nil {
+		f.reasons = map[int64]store.RunReason{}
+	}
+	f.reasons[id] = r
+	return nil
 }
 func (f *fakeStore) RepoIDs(_ context.Context, key, slug string) (int64, int64, bool, error) {
 	return idOf(key), idOf(key + "/" + slug), true, nil

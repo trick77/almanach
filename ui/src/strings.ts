@@ -12,6 +12,13 @@ import type {
   WaitReason,
 } from "./api";
 
+// What each page level (prompts.RepoEpoch, prompts.ProjectEpoch) brought,
+// for the queue's restyle reason; a bump adds its line here.
+const S_EPOCH_REPO: Record<number, string> = {};
+const S_EPOCH_PROJECT: Record<number, string> = {
+  2: "Projektseite nur Verdrahtung, als System oder Sammlung beurteilt",
+};
+
 export const S = {
   app: "Almanach",
   nav: {
@@ -762,6 +769,44 @@ export const S = {
     failed: "Die Warteschlange konnte nicht geladen werden.",
     polling: (s: number) => `Aktualisiert alle ${s} s, solange etwas läuft`,
     more: (n: number) => (n === 1 ? "Und 1 weitere" : `Und ${n} weitere`),
+    // The pause: the worker takes nothing new, the item in flight finishes.
+    pausedBadge: "Pausiert",
+    paused: (since: string) => `Pausiert seit ${since}`,
+    pausedHint:
+      "Almanach nimmt nichts Neues: keine Notiz, keinen Lauf-Schritt, kein Neugliedern, keinen Brief. Was gerade läuft, wird fertig. Webhook und Sync laufen weiter; die Arbeit wartet.",
+    pause: "Pausieren",
+    pauseHint:
+      "Nimmt nach dem laufenden Aufruf nichts Neues mehr, bis fortgesetzt wird; bleibt über einen Neustart.",
+    resume: "Fortsetzen",
+    pauseFailed:
+      "Die Warteschlange konnte nicht pausiert oder fortgesetzt werden.",
+    // Why a run was queued, under its meta line.
+    why: "Warum:",
+    reason: {
+      first: "Noch nie beschrieben, erstes Lesen.",
+      retry: (n: number, of: number, err: string) =>
+        `Neuer Versuch ${n} von ${of}` +
+        (err === "" ? "." : `; zuletzt: ${err}`),
+      unfinished:
+        "Der letzte Lauf hat Teile übersprungen oder keine Karte gezeichnet: das wird nachgeholt.",
+      interval: (days: number, from: string, to: string) =>
+        `Abgleich nach ${days} Tagen, ${from} bis ${to}.`,
+      intervalFull: (days: number) =>
+        `Nie fertig beschrieben; nach ${days} Tagen neu gelesen.`,
+      repoLevel: (n: number) =>
+        `Repository-Seite auf Regelstand ${n}` +
+        (S_EPOCH_REPO[n] ? ` (${S_EPOCH_REPO[n]})` : ""),
+      projectLevel: (n: number) =>
+        `Projektseite auf Regelstand ${n}` +
+        (S_EPOCH_PROJECT[n] ? ` (${S_EPOCH_PROJECT[n]})` : ""),
+      // Between a restyle's two page levels.
+      levelSep: "; ",
+      manual: "Von Hand ausgelöst.",
+      departure: "Repository deaktiviert: die Projektseite nimmt es heraus.",
+      returned: (from: string, to: string) =>
+        `Wieder aktiviert; Abgleich von ${from} bis ${to}.`,
+      returnedFull: "Wieder aktiviert, nie fertig beschrieben: neu gelesen.",
+    },
     tiles: {
       now: "Jetzt",
       waiting: "Wartet",
@@ -778,6 +823,10 @@ export const S = {
         .filter((s) => s !== "")
         .join(", "),
     calls: (n: number) => (n === 1 ? "1 Aufruf" : `${n} Aufrufe`),
+    // Beside the calls: those without a price, not in the sum.
+    unpriced: (n: number) => `${n} ohne Preis`,
+    unpricedHint:
+      "Ohne Preis: ein Aufruf, dessen Antwort abgebrochen wurde, bevor das Gateway die Kosten meldete. Nicht in der Summe; die Kosten sind unbekannt, nicht null. Das Tagesbudget zählt jeden wie den teuersten bepreisten Aufruf des Tages.",
     sync: {
       running: "Läuft",
       ready: "Bereit",
@@ -872,6 +921,7 @@ export const S = {
     recentHeaders: ["Zeit", "Was", "Ergebnis", "Kosten"],
     recentEmpty: "In den letzten 24 h nichts abgeschlossen.",
     runDone: "Beschrieben",
+    runRestyled: "Neu gegliedert",
     runFailed: "Fehlgeschlagen:",
     retryAt: (at: string) => `Erneut automatisch frühestens ${at}`,
     noteOutcome: {

@@ -117,13 +117,12 @@ func (s *Store) RestyleState(ctx context.Context, key, slug string, e Epochs, fa
 	return st, err
 }
 
-// RestyleDue reports whether the poller queues a restyle of a repository at
-// e (RestyleState): its page or its project's is due, and no restyle is
-// open anywhere, so a bump trickles through the wiki one page at a time and
-// never crowds out the notes and the reading.
-func (s *Store) RestyleDue(ctx context.Context, key, slug string, e Epochs, failedBefore time.Time) (bool, error) {
-	st, err := s.RestyleState(ctx, key, slug, e, failedBefore)
-	return (st.RepoDue || st.ProjectDue) && !st.Open, err
+// Queue reports whether the poller queues a restyle of the repository: its
+// page or its project's is due, and no restyle is open anywhere, so a bump
+// trickles through the wiki one page at a time and never crowds out the
+// notes and the reading.
+func (st RestyleState) Queue() bool {
+	return (st.RepoDue || st.ProjectDue) && !st.Open
 }
 
 // MarkProjectRestyled puts the project page of run runID's repository at

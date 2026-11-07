@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/gitrepo"
@@ -46,7 +47,8 @@ type Store interface {
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
 	EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int) (int64, error)
-	RestyleDue(ctx context.Context, key, slug string, e store.Epochs, failedBefore time.Time) (bool, error)
+	RestyleState(ctx context.Context, key, slug string, e store.Epochs, failedBefore time.Time) (store.RestyleState, error)
+	SetRunReason(ctx context.Context, id int64, reason store.RunReason) error
 	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, store.RunStreak, bool, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	CurrentPage(ctx context.Context, scope, project, repo string) (store.Page, bool, error)
@@ -538,6 +540,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 	}
 	key, slug := j.Source.ProjectKey, j.Repo.Slug
 	mode, trigger, base := store.RunFull, store.TriggerFirstReady, ""
+	why := store.RunReason{Kind: store.ReasonFirst}
 	if j.Repo.HeadCommit == "" && j.Repo.ReactivatedAt != nil {
 		// Back from a deactivation (which forgot the head with the clone):
 		// its page stands at the documented commit, so the first ready
@@ -548,8 +551,10 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			p.logRunCheck(err, key, slug)
 			return
 		}
+		why = store.RunReason{Kind: store.ReasonReturned}
 		if documented && doc.Commit != "" {
 			mode, base = store.RunReconcile, doc.Commit
+			why.From, why.To = doc.Commit, head
 		}
 	}
 	if j.Repo.HeadCommit != "" {
@@ -564,7 +569,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			// queued (its write failed, the process ended between the
 			// sync and the queue, the baseline was off). Queued now, at
 			// every cycle until it is.
-			p.enqueue(ctx, key, slug, mode, trigger, base, head)
+			p.enqueue(ctx, key, slug, mode, trigger, base, head, why)
 			return
 		}
 		// A done last run is the documented one; the store is asked only
@@ -584,6 +589,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			// times: a failure that is permanent (a repository too large
 			// for one call) must not cost a call a day forever.
 			mode, trigger = last.Mode, store.TriggerRetry
+			why = store.RunReason{Kind: store.ReasonRetry, Attempt: streak.Failed, Of: maxRetries, LastError: firstLine(last.Error, 200)}
 			if mode == store.RunReconcile && documented {
 				base = doc.Commit
 			} else {
@@ -597,6 +603,7 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			// that may not move again: the last run's skipped names are
 			// read again, the map drawn, nothing else read.
 			mode, trigger, base = store.RunReconcile, store.TriggerRetry, doc.Commit
+			why = store.RunReason{Kind: store.ReasonUnfinished}
 		case p.Describe.Reconcile <= 0:
 			return
 		case since < p.Describe.Reconcile:
@@ -606,14 +613,28 @@ func (p *Poller) describe(ctx context.Context, j store.SyncJob, head string) {
 			// Never documented and past its retries: the interval tries
 			// the full read again.
 			trigger = store.TriggerMonthly
+			why = store.RunReason{Kind: store.ReasonInterval, To: head, Days: int(since.Hours() / 24)}
 		case doc.Commit == head:
 			p.restyle(ctx, key, slug, doc, documented)
 			return
 		default:
 			mode, trigger, base = store.RunReconcile, store.TriggerMonthly, doc.Commit
+			why = store.RunReason{Kind: store.ReasonInterval, From: doc.Commit, To: head, Days: int(since.Hours() / 24)}
 		}
 	}
-	p.enqueue(ctx, key, slug, mode, trigger, base, head)
+	p.enqueue(ctx, key, slug, mode, trigger, base, head, why)
+}
+
+// firstLine is s's first line, cut at n bytes on a rune.
+func firstLine(s string, n int) string {
+	s, _, _ = strings.Cut(s, "\n")
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 // restyle queues a restyle run (store.RunRestyle) when the repository's
@@ -629,29 +650,38 @@ func (p *Poller) restyle(ctx context.Context, key, slug string, doc store.Baseli
 	if !documented || doc.Commit == "" {
 		return
 	}
-	due, err := p.Store.RestyleDue(ctx, key, slug, store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch},
+	st, err := p.Store.RestyleState(ctx, key, slug, store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch},
 		p.Now().Add(-retryWait))
 	if err != nil {
 		p.logRunCheck(err, key, slug)
 		return
 	}
-	if !due {
+	if !st.Queue() {
 		return
 	}
+	// The levels it lifts the pages to, a scope not due none.
+	why := store.RunReason{Kind: store.ReasonRestyle}
+	if st.RepoDue {
+		why.RepoEpoch = prompts.RepoEpoch
+	}
+	if st.ProjectDue {
+		why.ProjectEpoch = prompts.ProjectEpoch
+	}
 	id, err := p.Store.EnqueueRestyle(ctx, key, slug, doc.Commit, prompts.Epoch)
-	p.queued(err, key, slug, id, store.RunRestyle, store.TriggerEpoch, doc.Commit)
+	p.queued(ctx, err, key, slug, id, store.RunRestyle, store.TriggerEpoch, doc.Commit, why)
 }
 
 // enqueue queues a run and wakes the worker. A run already open is no
 // failure; a failed write is logged and, the repository still without
 // its run, tried again by the next cycle.
-func (p *Poller) enqueue(ctx context.Context, key, slug, mode, trigger, base, head string) {
+func (p *Poller) enqueue(ctx context.Context, key, slug, mode, trigger, base, head string, why store.RunReason) {
 	id, err := p.Store.EnqueueRun(ctx, key, slug, mode, trigger, base, head)
-	p.queued(err, key, slug, id, mode, trigger, head)
+	p.queued(ctx, err, key, slug, id, mode, trigger, head, why)
 }
 
-// queued logs a run's queueing and wakes the worker.
-func (p *Poller) queued(err error, key, slug string, id int64, mode, trigger, head string) {
+// queued logs a run's queueing, writes why (a failure a log line: the
+// reason is the page's, the run runs without it) and wakes the worker.
+func (p *Poller) queued(ctx context.Context, err error, key, slug string, id int64, mode, trigger, head string, why store.RunReason) {
 	switch {
 	case errors.Is(err, store.ErrExists), errors.Is(err, store.ErrNoRepo):
 		// A run already open, or the repository removed under the cycle:
@@ -661,7 +691,11 @@ func (p *Poller) queued(err error, key, slug string, id int64, mode, trigger, he
 		p.Log.Warn("baseline_queue_failed", "project", key, "repo", slug, "err", err.Error())
 		return
 	}
-	p.Log.Info("baseline_queued", "project", key, "repo", slug, "run_id", id, "mode", mode, "trigger", trigger, "head", gitrepo.ShortSHA(head))
+	if err := p.Store.SetRunReason(ctx, id, why); err != nil {
+		p.Log.Warn("baseline_reason_failed", "project", key, "repo", slug, "run_id", id, "err", err.Error())
+	}
+	p.Log.Info("baseline_queued", "project", key, "repo", slug, "run_id", id, "mode", mode, "trigger", trigger, "reason", why.Kind,
+		"head", gitrepo.ShortSHA(head))
 	p.Describe.Wake()
 }
 

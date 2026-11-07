@@ -42,6 +42,7 @@ type SourceStore interface {
 	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
+	SetRunReason(ctx context.Context, id int64, reason store.RunReason) error
 	SourceRepoByName(ctx context.Context, key, slug string) (store.SourceRepo, bool, error)
 	RenameProject(ctx context.Context, key, to string) (int64, error)
 	RenameRepo(ctx context.Context, key, slug, to, cloneURL string) error
@@ -1235,6 +1236,10 @@ func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		httpx.ServerError(w, r, err, "enqueue run")
 		return
+	}
+	// Why, for the queue page: a failed write is a log line, the run runs.
+	if err := d.Sources.Store.SetRunReason(ctx, id, store.RunReason{Kind: store.ReasonManual}); err != nil {
+		d.Log.WarnContext(ctx, "baseline_reason_failed", "project", src.ProjectKey, "repo", slug, "run_id", id, logging.Err(err))
 	}
 	d.Log.InfoContext(ctx, "baseline_queued", "project", src.ProjectKey, "repo", slug, "run_id", id, "mode", mode,
 		"head", gitrepo.ShortSHA(head), "user", d.user(r))

@@ -405,14 +405,58 @@ func OverBudget(spent *int64, budget int64) bool {
 	return budget > 0 && spent != nil && *spent >= budget
 }
 
-// Spent is what Almanach's own model calls since a time cost, and how many
-// there were; cost nil when none of them was priced.
-func (s *Store) Spent(ctx context.Context, since time.Time) (*int64, int, error) {
-	var cost sql.NullInt64
-	var calls int
-	err := s.db.QueryRowContext(ctx, `SELECT SUM(cost_nano_usd), COUNT(*) FROM llm_calls WHERE created_at >= ?`, stamp(since)).Scan(&cost, &calls)
-	if err != nil || !cost.Valid {
-		return nil, calls, err
+// Spend is what Almanach's own model calls since a time cost.
+type Spend struct {
+	// NanoUSD sums the priced calls; nil when none was.
+	NanoUSD *int64
+	Calls   int
+	// Unpriced is the calls the gateway billed without a price coming back:
+	// answered, or cut mid-answer (a loop cut, the output cap, a stall), the
+	// stream ended before its usage. Their cost is unknown, not zero. A call
+	// that got no answer (refused, no headers) billed nothing and is not one.
+	Unpriced int
+	// Dearest is the costliest priced call of the last dearestWindow: a day
+	// of nothing but unpriced calls still has one.
+	Dearest int64
+}
+
+// dearestWindow is how far back Spend.Dearest looks.
+const dearestWindow = 30 * 24 * time.Hour
+
+// billed is a ledger row the gateway billed: streamed, or from before the
+// column with an outcome that answered (inference.Outcome's strings).
+const billed = `(streamed = 1 OR outcome IN ('ok', 'unparseable', 'too_long'))`
+
+// Budgeted is the spend a daily budget counts: each unpriced call as the
+// costliest priced one, never as nothing (2026-11-07: a night of unpriced
+// runaways never reached the budget). Nil when nothing is known.
+func (s Spend) Budgeted() *int64 {
+	if s.NanoUSD == nil && (s.Unpriced == 0 || s.Dearest == 0) {
+		return nil
 	}
-	return &cost.Int64, calls, nil
+	var sum int64
+	if s.NanoUSD != nil {
+		sum = *s.NanoUSD
+	}
+	sum += int64(s.Unpriced) * s.Dearest
+	return &sum
+}
+
+// Spent is what Almanach's own model calls since a time cost: one read, so
+// the sum and the counts agree.
+func (s *Store) Spent(ctx context.Context, since time.Time) (Spend, error) {
+	var out Spend
+	var cost, dearest sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT SUM(cost_nano_usd), COUNT(*),
+		COALESCE(SUM(cost_nano_usd IS NULL AND `+billed+`), 0),
+		(SELECT MAX(cost_nano_usd) FROM llm_calls WHERE created_at >= ?2)
+		FROM llm_calls WHERE created_at >= ?1`, stamp(since), stamp(since.Add(-dearestWindow))).Scan(&cost, &out.Calls, &out.Unpriced, &dearest)
+	if err != nil {
+		return Spend{}, err
+	}
+	if cost.Valid {
+		out.NanoUSD = &cost.Int64
+	}
+	out.Dearest = dearest.Int64
+	return out, nil
 }
