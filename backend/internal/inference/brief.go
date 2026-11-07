@@ -20,7 +20,7 @@ type BriefResult struct {
 
 // Brief asks for a repository's brief, written from its stored page.
 func (c *Client) Brief(ctx context.Context, prompt string) BriefResult {
-	content, call := c.call(ctx, prompt, briefFormat())
+	content, call := c.call(ctx, prompt, briefFormat(), capBrief)
 	out := BriefResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out

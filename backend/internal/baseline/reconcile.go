@@ -18,12 +18,23 @@ type Changes struct {
 	Gone    []string
 }
 
-// Sift keeps what a reconcile looks at of a diff.
-func Sift(diff []gitrepo.Entry) Changes {
+// Sift keeps what a reconcile looks at of a diff: a change to a file of
+// files, the tree's readable set at the new commit (Files, Schemas), so a
+// file the run never reads (a test, an unnamed schema) is never read for
+// its change either. Such a file is not gone: it is still in the tree, and
+// a plan from before it was left out (one that read tests) would count its
+// bytes as left and read the repository afresh.
+func Sift(diff []gitrepo.Entry, files []File) Changes {
+	readable := make(map[string]bool, len(files))
+	for _, f := range files {
+		readable[f.Path] = true
+	}
 	var c Changes
 	for _, e := range diff {
 		if Readable(e) {
-			c.Changed = append(c.Changed, FileOf(e))
+			if readable[e.Path] {
+				c.Changed = append(c.Changed, FileOf(e))
+			}
 			continue
 		}
 		c.Gone = append(c.Gone, e.Path)

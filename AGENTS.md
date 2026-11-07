@@ -46,7 +46,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   `gatewayClass`: hold, note kept. Refused write: hold, note kept, retry counts once before its
   call (a pause repaid the call each poll). All ≤ `maxFoldAttempts`: none blocks queue forever.
 - One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
-  schema, no in-call retry.
+  schema, no in-call retry. Every call capped (`MaxAnswerTokens`); call cap hit while streaming =
+  `too_long`, the call's, never a gateway hold (2026-11-07: runaway restyles, 10 min, ~$0.9 each, 8×, unpriced).
 - Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.
   Daily budget holds runs, never notes.
 - SQLite: `serve` never migrates; never edit applied migration (0001 squashed once, DB dropped,
@@ -66,7 +67,10 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   UI copy: capital only if first char letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
   source key: from project URL, case-only rename.
 - Listing folds where files are, never 2 fixed levels (Maven = one line). Big file = head, never left
-  out (god class is one); redacted whole, then cut.
+  out (god class is one); redacted whole, then cut. What a run reads is code's where code can tell,
+  never the catalogue's alone (it read tests, not routing; user, 2026-11-07): tests out unless most of
+  the tree; anchors (contracts, entry points, build) always, first in a folder; WSDL/XSD only build-named;
+  generated (folder or head mark) and own `.agents/PROJECT.md` never (a page citing itself).
 - Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
   stored (user, 2026-10-30). Gate: key, slug any case (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
   start; repo's notes wait out its run. Step answers a patch: unnamed ids kept; repo page: PR statement

@@ -3,6 +3,7 @@ package clone
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 
 	"github.com/trick77/almanach/internal/baseline"
@@ -166,6 +167,31 @@ func (p *Poller) syncedManifests(ctx context.Context, j store.SyncJob, head stri
 		return manifest.Read{}, false
 	}
 	return read, true
+}
+
+// ReadManifestsNow reads and stores the manifests of a ready clone at
+// head outside a cycle, under the clone's lock: a clone this poller did
+// not sync itself (laid down by its caller) gets its dependencies too.
+func (p *Poller) ReadManifestsNow(ctx context.Context, key, slug, head string) error {
+	pid, rid, ok, err := p.Store.RepoIDs(ctx, key, slug)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("repository %s/%s: %w", key, slug, store.ErrNoRepo)
+	}
+	unlock, ok := p.tryLockRepo(rid)
+	if !ok {
+		return fmt.Errorf("repository %s/%s: the clone is busy", key, slug)
+	}
+	defer unlock()
+	j := store.SyncJob{Source: store.ProjectSource{ProjectID: pid, ProjectKey: key}, Repo: store.SourceRepo{ProjectID: pid, RepoID: rid, ProjectKey: key, Slug: slug}}
+	read, ok := p.syncedManifests(ctx, j, head)
+	if !ok {
+		return fmt.Errorf("repository %s/%s: manifests not read", key, slug)
+	}
+	p.saveManifests(ctx, j, head, read)
+	return nil
 }
 
 // saveManifests stores what was read; a failure is logged, never the

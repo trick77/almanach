@@ -3,6 +3,7 @@
 //	almanach serve        run the service (default)
 //	almanach migrate      apply pending database migrations and exit
 //	almanach backup FILE  write a consistent copy of the database to FILE and exit
+//	almanach evaluate     run the baseline over a folder of repositories and score the pages (paid calls)
 //	almanach version      print the version and exit
 //	almanach -healthcheck probe /healthz, exit 0 on a 2xx (liveness: the container healthcheck)
 //	almanach -readycheck  probe /readyz, exit 0 on a 2xx (readiness: the database answers, its disk has room)
@@ -55,6 +56,8 @@ func main() {
 		err = withLog(migrate)
 	case "backup":
 		err = withLog(backup)
+	case "evaluate":
+		err = withLog(runEval)
 	case "version":
 		fmt.Println(version.String())
 	case "-healthcheck":
@@ -73,7 +76,7 @@ func main() {
 	}
 }
 
-const usage = "usage: almanach [serve|migrate|backup <file>|version|-healthcheck|-readycheck]"
+const usage = "usage: almanach [serve|migrate|backup <file>|evaluate -dir DIR -out DIR ...|version|-healthcheck|-readycheck]"
 
 // optimizeGrace bounds PRAGMA optimize at shutdown: an ANALYZE of a few
 // tables, seconds at most; the stop grace counts it.
