@@ -80,5 +80,6 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   drops the model's word, PR-taught too.
 - Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, no
   kind, not "library"; map zone UI-drawn. Maps, prompts, uses: main scope only (test, dev, pins
-  dashed on Abhängigkeiten alone); parent POM a pin.
+  dashed on Abhängigkeiten alone); parent POM a pin. Topics likewise (user, 2026-11-07: "listed, where
+  data comes from or goes to"): code-read, joined by name; a name code can't resolve = left out, never guessed.
 - Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice): model's tags, `RuntimeOnly`.

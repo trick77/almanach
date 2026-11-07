@@ -18,6 +18,7 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -61,7 +62,9 @@ type runStore struct {
 	arranges int
 	// libs is what Libraries answers, by slug ("" the project's); libsErr
 	// fails it.
-	libs     map[string][]store.SharedRepo
+	libs map[string][]store.SharedRepo
+	// messages is what Messaging answers; libsErr fails it too.
+	messages map[store.RepoRef]messaging.Read
 	libsErr  error
 	libReads map[string]int
 	// departed is the project's deactivated repositories; prRepos the
@@ -155,6 +158,10 @@ func (s *runStore) SettleDepartures(_ context.Context, _ string, slugs []string)
 	s.settled = append(s.settled, slugs)
 	s.departureDue = false
 	return nil
+}
+
+func (s *runStore) Messaging(context.Context) (store.Messages, error) {
+	return store.NewMessages(s.messages), s.libsErr
 }
 
 func (s *runStore) Shared(_ context.Context, _, slug string) ([]store.SharedRepo, error) {

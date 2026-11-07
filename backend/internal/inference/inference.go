@@ -417,11 +417,16 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 // reasoningRoom: a thinking call's reasoning shares the wire cap, and
 // llmwire's own allowance for a level a profile has not measured is 1024
 // tokens, a guess; a long think would cut a normal answer.
+//
+// A step's patch of a large subject ran to 24k tokens of honest prose
+// (86k chars) and was cut there: patch and describe take 32k, with
+// reasoningRoom 48k, still inside CallTimeout. A loop (one heading and
+// paragraph again and again) is cut by the same cap.
 const (
 	reasoningRoom = 16_000
 	capCatalogue  = 12_000
-	capPatch      = 24_000
-	capDescribe   = 24_000
+	capPatch      = 32_000
+	capDescribe   = 32_000
 	capMap        = 12_000
 	capMerge      = 24_000
 	capBrief      = 8_000

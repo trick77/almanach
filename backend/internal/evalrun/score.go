@@ -13,6 +13,7 @@ import (
 	"github.com/trick77/toolkit/llmwire"
 
 	"github.com/trick77/almanach/internal/markup"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -89,6 +90,43 @@ type RepoReport struct {
 	JudgeError   string   `json:"judge_error,omitempty"`
 	// Rules is what the page breaks of the rules code can check.
 	Rules []string `json:"rules,omitempty"`
+	// TopicRecall is the share of the labels' topics the code-read
+	// messaging names the same way, nil without topic labels; TopicsMissed
+	// those it does not, TopicsExtra those it names beyond them.
+	TopicRecall  *float64 `json:"topic_recall,omitempty"`
+	TopicsMissed []string `json:"topics_missed,omitempty"`
+	TopicsExtra  []string `json:"topics_extra,omitempty"`
+}
+
+// topicScore holds what the poller read of a repository's topics to its
+// labels: a topic found the way the labels say, missed, or found beyond
+// them.
+func topicScore(rep *RepoReport, want []TopicLabel, got []messaging.Topic) {
+	if len(want) == 0 {
+		return
+	}
+	read := map[string]bool{}
+	for _, t := range got {
+		read[t.Name+" "+t.Direction] = true
+	}
+	labelled := map[string]bool{}
+	hit := 0
+	for _, w := range want {
+		k := w.Name + " " + w.Direction
+		labelled[k] = true
+		if read[k] {
+			hit++
+		} else {
+			rep.TopicsMissed = append(rep.TopicsMissed, k)
+		}
+	}
+	for _, t := range got {
+		if k := t.Name + " " + t.Direction; !labelled[k] {
+			rep.TopicsExtra = append(rep.TopicsExtra, k)
+		}
+	}
+	recall := float64(hit) / float64(len(want))
+	rep.TopicRecall = &recall
 }
 
 // Answer is the judge's verdict on one question.
@@ -127,6 +165,7 @@ func score(ctx context.Context, p Project, res ProjectResult, j *judge, log *slo
 		if l := r.Labels; l != nil {
 			rep.Labelled = true
 			files(&rep, l, rr)
+			topicScore(&rep, l.Topics, rr.Topics)
 			if rr.Page != nil && len(l.Questions) > 0 {
 				ans, cost, err := j.ask(ctx, pageText(rr.Page), l.Questions)
 				rep.JudgeCostUSD = cost.USD
@@ -512,6 +551,16 @@ func markdownRun(b *strings.Builder, run []ProjectReport) {
 					shown = shown[:20]
 				}
 				fmt.Fprintf(b, "\nnoise read (%d files): %s\n", len(x.NoiseFiles), strings.Join(shown, ", "))
+			}
+			if x.TopicRecall != nil {
+				fmt.Fprintf(b, "\ntopics found: %.0f%%", 100**x.TopicRecall)
+				if len(x.TopicsMissed) > 0 {
+					fmt.Fprintf(b, "; missed: %s", strings.Join(x.TopicsMissed, ", "))
+				}
+				if len(x.TopicsExtra) > 0 {
+					fmt.Fprintf(b, "; beyond the labels: %s", strings.Join(x.TopicsExtra, ", "))
+				}
+				b.WriteString("\n")
 			}
 			b.WriteString("\n")
 		}

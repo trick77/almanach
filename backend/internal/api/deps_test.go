@@ -9,6 +9,7 @@ import (
 
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/manifest"
+	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -150,6 +151,81 @@ func TestRepoMarkdown_Dependencies(t *testing.T) {
 	st.graph = store.Graph{}
 	if rec = getMD(h, "/api/projects/libs/repos/wire.md", ""); strings.Contains(rec.Body.String(), "Abhängigkeiten") {
 		t.Fatalf("export without edges: %q", rec.Body.String())
+	}
+}
+
+// A repository's page says which topics it sends to and receives from,
+// with the repositories on the far side, and its schemas; the project page
+// lists every topic its repositories touch with both sides; the export
+// says the same. With the sources off: none.
+func TestMessaging_RepoProjectAndExport(t *testing.T) {
+	st := depsStore()
+	loom, rongo := store.RepoRef{ProjectKey: "apps", Slug: "loom"}, store.RepoRef{ProjectKey: "apps", Slug: "rongo"}
+	wire := store.RepoRef{ProjectKey: "libs", Slug: "wire"}
+	tp := func(name, dir string) messaging.Topic {
+		return messaging.Topic{Name: name, Direction: dir, Files: []string{"a.go"}}
+	}
+	st.messages = map[store.RepoRef]messaging.Read{
+		loom:  {Topics: []messaging.Topic{tp("jobs.v1", messaging.Produces), tp("tick", messaging.Declares)}, Schemas: []messaging.Schema{{Name: "ex.Job", Kind: "avro", File: "job.avsc"}}},
+		rongo: {Topics: []messaging.Topic{tp("jobs.v1", messaging.Consumes)}},
+		wire:  {Topics: []messaging.Topic{tp("jobs.v1", messaging.Consumes)}},
+	}
+	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	code, body := do(t, h, http.MethodGet, "/api/projects/apps/repos/loom", "", "", nil)
+	var m repoMessagingBody
+	if err := json.Unmarshal(body["messaging"], &m); code != 200 || err != nil {
+		t.Fatalf("repo: %d %v", code, err)
+	}
+	if len(m.Topics) != 2 || m.Topics[0].Name != "jobs.v1" || len(m.Topics[0].Peers) != 2 || m.Topics[0].Peers[1].Project != "libs" ||
+		len(m.Schemas) != 1 || m.Schemas[0].Name != "ex.Job" {
+		t.Errorf("loom messaging = %+v", m)
+	}
+	code, body = do(t, h, http.MethodGet, "/api/projects/apps", "", "", nil)
+	var flows []topicFlowBody
+	if err := json.Unmarshal(body["topics"], &flows); code != 200 || err != nil || len(flows) != 2 {
+		t.Fatalf("project topics: %d %v %s", code, err, body["topics"])
+	}
+	if f := flows[0]; f.Name != "jobs.v1" || len(f.Producers) != 1 || len(f.Consumers) != 2 || len(f.Declared) != 0 {
+		t.Errorf("jobs.v1 = %+v", f)
+	}
+	rec := getMD(h, "/api/projects/apps/repos/loom.md", "")
+	want := "## Messaging\n\n- Producer von `jobs.v1`, Consumer: `apps/rongo`, `libs/wire`\n- nennt `tick`\n\nSchemas:\n\n- `ex.Job` (avro, `job.avsc`)\n"
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("export: %q, want %q in it", rec.Body.String(), want)
+	}
+	rec = getMD(h, "/api/projects/apps/repos/rongo.md", "")
+	if !strings.Contains(rec.Body.String(), "- Consumer von `jobs.v1`, Producer: `apps/loom`\n") {
+		t.Errorf("rongo export: %q", rec.Body.String())
+	}
+	if rec = getMD(h, "/api/projects/apps/repos/fetch.md", ""); strings.Contains(rec.Body.String(), "Messaging") {
+		t.Errorf("export without messages: %q", rec.Body.String())
+	}
+	rec = getMD(h, "/api/projects/apps.md", "")
+	wantFlows := "## Messaging\n\n- `jobs.v1`: Producer `apps/loom`; Consumer `apps/rongo`, `libs/wire`\n- `tick`: Producer –; Consumer –; genannt von `apps/loom`\n"
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), wantFlows) {
+		t.Errorf("project export: %d %q, want %q in it", rec.Code, rec.Body.String(), wantFlows)
+	}
+
+	// The sources off: the store is not asked.
+	st.graphErr = errors.New("must not be asked")
+	off := handler(t, st, &fakeWaker{}, "")
+	code, body = do(t, off, http.MethodGet, "/api/projects/libs/repos/wire", "", "", nil)
+	if code != 200 || string(body["messaging"]) != `{"topics":[],"schemas":[]}` {
+		t.Errorf("sources off: %d %s", code, body["messaging"])
+	}
+	code, body = do(t, off, http.MethodGet, "/api/projects/apps", "", "", nil)
+	if code != 200 || string(body["topics"]) != "[]" {
+		t.Errorf("project with the sources off: %d %s", code, body["topics"])
+	}
+	// A store that fails: a 500, never an empty list.
+	h, _, _ = sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
+	for _, p := range []string{"/api/projects/apps", "/api/projects/apps/repos/loom"} {
+		if code, _ := do(t, h, http.MethodGet, p, "", "", nil); code != 500 {
+			t.Errorf("%s with the store failing: %d, want 500", p, code)
+		}
+	}
+	if rec := getMD(h, "/api/projects/apps/repos/loom.md", ""); rec.Code != 500 {
+		t.Errorf("export with the store failing: %d, want 500", rec.Code)
 	}
 }
 

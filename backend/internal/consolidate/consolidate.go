@@ -147,6 +147,9 @@ type Worker struct {
 	libsRun  int64
 	libs     string
 	siblings string
+	// topics is, read with them, what the repository's code sends and
+	// receives (topicsShown).
+	topics string
 	// busyRun and busyWrites count the step writes of one run a busy
 	// database or the file refused in a row; a written step resets them.
 	// In memory: the row's attempts are the gateway's, reset by every

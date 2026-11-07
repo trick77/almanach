@@ -4,6 +4,7 @@ import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import { CompactMap } from "./CompactMap";
 import { titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
+import { ProjectMessages } from "./Messaging";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
 import { RepoPage } from "./RepoPage";
@@ -59,6 +60,7 @@ const tabLabel = (t: string) =>
 const ids = {
   map: "map",
   repos: "repositories",
+  messages: "messages",
   problems: "problems",
   notes: "notes",
   revisions: "revisions",
@@ -147,6 +149,16 @@ function Body({ data }: { data: ProjectDetail }) {
           tab: OVERVIEW,
           count: data.repos.length,
         },
+        ...(data.topics.length > 0
+          ? [
+              {
+                id: ids.messages,
+                label: S.msg.title,
+                tab: OVERVIEW,
+                count: data.topics.length,
+              },
+            ]
+          : []),
         {
           id: ids.problems,
           label: S.project.problems,
@@ -335,6 +347,13 @@ function Overview({
           </div>
         )}
       </section>
+
+      {data.topics.length > 0 && (
+        <section id={ids.messages} className="scroll-mt-16">
+          <div className={eyebrow}>{S.msg.title}</div>
+          <ProjectMessages project={data.key} flows={data.topics} />
+        </section>
+      )}
 
       <section id={ids.problems} className="scroll-mt-16">
         <div className={eyebrow}>

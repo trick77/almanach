@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,24 @@ func history(t *testing.T) (dir, first, second string) {
 	dir = filepath.Join(base, "remote.git")
 	gitRun(t, base, "clone", "-q", "--bare", work, dir)
 	return dir, first, second
+}
+
+func TestGrepFiles(t *testing.T) {
+	c := client(t)
+	dir, first, second := history(t)
+	got, err := c.GrepFiles(context.Background(), dir, second, "umlaut|PACKAGE")
+	if err != nil || !reflect.DeepEqual(got, []string{"docs/für.md", "new.go"}) {
+		t.Errorf("GrepFiles = %q %v, want the two files, case aside, under their own names", got, err)
+	}
+	if none, err := c.GrepFiles(context.Background(), dir, first, "nothing-here"); err != nil || len(none) != 0 {
+		t.Errorf("no match = %q %v, want none and no error", none, err)
+	}
+	if _, err := c.GrepFiles(context.Background(), dir, "HEAD", "x"); err == nil {
+		t.Error("a ref, not a sha: want an error")
+	}
+	if _, err := c.GrepFiles(context.Background(), dir, second, "("); err == nil {
+		t.Error("a bad pattern: want an error")
+	}
 }
 
 func TestListEntries_ModesSizesUmlauts(t *testing.T) {

@@ -53,4 +53,10 @@ func TestReadManifestsNow(t *testing.T) {
 	if m.saves != 1 {
 		t.Errorf("saves = %d, want 1", m.saves)
 	}
+	// Topics due though the manifests are not (a newer reader): read.
+	delete(m.topicsAt, idOf("tools/kit"))
+	_ = p.ReadManifestsNow(ctx, "tools", "kit", head)
+	if m.topicsAt[idOf("tools/kit")] != head {
+		t.Error("topics due with the manifests current: want them read")
+	}
 }

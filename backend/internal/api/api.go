@@ -60,6 +60,7 @@ type Store interface {
 	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
 	Dependencies(ctx context.Context, all bool) (store.Graph, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
+	Messaging(ctx context.Context) (store.Messages, error)
 	// Costs is Almanach's own ledger by month and project, the costs page;
 	// Spent the calls since a time, the page's "today".
 	Costs(ctx context.Context, now time.Time) ([]store.CostRow, error)
@@ -537,6 +538,9 @@ type projectDetailBody struct {
 	// Revisions is the project page's history, newest first; empty for a
 	// project of one, which has no project page.
 	Revisions []revisionBody `json:"revisions"`
+	// Topics are the topics the project's repositories touch, each with
+	// every repository on its sides.
+	Topics []topicFlowBody `json:"topics"`
 }
 
 func (d Deps) project(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +624,12 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		out.Shape = &page.Shape
 	}
 	out.Repos = repoBodies(repos)
+	msgs, err := d.messages(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "messaging")
+		return
+	}
+	out.Topics = projectFlows(msgs, key)
 	// The shared repositories are the map's zone: no map, none asked for.
 	out.Shared = []sharedBody{}
 	if drawn != nil {
@@ -695,6 +705,9 @@ type repoDetailBody struct {
 	// UsedBy those that use it.
 	Uses   []useBody `json:"uses"`
 	UsedBy []depBody `json:"used_by"`
+	// Messaging is the topics and schemas its code names, and who is on
+	// the far side of each topic.
+	Messaging repoMessagingBody `json:"messaging"`
 }
 
 func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
@@ -760,6 +773,12 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Map: drawn, MapDeclined: declined,
 		Notes: noteBodies(notes), Revisions: revisionBodies(revisions)}
 	out.Uses, out.UsedBy = usesOf(g, store.RepoRef{ProjectKey: key, Slug: slug})
+	msgs, err := d.messages(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "messaging")
+		return
+	}
+	out.Messaging = repoMessaging(msgs, store.RepoRef{ProjectKey: key, Slug: slug})
 	for _, rp := range repos {
 		if rp.Slug == slug {
 			out.NotesTotal, out.LastMerge = rp.Notes, rp.LastMerge
