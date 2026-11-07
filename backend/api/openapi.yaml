@@ -65,6 +65,10 @@ tags:
     description: The OIDC sign-in of oidc mode and the UI's session check.
   - name: operations
     description: What a monitoring system scrapes.
+  - name: queue
+    description: >-
+      Pausing and resuming the worker: operations, not wiki, and the one
+      browser write beside the sources. Gated like the read routes.
 
 paths:
   /metrics:
@@ -235,10 +239,42 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [count]
+                required: [count, paused]
                 properties:
                   count:
                     type: integer
+                  paused:
+                    type: boolean
+                    description: The queue is paused (POST /api/queue/pause).
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+
+  /api/queue/pause:
+    post:
+      tags: [queue]
+      summary: Pause the queue
+      description: >-
+        The worker takes no new item (note, run step, restyle, brief) until
+        resumed; the item in flight finishes, it is paid for. Stored, so a
+        restart keeps it. A pause on stays as it was (its time). Who paused
+        is logged, never stored.
+        The one browser write outside the sources.
+      operationId: pauseQueue
+      responses:
+        "204":
+          description: Paused.
+        "401":
+          $ref: "#/components/responses/SignInRequired"
+
+  /api/queue/resume:
+    post:
+      tags: [queue]
+      summary: Resume the queue
+      description: Lifts the pause and wakes the worker; none on is no error.
+      operationId: resumeQueue
+      responses:
+        "204":
+          description: Resumed.
         "401":
           $ref: "#/components/responses/SignInRequired"
 
@@ -1263,12 +1299,17 @@ components:
         today:
           type: object
           description: What the calls of the UTC day cost so far.
-          required: [calls]
+          required: [calls, unpriced]
           properties:
             cost_usd:
               type: string
             calls:
               type: integer
+            unpriced:
+              type: integer
+              description: >-
+                The calls among them billed without a price (answered, or
+                cut mid-answer before its usage arrived): not in cost_usd.
 
     CostSum:
       type: object
@@ -1498,8 +1539,18 @@ components:
     Queue:
       type: object
       description: The worker's queue.
-      required: [current, next, sync, spent, recent, failed, poll_seconds, max_attempts, more]
+      required: [paused, current, next, sync, spent, recent, failed, poll_seconds, max_attempts, more]
       properties:
+        paused:
+          description: The queue's pause, null when the worker takes items.
+          oneOf:
+            - type: object
+              required: [at]
+              properties:
+                at:
+                  type: string
+                  format: date-time
+            - type: "null"
         current:
           description: The note or run step in flight; null while the worker waits.
           oneOf:
@@ -1518,13 +1569,21 @@ components:
         spent:
           type: object
           description: What the worker's own calls of the last 24 hours cost.
-          required: [calls]
+          required: [calls, unpriced]
           properties:
             cost_usd:
               type: string
               description: 3 decimals; omitted when none was priced.
             calls:
               type: integer
+            unpriced:
+              type: integer
+              description: >-
+                The calls among them billed without a price (answered, or
+                cut mid-answer before its usage arrived): not in cost_usd,
+                their cost unknown, not zero. A call that got no answer is
+                not one. The daily budget counts each as the day's dearest
+                priced call.
         recent:
           type: array
           description: What the worker finished in the last 24 hours, newest first, at most 50.
@@ -1614,8 +1673,43 @@ components:
     QueueRun:
       type: object
       description: An open run with its steps.
-      required: [id, state, mode, trigger, commit, base_commit, calls, queued_at, started_at, steps]
+      required: [id, state, mode, trigger, commit, base_commit, calls, queued_at, started_at, steps, reason]
       properties:
+        reason:
+          description: >-
+            Why it was queued, as its queuer knew it; null for a run from
+            before reasons were kept. kind first (never read), retry
+            (attempt of of, last_error), unfinished (a done run's skipped
+            parts or map), interval (from the documented commit to the head,
+            days since the last run), restyle (the page levels it lifts to,
+            repo_epoch and project_epoch, a scope not due absent), returned
+            (back from a deactivation, from the documented commit to the
+            head when there is one), departure (deactivated, the project
+            page lets it go) or manual (a button).
+          oneOf:
+            - type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [first, retry, unfinished, interval, restyle, manual, returned, departure]
+                attempt:
+                  type: integer
+                of:
+                  type: integer
+                last_error:
+                  type: string
+                from:
+                  type: string
+                to:
+                  type: string
+                days:
+                  type: integer
+                repo_epoch:
+                  type: integer
+                project_epoch:
+                  type: integer
+            - type: "null"
         id:
           type: integer
         state:
@@ -1729,6 +1823,9 @@ components:
           description: How many notes the note's merge call folded, when more than one; cost_usd is then the whole call's, shared with them.
         run_id:
           type: integer
+        mode:
+          type: string
+          description: A run's mode (full, reconcile, restyle).
         state:
           type: string
           enum: [done, failed]

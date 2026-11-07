@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +33,11 @@ type fakeQueueStore struct {
 	callsAsked []int64
 	countRuns  bool
 	byID       map[int64]store.BaselineRun
+	// spentErr fails Spent.
+	spentErr error
+	// pause is the queue's pause; pauseErr fails its reads and writes.
+	pause    *store.Pause
+	pauseErr error
 }
 
 func (f *fakeQueueStore) PendingNotes(_ context.Context, limit int) ([]store.PendingNote, error) {
@@ -78,9 +85,31 @@ func (f *fakeQueueStore) RunCosts(_ context.Context, ids []int64) (map[int64]int
 	}
 	return out, nil
 }
-func (f *fakeQueueStore) Spent(context.Context, time.Time) (*int64, int, error) {
+func (f *fakeQueueStore) Spent(context.Context, time.Time) (store.Spend, error) {
 	n := int64(1_284_000_000)
-	return &n, 23, nil
+	return store.Spend{NanoUSD: &n, Calls: 23, Unpriced: 2, Dearest: 300_000_000}, f.spentErr
+}
+
+func (f *fakeQueueStore) WorkerPause(context.Context) (*store.Pause, error) {
+	return f.pause, f.pauseErr
+}
+
+func (f *fakeQueueStore) PauseWorker(context.Context) error {
+	if f.pauseErr != nil {
+		return f.pauseErr
+	}
+	if f.pause == nil {
+		f.pause = &store.Pause{At: queueNow}
+	}
+	return nil
+}
+
+func (f *fakeQueueStore) ResumeWorker(context.Context) error {
+	if f.pauseErr != nil {
+		return f.pauseErr
+	}
+	f.pause = nil
+	return nil
 }
 
 type fakeWorkerStatus struct{ s consolidate.Status }
@@ -117,12 +146,76 @@ func getQueue(t *testing.T, q *QueueDeps) queueBody {
 	return out
 }
 
+// A store that cannot read the spend fails the page: a figure without the
+// unpriced calls would pass for the whole spend.
+func TestQueue_SpentReadFails(t *testing.T) {
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httpapi.New(func(context.Context) error { return nil }, discard)
+	q := &QueueDeps{Store: &fakeQueueStore{spentErr: errors.New("database is locked")}, Worker: fakeWorkerStatus{},
+		Sync: fakeSync{}, Now: func() time.Time { return queueNow }}
+	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), Worker: &fakeWaker{}, AuthMode: config.AuthNone, Queue: q, Log: discard})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/queue", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("GET /api/queue = %d, want 500", rec.Code)
+	}
+}
+
+// A pause is a POST, shown on the queue and its count, logged; a resume
+// lifts it, logged, and wakes the worker; a store that fails is a 500.
+func TestQueue_PauseAndResume(t *testing.T) {
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httpapi.New(func(context.Context) error { return nil }, discard)
+	st := &fakeQueueStore{}
+	waker := &fakeWaker{}
+	var logs strings.Builder
+	q := &QueueDeps{Store: st, Worker: fakeWorkerStatus{}, Sync: fakeSync{}, Now: func() time.Time { return queueNow }}
+	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), Worker: waker, AuthMode: config.AuthNone, Queue: q,
+		Log: slog.New(slog.NewTextHandler(&logs, nil))})
+	defer func() {
+		if !strings.Contains(logs.String(), "queue_paused") || !strings.Contains(logs.String(), "queue_resumed") {
+			t.Errorf("log = %q, want the pause and the resume", logs.String())
+		}
+	}()
+	do := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+	if rec := do(http.MethodPost, "/api/queue/pause"); rec.Code != http.StatusNoContent || st.pause == nil {
+		t.Fatalf("pause = %d, paused %v", rec.Code, st.pause)
+	}
+	var body queueBody
+	if err := json.Unmarshal(do(http.MethodGet, "/api/queue").Body.Bytes(), &body); err != nil || body.Paused == nil || !body.Paused.At.Equal(queueNow) {
+		t.Errorf("queue paused = %+v %v", body.Paused, err)
+	}
+	if rec := do(http.MethodGet, "/api/queue/count"); !strings.Contains(rec.Body.String(), `"paused":true`) {
+		t.Errorf("count = %s, want paused", rec.Body.String())
+	}
+	if rec := do(http.MethodPost, "/api/queue/resume"); rec.Code != http.StatusNoContent || st.pause != nil || waker.wakes != 1 {
+		t.Fatalf("resume = %d, paused %v, wakes %d", rec.Code, st.pause, waker.wakes)
+	}
+	if err := json.Unmarshal(do(http.MethodGet, "/api/queue").Body.Bytes(), &body); err != nil || body.Paused != nil {
+		t.Errorf("after the resume = %+v %v", body.Paused, err)
+	}
+	st.pauseErr = errors.New("database is locked")
+	for _, c := range []struct{ method, path string }{
+		{http.MethodPost, "/api/queue/pause"}, {http.MethodPost, "/api/queue/resume"},
+		{http.MethodGet, "/api/queue"}, {http.MethodGet, "/api/queue/count"},
+	} {
+		if rec := do(c.method, c.path); rec.Code != http.StatusInternalServerError {
+			t.Errorf("%s %s with the store failing = %d, want 500", c.method, c.path, rec.Code)
+		}
+	}
+}
+
 func at(m int) time.Time { return queueNow.Add(time.Duration(m) * time.Minute) }
 
 func startedRun() store.BaselineRun {
 	started := at(-9)
 	return store.BaselineRun{ID: 41, ProjectKey: "pay", Slug: "billing", State: store.RunCataloguing, Mode: store.RunFull,
-		Trigger: store.TriggerFirstReady, Commit: "a1b2c3d", QueuedAt: at(-20), StartedAt: &started}
+		Trigger: store.TriggerFirstReady, Commit: "a1b2c3d", QueuedAt: at(-20), StartedAt: &started,
+		Reason: &store.RunReason{Kind: store.ReasonFirst}}
 }
 
 func queuedRun(id int64, slug string, m int) store.BaselineRun {
@@ -152,6 +245,9 @@ func TestQueue_TheWorkersOrder(t *testing.T) {
 	if out.Current == nil || out.Current.Run == nil || out.Current.Run.ID != 41 || !out.Current.Since.Equal(at(-1)) {
 		t.Fatalf("current = %+v, want run 41 since a minute", out.Current)
 	}
+	if r := out.Current.Run.Reason; r == nil || r.Kind != store.ReasonFirst {
+		t.Errorf("current run's reason = %+v, want first", r)
+	}
 	if out.Current.Run.CostUSD != "0.031" || out.Current.Run.Steps[0].State != consolidate.StepCurrent {
 		t.Errorf("current run = %+v", out.Current.Run)
 	}
@@ -178,7 +274,7 @@ func TestQueue_TheWorkersOrder(t *testing.T) {
 	if s := out.Sync; s == nil || !s.Running || s.Repo != "web" || s.Done != 2 || s.Total != 14 {
 		t.Errorf("sync = %+v", out.Sync)
 	}
-	if out.Spent.CostUSD != "1.284" || out.Spent.Calls != 23 || out.PollSeconds != 30 || out.MaxAttempts != 8 {
+	if out.Spent.CostUSD != "1.284" || out.Spent.Calls != 23 || out.Spent.Unpriced != 2 || out.PollSeconds != 30 || out.MaxAttempts != 8 {
 		t.Errorf("spent = %+v poll %d max %d", out.Spent, out.PollSeconds, out.MaxAttempts)
 	}
 	// The queued run has made no call: its calls are never read.

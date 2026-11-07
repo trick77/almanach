@@ -53,7 +53,7 @@ export interface Costs {
   months: CostMonth[];
   /** BACKEND_DAILY_BUDGET_USD; absent when none is set. */
   budget_usd?: string;
-  today: { cost_usd?: string; calls: number };
+  today: { cost_usd?: string; calls: number; unpriced: number };
 }
 
 export interface Projects {
@@ -660,6 +660,30 @@ export interface QueueRun {
   started_at: string | null;
   cost_usd?: string;
   steps: RunStep[];
+  /** Why it was queued; null for a run from before reasons were kept. */
+  reason: RunReason | null;
+}
+
+/** RunReason is why a run was queued, as its queuer knew it. Mirrors
+ *  store.RunReason. */
+export interface RunReason {
+  kind:
+    | "first"
+    | "retry"
+    | "unfinished"
+    | "interval"
+    | "restyle"
+    | "manual"
+    | "returned"
+    | "departure";
+  attempt?: number;
+  of?: number;
+  last_error?: string;
+  from?: string;
+  to?: string;
+  days?: number;
+  repo_epoch?: number;
+  project_epoch?: number;
 }
 
 /** A note or a run in the queue; as the current item also a repository's
@@ -700,6 +724,8 @@ export interface QueueRecent {
    *  is the whole call's. */
   batch?: number;
   run_id?: number;
+  /** A run's mode: a restyle reads as such. */
+  mode?: Baseline["mode"];
   state?: "done" | "failed";
   skipped?: number;
   error?: string;
@@ -721,6 +747,8 @@ export interface QueueFailed {
 }
 
 export interface Queue {
+  /** The pause: since when; null while the worker takes items. */
+  paused: { at: string } | null;
   current: QueueItem | null;
   next: QueueItem[];
   /** The sync cycle; null with the sources off. */
@@ -734,7 +762,8 @@ export interface Queue {
     finished_at: string | null;
     next_at: string | null;
   } | null;
-  spent: { cost_usd?: string; calls: number };
+  /** unpriced: calls cut before their usage arrived, not in cost_usd. */
+  spent: { cost_usd?: string; calls: number; unpriced: number };
   recent: QueueRecent[];
   failed: QueueFailed[];
   poll_seconds: number;
@@ -747,6 +776,8 @@ export interface Queue {
 /** The queue's size, for the nav. */
 export interface QueueCount {
   count: number;
+  /** The queue is paused: the nav says so. */
+  paused: boolean;
 }
 
 /** pollHeader marks a request a timer repeats; mirrored in

@@ -662,6 +662,9 @@ type LLMCall struct {
 	OutputTokens int64
 	CostNanoUSD  *int64
 	CallID       string
+	// Streamed: the answer or its reasoning had begun to arrive, so the
+	// gateway billed the call whatever its outcome.
+	Streamed bool
 	// BatchPRKeys is every pull request a merge folded together, in merge
 	// order, SourcePR the first; stored for two or more (batchKeys).
 	BatchPRKeys []string
@@ -699,11 +702,12 @@ func (s *Store) InsertLLMCall(ctx context.Context, c LLMCall) (int64, error) {
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO llm_calls (repo_id, source_kind, source_pr_key, source_commit, purpose, baseline_run_id, step,
 			                       outcome, model, input_tokens, cached_tokens, output_tokens, cost_nano_usd, call_id, created_at,
-			                       batch_pr_keys)
-			VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?)
+			                       batch_pr_keys, streamed)
+			VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?)
 			RETURNING id`,
 			rid, fromKind(c.SourceKind), c.SourcePR, c.SourceCommit, purpose, c.BaselineRunID, c.Step,
-			c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, nowStamp(), batch).Scan(&id)
+			c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, nowStamp(), batch,
+			c.Streamed).Scan(&id)
 	})
 	return id, err
 }

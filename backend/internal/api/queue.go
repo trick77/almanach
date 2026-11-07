@@ -27,7 +27,10 @@ type QueueStore interface {
 	QueueCount(ctx context.Context, runs bool) (int, error)
 	RunCalls(ctx context.Context, runID int64) ([]store.RunCall, error)
 	RunCosts(ctx context.Context, ids []int64) (map[int64]int64, error)
-	Spent(ctx context.Context, since time.Time) (*int64, int, error)
+	Spent(ctx context.Context, since time.Time) (store.Spend, error)
+	WorkerPause(ctx context.Context) (*store.Pause, error)
+	PauseWorker(ctx context.Context) error
+	ResumeWorker(ctx context.Context) error
 }
 
 // WorkerStatus is the worker as the queue page sees it.
@@ -61,7 +64,14 @@ const recentMax = 50
 // notesMax bounds the notes the page lists; the rest are counted (More).
 const notesMax = 100
 
+// pausedBody is the queue's pause: since when. Who paused is the log's.
+type pausedBody struct {
+	At time.Time `json:"at"`
+}
+
 type queueBody struct {
+	// Paused is the pause on, null when the worker takes items.
+	Paused *pausedBody `json:"paused"`
 	// Current is the work in flight, null when the worker waits.
 	Current *queueItemBody  `json:"current"`
 	Next    []queueItemBody `json:"next"`
@@ -82,6 +92,8 @@ type queueBody struct {
 
 type queueCountBody struct {
 	Count int `json:"count"`
+	// Paused: the nav says so beside the count.
+	Paused bool `json:"paused"`
 }
 
 // queueCount is the queue's size for the nav: two counts, polled from
@@ -93,7 +105,12 @@ func (d Deps) queueCount(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "queue count")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, queueCountBody{Count: n})
+	p, err := d.Queue.Store.WorkerPause(r.Context())
+	if err != nil {
+		httpx.ServerError(w, r, err, "queue pause")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, queueCountBody{Count: n, Paused: p != nil})
 }
 
 // queueItemBody is a note or a run, with what it waits for.
@@ -137,6 +154,9 @@ type queueRunBody struct {
 	StartedAt  *time.Time `json:"started_at"`
 	CostUSD    string     `json:"cost_usd,omitempty"`
 	Steps      []stepBody `json:"steps"`
+	// Reason is why it was queued, as its queuer knew it; null for a run
+	// from before reasons were kept.
+	Reason *store.RunReason `json:"reason"`
 }
 
 type stepBody struct {
@@ -175,6 +195,14 @@ type syncBody struct {
 type spentBody struct {
 	CostUSD string `json:"cost_usd,omitempty"`
 	Calls   int    `json:"calls"`
+	// Unpriced are the calls among them billed without a price: a stream
+	// cut mid-answer, before its usage came. Not in the cost; unknown, not
+	// zero.
+	Unpriced int `json:"unpriced"`
+}
+
+func spentOf(s store.Spend) spentBody {
+	return spentBody{CostUSD: usd(s.NanoUSD), Calls: s.Calls, Unpriced: s.Unpriced}
 }
 
 // recentBody is a run or a note the worker finished.
@@ -190,8 +218,9 @@ type recentBody struct {
 	// Batch is how many notes the note's merge call folded when more than
 	// one: CostUSD is then the whole call's, shared with the others.
 	Batch int `json:"batch,omitempty"`
-	// A run's.
+	// A run's; Mode says a restyle from a run that read code.
 	RunID   int64  `json:"run_id,omitempty"`
+	Mode    string `json:"mode,omitempty"`
 	State   string `json:"state,omitempty"`
 	Skipped int    `json:"skipped,omitempty"`
 	Error   string `json:"error,omitempty"`
@@ -224,7 +253,42 @@ func (d Deps) queue(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "queue")
 		return
 	}
+	p, err := q.Store.WorkerPause(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "queue pause")
+		return
+	}
+	if p != nil {
+		out.Paused = &pausedBody{At: p.At}
+	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// pauseQueue serves POST /api/queue/pause: the worker takes no new item
+// until resumed, the one in flight finishes. A pause on stays as it was.
+// The one browser write outside the sources (AGENTS.md).
+func (d Deps) pauseQueue(w http.ResponseWriter, r *http.Request) {
+	d.reader(r)
+	if err := d.Queue.Store.PauseWorker(r.Context()); err != nil {
+		httpx.ServerError(w, r, err, "pause queue")
+		return
+	}
+	d.Log.InfoContext(r.Context(), "queue_paused", "user", d.user(r))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resumeQueue serves POST /api/queue/resume and wakes the worker.
+func (d Deps) resumeQueue(w http.ResponseWriter, r *http.Request) {
+	d.reader(r)
+	if err := d.Queue.Store.ResumeWorker(r.Context()); err != nil {
+		httpx.ServerError(w, r, err, "resume queue")
+		return
+	}
+	d.Log.InfoContext(r.Context(), "queue_resumed", "user", d.user(r))
+	if d.Worker != nil {
+		d.Worker.Wake()
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (q *QueueDeps) now() time.Time {
@@ -240,11 +304,11 @@ func (q *QueueDeps) spent(ctx context.Context, runs []store.BaselineRun) (bool, 
 	if q.Budget <= 0 || !slices.ContainsFunc(runs, func(r store.BaselineRun) bool { return r.State == store.RunQueued }) {
 		return false, nil
 	}
-	cost, _, err := q.Store.Spent(ctx, store.DayStart(q.now()))
+	spent, err := q.Store.Spent(ctx, store.DayStart(q.now()))
 	if err != nil {
 		return false, err
 	}
-	return store.OverBudget(cost, q.Budget), nil
+	return store.OverBudget(spent.Budgeted(), q.Budget), nil
 }
 
 func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
@@ -419,11 +483,11 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 	}
 
 	since := q.now().Add(-recentWindow)
-	cost, calls, err := q.Store.Spent(ctx, since)
+	day, err := q.Store.Spent(ctx, since)
 	if err != nil {
 		return out, err
 	}
-	out.Spent = spentBody{CostUSD: usd(cost), Calls: calls}
+	out.Spent = spentOf(day)
 	if out.Recent, err = q.recent(ctx, since); err != nil {
 		return out, err
 	}
@@ -459,7 +523,7 @@ func (q *QueueDeps) runItem(ctx context.Context, r store.BaselineRun) (queueItem
 		return queueItemBody{}, err
 	}
 	body := &queueRunBody{ID: r.ID, State: r.State, Mode: r.Mode, Trigger: r.Trigger, Commit: r.Commit, BaseCommit: r.BaseCommit,
-		Calls: r.Calls, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, Steps: make([]stepBody, 0, len(steps))}
+		Calls: r.Calls, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, Steps: make([]stepBody, 0, len(steps)), Reason: r.Reason}
 	for _, s := range steps {
 		body.Steps = append(body.Steps, stepBody{Kind: s.Kind, Name: s.Name, Files: s.Files, Bytes: s.Bytes, State: s.State,
 			Skip: string(s.Skip), Calls: s.Calls, Failed: s.Failed, At: s.At, CostUSD: usd(s.CostNanoUSD)})
@@ -500,7 +564,7 @@ func (q *QueueDeps) recent(ctx context.Context, since time.Time) ([]recentBody, 
 		}
 		for _, r := range runs {
 			rb := recentBody{Kind: consolidate.KindRun, At: *r.FinishedAt, Project: r.ProjectKey, Repo: r.Slug, RunID: r.ID,
-				State: r.State, Skipped: r.Skipped, Error: r.Error}
+				Mode: r.Mode, State: r.State, Skipped: r.Skipped, Error: r.Error}
 			if c, ok := costs[r.ID]; ok {
 				rb.CostUSD = usd(&c)
 			}

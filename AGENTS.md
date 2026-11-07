@@ -7,7 +7,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Prompts compiled in, never configurable; a rule meant for stored pages bumps its scope's epoch.
   UI: German, copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
-  browser write. Text, summary: schema blocks, never newlines in a JSON string (models drop
+  browser write, and pausing the queue (operations, not wiki; user, 2026-11-07). Text, summary: schema blocks, never newlines in a JSON string (models drop
   them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
   rongo's code; maps by `mapLayout.ts`, banded, grow down (ELK holds no rows in zones).
 - Gate = `make check`. GitHub never first to find failure.

@@ -5,7 +5,7 @@ import { DepsPage } from "./DepsPage";
 import { NotePage } from "./NotePage";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsPage } from "./ProjectsPage";
-import { QueuePage } from "./QueuePage";
+import { QueuePage, queueChanged } from "./QueuePage";
 import { RepoPage } from "./RepoPage";
 import { RevisionPage } from "./RevisionPage";
 import { SearchPage } from "./SearchPage";
@@ -87,10 +87,24 @@ function Shell({ me }: { me: Me }) {
   const sourcesOn = sources?.enabled ?? false;
   const inSources = route.page === "sources" || route.page === "source";
   // The queue's count beside its entry: work in flight and waiting.
-  const { data: queue } = useFetch<QueueCount>("queue/count", queueEvery);
+  const { data: queue, reload: reloadQueue } = useFetch<QueueCount>(
+    "queue/count",
+    queueEvery,
+  );
   const queued = queue?.count ?? 0;
+  // A pause or resume on the queue page: the badge reads at once.
+  useEffect(() => {
+    window.addEventListener(queueChanged, reloadQueue);
+    return () => window.removeEventListener(queueChanged, reloadQueue);
+  }, [reloadQueue]);
 
-  const nav = (label: string, to: string, current: boolean, count = 0) => (
+  const nav = (
+    label: string,
+    to: string,
+    current: boolean,
+    count = 0,
+    paused = false,
+  ) => (
     <Link
       to={to}
       className={
@@ -107,6 +121,14 @@ function Shell({ me }: { me: Me }) {
           className="ml-1.5 rounded-full bg-accent-dim px-1.5 text-[11.5px] text-ink tabular-nums"
         >
           {count}
+        </span>
+      )}
+      {paused && (
+        <span
+          data-testid="queue-paused"
+          className="ml-1.5 rounded-full border border-ochre px-1.5 text-[11.5px] text-ochre"
+        >
+          {S.queue.pausedBadge}
         </span>
       )}
     </Link>
@@ -136,7 +158,13 @@ function Shell({ me }: { me: Me }) {
           )}
           {sourcesOn && nav(S.nav.deps, depsPath, route.page === "deps")}
           {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
-          {nav(S.nav.queue, queuePath, route.page === "queue", queued)}
+          {nav(
+            S.nav.queue,
+            queuePath,
+            route.page === "queue",
+            queued,
+            queue?.paused ?? false,
+          )}
           {nav(S.nav.costs, costsPath, route.page === "costs")}
         </nav>
         <SearchBox key={route.page === "search" ? route.q : ""} route={route} />

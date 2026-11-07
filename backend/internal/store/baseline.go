@@ -83,12 +83,15 @@ type BaselineRun struct {
 	FinishedAt    *time.Time
 	// Epoch is the prompts.Epoch a full or restyle run ran under, the
 	// worker's to set when it starts one; 0 on any other run. A full run
-	// done with one restyles its repository's page (RestyleDue).
+	// done with one restyles its repository's page (RestyleState).
 	Epoch int
 	// RepoID and ProjectID are the repository's ids; ProjectKey and Slug
 	// its current names.
 	RepoID    int64
 	ProjectID int64
+	// Reason is why it was queued (SetRunReason), nil for a run from before
+	// or one whose queuer gave none.
+	Reason *RunReason
 }
 
 // Open reports whether the run is neither done nor failed.
@@ -104,12 +107,12 @@ const runColumns = `b.id AS id, p.key AS project_key, r.slug AS slug, b.mode AS 
 	b.base_commit AS base_commit, b."commit" AS "commit", b.state AS state, b.step AS step, b.steps AS steps,
 	b.plan AS plan, b.attempts AS attempts, b.calls AS calls, b.bytes AS bytes, b.readable_bytes AS readable_bytes,
 	b.read_bytes AS read_bytes, b.skipped AS skipped, b.error AS error, b.queued_at AS queued_at, b.started_at AS started_at,
-	b.finished_at AS finished_at, b.epoch AS epoch, b.repo_id AS repo_id, r.project_id AS project_id`
+	b.finished_at AS finished_at, b.epoch AS epoch, b.repo_id AS repo_id, r.project_id AS project_id, b.reason AS reason`
 
 // lColumns is runColumns of a subquery aliased l, in the same order.
 const lColumns = `l.id, l.project_key, l.slug, l.mode, l.trigger, l.base_commit, l."commit", l.state, l.step, l.steps, l.plan,
 	l.attempts, l.calls, l.bytes, l.readable_bytes, l.read_bytes, l.skipped, l.error, l.queued_at, l.started_at, l.finished_at, l.epoch,
-	l.repo_id, l.project_id`
+	l.repo_id, l.project_id, l.reason`
 
 // readsRepo holds a run row b to the runs that read its repository: never a
 // departure (no reading) nor a restyle (the page alone). The poller's
@@ -126,12 +129,20 @@ type scanner interface {
 func scanRun(row scanner, extra ...any) (BaselineRun, error) {
 	var r BaselineRun
 	var plan []byte
+	var reason sql.NullString
 	dest := append([]any{&r.ID, &r.ProjectKey, &r.Slug, &r.Mode, &r.Trigger, &r.BaseCommit, &r.Commit, &r.State, &r.Step, &r.Steps, &plan,
 		&r.Attempts, &r.Calls, &r.Bytes, &r.ReadableBytes, &r.ReadBytes, &r.Skipped, &r.Error, timeAt(&r.QueuedAt), timeOrNil(&r.StartedAt), timeOrNil(&r.FinishedAt),
-		&r.Epoch, &r.RepoID, &r.ProjectID}, extra...)
+		&r.Epoch, &r.RepoID, &r.ProjectID, &reason}, extra...)
 	err := row.Scan(dest...)
 	if len(plan) > 0 {
 		r.Plan = json.RawMessage(plan)
+	}
+	if err == nil && reason.Valid {
+		// A reason that does not read is no reason: the page says none.
+		var why RunReason
+		if json.Unmarshal([]byte(reason.String), &why) == nil {
+			r.Reason = &why
+		}
 	}
 	return r, err
 }
@@ -146,6 +157,53 @@ func (s *Store) oneRun(ctx context.Context, query string, args ...any) (Baseline
 		return BaselineRun{}, false, err
 	}
 	return r, true, nil
+}
+
+// RunReason is why a run was queued, as its queuer knew it: the queue page
+// words it. Kind is first (never read), retry (Attempt of Of, LastError the
+// failure's), unfinished (a done run's skipped parts or map), interval (the
+// reconcile interval: From the documented commit, To the head, Days since
+// the last run), restyle (the page levels it lifts to: RepoEpoch,
+// ProjectEpoch, 0 for a scope not due), returned (back from a
+// deactivation, From the documented commit when there is one), departure
+// (deactivated, the project page lets it go) or manual (a
+// button; who pressed it is the log's, never stored: the reader's name is
+// log only).
+type RunReason struct {
+	Kind         string `json:"kind"`
+	Attempt      int    `json:"attempt,omitempty"`
+	Of           int    `json:"of,omitempty"`
+	LastError    string `json:"last_error,omitempty"`
+	From         string `json:"from,omitempty"`
+	To           string `json:"to,omitempty"`
+	Days         int    `json:"days,omitempty"`
+	RepoEpoch    int    `json:"repo_epoch,omitempty"`
+	ProjectEpoch int    `json:"project_epoch,omitempty"`
+}
+
+// The reason kinds.
+const (
+	ReasonFirst      = "first"
+	ReasonRetry      = "retry"
+	ReasonUnfinished = "unfinished"
+	ReasonInterval   = "interval"
+	ReasonRestyle    = "restyle"
+	ReasonManual     = "manual"
+	ReasonReturned   = "returned"
+	// ReasonDeparture: the repository was deactivated, the project page
+	// lets it go.
+	ReasonDeparture = "departure"
+)
+
+// SetRunReason writes why run id was queued, right after its queuer queued
+// it: the page's to word, nothing else reads it.
+func (s *Store) SetRunReason(ctx context.Context, id int64, reason RunReason) error {
+	b, err := jsonOf(reason)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE baseline_runs SET reason = ? WHERE id = ?`, b, id)
+	return err
 }
 
 // EnqueueRun queues a run of one repository at a pinned commit and returns

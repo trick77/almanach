@@ -109,8 +109,8 @@ func (s *Store) DeactivateSourceRepo(ctx context.Context, key, slug string) (boo
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO baseline_runs (repo_id, mode, trigger, base_commit, "commit", state, plan, queued_at)
-			VALUES (?, 'full', 'departure', '', ?, 'queued', '{"departure":true}', ?)`, rid, head, now); err != nil {
+			INSERT INTO baseline_runs (repo_id, mode, trigger, base_commit, "commit", state, plan, queued_at, reason)
+			VALUES (?, 'full', 'departure', '', ?, 'queued', '{"departure":true}', ?, '{"kind":"`+ReasonDeparture+`"}')`, rid, head, now); err != nil {
 			return err
 		}
 		queued = true

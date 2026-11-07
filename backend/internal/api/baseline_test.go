@@ -69,6 +69,24 @@ func describeSources() *fakeSources {
 	return fs
 }
 
+// The button's run says it was the button's; a reason that cannot be
+// written leaves the run queued.
+func TestDescribe_RecordsAManualReason(t *testing.T) {
+	fs := describeSources()
+	h, _, _ := sourcesHandlerWith(t, fs, newFakeStore(), &fakeWaker{}, false)
+	if code, _ := do(t, h, "POST", "/api/sources/tools/repos/svc/describe", "", `{}`, jsonHdr); code != 202 {
+		t.Fatalf("describe = %d, want 202", code)
+	}
+	if r := fs.reasons[1]; r.Kind != store.ReasonManual {
+		t.Errorf("reason = %+v, want manual", r)
+	}
+	fs.runs = map[string]store.RepoRuns{}
+	fs.enqueued, fs.reasonErr = nil, errors.New("database is locked")
+	if code, _ := do(t, h, "POST", "/api/sources/tools/repos/svc/describe", "", `{}`, jsonHdr); code != 202 || len(fs.enqueued) != 1 {
+		t.Errorf("reason write failed: %d, queued %v, want the run queued", code, fs.enqueued)
+	}
+}
+
 func TestDescribe_QueuesARunAndWakesTheWorker(t *testing.T) {
 	fs := describeSources()
 	w := &fakeWaker{}

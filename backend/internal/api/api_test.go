@@ -95,9 +95,9 @@ func (f *fakeStore) Dependencies(_ context.Context, all bool) (store.Graph, erro
 }
 
 func (f *fakeStore) Costs(context.Context, time.Time) ([]store.CostRow, error) { return f.costs, nil }
-func (f *fakeStore) Spent(context.Context, time.Time) (*int64, int, error) {
+func (f *fakeStore) Spent(context.Context, time.Time) (store.Spend, error) {
 	n := int64(1_284_000_000)
-	return &n, 23, nil
+	return store.Spend{NanoUSD: &n, Calls: 23}, nil
 }
 
 // Libraries answers libs by project key; graphErr fails it.

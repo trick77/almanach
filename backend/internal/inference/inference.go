@@ -5,6 +5,7 @@
 package inference
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -298,6 +299,9 @@ type CallCost struct {
 	// llmwire's table priced it.
 	NanoUSD  *int64
 	Answered bool
+	// Streamed: the answer or its reasoning had begun to arrive, so the
+	// call was billed whatever its outcome.
+	Streamed bool
 }
 
 // LogLine is the cost record for the log.
@@ -359,6 +363,12 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 	if c.effort != EffortOff {
 		maxAnswer += reasoningRoom
 	}
+	// The loop guards cancel a stream whose answer or reasoning repeats
+	// itself, long before the cap: a call of its own context, so a cut is
+	// told from the worker's.
+	ctx, cut := context.WithCancel(ctx)
+	defer cut()
+	var answer, thought loopGuard
 	stream, _, err := c.wire.ChatStream(ctx, llmwire.ChatRequest{
 		Model:           c.model,
 		Reasoning:       c.reasoning(),
@@ -370,13 +380,44 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		return "", failed(err)
 	}
 	defer func() { _ = stream.Close() }()
-	res, err := stream.Collect(nil)
+	// Collect hands on the answer alone; a model can loop in its reasoning
+	// as well, with no answer at all.
+	for stream.Next() {
+		ev := stream.Event()
+		g := &answer
+		switch ev.Kind {
+		case llmwire.EventContent:
+		case llmwire.EventReasoning:
+			g = &thought
+		default:
+			continue
+		}
+		if g.add(ev.Text) {
+			cut()
+		}
+	}
+	res, err := stream.Result(), stream.Err()
 	if err != nil {
 		out := failed(err)
 		out.Cost = c.costFrom(res)
 		out.Cost.Answered = false
 		if n, ok := res.Usage.Total(); !ok || n == 0 {
 			out.Cost.NanoUSD = nil
+		}
+		// Cut by the guard: too long, the call's own failure. A cancelled
+		// stream reports no usage, so the call is unpriced, but it was cut
+		// at a fraction of what the cap would have billed.
+		if answer.looped {
+			out.Outcome = OutcomeTooLong
+			out.Err = fmt.Errorf("the answer repeated itself; cut after %d chars", len(res.Content))
+			c.logCut(res.Gateway.CallID, res.Content)
+			return "", out
+		}
+		if thought.looped {
+			out.Outcome = OutcomeTooLong
+			out.Err = fmt.Errorf("the reasoning repeated itself; cut after %d chars of it", len(res.Reasoning))
+			c.logCut(res.Gateway.CallID, res.Reasoning)
+			return "", out
 		}
 		// The call cap firing while the answer streamed is the answer's
 		// fault, not the gateway's: a runaway (2026-11-07: restyles
@@ -456,6 +497,60 @@ func (c *Client) logCut(callID, content string) {
 
 // cutTail is how much of a cut answer's end the log keeps.
 const cutTail = 400
+
+// loopGuard watches a streamed answer for a loop: the same stretch of text
+// again and again at its end (2026-11-07: a heading and paragraph pair, "so
+// weiter so fort", three short paragraphs in turn; each ran to the cap).
+// Checked every loopEvery chars, over the last loopWindow.
+type loopGuard struct {
+	tail   []byte
+	since  int
+	looped bool
+}
+
+const (
+	loopEvery  = 2048
+	loopWindow = 16_384
+	// loopSpan is how much exactly periodic text is a loop: no answer
+	// repeats 1500 chars to the byte unless it is stuck.
+	loopSpan = 1500
+	// loopMaxPeriod is the longest repeated stretch looked for.
+	loopMaxPeriod = 1200
+)
+
+// add takes a delta and reports whether the answer now loops.
+func (g *loopGuard) add(delta string) bool {
+	if g.looped {
+		return true
+	}
+	g.tail = append(g.tail, delta...)
+	if over := len(g.tail) - loopWindow; over > 0 {
+		g.tail = append(g.tail[:0], g.tail[over:]...)
+	}
+	g.since += len(delta)
+	if g.since < loopEvery {
+		return false
+	}
+	g.since = 0
+	g.looped = looping(g.tail)
+	return g.looped
+}
+
+// looping reports whether s ends in a stretch of period p (8 to
+// loopMaxPeriod) repeated over loopSpan chars, six times at least.
+func looping(s []byte) bool {
+	for p := 8; p <= loopMaxPeriod; p++ {
+		n := max(6*p, loopSpan)
+		if n > len(s) {
+			break
+		}
+		seg := s[len(s)-n:]
+		if bytes.Equal(seg[p:], seg[:n-p]) {
+			return true
+		}
+	}
+	return false
+}
 
 // failed is a call that got no answer: timed out when a bound fired (the
 // whole call's, the headers', a stream gone silent), an error otherwise.
@@ -539,7 +634,8 @@ func parse(content string, dst any) bool {
 func (c *Client) costFrom(res llmwire.StreamResult) CallCost {
 	u := res.Usage
 	out := CallCost{Model: c.model, CallID: res.Gateway.CallID,
-		InputTokens: deref(u.Input.Total), CachedTokens: deref(u.Input.CacheRead), OutputTokens: deref(u.Output.Total)}
+		InputTokens: deref(u.Input.Total), CachedTokens: deref(u.Input.CacheRead), OutputTokens: deref(u.Output.Total),
+		Streamed: res.Content != "" || res.Reasoning != ""}
 	// Reported is the gateway's charge, on a stream only with LiteLLM's
 	// include_cost_in_streaming_usage; FromTable is llmwire's list rate, the
 	// only figure a direct-route call has. Unpriced alone is unknown.

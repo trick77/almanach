@@ -62,7 +62,7 @@ const costs: Costs = {
     },
   ],
   budget_usd: "5.000",
-  today: { cost_usd: "1.284", calls: 23 },
+  today: { cost_usd: "1.284", calls: 23, unpriced: 0 },
 };
 
 describe("CostsPage", () => {
@@ -101,14 +101,20 @@ describe("CostsPage", () => {
   });
 
   it("says when there is no call yet and no budget", async () => {
-    serve({ costs: { months: [], today: { calls: 0 } } });
+    serve({ costs: { months: [], today: { calls: 0, unpriced: 0 } } });
     render(<CostsPage />);
     expect(await screen.findByText(S.costs.empty)).toBeInTheDocument();
     expect(screen.getByText(S.costs.tiles.noBudget)).toBeInTheDocument();
   });
 
   it("counts nothing spent yet as $0.00 against the budget", async () => {
-    serve({ costs: { months: [], budget_usd: "5.000", today: { calls: 0 } } });
+    serve({
+      costs: {
+        months: [],
+        budget_usd: "5.000",
+        today: { calls: 0, unpriced: 0 },
+      },
+    });
     render(<CostsPage />);
     expect(
       await screen.findByText(S.costs.tiles.budgetNote("$0.00", "$5.00")),

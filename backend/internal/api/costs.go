@@ -76,12 +76,12 @@ func (d Deps) costs(w http.ResponseWriter, r *http.Request) {
 	if n := len(out.Months); n > 0 {
 		out.Months[n-1].CostUSD = usd(monthTotal)
 	}
-	cost, calls, err := d.Store.Spent(ctx, store.DayStart(d.now()))
+	spent, err := d.Store.Spent(ctx, store.DayStart(d.now()))
 	if err != nil {
 		httpx.ServerError(w, r, err, "costs today")
 		return
 	}
-	out.Today = spentBody{CostUSD: usd(cost), Calls: calls}
+	out.Today = spentOf(spent)
 	if b := d.DailyBudgetNanoUSD; b > 0 {
 		out.BudgetUSD = usd(&b)
 	}
