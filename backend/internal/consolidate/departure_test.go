@@ -78,7 +78,7 @@ func TestDeparture_MapThenCall(t *testing.T) {
 		t.Fatalf("ledger = %+v", x.st.calls)
 	}
 	prompt := x.models.prompts[0]
-	for _, want := range []string{"taken out of project `tools`: `old`", "`svc`, `web`", "Nur old.", "svc bietet sie, old nutzt sie.", "Der Dienst."} {
+	for _, want := range []string{"Project `tools`.", "Departed: `old`.", "Remaining: `svc`, `web`.", "Nur old.", "svc bietet sie, old nutzt sie.", "Der Dienst."} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
@@ -271,7 +271,7 @@ func TestRenderProject_NamesTheDeparted(t *testing.T) {
 		t.Error("the project prompt does not name the departed repository")
 	}
 	without := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", nil, []string{"svc", "web"}, nil, nil, limits, nil)
-	if strings.Contains(without, "taken out of the project") {
+	if strings.Contains(without, "taken out of the project and are no part of it") {
 		t.Error("the project prompt names departed repositories when there are none")
 	}
 }

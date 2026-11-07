@@ -1,6 +1,7 @@
 package prompts
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -145,6 +146,37 @@ func TestPromptsStateTheFlowKind(t *testing.T) {
 		}
 		if !strings.Contains(p, "told in full in its `flow` statement") || strings.Contains(p, "flows, end to end") {
 			t.Errorf("%s prompt's summary still tells the flows itself", name)
+		}
+	}
+}
+
+// A gateway caches a prompt's identical prefix only: before, every prompt
+// named its repository a few kB in, and a call cached its first 1024
+// tokens of 66-92k (2026-11-07). The instructions come first, byte for byte
+// the same on every call, the call's values after the output format; only
+// what a deployment fixes (the diagram rules and limits; the repository
+// map's size, a constant) comes earlier. The call's own section stands
+// before "Untrusted input", which the system message makes data.
+// Catalogue (below one cached block) and brief (a button's rare call) are
+// left as they are.
+func TestPromptsPutTheCallLast(t *testing.T) {
+	diagrams := map[string]bool{"{diagram_rules}": true, "{diagram_change}": true, "{diagram_field}": true}
+	repoMap := map[string]bool{"{map_max_nodes}": true, "{map_max_edges}": true}
+	placeholder := regexp.MustCompile(`\{[a-z_]+\}`)
+	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture,
+		"repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle} {
+		format, untrusted := strings.Index(p, "## Output format"), strings.Index(p, "## Untrusted input")
+		if format < 0 || untrusted < format {
+			t.Fatalf("%s prompt has no output format, or its untrusted input before it", name)
+		}
+		for _, at := range placeholder.FindAllStringIndex(p, -1) {
+			ph := p[at[0]:at[1]]
+			if fixed := diagrams[ph] || name == "repo map" && repoMap[ph]; !fixed && at[0] < format {
+				t.Errorf("%s prompt has %s before its output format, at byte %d", name, ph, at[0])
+			}
+		}
+		if call := strings.Index(p, "## This "); call < format || call > untrusted {
+			t.Errorf("%s prompt's call section is not between the output format and the untrusted input", name)
 		}
 	}
 }

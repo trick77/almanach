@@ -1525,7 +1525,7 @@ func TestRender(t *testing.T) {
 			t.Errorf("placeholder %s left in the prompt", ph)
 		}
 	}
-	for _, want := range []string{"`files`", "`PLAT`", "### PR PLAT/files#42 (ticket none, kind unknown, merged 2026-10-20)", "(1 note)", noProblems,
+	for _, want := range []string{"`files`", "`PLAT`", "### PR PLAT/files#42 (ticket none, kind unknown, merged 2026-10-20)", "1 note of repository `files` in project `PLAT`", noProblems,
 		"Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram",
 		// A PR-taught statement is marked, the prompt naming the mark: a

@@ -751,7 +751,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	if !strings.Contains(cat, "auth/login.go\t30") || strings.Contains(cat, "go.sum") || !strings.Contains(cat, "<<<FILE README.md>>>") {
 		t.Errorf("catalogue prompt lacks the listing or the docs, or shows a lockfile:\n%s", cat)
 	}
-	if !strings.Contains(overview, "step 1 of 4") || !strings.Contains(overview, "# svc") || !strings.Contains(overview, "fresh reading") {
+	if !strings.Contains(overview, "Step 1 of 4") || !strings.Contains(overview, "# svc") || !strings.Contains(overview, "fresh reading") {
 		t.Errorf("overview prompt:\n%s", overview)
 	}
 	if !strings.Contains(auth, `the subject "Anmeldung": Login.`) || !strings.Contains(auth, "<<<FILE auth/login.go>>>\npackage auth") ||
@@ -764,7 +764,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		t.Errorf("project prompt:\n%s", proj)
 	}
 	// The map the model may draw: these slugs, the current map to repeat.
-	if !strings.Contains(proj, "one of these and nothing else: portal, svc.") || !strings.Contains(proj, `"zone":"repositories"`) {
+	if !strings.Contains(proj, "the only slugs a node in `repositories` has: portal, svc.") || !strings.Contains(proj, `"zone":"repositories"`) {
 		t.Errorf("project prompt lacks the slugs or the current map:\n%s", proj)
 	}
 }
@@ -2761,5 +2761,31 @@ func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
 	y.w.drain(context.Background())
 	if r := y.run(); r.State != store.RunDescribing || r.Calls != 2 {
 		t.Errorf("run after a failed problem read = %+v, want the subject step held", r)
+	}
+}
+
+// A gateway caches a prompt's identical prefix: two steps of one run share
+// everything before the step (the instructions and the run's name), two
+// repositories everything before the run: every instruction.
+func TestRenderDescribe_CachedPrefix(t *testing.T) {
+	common := func(a, b string) int {
+		n := 0
+		for n < len(a) && n < len(b) && a[n] == b[n] {
+			n++
+		}
+		return n
+	}
+	svc := store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Commit: head}
+	cli := store.BaselineRun{ID: 2, ProjectKey: "apps", Slug: "cli", Commit: "0123abc"}
+	fresh := "This is a fresh reading."
+	overview := renderDescribe(svc, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "### libs/wire", "- svc", "- sends to `jobs`", nil)
+	subject := renderDescribe(svc, existingRepoPage(), limits, 2, 3, `the subject "Login"`, fresh, "<<<FILE a.go>>>", "_None._",
+		"### libs/wire", "- svc", "- sends to `jobs`", nil)
+	if n, step := common(overview, subject), strings.Index(subject, "## This step"); n < step {
+		t.Errorf("two steps of one run share %d bytes, want all %d before the step", n, step)
+	}
+	other := renderDescribe(cli, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "_None._", "_None._", "_None._", nil)
+	if n, run := common(overview, other), strings.Index(other, "## This run"); n < run || run < strings.Index(other, "## Output format") {
+		t.Errorf("two repositories share %d bytes, want all %d before the run, every instruction", n, run)
 	}
 }
