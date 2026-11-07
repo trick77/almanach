@@ -118,7 +118,7 @@ const (
 // repository's, the page alone in the prompt, or with project the
 // project's, whose kinds it takes, with its drops and its shape.
 func (c *Client) Restyle(ctx context.Context, prompt string, project bool) RestyleResult {
-	content, call := c.call(ctx, prompt, restyleFormat(c.diagrams, project))
+	content, call := c.call(ctx, prompt, restyleFormat(c.diagrams, project), restyleCap(prompt))
 	out := RestyleResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out
@@ -162,7 +162,7 @@ func restyleFormat(diagrams, project bool) llmwire.ResponseFormat {
 
 // Catalogue asks which subjects a repository is made of.
 func (c *Client) Catalogue(ctx context.Context, prompt string) CatalogueResult {
-	content, call := c.call(ctx, prompt, catalogueFormat())
+	content, call := c.call(ctx, prompt, catalogueFormat(), capCatalogue)
 	out := CatalogueResult{Call: call}
 	if call.Outcome == OutcomeOK && (!parse(content, &out.Catalogue) || out.Catalogue.Subjects == nil) {
 		out.Outcome, out.Catalogue = OutcomeUnparseable, Catalogue{}
@@ -172,7 +172,7 @@ func (c *Client) Catalogue(ctx context.Context, prompt string) CatalogueResult {
 
 // Patch asks what one part of the code teaches the repository page.
 func (c *Client) Patch(ctx context.Context, prompt string) PatchResult {
-	content, call := c.call(ctx, prompt, patchFormat(c.diagrams))
+	content, call := c.call(ctx, prompt, patchFormat(c.diagrams), capPatch)
 	out := PatchResult{Call: call}
 	if call.Outcome == OutcomeOK && (!parse(content, &out.Patch) || out.Patch.Statements == nil) {
 		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
@@ -182,7 +182,7 @@ func (c *Client) Patch(ctx context.Context, prompt string) PatchResult {
 
 // Describe asks for the project description rewritten, or null.
 func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult {
-	content, call := c.call(ctx, prompt, descriptionFormat(c.diagrams))
+	content, call := c.call(ctx, prompt, descriptionFormat(c.diagrams), capDescribe)
 	out := DescriptionResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out
@@ -229,7 +229,7 @@ func (c *Client) ProjectMap(ctx context.Context, prompt string) RepoMapResult {
 // answer lays the page out too. An outline that does not parse costs
 // only itself: the map is the call's answer.
 func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.ResponseFormat, outline bool) RepoMapResult {
-	content, call := c.call(ctx, prompt, format)
+	content, call := c.call(ctx, prompt, format, capMap)
 	out := RepoMapResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out

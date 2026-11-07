@@ -162,6 +162,10 @@ func (c *Code) ReadFiles(ctx context.Context, key, slug, sha string, files []bas
 			if err != nil || baseline.Binary(body) {
 				continue
 			}
+			if baseline.Generated(body) {
+				c.p.Log.InfoContext(ctx, "baseline: generated file left out", "project", key, "repo", slug, "path", f.Path)
+				continue
+			}
 			body, ok := redact.File(f.Path, body)
 			if !ok {
 				c.p.Log.InfoContext(ctx, "baseline: Secret manifest or Terraform state left out", "project", key, "repo", slug, "path", f.Path)

@@ -501,6 +501,9 @@ func (ix index) resolve(p string) []File {
 		}
 		out = append(out, f)
 	}
+	// A folder's anchors first: in path order a step's budget went to
+	// whatever sorted early, the files every page rests on to none.
+	byAnchor(out)
 	return out
 }
 

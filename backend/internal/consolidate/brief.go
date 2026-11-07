@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/markup"
@@ -27,7 +28,7 @@ import (
 // The brief in the repository: the file agents-md-sync folds into the
 // AGENTS.md, the branch it is pushed to, the commit's message and author.
 const (
-	BriefPath    = ".agents/PROJECT.md"
+	BriefPath    = baseline.BriefPath
 	BriefBranch  = "feature/repository-description-update"
 	BriefMessage = "Update the repository description in .agents/PROJECT.md"
 )

@@ -515,6 +515,34 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 	return true, nil
 }
 
+// readable is the files a run reads of a tree at its commit: baseline.Files,
+// then the WSDL and XSD files held to what its build files name
+// (baseline.Schemas), with those named as contracts: the build files are
+// read only when the tree holds a schema. One answer for the catalogue and
+// a reconcile's diff, so a file left out is left out of either; a step
+// reads what its plan names.
+func (w *Worker) readable(ctx context.Context, r *store.BaselineRun, tree []gitrepo.Entry) ([]baseline.File, map[string]bool, error) {
+	files := baseline.Files(tree)
+	if !baseline.HasSchemas(files) {
+		return files, map[string]bool{}, nil
+	}
+	var builds []baseline.File
+	for _, f := range files {
+		if baseline.BuildFile(f.Path) {
+			builds = append(builds, f)
+		}
+	}
+	var bodies map[string][]byte
+	if len(builds) > 0 {
+		var err error
+		if bodies, err = w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, builds); err != nil {
+			return nil, nil, readErr(err)
+		}
+	}
+	kept, contracts := baseline.Schemas(files, bodies)
+	return kept, contracts, nil
+}
+
 // maxSubjects is how many subjects a full run's calls can read: the cap
 // less the catalogue, the overview, the project and the repository map.
 func (w *Worker) maxSubjects() int {
@@ -554,7 +582,10 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return readErr(err)
 	}
-	files := baseline.Files(tree)
+	files, contracts, err := w.readable(ctx, r, tree)
+	if err != nil {
+		return err
+	}
 	// The commit's time before any paid call: a busy clone here defers the
 	// step without throwing a call away.
 	at, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
@@ -594,6 +625,7 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 		return fmt.Errorf("the catalogue failed: %s", res.Outcome)
 	}
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
+	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
 	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true}
 	for _, s := range p.Subjects {
 		plan.Read = append(plan.Read, s.Name)
@@ -622,7 +654,7 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	if errors.Is(derr, ErrCloneBusy) {
 		return runPlan{}, false, derr
 	}
-	changes := baseline.Sift(diff)
+	changes := baseline.Sift(diff, files)
 	if !ok || err != nil || derr != nil || baseline.FullInstead(old.Plan, changes) {
 		w.log.InfoContext(ctx, "baseline: reconcile reads the repository afresh")
 		r.Mode = store.RunFull

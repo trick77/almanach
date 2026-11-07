@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/redact"
 	"github.com/trick77/toolkit/llmwire"
 )
 
@@ -324,7 +325,7 @@ const SystemMessage = "You maintain the documentation of a software system. Ever
 
 // Merge runs one fold.
 func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
-	content, call := c.call(ctx, req.Prompt, mergeFormat(c.diagrams))
+	content, call := c.call(ctx, req.Prompt, mergeFormat(c.diagrams), capMerge)
 	out := MergeResult{Call: call}
 	if out.Outcome != OutcomeOK {
 		return out
@@ -354,12 +355,16 @@ type Call struct {
 // the outcome is ok. A failed stream keeps the gateway's call id (what
 // matches it to the gateway's log) and, cut after its usage arrived, what
 // it was paid.
-func (c *Client) call(ctx context.Context, prompt string, format llmwire.ResponseFormat) (string, Call) {
+func (c *Client) call(ctx context.Context, prompt string, format llmwire.ResponseFormat, maxAnswer int) (string, Call) {
+	if c.effort != EffortOff {
+		maxAnswer += reasoningRoom
+	}
 	stream, _, err := c.wire.ChatStream(ctx, llmwire.ChatRequest{
-		Model:          c.model,
-		Reasoning:      c.reasoning(),
-		Messages:       []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(prompt)},
-		ResponseFormat: format,
+		Model:           c.model,
+		Reasoning:       c.reasoning(),
+		Messages:        []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(prompt)},
+		ResponseFormat:  format,
+		MaxAnswerTokens: &maxAnswer,
 	})
 	if err != nil {
 		return "", failed(err)
@@ -373,6 +378,18 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		if n, ok := res.Usage.Total(); !ok || n == 0 {
 			out.Cost.NanoUSD = nil
 		}
+		// The call cap firing while the answer streamed is the answer's
+		// fault, not the gateway's: a runaway (2026-11-07: restyles
+		// streaming 200k+ chars for pages a retry answered in 20k
+		// tokens, each billed in full). Too long, so it fails this call
+		// and never holds the queue nor is taken 8 times; a silent stream
+		// or no headers stay the gateway's. A model that thinks to the cap
+		// without a word of answer ran away the same.
+		if errors.Is(err, llmwire.ErrCallCap) && (res.Content != "" || res.Reasoning != "") {
+			out.Outcome = OutcomeTooLong
+			out.Err = fmt.Errorf("cut by the call cap after %d chars of answer, %d of reasoning: %w", len(res.Content), len(res.Reasoning), err)
+			c.logCut(res.Gateway.CallID, res.Content)
+		}
 		return "", out
 	}
 	out := Call{Cost: c.costFrom(res)}
@@ -381,14 +398,59 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		c.logUnpriced(res.Gateway.CallID, stream.Warnings())
 	}
 	if res.FinishReason == "length" {
-		// Cut by the model's output cap, so the JSON is incomplete: say so,
-		// rather than reporting the cut as an answer off the schema.
+		// Cut by the output cap, so the JSON is incomplete: say so, rather
+		// than reporting the cut as an answer off the schema.
 		out.Outcome = OutcomeTooLong
 		out.Err = errors.New("the answer was cut by the model's output limit")
+		c.logCut(res.Gateway.CallID, res.Content)
 		return "", out
 	}
 	return res.Content, out
 }
+
+// Output caps, in answer tokens, per call: none is unbounded (a runaway
+// streamed until the 10-minute call cap, billed in full). Each is several
+// times the longest answer its call gives, and with reasoningRoom short
+// enough to end before CallTimeout at ~95 tokens a second, so a cut call
+// still reports its usage and is priced.
+//
+// reasoningRoom: a thinking call's reasoning shares the wire cap, and
+// llmwire's own allowance for a level a profile has not measured is 1024
+// tokens, a guess; a long think would cut a normal answer.
+const (
+	reasoningRoom = 16_000
+	capCatalogue  = 12_000
+	capPatch      = 24_000
+	capDescribe   = 24_000
+	capMap        = 12_000
+	capMerge      = 24_000
+	capBrief      = 8_000
+	capRestyleLo  = 4_000
+	capRestyleHi  = 32_000
+)
+
+// restyleCap is a restyle's cap: the answer rewrites the page the prompt
+// carries, so it is the prompt's size in tokens (about 3 chars each) with
+// room to grow, held between capRestyleLo and capRestyleHi.
+func restyleCap(prompt string) int {
+	return min(max(len(prompt)/3*13/10+2000, capRestyleLo), capRestyleHi)
+}
+
+// logCut leaves the end of a cut answer in the log, credentials redacted:
+// what a runaway repeats (a list, whitespace, one statement again) is what
+// its prompt or schema needs fixed.
+// Redacted whole, then cut: a window starting past a key would leave its
+// value unrecognised.
+func (c *Client) logCut(callID, content string) {
+	tail := redact.Text(content)
+	if n := len(tail); n > cutTail {
+		tail = strings.ToValidUTF8(tail[n-cutTail:], "")
+	}
+	c.log.Warn("answer cut", "model", c.model, "call_id", callID, "chars", len(content), "tail", tail)
+}
+
+// cutTail is how much of a cut answer's end the log keeps.
+const cutTail = 400
 
 // failed is a call that got no answer: timed out when a bound fired (the
 // whole call's, the headers', a stream gone silent), an error otherwise.
