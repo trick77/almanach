@@ -422,7 +422,7 @@ themselves go oldest first, one to its end before the next begins.
   the day's spend and the daily budget (`BACKEND_DAILY_BUDGET_USD`). Never
   noergler's figures (`note_calls`), which a note page shows for its own
   call.
-- `/api/queue`: the worker's queue, the page Warteschlange. The note or
+- `/api/queue`: the worker's queue, the page Queue. The note or
   run step in flight, then the rest in the order the worker takes it (the
   notes it may fold, the started run's next step, the notes waiting for
   that run, the queued runs). Why the next item waits sits on that item:
@@ -852,7 +852,7 @@ them in its root POM. An edge shows the version
 of its strongest coordinates. Only main uses are the system: the maps, the
 prompts (`store.Shared`, the project step's build dependencies), a
 repository's `uses`, `used_by` and its export count them alone; the page
-"Abhängigkeiten" draws the others dashed. A row read before scopes
+"Dependencies" draws the others dashed. A row read before scopes
 (`manifest.Version` 4) is main until its next sync reads it again. Maps a
 project's last run drew from a test-only edge keep it until its next run:
 the rule is code's input, no prompt's, so no epoch.
@@ -890,9 +890,9 @@ provide (a fork, a copy) gives no edge to either and is listed as
 ambiguous; when the providers share one clone URL (two sources cloned it
 before the rule) it says so, and removing all but one row gives the edges
 back. A repository's body carries `uses` (with the other users, `also`)
-and `used_by`, the `.md` export an `Abhängigkeiten` section, and
+and `used_by`, the `.md` export a `Dependencies` section, and
 `GET /api/dependencies` the whole graph, every scope, each edge its
-strongest, drawn on the page "Abhängigkeiten" as a flow from users to the
+strongest, drawn on the page "Dependencies" as a flow from users to the
 repositories they use, a non-main edge amber dashed with what it is for
 (a gray dashed one is the flow's loop back, any scope); when
 all would not fit and the main ones do, the main ones alone, said under
@@ -910,7 +910,7 @@ those of other projects the project's repositories depend on; both
 prompts ask how the repository or the system uses them, never what they
 are. A project with a map carries them as `shared`, and the UI draws them
 on the architecture overview in a zone of its own ("Geteilte
-Repositories") with an edge from each user ("Abhängigkeit"); the stored
+Repositories") with an edge from each user ("Dependency"); the stored
 map never holds them. The model is told not to draw them and gets a node
 and edge cap lowered by what they need (`mapRoom`); the UI draws as many
 as fit. An external node the model drew anyway, named by the repository's

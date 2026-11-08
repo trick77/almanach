@@ -1,6 +1,8 @@
 // Every string the UI shows, in one place. German, Swiss spelling (ss,
 // never the sharp s), generic masculine. There is no second language: the
-// readers are German speaking, and the wiki itself is German.
+// readers are German speaking, and the wiki itself is German. A software
+// word a German developer says in English stays English: Repository, Queue,
+// Dependency, Run, Timeout, Session (user, 2026-11-08).
 
 import type {
   BriefState,
@@ -24,28 +26,28 @@ export const S = {
   nav: {
     label: "Seiten",
     projects: "Projekte",
-    deps: "Abhängigkeiten",
+    deps: "Dependencies",
     sources: "Quellen",
-    queue: "Warteschlange",
+    queue: "Queue",
     costs: "Kosten",
   },
   costs: {
     title: "Kosten",
     failed: "Die Kosten konnten nicht geladen werden.",
-    lede: "Was die eigenen Modellaufrufe von Almanach kosten, nach Monat (UTC) und Projekt: die Notizen (ein Aufruf pro gemergtem Pull Request) getrennt von den Läufen (ein Repository lesen oder seine Seiten neu fassen) und den PROJECT.md (eine pro Klick in den Quellen). Nur das eigene Hauptbuch; was noergler für seine Reviews zahlt, steht auf den Notizen.",
+    lede: "Was die eigenen Modellaufrufe von Almanach kosten, nach Monat (UTC) und Projekt: die Notizen (ein Aufruf pro gemergtem Pull Request) getrennt von den Runs (ein Repository lesen oder seine Seiten neu fassen) und den PROJECT.md (eine pro Klick in den Quellen). Nur das eigene Hauptbuch; was noergler für seine Reviews zahlt, steht auf den Notizen.",
     empty: "Noch kein Modellaufruf.",
     tiles: {
       today: "Heute ausgegeben (UTC)",
       budget: "Tagesbudget",
       noBudget:
-        "Kein Budget gesetzt (BACKEND_DAILY_BUDGET_USD, nur mit Quellen: es hält die Läufe)",
+        "Kein Budget gesetzt (BACKEND_DAILY_BUDGET_USD, nur mit Quellen: es hält die Runs)",
       budgetNote: (spent: string, budget: string) =>
-        `${spent} von ${budget}; ausgeschöpft, warten die Läufe bis zum nächsten Tag (UTC), die Notizen und das Deaktivieren nicht`,
+        `${spent} von ${budget}; ausgeschöpft, warten die Runs bis zum nächsten Tag (UTC), die Notizen und das Deaktivieren nicht`,
       // What the budget counts beyond the priced sum.
       budgetUnpriced:
         "Aufrufe ohne Preis zählen gegen das Budget wie der teuerste bepreiste Aufruf der letzten 30 Tage.",
     },
-    headers: ["Projekt", "Notizen", "Läufe", "PROJECT.md", "Aufrufe", "Kosten"],
+    headers: ["Projekt", "Notizen", "Runs", "PROJECT.md", "Aufrufe", "Kosten"],
     monthTotal: "Summe",
     unpriced: (n: number) =>
       n === 1 ? "1 Aufruf ohne Preis" : `${n} Aufrufe ohne Preis`,
@@ -69,13 +71,13 @@ export const S = {
     project: (key: string) => `Projekt ${key}`,
   },
   deps: {
-    title: "Abhängigkeiten",
-    failed: "Die Abhängigkeiten konnten nicht geladen werden.",
-    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json, Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; Python: pyproject.toml, requirements.txt; Rust: Cargo.toml; im Wurzelverzeichnis, eine Ebene darunter und in jedem Ordner, den der Build als Gradle-Projekt, Maven-Modul oder Workspace-Paket einbindet) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Eine Verwendung nur für Tests, für den Build oder als Versionsvorgabe ist ocker gestrichelt; die Karten und die Beschreibungen zählen nur die Verwendungen zur Laufzeit. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
+    title: "Dependencies",
+    failed: "Die Dependencies konnten nicht geladen werden.",
+    lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json, Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; Python: pyproject.toml, requirements.txt; Rust: Cargo.toml; im Root-Verzeichnis, eine Ebene darunter und in jedem Ordner, den der Build als Gradle-Projekt, Maven-Modul oder Workspace-Paket einbindet) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Eine Verwendung nur für Tests, für den Build oder als Versionsvorgabe ist ocker gestrichelt; die Karten und die Beschreibungen zählen nur die Verwendungen zur Laufzeit. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
     disabled:
-      "Abhängigkeiten gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
+      "Dependencies gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
     empty:
-      "Noch keine Abhängigkeit: kein Repository der Quellen verwendet ein anderes, oder die Manifeste sind noch nicht gelesen.",
+      "Noch keine Dependency: kein Repository der Quellen verwendet ein anderes, oder die Manifeste sind noch nicht gelesen.",
     graph: "Graph",
     tooLarge: (n: number) =>
       `${n} Repositories sind zu viele für einen Graphen; die Tabelle zeigt alle.`,
@@ -89,7 +91,7 @@ export const S = {
     scopes: {
       main: "",
       managed: "Versionen",
-      dev: "Entwicklung",
+      dev: "Dev",
       test: "Test",
       indirect: "Indirekt",
     } as Record<string, string>,
@@ -192,7 +194,7 @@ export const S = {
       "Letzter Fix",
     ],
     noProblems: "Keine Bugfixes im Zeitfenster.",
-    rootArea: "(Wurzel)",
+    rootArea: "(Root)",
     recentNotes: "Letzte Notizen",
     noNotes: "Noch keine Notiz.",
     map: "Systemübersicht",
@@ -243,7 +245,7 @@ export const S = {
       shared: "Geteilte Repositories",
     } as Record<string, string>,
     // The edge code draws from a repository to one it depends on.
-    sharedEdge: "Abhängigkeit",
+    sharedEdge: "Dependency",
     // The dependency graph's zones by id, drawn by code.
     depZones: {
       users: "Nutzer",
@@ -252,9 +254,9 @@ export const S = {
     // A repository's messages, left to right.
     msgZones: {
       from: "Producer",
-      in: "Konsumiert",
+      in: "Consumed",
       self: "Repository",
-      out: "Produziert",
+      out: "Produced",
       to: "Consumer",
     } as Record<string, string>,
     // A repository map's zones by id, the same rule.
@@ -460,15 +462,7 @@ export const S = {
     empty: "Noch keine Quelle.",
     disabled:
       "Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
-    headers: [
-      "Slug",
-      "Art",
-      "Host",
-      "Token",
-      "Repos",
-      "Zustand",
-      "Letzter Run",
-    ],
+    headers: ["Slug", "Art", "Host", "Token", "Repos", "Status", "Letzter Run"],
     kind: { bitbucket: "Bitbucket", static: "Einzeln" } as Record<
       string,
       string
@@ -545,7 +539,7 @@ export const S = {
       user: "Benutzername",
       userHint:
         "GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).",
-      create: "Anlegen und synchronisieren",
+      create: "Anlegen und syncen",
       // Every repository of a new source gets a full run: said before
       // the click, with what one may cost.
       costHint: (calls: number) =>
@@ -568,11 +562,11 @@ export const S = {
       ready: "Bereit",
       lastSync: "Letzter Sync",
       running: "läuft gerade",
-      disk: "Auf der Platte",
+      disk: "Auf der Disk",
     },
     actions: {
-      sync: "Synchronisieren",
-      syncRunning: "Synchronisieren läuft gerade.",
+      sync: "Sync",
+      syncRunning: "Sync läuft gerade.",
       queued: "Angestossen …",
       addRepo: "Repository hinzufügen",
       access: { bitbucket: "Host und Token", static: "Token" } as Record<
@@ -605,7 +599,7 @@ export const S = {
     // Instant: clone gone, notes ignored, page out of the wiki. The project
     // page is the queue's: the departure run (one model call).
     confirmDeactivateRepo: (slug: string) =>
-      `Repository ${slug} deaktivieren? Der Clone wird gelöscht, neue Notizen werden ignoriert und die Seite verschwindet aus dem Wiki; das Listing nimmt es nicht wieder auf. Ein Run in der Warteschlange nimmt es aus der Projektseite und der Systemkarte (ein Modellaufruf). Die Seite selbst bleibt erhalten und ist mit «Aktivieren» wieder da.`,
+      `Repository ${slug} deaktivieren? Der Clone wird gelöscht, neue Notizen werden ignoriert und die Seite verschwindet aus dem Wiki; das Listing nimmt es nicht wieder auf. Ein Run in der Queue nimmt es aus der Projektseite und der Systemkarte (ein Modellaufruf). Die Seite selbst bleibt erhalten und ist mit «Aktivieren» wieder da.`,
     yesDeactivate: "Ja, deaktivieren",
     repos: "Repositories",
     reposNote: {
@@ -617,7 +611,7 @@ export const S = {
       "Repository",
       "Branch",
       "Head",
-      "Zustand",
+      "Status",
       "Letzter Sync",
       "Beschreibung",
       "",
@@ -638,7 +632,7 @@ export const S = {
     } as Record<string, string>,
     deactivated: "Deaktiviert",
     repoActions: {
-      sync: "Synchronisieren",
+      sync: "Sync",
       retry: "Erneut",
       remove: "Entfernen",
       removeClone: "Clone entfernen",
@@ -661,7 +655,7 @@ export const S = {
     },
     listingError: "Letztes Listing fehlgeschlagen:",
     listingErrorHint:
-      "Die Repository-Liste ist die des letzten erfolgreichen Listings; bekannte Repositories werden weiter synchronisiert.",
+      "Die Repository-Liste ist die des letzten erfolgreichen Listings; bekannte Repositories werden weiter gesynct.",
   },
   baseline: {
     chip: (sha: string, repo?: string) =>
@@ -713,8 +707,8 @@ export const S = {
     // error says so; a run's own budget is no error.
     skipReason: {
       gone: "Nicht mehr im Katalog",
-      calls: "Aufrufe des Laufs aufgebraucht",
-      bytes: "Lesebudget des Laufs überschritten",
+      calls: "Aufrufe des Runs aufgebraucht",
+      bytes: "Lesebudget des Runs überschritten",
       failed: "Fehler: Modellaufruf fehlgeschlagen",
       refused: "Fehler: Antwort regelwidrig, verworfen",
       no_page: "Projekt ohne Seite",
@@ -724,7 +718,7 @@ export const S = {
     // poller, auto_retry: a day after the run) or with the next run,
     // sooner by the button.
     retryAuto: "Wird von selbst erneut gelesen.",
-    retryManual: "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
+    retryManual: "Der nächste Run liest sie erneut, Aktualisieren sofort.",
     failedRun: "Beschreibung fehlgeschlagen:",
     upToDate:
       "Der Head ist schon beschrieben: Neu beschreiben liest alles erneut.",
@@ -737,7 +731,7 @@ export const S = {
     // A full run is paid for whole: confirmed, with what the last one cost.
     confirmFull: (slug: string, calls: number, last: string) =>
       `${slug} neu beschreiben? Liest das ganze Repository erneut, bis zu ${calls} Modellaufrufe` +
-      (last === "" ? "." : `; der letzte Lauf kostete ${last}.`),
+      (last === "" ? "." : `; der letzte Run kostete ${last}.`),
     yesFull: "Ja, neu beschreiben",
   },
   // A repository's .agents/PROJECT.md: written from its page, pushed to a
@@ -768,21 +762,20 @@ export const S = {
     failedLoad: "Der Text konnte nicht geladen werden.",
   },
   queue: {
-    title: "Warteschlange",
-    failed: "Die Warteschlange konnte nicht geladen werden.",
+    title: "Queue",
+    failed: "Die Queue konnte nicht geladen werden.",
     polling: (s: number) => `Aktualisiert alle ${s} s, solange etwas läuft`,
     more: (n: number) => (n === 1 ? "Und 1 weitere" : `Und ${n} weitere`),
     // The pause: the worker takes nothing new, the item in flight finishes.
     pausedBadge: "Pausiert",
     paused: (since: string) => `Pausiert seit ${since}`,
     pausedHint:
-      "Almanach nimmt nichts Neues: keine Notiz, keinen Lauf-Schritt, kein Neugliedern, keinen Brief. Was gerade läuft, wird fertig. Webhook und Sync laufen weiter; die Arbeit wartet.",
+      "Almanach nimmt nichts Neues: keine Notiz, keinen Run-Schritt, kein Neugliedern, keine PROJECT.md. Was gerade läuft, wird fertig. Webhook und Sync laufen weiter; die Arbeit wartet.",
     pause: "Pausieren",
     pauseHint:
       "Nimmt nach dem laufenden Aufruf nichts Neues mehr, bis fortgesetzt wird; bleibt über einen Neustart.",
     resume: "Fortsetzen",
-    pauseFailed:
-      "Die Warteschlange konnte nicht pausiert oder fortgesetzt werden.",
+    pauseFailed: "Die Queue konnte nicht pausiert oder fortgesetzt werden.",
     // Why a run was queued, under its meta line.
     why: "Warum:",
     reason: {
@@ -791,7 +784,7 @@ export const S = {
         `Neuer Versuch ${n} von ${of}` +
         (err === "" ? "." : `; zuletzt: ${err}`),
       unfinished:
-        "Der letzte Lauf hat Teile übersprungen oder keine Karte gezeichnet: das wird nachgeholt.",
+        "Der letzte Run hat Teile übersprungen oder keine Karte gezeichnet: das wird nachgeholt.",
       interval: (days: number, from: string, to: string) =>
         `Abgleich nach ${days} Tagen, ${from} bis ${to}.`,
       intervalFull: (days: number) =>
@@ -904,16 +897,16 @@ export const S = {
     commit: (from: string, to: string) =>
       from === "" ? `Commit ${to}` : `von ${from} auf ${to}`,
     wait: {
-      timeout: "Modell antwortet nicht (Zeitüberschreitung)",
+      timeout: "Modell antwortet nicht (Timeout)",
       unavailable: "Modell antwortet nicht",
       rate_limit: "Modell ausgelastet",
-      key_refused: "Schlüssel abgelehnt",
+      key_refused: "API-Key abgelehnt",
       busy: "Datenbank belegt",
-      write: "Datenbank nimmt keine Schreibzugriffe an (Platte voll?)",
+      write: "Datenbank nimmt keine Schreibzugriffe an (Disk voll?)",
       clone_busy: "Clone belegt",
       placing: "Git ordnet einen Merge-Commit ein",
       budget:
-        "Tagesbudget ausgeschöpft, Läufe warten bis morgen (UTC), ausser beim Deaktivieren",
+        "Tagesbudget ausgeschöpft, Runs warten bis morgen (UTC), ausser beim Deaktivieren",
     } satisfies Record<WaitReason, string>,
     until: (at: string, left: string) => `${at}, in ${left}`,
     soon: (s: number) => `in ≤ ${s} s`,
@@ -929,7 +922,7 @@ export const S = {
     retryAt: (at: string) => `Erneut automatisch frühestens ${at}`,
     noteOutcome: {
       ok: "Gefaltet",
-      timed_out: "Nicht gefaltet: Zeitüberschreitung",
+      timed_out: "Nicht gefaltet: Timeout",
       unparseable: "Nicht gefaltet: Antwort unlesbar",
       too_long: "Nicht gefaltet: Antwort zu lang",
       error: "Nicht gefaltet: Aufruf fehlgeschlagen",
@@ -937,7 +930,7 @@ export const S = {
     } as Record<string, string>,
     failedNotes: "Nicht eingearbeitet",
     failedHint:
-      "Der Modellaufruf ist an der Notiz gescheitert. Nach dem nächsten Lauf des Repositories, spätestens nach einem Tag, wird sie erneut eingearbeitet.",
+      "Der Modellaufruf ist an der Notiz gescheitert. Nach dem nächsten Run des Repositories, spätestens nach einem Tag, wird sie erneut eingearbeitet.",
     givenUpHint:
       "Eine aufgegebene Notiz wird erst mit einer neuen Lieferung wieder eingearbeitet.",
     failedHeaders: ["Zeit", "Notiz", "Grund", "Versuche"],
@@ -945,26 +938,26 @@ export const S = {
     givenUp: "Aufgegeben",
   },
   auth: {
-    checking: "Sitzung wird geprüft …",
-    redirecting: "Weiterleitung zur Anmeldung …",
+    checking: "Session wird geprüft …",
+    redirecting: "Weiterleitung zum Login …",
     signedOut:
-      "Abgemeldet. Die Sitzung beim Identitätsanbieter läuft weiter; wer sie beenden will, meldet sich auch dort ab.",
+      "Ausgeloggt. Die Session beim Identity Provider läuft weiter; wer sie beenden will, loggt sich auch dort aus.",
     failed:
-      "Die Anmeldung konnte nicht abgeschlossen werden. Bitte erneut versuchen; schlägt sie wieder fehl, steht der Grund im Server-Log.",
+      "Der Login konnte nicht abgeschlossen werden. Bitte erneut versuchen; schlägt er wieder fehl, steht der Grund im Server-Log.",
     unchecked: (status: number) =>
-      `Die Sitzung konnte nicht geprüft werden (HTTP ${status}).`,
+      `Die Session konnte nicht geprüft werden (HTTP ${status}).`,
     unreadable:
-      "Die Sitzung konnte nicht geprüft werden: die Antwort des Servers war unlesbar.",
+      "Die Session konnte nicht geprüft werden: die Antwort des Servers war unlesbar.",
     offline:
-      "Die Sitzung konnte nicht geprüft werden: der Server ist nicht erreichbar.",
+      "Die Session konnte nicht geprüft werden: der Server ist nicht erreichbar.",
     misconfigured:
-      "Die Anmeldung ist falsch eingerichtet: der Identitätsanbieter passt nicht zur Konfiguration. Der Grund steht im Server-Log; nach der Korrektur und einem Neustart erneut versuchen.",
-    signOutFailed: "Abmelden fehlgeschlagen, bitte erneut versuchen.",
+      "Der Login ist falsch eingerichtet: der Identity Provider passt nicht zur Konfiguration. Der Grund steht im Server-Log; nach der Korrektur und einem Neustart erneut versuchen.",
+    signOutFailed: "Logout fehlgeschlagen, bitte erneut versuchen.",
     unavailable:
-      "Die Anmeldung ist im Moment nicht möglich: der Identitätsanbieter antwortet nicht. Almanach versucht es laufend weiter; bitte später erneut versuchen.",
-    loop: "Die Anmeldung hat gerade eben keine Sitzung ergeben. Bitte erneut anmelden; geschieht das wieder, steht der Grund im Server-Log.",
-    signIn: "Anmelden",
-    signOut: "Abmelden",
+      "Der Login ist im Moment nicht möglich: der Identity Provider antwortet nicht. Almanach versucht es laufend weiter; bitte später erneut versuchen.",
+    loop: "Der Login hat gerade eben keine Session ergeben. Bitte erneut einloggen; geschieht das wieder, steht der Grund im Server-Log.",
+    signIn: "Login",
+    signOut: "Logout",
     retry: "Erneut versuchen",
   },
 } as const;

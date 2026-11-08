@@ -256,7 +256,7 @@ describe("SourcesPage", () => {
     expect(
       screen.getByText(/listet das Projekt über die API/),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    fireEvent.click(screen.getByText("Anlegen und syncen"));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toEqual({
       method: "POST",
@@ -347,7 +347,7 @@ describe("SourcesPage", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(
         S.sources.form.projectURLInvalid,
       );
-      const create = screen.getByText("Anlegen und synchronisieren");
+      const create = screen.getByText("Anlegen und syncen");
       expect(create).toBeDisabled();
       fireEvent.click(create);
     }
@@ -367,11 +367,11 @@ describe("SourcesPage", () => {
     expect(
       screen.queryByText(S.sources.form.projectURLInvalid),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Anlegen und synchronisieren")).toBeDisabled();
+    expect(screen.getByText("Anlegen und syncen")).toBeDisabled();
     fireEvent.change(project, {
       target: { value: "https://forge.example.invalid/projects/neu" },
     });
-    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    fireEvent.click(screen.getByText("Anlegen und syncen"));
     await waitFor(() => expect(writes).toHaveLength(1));
     const body = writes[0]?.body as { host: string; project_key: string };
     expect(body.host).toBe("https://forge.example.invalid");
@@ -386,7 +386,7 @@ describe("SourcesPage", () => {
     fireEvent.click(await screen.findByText("Neue Quelle"));
     // No system switch: one repository alone is a project of one.
     expect(screen.queryByRole("switch")).toBeNull();
-    const create = screen.getByText("Anlegen und synchronisieren");
+    const create = screen.getByText("Anlegen und syncen");
     expect(create).toBeDisabled();
     fireEvent.change(
       screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
@@ -456,7 +456,7 @@ describe("SourcePage baseline", () => {
     expect(writes).toHaveLength(1);
     expect(
       screen.getByText(
-        /acme-cli neu beschreiben\? .*bis zu 16 Modellaufrufe; der letzte Lauf kostete \$2\.42\./,
+        /acme-cli neu beschreiben\? .*bis zu 16 Modellaufrufe; der letzte Run kostete \$2\.42\./,
       ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByText(S.baseline.yesFull));
@@ -720,7 +720,7 @@ describe("SourcePage baseline", () => {
     // The skipped parts by reason, one line each, the run's order kept.
     expect(
       screen.getByText(
-        "Lesebudget des Laufs überschritten: Überblick, Auth, B und 2 weitere",
+        "Lesebudget des Runs überschritten: Überblick, Auth, B und 2 weitere",
       ),
     ).toBeInTheDocument();
     expect(
@@ -837,7 +837,7 @@ describe("SourcePage baseline", () => {
     // said once, not under the gone subject.
     expect(
       screen.getAllByText(
-        "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
+        "Der nächste Run liest sie erneut, Aktualisieren sofort.",
       ),
     ).toHaveLength(1);
   });
@@ -919,7 +919,7 @@ describe("SourcePage", () => {
 
     // The primary button and the ready row's action share the word; the
     // primary one comes first in the document.
-    fireEvent.click(screen.getAllByText("Synchronisieren")[0]);
+    fireEvent.click(screen.getAllByText("Sync")[0]);
     await waitFor(() =>
       expect(writes.some((w) => w.path === "sources/werkzeuge/sync")).toBe(
         true,
@@ -939,7 +939,7 @@ describe("SourcePage", () => {
       render(<SourcePage projectKey="werkzeuge" />);
       await screen.findByText("acme-cli");
       const top = screen
-        .getAllByRole("button", { name: "Synchronisieren" })
+        .getAllByRole("button", { name: "Sync" })
         .filter((b) => b.closest("table") === null);
       expect(top).toHaveLength(1);
       return top[0];
@@ -1205,7 +1205,7 @@ describe("App with sources", () => {
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
     expect(await screen.findByText("Quellen")).toBeInTheDocument();
-    // Abhängigkeiten before Quellen, no FAQ. The label alone: the queue's
+    // Dependencies before Quellen, no FAQ. The label alone: the queue's
     // count sits in its link beside it.
     const entries = () =>
       within(screen.getByRole("navigation", { name: "Seiten" }))
@@ -1213,9 +1213,9 @@ describe("App with sources", () => {
         .map((a) => a.firstElementChild?.textContent);
     expect(entries()).toEqual([
       "Projekte",
-      "Abhängigkeiten",
+      "Dependencies",
       "Quellen",
-      "Warteschlange",
+      "Queue",
       "Kosten",
     ]);
     unmount();
@@ -1231,6 +1231,6 @@ describe("App with sources", () => {
     await waitFor(() =>
       expect(screen.queryByText("Quellen")).not.toBeInTheDocument(),
     );
-    expect(entries()).toEqual(["Projekte", "Warteschlange", "Kosten"]);
+    expect(entries()).toEqual(["Projekte", "Queue", "Kosten"]);
   });
 });

@@ -406,7 +406,7 @@ paths:
       summary: A repository's page as Markdown
       description: |
         The repository's current revision as one Markdown file, framed as
-        the project's export (no map), closed by an `Abhängigkeiten`
+        the project's export (no map), closed by a `Dependencies`
         section when it uses or is used by another source repository. A slug that itself ends in `.md` and
         is listed keeps its JSON route; its export is `{slug}.md.md`. In
         oidc mode a team bearer opens it read-only, the same token the

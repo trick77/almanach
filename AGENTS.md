@@ -5,7 +5,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 ## Commands
 
 - Prompts compiled in, never configurable; a rule meant for stored pages bumps its scope's epoch.
-  UI: German, copy only in `strings.ts`, `/api/...` only;
+  UI: German, IT words English (user: "No one ever says Repositorium"), copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
   browser write, and pausing the queue (operations, not wiki; user, 2026-11-07). Text, summary: schema blocks, never newlines in a JSON string (models drop
   them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
@@ -80,6 +80,6 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   drops the model's word, PR-taught too.
 - Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, no
   kind, not "library"; map zone UI-drawn. Maps, prompts, uses: main scope only (test, dev, pins
-  dashed on Abhängigkeiten alone); parent POM a pin. Topics likewise (user, 2026-11-07: "listed, where
+  dashed on Dependencies alone); parent POM a pin. Topics likewise (user, 2026-11-07: "listed, where
   data comes from or goes to"): code-read, joined by name; a name code can't resolve = left out, never guessed.
 - Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice): model's tags, `RuntimeOnly`.
