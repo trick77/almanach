@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -16,56 +17,73 @@ import (
 var (
 	reJavaPackage = regexp.MustCompile(`^\s*package\s+([A-Za-z_][\w.]*)`)
 	reJavaImport  = regexp.MustCompile(`^\s*import\s+(?:static\s+)?([A-Za-z_]\w*(?:\.\w+)*(?:\.\*)?)`)
-	reJVMType     = regexp.MustCompile(`\b(?:class|interface|enum|record|object)\s+([A-Z]\w*)`)
-	reTSImport    = regexp.MustCompile(`(?:from\s+|require\(\s*|import\(\s*|^\s*import\s+)['"](\.{1,2}/[^'"]+)['"]`)
-	reGoModule    = regexp.MustCompile(`(?m)^module\s+(\S+)`)
-	reGoImport    = regexp.MustCompile(`^\s*(?:import\s+)?(?:[A-Za-z_.]+\s+)?"([^"]+)"`)
+	// reJVMType is a Kotlin declaration, at its line's start: never a
+	// "class Money" a comment or a string mentions.
+	reJVMType  = regexp.MustCompile(`^\s*(?:(?:public|private|internal|protected|data|sealed|enum|abstract|open|inner|value|annotation|fun)\s+)*(?:class|interface|object)\s+([A-Z]\w*)`)
+	reTSImport = regexp.MustCompile(`(?:from\s+|require\(\s*|import\(\s*|^\s*import\s+)['"](\.{1,2}/[^'"]+)['"]`)
+	reGoModule = regexp.MustCompile(`(?m)^module\s+(\S+)`)
+	// reGoImportSpec is one import spec: in a block or after "import".
+	reGoImportSpec = regexp.MustCompile(`^\s*(?:[A-Za-z_.]+\s+)?"([^"]+)"`)
 )
 
 // tsExts are what a relative TS/JS import may leave off, in the order a
 // bundler tries them.
 var tsExts = []string{"", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", "/index.ts", "/index.tsx", "/index.js", "/index.mjs"}
 
-// jvmFile is a Java or Kotlin file's package and the types it declares:
-// a Java file its own name, a Kotlin file whatever it declares.
-type jvmFile struct {
-	pkg   string
-	types []string
-}
-
 // FanIn is how many files of bodies use each file of it: a Java or Kotlin
 // type by an import of it or of its package (`.*`), or by its name in a
 // file of its own package; a TS/JS module by a relative import (`./x.js`
 // naming x.ts as ESM does); a Go file by an import of its package, of any
 // module of the tree (every file of the package counts one per importer).
-// A file no one uses is absent. Python and the rest import by names code
-// cannot map to a file without running it: none.
+// A file no one uses is absent; a test is no user (a package with many
+// tests is not the more used for them). Python and the rest import by
+// names code cannot map to a file without running it: none.
+// Deterministic: the files are taken in path order, so of two declaring
+// one type the first by path is its file on every run.
 func FanIn(bodies map[string][]byte) map[string]int {
+	paths := make([]string, 0, len(bodies))
+	for p := range bodies {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
 	byFQN := map[string]string{}
 	byPkg := map[string][]string{}
-	jvm := map[string]jvmFile{}
+	// pkgTypes is each package's types by simple name: a word of a file
+	// of the package is looked up here, one pass over its body.
+	pkgTypes := map[string]map[string]string{}
+	jvmPkg := map[string]string{}
 	goDirs := map[string][]string{}
 	var modules [][2]string // module path, its directory
-	for p, body := range bodies {
+	for _, p := range paths {
+		body := bodies[p]
 		switch strings.ToLower(path.Ext(p)) {
 		case ".java", ".kt":
 			m := reJavaPackage.FindSubmatch(firstMatchLine(body, reJavaPackage))
 			if m == nil {
 				continue
 			}
-			f := jvmFile{pkg: string(m[1])}
+			pkg := string(m[1])
+			var types []string
 			if strings.EqualFold(path.Ext(p), ".java") {
-				f.types = []string{strings.TrimSuffix(path.Base(p), path.Ext(p))}
+				types = []string{strings.TrimSuffix(path.Base(p), path.Ext(p))}
 			} else {
-				for _, t := range reJVMType.FindAllSubmatch(body, -1) {
-					f.types = append(f.types, string(t[1]))
+				eachLine(body, func(line string) {
+					if t := reJVMType.FindStringSubmatch(line); t != nil {
+						types = append(types, t[1])
+					}
+				})
+			}
+			jvmPkg[p] = pkg
+			if pkgTypes[pkg] == nil {
+				pkgTypes[pkg] = map[string]string{}
+			}
+			for _, t := range types {
+				if _, taken := byFQN[pkg+"."+t]; !taken {
+					byFQN[pkg+"."+t] = p
+					pkgTypes[pkg][t] = p
 				}
 			}
-			jvm[p] = f
-			for _, t := range f.types {
-				byFQN[f.pkg+"."+t] = p
-			}
-			byPkg[f.pkg] = append(byPkg[f.pkg], p)
+			byPkg[pkg] = append(byPkg[pkg], p)
 		case ".go":
 			if !strings.HasSuffix(p, "_test.go") {
 				goDirs[path.Dir(p)] = append(goDirs[path.Dir(p)], p)
@@ -78,7 +96,11 @@ func FanIn(bodies map[string][]byte) map[string]int {
 		}
 	}
 	in := map[string]int{}
-	for p, body := range bodies {
+	for _, p := range paths {
+		if TestFile(p) {
+			continue
+		}
+		body := bodies[p]
 		seen := map[string]bool{}
 		count := func(target string) {
 			if target != "" && target != p && !seen[target] {
@@ -87,6 +109,7 @@ func FanIn(bodies map[string][]byte) map[string]int {
 			}
 		}
 		ext := strings.ToLower(path.Ext(p))
+		inImports := false
 		eachLine(body, func(line string) {
 			switch ext {
 			case ".java", ".kt", ".kts":
@@ -96,8 +119,13 @@ func FanIn(bodies map[string][]byte) map[string]int {
 				}
 				name := m[1]
 				if pkg, ok := strings.CutSuffix(name, ".*"); ok {
-					for _, f := range byPkg[pkg] {
-						count(f)
+					// A package's every type, or a static import's own.
+					if files, ok := byPkg[pkg]; ok {
+						for _, f := range files {
+							count(f)
+						}
+					} else {
+						count(byFQN[pkg])
 					}
 					return
 				}
@@ -111,29 +139,56 @@ func FanIn(bodies map[string][]byte) map[string]int {
 					count(resolveTS(bodies, path.Join(path.Dir(p), m[1])))
 				}
 			case ".go":
-				if m := reGoImport.FindStringSubmatch(line); m != nil {
+				// Only an import declaration's specs: a string elsewhere
+				// that looks like an import path is none.
+				spec := ""
+				switch {
+				case strings.HasPrefix(line, "import ("):
+					inImports = true
+				case inImports && strings.TrimSpace(line) == ")":
+					inImports = false
+				case inImports:
+					spec = line
+				case strings.HasPrefix(line, "import "):
+					spec = strings.TrimPrefix(line, "import ")
+				}
+				if m := reGoImportSpec.FindStringSubmatch(spec); m != nil {
 					for _, f := range goDirs[goImportDir(modules, m[1])] {
 						count(f)
 					}
 				}
 			}
 		})
-		// A type of its own package is used by name, never imported.
-		if f, ok := jvm[p]; ok {
-			for _, other := range byPkg[f.pkg] {
-				if other == p || seen[other] {
-					continue
+		// A type of its own package is used by name, never imported: each
+		// word of the body looked up once.
+		if pkg, ok := jvmPkg[p]; ok && len(pkgTypes[pkg]) > 1 {
+			eachWord(body, func(w string) {
+				if f, ok := pkgTypes[pkg][w]; ok {
+					count(f)
 				}
-				for _, t := range jvm[other].types {
-					if containsWord(body, t) {
-						count(other)
-						break
-					}
-				}
-			}
+			})
 		}
 	}
 	return in
+}
+
+// eachWord calls f with each identifier-like word of body.
+func eachWord(body []byte, f func(string)) {
+	isWord := func(b byte) bool {
+		return b == '_' || b >= '0' && b <= '9' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z'
+	}
+	for i := 0; i < len(body); {
+		if !isWord(body[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(body) && isWord(body[j]) {
+			j++
+		}
+		f(string(body[i:j]))
+		i = j
+	}
 }
 
 // goImportDir is the tree directory a Go import names, "" when no module
@@ -147,25 +202,6 @@ func goImportDir(modules [][2]string, imp string) string {
 		}
 	}
 	return dir
-}
-
-// containsWord reports whether body names w as a word of its own.
-func containsWord(body []byte, w string) bool {
-	word := func(b byte) bool {
-		return b == '_' || b >= '0' && b <= '9' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z'
-	}
-	for i := 0; ; {
-		j := bytes.Index(body[i:], []byte(w))
-		if j < 0 {
-			return false
-		}
-		j += i
-		end := j + len(w)
-		if (j == 0 || !word(body[j-1])) && (end == len(body) || !word(body[end])) {
-			return true
-		}
-		i = j + 1
-	}
 }
 
 // resolveTS is the file a relative import names, "" when bodies holds none.
@@ -187,14 +223,17 @@ func resolveTS(bodies map[string][]byte, p string) string {
 	return ""
 }
 
+// firstMatchLine is the first line of body re matches, nil for none; the
+// rest of the body is not read.
 func firstMatchLine(body []byte, re *regexp.Regexp) []byte {
-	var hit []byte
-	eachLine(body, func(line string) {
-		if hit == nil && re.MatchString(line) {
-			hit = []byte(line)
+	for len(body) > 0 {
+		line, rest, _ := bytes.Cut(body, []byte("\n"))
+		if re.Match(line) {
+			return line
 		}
-	})
-	return hit
+		body = rest
+	}
+	return nil
 }
 
 func eachLine(body []byte, f func(string)) {

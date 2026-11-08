@@ -3,9 +3,12 @@ package baseline
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // A skeleton is what a router reads of a file it may not read whole: the
@@ -25,24 +28,29 @@ const SkeletonMaxBytes = 4096
 const skeletonLineMax = 160
 
 var (
-	reJavaKeep = regexp.MustCompile(`^\s*(package|import)\s|^\s*@[A-Za-z]|\b(class|interface|enum|record|object)\s+[A-Z]\w*|^\s*(public|protected|private|internal|override|static|abstract|default|suspend|fun|open)\b[^=;]*\(`)
+	// No "default" among the modifiers: a switch arm ("default: run(x);")
+	// would pass for a signature; an interface's default method is
+	// reJavaMethod's, the modifier taken off first.
+	reJavaKeep = regexp.MustCompile(`^\s*(package|import)\s|^\s*@[A-Za-z]|\b(class|interface|enum|record|object)\s+[A-Z]\w*|^\s*(public|protected|private|internal|override|static|abstract|suspend|fun|open)\b[^=;]*\(`)
+	// reDefault is "${key:default}" in an annotation: the default may be a
+	// credential, the key is what the skeleton needs.
+	reDefault = regexp.MustCompile(`\$\{([^}:]+):[^}]*\}`)
 	// reJavaMethod is a signature with no modifier: an interface's methods
 	// (a Spring Data repository, a Feign client), a package-private one. A
 	// return type, a lower-case name, its parameters, an end of ; or {.
 	reJavaMethod = regexp.MustCompile(`^\s*([\w.?]+(?:<[^=;]*>)?(?:\[\])*)\s+([a-z]\w*)\s*\([^=;{]*\)\s*(?:throws\s+[\w.,\s]+)?\s*[;{]?\s*$`)
 	reTSKeep     = regexp.MustCompile(`^\s*(import|export)\s|^\s*@[A-Za-z]\w*\(|\bpath:\s*['"]`)
-	reGoKeep     = regexp.MustCompile(`^package\s|^import\s|^func\s+[A-Z]|^func\s+\([^)]*\)\s+[A-Z]|^type\s+[A-Z]`)
+	reGoKeep     = regexp.MustCompile(`^package\s|^import\s|^func\s+[A-Z]|^func\s+\([^)]*\)\s+[A-Z]|^type\s+[A-Z]|^(var|const)\s+[A-Z]|^\t[A-Z]\w*(\s|$)`)
 	rePyKeep     = regexp.MustCompile(`^\s*(import|from)\s|^\s*(class|def|async\s+def)\s|^\s*@[A-Za-z]`)
 	reYAMLKey    = regexp.MustCompile(`^( {0,2})(- )?["']?([A-Za-z0-9_.$/{}\-]+)["']?\s*:`)
 	rePropKey    = regexp.MustCompile(`^\s*([A-Za-z0-9_.\-\[\]"]+)\s*[=:]`)
 	reSection    = regexp.MustCompile(`^\[\[?[A-Za-z0-9_.\-" ]+\]\]?$`)
-	reSQLKeep    = regexp.MustCompile(`(?i)^\s*(create|alter|drop)\s+(table|view|index|unique\s+index|sequence|schema|type)\b`)
+	reSQLKeep    = regexp.MustCompile(`(?i)^\s*(create|alter|drop)\s+(or\s+replace\s+)?((global\s+|local\s+)?(temporary|temp)\s+|unlogged\s+)?(table|view|materialized\s+view|index|unique\s+index|sequence|schema|type|function|procedure|trigger)\b`)
 	reSQLColumn  = regexp.MustCompile(`^\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\s+[A-Za-z]`)
 	rePomKeep    = regexp.MustCompile(`<(groupId|artifactId|version|packaging|module|parent)>`)
 	reBPMNKeep   = regexp.MustCompile(`<(\w+:)?(process|\w*[Tt]ask|startEvent|endEvent|\w*Gateway|subProcess|callActivity|boundaryEvent|intermediate\w*Event|decision)\b[^>]*`)
 	reXMLAttr    = regexp.MustCompile(`\b(id|name)="[^"]*"`)
 	reProtoKeep  = regexp.MustCompile(`^\s*(package|import|message|service|rpc|enum)\s`)
-	reJSONTop    = regexp.MustCompile(`^\s{0,2}"[^"]+"\s*:`)
 	reJSONSchema = regexp.MustCompile(`"(name|namespace|type)"\s*:\s*"[^"]*"`)
 	reContainer  = regexp.MustCompile(`(?i)^\s*(FROM|EXPOSE|ENTRYPOINT|CMD|USER|WORKDIR|ARG|ENV)\b`)
 	rePipeline   = regexp.MustCompile(`\bstage\s*\(|^\s*stages\s*\{|^\s*pipeline\s*\{|^\s*agent\b`)
@@ -64,7 +72,7 @@ func Skeleton(p string, body []byte) string {
 	case ext == ".java" || ext == ".kt" || ext == ".kts" || ext == ".scala" || ext == ".groovy" && !strings.HasPrefix(base, "jenkinsfile"):
 		keep = docAnd(javaKeep)
 	case ext == ".ts" || ext == ".tsx" || ext == ".js" || ext == ".jsx" || ext == ".mjs" || ext == ".cjs" || ext == ".vue":
-		keep = matching(reTSKeep)
+		keep = tsKeep
 	case ext == ".go":
 		keep = goKeep()
 	case ext == ".py":
@@ -79,16 +87,18 @@ func Skeleton(p string, body []byte) string {
 		keep = xmlKeep(body)
 	case ext == ".proto":
 		keep = matching(reProtoKeep)
-	case ext == ".avsc" || ext == ".json":
-		keep = jsonKeep(ext == ".avsc")
+	case ext == ".avsc":
+		keep = avroKeep
+	case ext == ".json":
+		return jsonKeys(body)
 	case base == "containerfile" || base == "dockerfile" || strings.HasPrefix(base, "dockerfile.") || strings.HasSuffix(base, ".containerfile"):
-		keep = matching(reContainer)
+		keep = containerKeep
 	case strings.HasPrefix(base, "jenkinsfile"):
 		keep = matching(rePipeline)
 	case ext == ".md" || ext == ".adoc":
 		keep = matching(reMDHeading)
 	default:
-		return headLines(body, 3)
+		return headLines(body)
 	}
 	return collect(body, keep)
 }
@@ -129,9 +139,18 @@ func collect(body []byte, keep func(string) (string, bool)) string {
 // statement that only looks like one ("return x(y);", "new A(b);").
 func javaKeep(line string) (string, bool) {
 	if reJavaKeep.MatchString(line) {
-		return line, true
+		return reDefault.ReplaceAllString(line, "$${$1}"), true
 	}
-	m := reJavaMethod.FindStringSubmatch(line)
+	// An interface's default method: the modifier off, then a signature.
+	sig := line
+	if t := strings.TrimSpace(line); strings.HasPrefix(t, "default ") {
+		sig = strings.TrimPrefix(t, "default ")
+	}
+	// A one-line body after the signature is no part of it.
+	if i := strings.Index(sig, "{"); i >= 0 {
+		sig = sig[:i+1]
+	}
+	m := reJavaMethod.FindStringSubmatch(sig)
 	if m == nil {
 		return "", false
 	}
@@ -157,18 +176,60 @@ func configFile(base, ext string) bool {
 	return base == ".env" || strings.HasPrefix(base, ".env.") || base == ".npmrc"
 }
 
+// cutLine is line within skeletonLineMax bytes, cut where a rune starts.
 func cutLine(line string) string {
 	if len(line) <= skeletonLineMax {
 		return line
 	}
-	cut := line[:skeletonLineMax]
-	for len(cut) > 0 && cut[len(cut)-1]&0xC0 == 0x80 {
-		cut = cut[:len(cut)-1]
+	n := skeletonLineMax
+	for n > 0 && !utf8.RuneStart(line[n]) {
+		n--
 	}
-	if len(cut) > 0 && cut[len(cut)-1] >= 0xC0 {
-		cut = cut[:len(cut)-1]
+	return line[:n] + "…"
+}
+
+// tsKeep keeps a TS/JS file's imports, exports, decorators and route
+// paths; an exported constant without its value, which may be a key.
+func tsKeep(line string) (string, bool) {
+	if !reTSKeep.MatchString(line) {
+		return "", false
 	}
-	return cut + "…"
+	t := strings.TrimSpace(line)
+	// A route table on one line keeps its paths: a path is no credential.
+	if strings.Contains(t, "path:") {
+		return line, true
+	}
+	for _, decl := range []string{"export const ", "export let ", "export var "} {
+		if strings.HasPrefix(t, decl) {
+			if i := strings.Index(t, "="); i >= 0 {
+				return strings.TrimSpace(t[:i]), true
+			}
+		}
+	}
+	return line, true
+}
+
+// containerKeep keeps a Containerfile's structure; an ENV or ARG by its
+// name alone, never a value baked into the image.
+func containerKeep(line string) (string, bool) {
+	if !reContainer.MatchString(line) {
+		return "", false
+	}
+	f := strings.Fields(line)
+	switch strings.ToUpper(f[0]) {
+	case "ENV", "ARG":
+		names := []string{strings.ToUpper(f[0])}
+		for i, w := range f[1:] {
+			name, _, hasEq := strings.Cut(w, "=")
+			// "ENV KEY value": the old form, one key and its value.
+			if !hasEq && i > 0 {
+				break
+			}
+			names = append(names, name)
+		}
+		return strings.Join(names, " "), true
+	}
+	return line, true
 }
 
 func matching(re *regexp.Regexp) func(string) (string, bool) {
@@ -208,9 +269,11 @@ func docAnd(keep func(string) (string, bool)) func(string) (string, bool) {
 }
 
 // goKeep keeps a Go file's package, imports (each of an import block),
-// exported declarations and the first line of each doc comment before one.
+// exported declarations, a grouped type, var or const block's exported
+// names (sentinel errors among them), and the first line of each doc
+// comment before one.
 func goKeep() func(string) (string, bool) {
-	inImports, doc := false, ""
+	inImports, inGroup, doc := false, false, ""
 	return func(line string) (string, bool) {
 		switch {
 		case strings.HasPrefix(line, "import ("):
@@ -221,14 +284,29 @@ func goKeep() func(string) (string, bool) {
 			return ")", true
 		case inImports:
 			return "\t" + strings.TrimSpace(line), strings.TrimSpace(line) != ""
+		case line == "type (" || line == "var (" || line == "const (":
+			inGroup = true
+			return line, true
+		case inGroup && line == ")":
+			inGroup = false
+			return ")", true
 		case strings.HasPrefix(line, "// "):
 			if doc == "" {
 				doc = line
 			}
 			return "", false
+		case strings.HasPrefix(line, "\t") && !inGroup:
+			doc = ""
+			return "", false
 		case reGoKeep.MatchString(line):
 			d := doc
 			doc = ""
+			// A var or const by its name and type, never its value.
+			if inGroup || strings.HasPrefix(line, "var ") || strings.HasPrefix(line, "const ") {
+				if i := strings.Index(line, "="); i >= 0 {
+					line = strings.TrimRight(line[:i], " \t")
+				}
+			}
 			if d != "" && !strings.HasPrefix(line, "package") && !strings.HasPrefix(line, "import") {
 				return d + "\n" + line, true
 			}
@@ -281,7 +359,10 @@ func sqlKeep() func(string) (string, bool) {
 		t := strings.TrimSpace(line)
 		if reSQLKeep.MatchString(line) {
 			lower := strings.ToLower(t)
-			inTable = strings.HasPrefix(lower, "create") && strings.Contains(lower, "table") && !strings.HasSuffix(t, ";")
+			// Columns only of a table defined by them: never one made AS a
+			// SELECT, whose next lines are a query.
+			inTable = strings.HasPrefix(lower, "create") && strings.Contains(lower, "table") && !strings.HasSuffix(t, ";") &&
+				!strings.HasSuffix(lower, " as") && !strings.Contains(lower, " as select")
 			return t, true
 		}
 		if !inTable {
@@ -335,30 +416,45 @@ func xmlKeep(body []byte) func(string) (string, bool) {
 	}
 }
 
-// jsonKeep keeps a JSON file's top-level keys; an Avro schema's names,
-// namespaces and types, which are what the schema defines.
-func jsonKeep(avro bool) func(string) (string, bool) {
-	return func(line string) (string, bool) {
-		if avro {
-			ms := reJSONSchema.FindAllString(line, -1)
-			return strings.Join(ms, ", "), len(ms) > 0
-		}
-		if !reJSONTop.MatchString(line) {
-			return "", false
-		}
-		key := strings.TrimSpace(line)
-		if i := strings.Index(key, ":"); i >= 0 {
-			key = key[:i+1]
-		}
-		return key, true
-	}
+// avroKeep keeps an Avro schema's names, namespaces and types, which are
+// what the schema defines.
+func avroKeep(line string) (string, bool) {
+	ms := reJSONSchema.FindAllString(line, -1)
+	return strings.Join(ms, ", "), len(ms) > 0
 }
 
-// headLines is a file's first n lines that are not blank.
-func headLines(body []byte, n int) string {
+// jsonKeys is a JSON file's top-level keys, in their order, whatever its
+// indentation or none (a minified file); a body that is no JSON object (a
+// list, JSON with comments) its first three lines.
+func jsonKeys(body []byte) string {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return headLines(body)
+	}
+	var keys []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return headLines(body)
+		}
+		key, _ := tok.(string)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return headLines(body)
+		}
+		keys = append(keys, strconv.Quote(key)+":")
+	}
+	return collect([]byte(strings.Join(keys, "\n")), func(l string) (string, bool) { return l, true })
+}
+
+// headLineCount is how many lines a file of a kind no rule knows keeps.
+const headLineCount = 3
+
+// headLines is a file's first headLineCount lines that are not blank.
+func headLines(body []byte) string {
 	kept := 0
 	return collect(body, func(line string) (string, bool) {
-		if strings.TrimSpace(line) == "" || kept >= n {
+		if strings.TrimSpace(line) == "" || kept >= headLineCount {
 			return "", false
 		}
 		kept++

@@ -631,16 +631,19 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if !ok {
 		return fmt.Errorf("the catalogue failed: %s", res.Outcome)
 	}
-	// After the call, once: a hold or a busy clone before it repeats the
-	// step, and stage 0 would read the whole tree again each time.
-	w.stageZero(ctx, r, files, at)
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
 	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
 	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true}
 	for _, s := range p.Subjects {
 		plan.Read = append(plan.Read, s.Name)
 	}
-	return w.planned(ctx, r, plan)
+	if err := w.planned(ctx, r, plan); err != nil {
+		return err
+	}
+	// Once the paid call's plan is stored: a hold or a busy clone before it
+	// repeats the step, and nothing between call and write may cost it.
+	w.stageZero(ctx, r, files, at)
+	return nil
 }
 
 // churnWindow is how far back churn counts commits.

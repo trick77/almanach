@@ -30,9 +30,10 @@ func (c *Client) Churn(ctx context.Context, dir, sha string, since time.Time) (m
 
 // reBumpSubject is a dependency bump's subject, as Renovate, Dependabot and
 // the conventional "deps" scope write it: "Bump x from 1 to 2", "Update
-// dependency x to v2", "Update x to v1.2.3" and nothing after. Never a
-// human's "Update retry delay to 5 seconds" or "Bump batch size".
-var reBumpSubject = regexp.MustCompile(`(?i)^(\w+\(deps(-dev)?\)!?:|deps(-dev)?:|bump\s+\S+\s+from\s+\S+\s+to\s|update\s+(dependency|module|plugin)\s|update\s+\S+\s+to\s+v?\d[\w.\-+]*\s*$|chore\(renovate\)|lock file maintenance)`)
+// dependency x to v2", "Update Helm release x to v2", "Update x to v1.2.3"
+// or "to v2" and nothing after. Never a human's "Update retry delay to 5
+// seconds", "Update timeout to 30s" or "Bump batch size".
+var reBumpSubject = regexp.MustCompile(`(?i)^(\w+\(deps(-dev)?\)!?:|deps(-dev)?:|bump\s+\S+\s+from\s+\S+\s+to\s|update\s+(dependency|module|plugin|helm\s+release|docker\s+tag|image)\s|update\s+\S+\s+to\s+(v\d[\w.\-+]*|\d+\.\d+[\w.\-+]*)\s*$|chore\(renovate\)|lock file maintenance)`)
 
 // bot reports whether an author is an automation: a GitHub App's "[bot]",
 // Renovate, Dependabot, or an address naming a bot.

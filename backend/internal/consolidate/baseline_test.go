@@ -888,10 +888,6 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	}
 }
 
-// A step's prompt names no ceiling and no budget: a description is
-// documentation (user, 2026-11-01). After the fold one line logs what the
-// page grew by and the statements returned as stored, which belonged in
-// confirmed.
 // A full run's catalogue builds stage 0 and logs its size; churn that
 // cannot be read is logged and the run goes on, the catalogue's call made.
 func TestRun_StageZeroLogged(t *testing.T) {
@@ -914,6 +910,10 @@ func TestRun_StageZeroLogged(t *testing.T) {
 	}
 }
 
+// A step's prompt names no ceiling and no budget: a description is
+// documentation (user, 2026-11-01). After the fold one line logs what the
+// page grew by and the statements returned as stored, which belonged in
+// confirmed.
 func TestRun_StepGrowthLogged(t *testing.T) {
 	x := newWorld(t, 16)
 	var logs strings.Builder

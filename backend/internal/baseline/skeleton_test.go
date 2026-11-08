@@ -113,6 +113,22 @@ func TestSkeletonEdges(t *testing.T) {
 		{".env.production", "DB_PASSWORD=Winter2026!\n", []string{"DB_PASSWORD"}, []string{"Winter2026!"}},
 		{"conf/app.ini", "; comment\n[mail]\nhost=smtp.example.invalid\n", []string{"[mail]", "host"}, []string{"smtp", "comment"}},
 		{"a.properties", "key.one=abc\\\n  abcDEF123=\nkey.two=2\n", []string{"key.one", "key.two"}, []string{"abcDEF123"}},
+		// The medium review's: values out of a Containerfile, an export, a
+		// default; JSON at any indentation or none; a switch arm no
+		// signature, a default method one; Go's grouped names; more SQL.
+		{"Containerfile", "FROM x\nENV DB_PASSWORD=Winter2026! MODE=prod\nENV OLD_KEY old value\nARG NPM_TOKEN=abc123\n",
+			[]string{"ENV DB_PASSWORD MODE", "ENV OLD_KEY", "ARG NPM_TOKEN"}, []string{"Winter2026!", "abc123", "old value", "prod"}},
+		{"web/src/env.ts", "export const API_KEY = 'k-123';\nexport function load() {}\n", []string{"export const API_KEY", "export function load()"}, []string{"k-123"}},
+		{"src/Mail.java", "class Mail {\n    @Value(\"${mail.password:Winter2026!}\")\n    String password;\n}\n", []string{"@Value(\"${mail.password}\")"}, []string{"Winter2026!"}},
+		{"appsettings.json", "{\n    \"Logging\": {\n        \"LogLevel\": {}\n    },\n    \"ConnectionStrings\": {}\n}\n", []string{"\"Logging\":", "\"ConnectionStrings\":"}, []string{"LogLevel"}},
+		{"min.json", `{"a":1,"b":{"c":2}}`, []string{"\"a\":", "\"b\":"}, []string{"\"c\""}},
+		{"list.json", "[1, 2, 3]\n", []string{"[1, 2, 3]"}, nil},
+		{"src/Sw.java", "interface Sw {\n    default int size() { return 0; }\n    void run(int x) {\n        switch (x) {\n            default: handle(x);\n        }\n    }\n}\n",
+			[]string{"default int size()", "void run(int x)"}, []string{"handle(x)"}},
+		{"errs.go", "package e\n\nvar (\n\tErrGone = errors.New(\"gone\")\n\tlocal = 1\n)\n\nconst Limit = 5\n\ntype (\n\tA struct{}\n)\n",
+			[]string{"var (", "\tErrGone", "const Limit", "type (", "\tA struct{}"}, []string{"\"gone\"", "local", "= 5"}},
+		{"db/V3.sql", "CREATE OR REPLACE VIEW claim_open AS\nSELECT id\nFROM claim;\nCREATE TABLE stats AS\nSELECT a\nFROM b;\nCREATE TEMPORARY TABLE tmp (\n  x INT\n);\n",
+			[]string{"CREATE OR REPLACE VIEW claim_open AS", "CREATE TABLE stats AS", "CREATE TEMPORARY TABLE tmp (\n  x"}, []string{"  SELECT", "  FROM"}},
 	} {
 		got := Skeleton(c.path, []byte(c.body))
 		for _, w := range c.want {
@@ -147,12 +163,22 @@ func TestFanInEdges(t *testing.T) {
 		"src/shop/app/Use.kt":         []byte("package shop.app\nimport shop.core.Claim\n"),
 		"web/src/api.ts":              []byte("export const api = 1;\n"),
 		"web/src/main.ts":             []byte("import { api } from './api.js';\n"),
+		// A static wildcard counts its class; a string that looks like an
+		// import is none; a test imports nothing; a comment declares nothing.
+		"src/shop/core/Consts.java":       []byte("package shop.core;\nclass Consts { static int MAX = 1; }\n"),
+		"src/shop/app/UseConsts.java":     []byte("package shop.app;\nimport static shop.core.Consts.*;\n"),
+		"backend/internal/conf/c.go":      []byte("package conf\n"),
+		"backend/cmd/str.go":              []byte("package main\nvar p = []string{\n\t\"example.invalid/app/internal/conf\",\n}\n"),
+		"backend/internal/conf/c_test.go": []byte("package conf\nimport \"example.invalid/app/internal/store\"\n"),
+		"src/shop/core/Doc.kt":            []byte("package shop.core\n/** see class Phantom */\nclass Real\n"),
+		"src/shop/app/Ph.kt":              []byte("package shop.app\nimport shop.core.Phantom\nimport shop.core.Real\n"),
 	}
 	in := FanIn(bodies)
 	for p, want := range map[string]int{
 		"backend/internal/store/s.go": 1, "tool/lib/l.go": 1,
 		"src/shop/core/Money.java": 2, "src/shop/core/Ledger.java": 1, "src/shop/core/Unused.java": 1,
 		"src/shop/core/Types.kt": 2, "web/src/api.ts": 1,
+		"src/shop/core/Consts.java": 2, "backend/internal/conf/c.go": 0, "src/shop/core/Doc.kt": 2,
 	} {
 		if in[p] != want {
 			t.Errorf("fan-in of %s = %d, want %d (all: %v)", p, in[p], want, in)
