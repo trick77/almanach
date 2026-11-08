@@ -1046,7 +1046,10 @@ resumes after a restart. The run pins the clone's head when it starts.
    It was once folded to two levels whatever the shape, and a Maven
    repository, all of it under `src/main/java`, became one line the model
    could only name whole, filled in path order to the step's cap. Code holds
-   the answer to the tree: invented paths dropped, directories expanded,
+   the answer to the tree: invented paths dropped, a path leading folders
+   short resolved there where only one place fits (a model once
+   dropped `backend/` from every path of five subjects), directories
+   expanded,
    each subject within 240 kB, at most `BACKEND_BASELINE_MAX_CALLS` less
    four (the catalogue, the overview, the project, the repository map); a
    full run's model is asked one short, so the anchors' subject needs no

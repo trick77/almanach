@@ -115,12 +115,20 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	if res.Outcome != inference.OutcomeOK {
 		return out, nil
 	}
+	// Each router subject's files as the plan resolves its paths.
+	resolver := baseline.NewResolver(files)
 	subjects := make([]inference.Subject, 0, len(res.Subjects))
-	for _, s := range res.Subjects {
+	named := make([]map[string]bool, len(res.Subjects))
+	for i, s := range res.Subjects {
 		subjects = append(subjects, s.Subject)
+		named[i] = map[string]bool{}
 		for _, p := range s.Paths {
-			if !picksAny([]string{p}, files) {
+			got := resolver.Resolve(p)
+			if len(got) == 0 {
 				out.Unresolved = append(out.Unresolved, s.Name+": "+p)
+			}
+			for _, f := range got {
+				named[i][f.Path] = true
 			}
 		}
 	}
@@ -150,29 +158,11 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 			held[f.Path] = true
 		}
 	}
-	// What the router named, as picksAny reads a path: a file, its own
-	// directory ("dir/*", "*"), a subtree ("dir/"); one pass over the files.
-	exact, ownDir, subtrees := map[string]bool{}, map[string]bool{}, []string{}
-	for _, s := range subjects {
-		for _, p := range s.Paths {
-			p = strings.TrimPrefix(strings.TrimSpace(p), "./")
-			switch {
-			case strings.HasSuffix(p, "*"):
-				ownDir[strings.TrimSuffix(p, "*")] = true
-			case strings.HasSuffix(p, "/"):
-				subtrees = append(subtrees, p)
-			default:
-				exact[p] = true
+	for _, n := range named {
+		for p := range n {
+			if !held[p] {
+				out.Dropped[p] = true
 			}
-		}
-	}
-	for _, f := range files {
-		if held[f.Path] {
-			continue
-		}
-		dir := f.Path[:strings.LastIndex(f.Path, "/")+1]
-		if exact[f.Path] || ownDir[dir] || slices.ContainsFunc(subtrees, func(s string) bool { return strings.HasPrefix(f.Path, s) }) {
-			out.Dropped[f.Path] = true
 		}
 	}
 	// The plan names a subject as stored (lang.Prose) and merges two the
@@ -185,9 +175,9 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 		names := ps.Names()
 		var qs []string
 		per := map[int]int{} // questions taken by part
-		for _, s := range res.Subjects {
+		for i, s := range res.Subjects {
 			part := slices.IndexFunc(names, func(n string) bool { return lang.SameName(lang.Prose(s.Name), n) })
-			if part < 0 || !picksAny(s.Paths, ps.Files) {
+			if part < 0 || !slices.ContainsFunc(ps.Files, func(f baseline.File) bool { return named[i][f.Path] }) {
 				continue
 			}
 			for _, q := range s.Questions {
@@ -235,28 +225,6 @@ func routerRunBytes(maxBytes int, files []baseline.File, contracts map[string]bo
 		}
 	}
 	return max(maxBytes-int(docs)-int(min(anchors, baseline.StepMaxBytes)), 0)
-}
-
-// picksAny reports whether a router subject's paths name any of files: a
-// file's path, its own directory ("dir/*", "*"), or one above it ("dir/").
-func picksAny(paths []string, files []baseline.File) bool {
-	for _, p := range paths {
-		p = strings.TrimPrefix(strings.TrimSpace(p), "./")
-		for _, f := range files {
-			switch {
-			case p == f.Path:
-				return true
-			case strings.HasSuffix(p, "*"):
-				dir := strings.TrimSuffix(p, "*")
-				if strings.HasPrefix(f.Path, dir) && !strings.Contains(f.Path[len(dir):], "/") {
-					return true
-				}
-			case strings.HasSuffix(p, "/") && strings.HasPrefix(f.Path, p):
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // renderRouter is a router call's prompt. Budgets in kB of 1024 bytes, as
