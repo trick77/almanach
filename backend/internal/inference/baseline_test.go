@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -41,12 +42,30 @@ func TestCatalogue(t *testing.T) {
 		t.Errorf("schema = %q", name)
 	}
 
-	for _, reply := range []string{"no json", `{"subjects": null}`, "null"} {
+	for _, reply := range []string{"no json", `{"subjects": null}`, "null", "Hier: {kein json}"} {
 		srv.SetReply(reply)
 		res := testClient(srv.Client()).Catalogue(context.Background(), "p")
 		if res.Outcome != OutcomeUnparseable || res.Catalogue.Subjects != nil {
 			t.Errorf("reply %q: Outcome = %s catalogue %+v, want unparseable and empty", reply, res.Outcome, res.Catalogue)
 		}
+	}
+
+	// Prose around the object: the object is the answer.
+	srv.SetReply("Hier ist der Katalog:\n" + `{"subjects": [{"name": "Kern", "purpose": "p", "paths": ["a.go"]}]}` + "\nViel Erfolg.")
+	if res := testClient(srv.Client()).Catalogue(context.Background(), "p"); res.Outcome != OutcomeOK || len(res.Catalogue.Subjects) != 1 {
+		t.Errorf("prose around the JSON: Outcome = %s catalogue %+v", res.Outcome, res.Catalogue)
+	}
+
+	// An answer no parse takes is logged, head and end, credentials out.
+	var logs strings.Builder
+	c := testClient(srv.Client())
+	c.log = slog.New(slog.NewTextHandler(&logs, nil))
+	srv.SetReply(`Ich habe den Katalog nicht erstellt. token ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8`) // ship:allow-secret: invented fixture
+	if res := c.Catalogue(context.Background(), "p"); res.Outcome != OutcomeUnparseable {
+		t.Fatalf("Outcome = %s", res.Outcome)
+	}
+	if out := logs.String(); !strings.Contains(out, "answer unparseable") || !strings.Contains(out, "Ich habe den Katalog") || strings.Contains(out, "ghp_A1b2") {
+		t.Errorf("log = %s", out)
 	}
 }
 

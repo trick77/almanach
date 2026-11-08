@@ -144,7 +144,7 @@ func (c *Client) Route(ctx context.Context, prompt string) RouteResult {
 		Subjects []RouteSubject `json:"subjects"`
 	}
 	if call.Outcome == OutcomeOK && (!parse(content, &answer) || answer.Subjects == nil) {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	out.Subjects = answer.Subjects
@@ -175,7 +175,7 @@ func (c *Client) Restyle(ctx context.Context, prompt string, project bool) Resty
 		Outline json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &out.Patch) || out.Patch.Statements == nil || !parse(content, &outline) {
-		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
+		out.Outcome, out.Patch = c.unparseable(out.Call, content), Patch{}
 		return out
 	}
 	out.Outline = parseOutline(outline.Outline)
@@ -213,7 +213,7 @@ func (c *Client) Catalogue(ctx context.Context, prompt string) CatalogueResult {
 	content, call := c.call(ctx, prompt, catalogueFormat(), capCatalogue)
 	out := CatalogueResult{Call: call}
 	if call.Outcome == OutcomeOK && (!parse(content, &out.Catalogue) || out.Catalogue.Subjects == nil) {
-		out.Outcome, out.Catalogue = OutcomeUnparseable, Catalogue{}
+		out.Outcome, out.Catalogue = c.unparseable(out.Call, content), Catalogue{}
 	}
 	return out
 }
@@ -223,7 +223,7 @@ func (c *Client) Patch(ctx context.Context, prompt string) PatchResult {
 	content, call := c.call(ctx, prompt, patchFormat(c.diagrams), capPatch)
 	out := PatchResult{Call: call}
 	if call.Outcome == OutcomeOK && (!parse(content, &out.Patch) || out.Patch.Statements == nil) {
-		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
+		out.Outcome, out.Patch = c.unparseable(out.Call, content), Patch{}
 	}
 	return out
 }
@@ -242,7 +242,7 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 		Outline     json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &answer) || answer == nil || answer.Description == nil {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	out.Outline = parseOutline(answer.Outline)
@@ -254,7 +254,7 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 	// be is the worker's to judge, and a missing one never sinks the text.
 	var d Description
 	if json.Unmarshal(answer.Description, &d) != nil || d.Statements == nil {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	out.Description = &d
@@ -288,7 +288,7 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 		Outline json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &answer) || answer == nil || answer.Map == nil {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	if outline {
@@ -299,7 +299,7 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 	}
 	var d diagram.Diagram
 	if json.Unmarshal(answer.Map, &d) != nil {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	out.Map = &d

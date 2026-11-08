@@ -29,12 +29,12 @@ func (c *Client) Brief(ctx context.Context, prompt string) BriefResult {
 		Brief json.RawMessage `json:"brief"`
 	}
 	if !parse(content, &answer) || answer == nil {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	text, ok, err := laid(answer.Brief)
 	if err != nil || !ok || strings.TrimSpace(text) == "" {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	out.Text = text

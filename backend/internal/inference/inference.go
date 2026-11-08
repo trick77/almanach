@@ -336,7 +336,7 @@ func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
 	}
 	m, ok := ParseMerge(content)
 	if !ok {
-		out.Outcome = OutcomeUnparseable
+		out.Outcome = c.unparseable(out.Call, content)
 		return out
 	}
 	out.Merge = m
@@ -502,6 +502,22 @@ func (c *Client) logCut(callID, content string) {
 // cutTail is how much of a cut answer's end the log keeps.
 const cutTail = 400
 
+// unparseable logs an answer that arrived whole but is no answer to its
+// schema, credentials redacted, its head and its end: what the model wrote
+// instead (prose around the JSON, a field of the wrong type) is what the
+// prompt or the schema needs fixed, and an unlogged "unparseable" tells
+// nothing (a catalogue failed so, 2026-11-08). Returns the outcome.
+func (c *Client) unparseable(call Call, content string) Outcome {
+	text := redact.Text(content)
+	head, tail := text, ""
+	if len(text) > 2*cutTail {
+		head = strings.ToValidUTF8(text[:cutTail], "")
+		tail = strings.ToValidUTF8(text[len(text)-cutTail:], "")
+	}
+	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "head", head, "tail", tail)
+	return OutcomeUnparseable
+}
+
 // loopGuard watches a streamed answer for a loop: the same stretch of text
 // again and again at its end (2026-11-07: a heading and paragraph pair, "so
 // weiter so fort", three short paragraphs in turn; each ran to the cap).
@@ -628,7 +644,17 @@ func parse(content string, dst any) bool {
 		}
 		content = strings.Join(lines, "\n")
 	}
-	return json.Unmarshal([]byte(content), dst) == nil
+	if json.Unmarshal([]byte(content), dst) == nil {
+		return true
+	}
+	// Prose before or after the object ("Hier ist der Katalog: {...}"): the
+	// outermost object, when it is the answer. A strict schema asks for the
+	// object alone, and a model does not always hold to it.
+	start, end := strings.Index(content, "{"), strings.LastIndex(content, "}")
+	if start < 0 || end <= start || start == 0 && end == len(content)-1 {
+		return false
+	}
+	return json.Unmarshal([]byte(content[start:end+1]), dst) == nil
 }
 
 // costFrom is a stream's usage, cost and call id; Answered is the caller's
