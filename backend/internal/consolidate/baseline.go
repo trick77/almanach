@@ -71,6 +71,9 @@ type Code interface {
 	// marks Cut as its first FileMaxBytes; a file over the cap not so
 	// marked, missing or binary is left out, not an error.
 	ReadFiles(ctx context.Context, key, slug, sha string, files []baseline.File) (map[string][]byte, error)
+	// Churn is how many commits since since touched each path at sha, bots
+	// and dependency bumps left out: a router's hint (baseline.StageZero).
+	Churn(ctx context.Context, key, slug, sha string, since time.Time) (map[string]int, error)
 }
 
 // Cataloguer is the catalogue model.
@@ -614,6 +617,7 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if r.Calls >= w.base.Limits.MaxCalls {
 		return errors.New("no call left for the catalogue")
 	}
+	w.stageZero(ctx, r, files)
 	docs, size, err := w.readDocs(ctx, r, files, baseline.CatalogueDocsBytes)
 	if err != nil {
 		return err
@@ -636,6 +640,56 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	}
 	return w.planned(ctx, r, plan)
 }
+
+// churnWindow is how far back churn counts commits.
+const churnWindow = 365 * 24 * time.Hour
+
+// stageZero builds the filter stage's first part over a full run's tree
+// (baseline.StageZero: every file's skeleton, fan-in, churn) and logs what
+// it came to: what a router would read against what the run could read.
+// Nothing reads it yet, so it never fails or holds the run: a read that
+// fails is logged and the run goes on as before.
+func (w *Worker) stageZero(ctx context.Context, r *store.BaselineRun, files []baseline.File) {
+	whole := make([]baseline.File, len(files))
+	for i, f := range files {
+		f.Cut = true
+		whole[i] = f
+	}
+	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, whole)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: stage 0 skipped, the tree could not be read", logging.Err(err))
+		return
+	}
+	at, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
+	var churn map[string]int
+	if err == nil {
+		churn, err = w.base.Code.Churn(ctx, r.ProjectKey, r.Slug, r.Commit, at.Add(-churnWindow))
+	}
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: stage 0 without churn", logging.Err(err))
+	}
+	z := baseline.BuildStageZero(bodies, churn)
+	most, imported := 0, 0
+	for _, n := range z.FanIn {
+		imported++
+		most = max(most, n)
+	}
+	touched := 0
+	for p := range z.Skeletons {
+		if z.Churn[p] > 0 {
+			touched++
+		}
+	}
+	share := 0
+	if z.Bytes > 0 {
+		share = int(z.SkeletonBytes * 100 / z.Bytes)
+	}
+	w.log.InfoContext(ctx, fmt.Sprintf("baseline: stage 0: %s, skeletons %s of %s (%d%%); %d imported by others (most %d), %d changed in a year",
+		plural(len(z.Skeletons), "file"), kib(z.SkeletonBytes), kib(z.Bytes), share, imported, most, touched))
+}
+
+// kib is a byte count as the log shows it.
+func kib(n int64) string { return fmt.Sprintf("%d kB", (n+512)/1024) }
 
 // reconcilePlan is a reconcile's catalogue: the documented run's plan, the
 // changes since its commit mapped onto it, new files placed by a catalogue

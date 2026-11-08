@@ -327,6 +327,9 @@ type fakeCode struct {
 	read        [][]string
 	// treesAt is every commit a tree was asked at.
 	treesAt []string
+	// churn and churnErr answer Churn.
+	churn    map[string]int
+	churnErr error
 }
 
 func (c *fakeCode) Tree(ctx context.Context, _, _, sha string) ([]gitrepo.Entry, error) {
@@ -356,6 +359,9 @@ func (c *fakeCode) Contains(_ context.Context, _, _, ancestor, _ string) (bool, 
 }
 func (c *fakeCode) CommitTime(context.Context, string, string, string) (time.Time, error) {
 	return mergedAt, nil
+}
+func (c *fakeCode) Churn(context.Context, string, string, string, time.Time) (map[string]int, error) {
+	return c.churn, c.churnErr
 }
 func (c *fakeCode) ReadFiles(_ context.Context, _, _, _ string, files []baseline.File) (map[string][]byte, error) {
 	out := map[string][]byte{}
@@ -886,6 +892,28 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 // documentation (user, 2026-11-01). After the fold one line logs what the
 // page grew by and the statements returned as stored, which belonged in
 // confirmed.
+// A full run's catalogue builds stage 0 and logs its size; churn that
+// cannot be read is logged and the run goes on, the catalogue's call made.
+func TestRun_StageZeroLogged(t *testing.T) {
+	x := newWorld(t, 16)
+	var logs strings.Builder
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	x.code.churnErr = errors.New("log broke")
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
+	x.models.patches = []inference.PatchResult{{Call: called}, {Call: called}}
+	x.models.project = inference.DescriptionResult{Call: called}
+	x.w.drain(context.Background())
+	out := logs.String()
+	if !strings.Contains(out, "baseline: stage 0: ") || !strings.Contains(out, "stage 0 without churn") {
+		t.Errorf("log lacks stage 0:\n%s", out)
+	}
+	if r := x.run(); r.State == store.RunFailed || r.Calls < 1 {
+		t.Errorf("run = %+v, want it to go on past stage 0", r)
+	}
+}
+
 func TestRun_StepGrowthLogged(t *testing.T) {
 	x := newWorld(t, 16)
 	var logs strings.Builder
@@ -1584,7 +1612,8 @@ func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 	x.models.project = inference.DescriptionResult{Call: called}
 	for lap := range 3 {
 		x.w.drain(context.Background())
-		if r := x.run(); r.State != store.RunDescribing || r.Step != 0 || len(x.models.prompts) != 1 || len(x.code.read) != 1 {
+		// Two reads, both the catalogue's: stage 0's tree, then the docs.
+		if r := x.run(); r.State != store.RunDescribing || r.Step != 0 || len(x.models.prompts) != 1 || len(x.code.read) != 2 {
 			t.Fatalf("lap %d: run %+v, %d prompts, %d reads; want the first describe step held", lap, r, len(x.models.prompts), len(x.code.read))
 		}
 		now = now.Add(placeWait / 3)

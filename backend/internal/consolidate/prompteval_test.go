@@ -80,6 +80,14 @@ func (c evalCode) CommitTime(ctx context.Context, key, slug, sha string) (time.T
 	return c.git.CommitTime(ctx, dir, sha)
 }
 
+func (c evalCode) Churn(ctx context.Context, key, slug, sha string, since time.Time) (map[string]int, error) {
+	dir, err := c.git.Dir(key, slug)
+	if err != nil {
+		return nil, err
+	}
+	return c.git.Churn(ctx, dir, sha, since)
+}
+
 func (c evalCode) ReadFiles(ctx context.Context, key, slug, sha string, files []baseline.File) (map[string][]byte, error) {
 	out := map[string][]byte{}
 	dir, err := c.git.Dir(key, slug)

@@ -26,6 +26,7 @@ type Reads interface {
 	HasCommit(ctx context.Context, dir, sha string) (bool, error)
 	CommitTime(ctx context.Context, dir, sha string) (time.Time, error)
 	NewReader(ctx context.Context, dir string) (*gitrepo.Reader, error)
+	Churn(ctx context.Context, dir, sha string, since time.Time) (map[string]int, error)
 }
 
 // Code reads the clones for the baseline worker.
@@ -123,6 +124,17 @@ func (c *Code) CommitTime(ctx context.Context, key, slug, sha string) (time.Time
 		return err
 	})
 	return at, err
+}
+
+// Churn is how many commits since since touched each path at sha, bots and
+// dependency bumps left out (gitrepo.Churn).
+func (c *Code) Churn(ctx context.Context, key, slug, sha string, since time.Time) (map[string]int, error) {
+	var churn map[string]int
+	err := c.locked(ctx, key, slug, func(dir string) (err error) {
+		churn, err = c.reads.Churn(ctx, dir, sha, since)
+		return err
+	})
+	return churn, err
 }
 
 // ReadFiles reads files at sha through one batch reader. A file the plan
