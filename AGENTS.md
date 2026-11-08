@@ -58,7 +58,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   push = text to copy (user, 2026-11-06).
 - A run is due by the rows, read each cycle, never by an event.
 - What a run reads is code's where code can tell, never the catalogue's alone (it read tests, not routing;
-  user, 2026-11-07): tests out unless most of the tree; anchors always; WSDL/XSD only build-named; generated
+  user, 2026-11-07): tests out unless most of the tree; migrations out, model from code
+  (user, 2026-11-08); anchors always; WSDL/XSD only build-named; generated
   and own `.agents/PROJECT.md` never. Big file = head, never left out (god class is one); redacted whole,
   then cut. Listing folds where files are (Maven = one line).
 - Sources on: a non-source repo's note = 202 `ignored`, never stored (user, 2026-10-30); gate key/slug any
