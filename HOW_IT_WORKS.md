@@ -1388,7 +1388,13 @@ The repository's call never drops. Each page that is at the epoch already is ski
 call. The answer is a patch with an outline: edits by id, new statements in
 `added` each naming what it was split out of (`from`, statement ids or
 `summary`), a summary or null; no confirmation in the schema, a drop only
-in the project's. It
+in the project's. The answer is the diff (`prompts.RestyleEdits`): only a
+statement whose kind, name or text the rules change, never one reworded to
+polish it, and an area alone by the outline, never by returning the
+statement. A page whose rewrite would not fit one answer (an 86k prompt cut
+at 59-68k answer tokens, every attempt, 2026-11-07) fits as its diff; a
+statement returned with no change of kind, name or text is logged, the
+answer having paid for more than it needed. It
 learns nothing, so it neither credits nor checks: an edit keeps its files,
 sources, last check and diagram (none drawn where there was none); a new
 statement keeps only files of what it came from (any file of the page

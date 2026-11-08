@@ -44,6 +44,16 @@ func TestPromptsStateTheAreas(t *testing.T) {
 	}
 }
 
+// Both restyles ask for the diff alone, in one wording: an area by the
+// outline, never a statement returned for it.
+func TestRestylesAskTheDiff(t *testing.T) {
+	for name, p := range map[string]string{"restyle": Restyle, "project restyle": ProjectRestyle} {
+		if !strings.Contains(p, RestyleEdits) {
+			t.Errorf("%s prompt lacks the diff rule %q", name, RestyleEdits)
+		}
+	}
+}
+
 // Every prompt that writes statement text and a summary states the one
 // layout rule and how the summary takes it; none bars the summary from it.
 func TestPromptsStateTheLayout(t *testing.T) {

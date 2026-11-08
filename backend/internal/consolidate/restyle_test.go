@@ -1,9 +1,11 @@
 package consolidate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -220,6 +222,26 @@ func TestRestyle_LayoutInPlace(t *testing.T) {
 	}
 	if x.st.repoEpoch != prompts.RepoEpoch {
 		t.Errorf("repository epoch = %d", x.st.repoEpoch)
+	}
+}
+
+// A statement returned as stored, its area alone moved, is no change: the
+// layout in place, no revision, and the log says the answer held more than
+// the diff the prompt asks for.
+func TestRestyle_UnchangedEditsLogged(t *testing.T) {
+	x := restyleWorld(t)
+	x.st.projectEpoch = prompts.ProjectEpoch
+	var logs bytes.Buffer
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	x.models.restyles = []inference.RestyleResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{
+		stmt(ref("s2"), "rule", "Anmeldung", "Nur angemeldet."),
+	}}, Outline: []inference.OutlineArea{{Area: "Kern", IDs: []string{"s1", "s2"}}}}}
+	x.w.drain(context.Background())
+	if len(x.st.revisions) != 0 || x.st.arranges != 1 || x.repoPage().Statements[1].Area != "Kern" {
+		t.Fatalf("revisions %d, layouts %d, page %+v: want the layout in place", len(x.st.revisions), x.st.arranges, x.repoPage().Statements)
+	}
+	if !strings.Contains(logs.String(), "1 statement returned without a change of kind, name or text") {
+		t.Errorf("log lacks the unchanged count:\n%s", logs.String())
 	}
 }
 

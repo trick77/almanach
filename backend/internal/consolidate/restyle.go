@@ -10,6 +10,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
@@ -251,6 +252,7 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	// and a restyle drops nothing nor draws what no reading taught. One a
 	// left-out statement came from stays as stored.
 	edits := make([]inference.Statement, 0, len(patch.Statements))
+	unchanged := 0
 	for _, s := range patch.Statements {
 		if s.ID != nil {
 			if kept[*s.ID] {
@@ -258,11 +260,20 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 			}
 			if old, ok := byID[*s.ID]; ok {
 				s.Files, s.Diagram = old.Files, old.Diagram
+				if unchangedEdit(old, s) {
+					unchanged++
+				}
 			}
 		}
 		edits = append(edits, s)
 	}
 	patch.Statements = edits
+	// The prompt asks for the changed statements alone (prompts.RestyleEdits):
+	// one returned as stored, or for its area alone, is answer the call paid
+	// for and a big page cannot afford.
+	if unchanged > 0 {
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: %s returned without a change of kind, name or text", at, plural(unchanged, "statement")))
+	}
 	// No tree: every edit keeps its stored files and the drops are taken
 	// before, so no file check of ApplyPatch has anything to judge.
 	applied := baseline.ApplyPatch(page.Statements, patch, func(string) bool { return true }, validFor(scope))
@@ -329,6 +340,14 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	grown, n := growth(stored, summary, statements)
 	w.log.InfoContext(ctx, fmt.Sprintf("%s: %d chars of prose more; %s split off", at, grown, plural(n, "statement")))
 	return store.Restyled{Revision: rev}, nil
+}
+
+// unchangedEdit reports whether a restyle's edit of old says what old says:
+// the same kind, its name and text the same once stored (cleanStatement),
+// whatever its area.
+func unchangedEdit(old store.Statement, s inference.Statement) bool {
+	c := cleanStatement(s)
+	return c.Kind == old.Kind && lang.SameButSpelling(old.Name, c.Name) && sameText(old.Text, c.Text)
 }
 
 // splitOff holds a restyle's new statements to what they came from: the

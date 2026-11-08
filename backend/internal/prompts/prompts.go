@@ -104,6 +104,14 @@ const Spelling = `"ss", never "ß"; umlauts stay ä, ö, ü, Ä, Ö, Ü, never s
 // value; the sentence only keeps the model from inventing one.
 const Redacted = "`<redacted>` in what you read marks a credential the code removed before you saw it: never guess, reconstruct or quote its value; where it matters, say that a credential is configured there."
 
+// RestyleEdits is what both restyle prompts ask back, word for word: the
+// statements the rules change, and no more. A page too large to rewrite in
+// one answer (an 86k prompt cut at 59-68k answer tokens every attempt,
+// 2026-11-07) fits when the answer is the diff (user, 2026-11-08: changed
+// statements only, the rest kept by id); an area alone goes by the outline,
+// which an old page without areas otherwise returned whole for.
+const RestyleEdits = "- `statements`: every statement whose kind, name or text the rules here make you change, by its `id` exactly as shown, with its full new `name`, `text`, `files` and `area`. Only ids shown there, never one of your own. As few as the rules need: a text is rewritten only where it breaks a rule here (its layout, a flow or an interface it tells that is another statement's, its kind), never to polish its wording, and a statement the rules accept as it stands is not returned, whatever you would word differently. An area alone is the outline's: a statement whose only change is its area is not returned; the outline places it."
+
 // Layout is the text layout rule every prompt that writes statement text
 // or a summary states, word for word: structure where it helps a human
 // reader, prose by default, carried by the schema's blocks (Block), never

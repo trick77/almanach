@@ -16,7 +16,7 @@ The repository description below was written under earlier rules for its layout,
 
 Answer with a patch over the description below:
 
-- `statements`: every statement whose layout, kind, name, text or area you change, by its `id` exactly as shown, with its full new `name`, `text`, `files` and `area`. Only ids shown there, never one of your own. A statement already as the rules want it is not returned.
+- `statements`: every statement whose kind, name or text the rules here make you change, by its `id` exactly as shown, with its full new `name`, `text`, `files` and `area`. Only ids shown there, never one of your own. As few as the rules need: a text is rewritten only where it breaks a rule here (its layout, a flow or an interface it tells that is another statement's, its kind), never to polish its wording, and a statement the rules accept as it stands is not returned, whatever you would word differently. An area alone is the outline's: a statement whose only change is its area is not returned; the outline places it.
 - `added`: a statement the rules want on its own that the description still tells inside another one or in the summary (the two cases are below, under the kinds), with no id: the code numbers it. `from` names where its text comes from: the ids of the statements it takes it from, and `summary` when it comes from the summary. Its `files` are paths those statements already name, never another. The statement it came from is edited in `statements` to name it rather than tell it again; never the same text twice.
 - Nothing is dropped: a statement stays, shortened where its text moved into another, never emptied.
 - `files`: as stored; an edit keeps every file the statement names.
