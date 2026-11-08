@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,6 +55,9 @@ func TestRouteOnlyAgainstAFakeModel(t *testing.T) {
 	if md := rep.Markdown(); !strings.Contains(md, "| p1/r1 |") {
 		t.Errorf("markdown = %q", md)
 	}
+	if listing, err := os.ReadFile(filepath.Join(dir, "out", "p1", "r1", "listing.txt")); err != nil || !strings.Contains(string(listing), "main.go (") {
+		t.Errorf("listing.txt = %q, %v", listing, err)
+	}
 	again, err := RouteOnly(context.Background(), Options{Dir: dir, Out: filepath.Join(dir, "out"), Model: "mimo-v2.6-pro",
 		Lookup: lookup, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil || !strings.Contains(again.Repos[0].Error, "holds a run already") {
@@ -72,18 +76,53 @@ func TestRouteReport(t *testing.T) {
 			Files: []baseline.File{{Path: "a.go", Size: 2048}, {Path: "gen/x.go", Size: 1024}}}}},
 		Questions:     map[string][]string{"Kern": {"Was tut der Kern?"}},
 		Call:          inference.Call{Outcome: inference.OutcomeOK, Cost: inference.CallCost{InputTokens: 900, OutputTokens: 50, NanoUSD: &usd}},
-		ReadableBytes: 3082, SkeletonBytes: 300, ListingBytes: 400,
+		ReadableBytes: 3082, SkeletonBytes: 300, Listing: strings.Repeat("x", 2048),
 	}
 	l := &Labels{MustRead: []MustRead{{Path: "a.go"}, {Path: "b.go"}}, Generated: []Glob{{Glob: "gen/**"}}}
 	rr := routeReport(RouteRepo{Project: "p", Repo: "r"}, dry, l)
 	if rr.MustReadRecall != 0.5 || len(rr.MustReadMissed) != 1 || rr.MustReadMissed[0] != "b.go" {
 		t.Errorf("must-read = %v %v", rr.MustReadRecall, rr.MustReadMissed)
 	}
-	if len(rr.NoiseFiles) != 1 || rr.NoiseKB != 1 || rr.PickedFiles != 2 || rr.PickedKB != 3 || *rr.CostUSD != 0.02 || rr.InputTokens != 900 {
+	if len(rr.NoiseFiles) != 1 || rr.NoiseKB != 1 || rr.PickedFiles != 2 || rr.PickedKB != 3 || *rr.CostUSD != 0.02 || rr.InputTokens != 900 ||
+		rr.ListingKB != 2 {
 		t.Errorf("report = %+v", rr)
 	}
 	md := (&RouteReport{Model: "m", Repos: []RouteRepo{rr}, CostUSD: 0.02}).Markdown()
 	for _, want := range []string{"| p/r | 3 |", "### Kern (3 kB)", "- `a.go`", "- Was tut der Kern?", "Must-read missed: b.go", "Noise picked: gen/x.go"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown lacks %q:\n%s", want, md)
+		}
+	}
+}
+
+// A missed must-read is told apart by what the run knew of it: a label
+// naming no file, a file not readable, one the plan dropped, one only in a
+// folded line; the rest the router saw by name and passed over.
+func TestRouteReportTellsWhyAMissWasMissed(t *testing.T) {
+	files := []baseline.File{{Path: "a.go", Size: 10}, {Path: "b.go", Size: 10}, {Path: "c.go", Size: 10}, {Path: "web/x.ts", Size: 10}}
+	tree := map[string]bool{"web/x.spec.ts": true}
+	for _, f := range files {
+		tree[f.Path] = true
+	}
+	dry := consolidate.RouteDry{
+		Files:   files,
+		Plan:    baseline.Plan{Subjects: []baseline.Subject{{Name: "Kern", Files: []baseline.File{{Path: "a.go", Size: 10}}}}},
+		Call:    inference.Call{Outcome: inference.OutcomeOK},
+		Tree:    tree,
+		Folded:  map[string]bool{"web/x.ts": true},
+		Dropped: map[string]bool{"c.go": true},
+	}
+	l := &Labels{MustRead: []MustRead{{Path: "a.go"}, {Path: "b.go"}, {Path: "c.go"}, {Path: "web/x.ts"}, {Path: "web/x.spec.ts"}, {Path: "Old.java"}}}
+	rr := routeReport(RouteRepo{Project: "p", Repo: "r"}, dry, l)
+	if len(rr.MustReadMissed) != 5 || !reflect.DeepEqual(rr.MustReadFolded, []string{"web/x.ts"}) ||
+		!reflect.DeepEqual(rr.MustReadUnreadable, []string{"web/x.spec.ts"}) || !reflect.DeepEqual(rr.MustReadDropped, []string{"c.go"}) ||
+		!reflect.DeepEqual(rr.MustReadNotInTree, []string{"Old.java"}) {
+		t.Errorf("missed %v: folded %v, unreadable %v, dropped %v, not in tree %v", rr.MustReadMissed, rr.MustReadFolded,
+			rr.MustReadUnreadable, rr.MustReadDropped, rr.MustReadNotInTree)
+	}
+	md := (&RouteReport{Model: "m", Repos: []RouteRepo{rr}}).Markdown()
+	for _, want := range []string{"only in a folded line: web/x.ts", "not readable (left out before the router): web/x.spec.ts",
+		"dropped by the plan (budget, cap): c.go", "no file at the commit (the label): Old.java"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown lacks %q:\n%s", want, md)
 		}

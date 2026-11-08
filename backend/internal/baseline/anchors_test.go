@@ -2,6 +2,7 @@ package baseline
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/trick77/almanach/internal/gitrepo"
@@ -21,6 +22,22 @@ func TestTestFile(t *testing.T) {
 		"pkg/testdata/golden.json":                true,
 		"e2e/fixtures/a.json":                     true,
 		"e2e/playwright.config.ts":                false,
+		"apps/shop-e2e/playwright.config.ts":      false,
+		"apps/shop-e2e/test-utils.ts":             true,
+		"libs/e2e/src/login.ts":                   true,
+		"libs/e2e/src/page.po.ts":                 true,
+		"apps/e2etools/src/main.ts":               false,
+		"apps/shop-e2e/cypress.config.ts":         false, // a runner config, an anchor
+		"apps/shop-e2e/project.json":              false, // a build file, an anchor
+		"e2e/Playwright.config.mjs":               false,
+		"E2E/helpers.ts":                          true,
+		"e2e_tests/login.ts":                      true,
+		"tests-e2e/stub.ts":                       true,
+		"src/main/java/a/chat/e2e/Cipher.java":    false, // end-to-end encryption
+		"internal/crypto/e2e/session.go":          false,
+		"packages/e2e-encryption/src/cipher.ts":   false,
+		"mypkg/e2e/keys.py":                       false,
+		"apps/shop-e2e/src/main.ts":               true, // the suite's, no entry point of the product
 		"test/helpers.js":                         true,
 		"tests/conftest.py":                       true,
 		"src/__tests__/a.ts":                      true,
@@ -52,6 +69,54 @@ func TestFilesLeavesTestsOutUnlessMostly(t *testing.T) {
 	}
 	if got := Files(mostlyTests); len(got) != 2 {
 		t.Errorf("Files = %v, want a test suite's tests kept", got)
+	}
+	// Unit tests short of half, an end-to-end folder beside them: together
+	// past half, but neither kind is most, so both go.
+	app := []gitrepo.Entry{
+		{Path: "src/a.ts", Mode: "100644", Size: 100},
+		{Path: "src/b.ts", Mode: "100644", Size: 100},
+		{Path: "src/a.spec.ts", Mode: "100644", Size: 100},
+		{Path: "src/b.spec.ts", Mode: "100644", Size: 100},
+		{Path: "src/c.spec.ts", Mode: "100644", Size: 100},
+		{Path: "apps/shop-e2e/login.ts", Mode: "100644", Size: 100},
+		{Path: "apps/shop-e2e/order.ts", Mode: "100644", Size: 100},
+		{Path: "apps/shop-e2e/playwright.config.ts", Mode: "100644", Size: 100},
+	}
+	if got := Files(app); len(got) != 3 {
+		t.Errorf("Files = %v, want the code and the runner config alone", got)
+	}
+	suite := []gitrepo.Entry{
+		{Path: "README.md", Mode: "100644", Size: 100},
+		{Path: "e2e/login.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/order.ts", Mode: "100644", Size: 100},
+	}
+	if got := Files(suite); len(got) != 3 {
+		t.Errorf("Files = %v, want an end-to-end suite kept", got)
+	}
+	// A suite's specs are the suite's, never unit tests splitting its vote.
+	specs := []gitrepo.Entry{
+		{Path: "README.md", Mode: "100644", Size: 100},
+		{Path: "package.json", Mode: "100644", Size: 100},
+		{Path: "playwright.config.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/login.spec.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/order.spec.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/pages/login.po.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/support/helpers.ts", Mode: "100644", Size: 100},
+	}
+	if got := Files(specs); len(got) != 7 {
+		t.Errorf("Files = %v, want the suite whole", got)
+	}
+	// End-to-end files most of the tree: they stay, the unit tests go.
+	mostlyE2E := []gitrepo.Entry{
+		{Path: "src/a.ts", Mode: "100644", Size: 100},
+		{Path: "src/a.spec.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/one.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/two.ts", Mode: "100644", Size: 100},
+		{Path: "e2e/three.ts", Mode: "100644", Size: 100},
+	}
+	got := Files(mostlyE2E)
+	if len(got) != 4 || slices.ContainsFunc(got, func(f File) bool { return f.Path == "src/a.spec.ts" }) {
+		t.Errorf("Files = %v, want the suite and the code, no unit test", got)
 	}
 }
 

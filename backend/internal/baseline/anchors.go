@@ -18,23 +18,36 @@ import (
 // (Schemas).
 
 // testDirs are folders whose files are tests or test data, wherever they
-// sit. A folder named e2e is not one: a Playwright config there is how the
-// tests run, which a reader needs.
+// sit.
 var testDirs = map[string]bool{
 	"test": true, "tests": true, "__tests__": true, "__snapshots__": true, "testdata": true, "fixtures": true, "__mocks__": true,
 }
 
 // testName is a file named as a test by the conventions in use; jvmTest a
-// JVM test class, by case (Latest.java is none).
+// JVM test class, by case (Latest.java is none); e2eDir an end-to-end
+// folder by its name (e2e, shop-e2e, e2e_tests, any case); runnerConfig the
+// config that says how end-to-end tests run, an anchor (entryName).
 var (
-	testName = regexp.MustCompile(`(?i)(\.(spec|test)\.[a-z]+$|_test\.go$|_test\.py$|^test_.*\.py$)`)
-	jvmTest  = regexp.MustCompile(`^[A-Za-z0-9_]+(Test|Tests|IT)\.(java|kt|groovy)$`)
+	testName     = regexp.MustCompile(`(?i)(\.(spec|test)\.[a-z]+$|_test\.go$|_test\.py$|^test_.*\.py$)`)
+	jvmTest      = regexp.MustCompile(`^[A-Za-z0-9_]+(Test|Tests|IT)\.(java|kt|groovy)$`)
+	e2eDir       = regexp.MustCompile(`(?i)^(e2e|.+[-_]e2e|e2e[-_]tests?)$`)
+	runnerConfig = `(playwright|cypress|wdio|protractor)\.conf(ig)?\.[a-z]+`
+	runnerName   = regexp.MustCompile(`(?i)^` + runnerConfig + `$`)
 )
 
+// workspaceDirs are a monorepo's project folders: an e2e folder right in
+// one is a project of its own (Nx apps/shop-e2e, libs/e2e).
+var workspaceDirs = map[string]bool{"apps": true, "libs": true, "packages": true, "projects": true}
+
 // TestFile reports whether a path is a test or test data by its name: a
-// test file, a Maven/Gradle test source set, a folder of tests, snapshots
-// or fixtures.
+// unit test (unitTest) or end-to-end test infrastructure (e2eFile).
 func TestFile(p string) bool {
+	return unitTest(p) || e2eFile(p)
+}
+
+// unitTest is a test file, a Maven/Gradle test source set, a folder of
+// tests, snapshots or fixtures.
+func unitTest(p string) bool {
 	if strings.HasPrefix(p, "src/test/") || strings.Contains(p, "/src/test/") {
 		return true
 	}
@@ -47,13 +60,58 @@ func TestFile(p string) bool {
 	return testName.MatchString(base) || jvmTest.MatchString(base)
 }
 
-// keepTests reports whether a tree's tests stay readable: when they are
-// most of its files, the repository is about them (a smoketest, a
-// recording suite) and leaving them out would leave it nothing. By count,
-// never bytes: recorded fixtures can outweigh the code and would keep every
-// unit test in.
+// e2eFile is a file of an end-to-end project: an e2e folder at the root or
+// right in a workspace folder. Page objects, logins, stubs, test accounts
+// say nothing of the product, and a router given them made a whole subject
+// of them (2026-11-08). Deeper, an e2e folder is a package of the product
+// (end-to-end encryption), never a suite. The project's runner config and
+// build files stay: how the tests run and are built is what a reader needs
+// (anchors).
+func e2eFile(p string) bool {
+	parts := strings.Split(p, "/")
+	at := -1
+	switch {
+	case len(parts) > 1 && e2eDir.MatchString(parts[0]):
+		at = 0
+	case len(parts) > 2 && workspaceDirs[parts[0]] && e2eDir.MatchString(parts[1]):
+		at = 1
+	}
+	if at < 0 {
+		return false
+	}
+	base := parts[len(parts)-1]
+	return !runnerName.MatchString(base) && !buildNames[base]
+}
+
+// keepTests reports whether a kind of tests stays readable: when its files
+// are most of the tree, the repository is about them (a smoketest, a
+// recording suite) and leaving them out would leave it nothing. Unit and
+// end-to-end tests each on their own: an app's end-to-end project neither
+// tips its unit tests over half nor rides in with them. By count, never
+// bytes: recorded fixtures can outweigh the code and would keep every unit
+// test in.
 func keepTests(tests, all int) bool {
 	return all > 0 && tests*2 >= all
+}
+
+// testKind is a file's kind of test: an end-to-end project's file first,
+// a spec in one is the suite's.
+type testKind int
+
+const (
+	noTest testKind = iota
+	unitKind
+	e2eKind
+)
+
+func kindOf(p string) testKind {
+	switch {
+	case e2eFile(p):
+		return e2eKind
+	case unitTest(p):
+		return unitKind
+	}
+	return noTest
 }
 
 // Anchor ranks: higher is read first.
@@ -75,7 +133,7 @@ var buildNames = map[string]bool{
 
 // entryName is an entry point, routing, security or runtime configuration
 // by its name.
-var entryName = regexp.MustCompile(`(?i)^(main\.(go|ts|py|rs)|.*Application\.(java|kt)|app\.module\.ts|app\.config\.ts|app\.routes\.ts|.*[-.]routing\.module\.ts|.*Security(Config|Configuration)?\.(java|kt)|application(-[a-z0-9]+)?\.(properties|ya?ml)|bootstrap\.(properties|ya?ml)|proxy.*\.conf\.(js|json)|vite\.config\.ts|playwright\.config\.ts|Jenkinsfile.*)$`)
+var entryName = regexp.MustCompile(`(?i)^(main\.(go|ts|py|rs)|.*Application\.(java|kt)|app\.module\.ts|app\.config\.ts|app\.routes\.ts|.*[-.]routing\.module\.ts|.*Security(Config|Configuration)?\.(java|kt)|application(-[a-z0-9]+)?\.(properties|ya?ml)|bootstrap\.(properties|ya?ml)|proxy.*\.conf\.(js|json)|vite\.config\.ts|` + runnerConfig + `|Jenkinsfile.*)$`)
 
 // contractExt are schema files: what a repository sends, receives or
 // stores, by definition.

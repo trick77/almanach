@@ -18,7 +18,10 @@ func TestRouterListing(t *testing.T) {
 		FanIn:     map[string]int{"src/core/Rules.java": 2},
 		Churn:     map[string]int{"src/core/Rules.java": 5},
 	}
-	got := RouterListing(files, z, RouterMaxBytes)
+	got, folded := RouterListing(files, z, RouterMaxBytes)
+	if len(folded) != 0 {
+		t.Errorf("folded = %v in a listing that fits", folded)
+	}
 	for _, want := range []string{"Containerfile (300 B, anchor)\n    FROM x\n", "src/core/Rules.java (4 kB, in 2, churn 5)\n    package core;\n    public class Rules\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("listing lacks %q:\n%s", want, got)
@@ -41,9 +44,12 @@ func TestRouterListing(t *testing.T) {
 	z.Skeletons["src/main/java/App.java"] = "public class App"
 	z.Skeletons["src/main/java/Low.java"] = strings.Repeat("x", 5000)
 	z.FanIn["src/main/java/App.java"] = 3
-	got = RouterListing(many, z, 4000)
+	got, folded = RouterListing(many, z, 4000)
 	if !strings.Contains(got, "assets/img/* (folded: 200 files, 20 kB)\n") || strings.Contains(got, "picture-001") {
 		t.Errorf("the plain directory did not fold:\n%s", got)
+	}
+	if len(folded) != 200 || !folded["assets/img/picture-001.svg"] || folded["src/main/java/App.java"] {
+		t.Errorf("folded = %d files, want the 200 pictures alone", len(folded))
 	}
 	if !strings.Contains(got, "src/main/java/App.java (900 B, in 3)\n    public class App\n") || strings.Contains(got, "xxxx") {
 		t.Errorf("skeletons not by score within the ceiling:\n%s", got)
@@ -63,7 +69,7 @@ func TestRouterListing(t *testing.T) {
 	for i := range 20 {
 		deep = append(deep, File{Path: fmt.Sprintf("tool-%02d.sh", i), Size: 10})
 	}
-	got = RouterListing(deep, z, 3000)
+	got, _ = RouterListing(deep, z, 3000)
 	if len(got) > 3000 {
 		t.Errorf("deep listing of %d bytes over 3000:\n%s", len(got), got)
 	}
@@ -83,8 +89,8 @@ func TestRouterListing(t *testing.T) {
 		t.Errorf("the listing stands for %d files, the tree has %d:\n%s", shown, len(deep), got)
 	}
 	// As Files hands a big file on: capped at FileMaxBytes, marked Cut.
-	if big := FileOf(gitrepo.Entry{Path: "Big.java", Mode: "100644", Size: 3 * FileMaxBytes}); !big.Cut ||
-		!strings.Contains(RouterListing([]File{big}, StageZero{}, 1000), "head only") {
+	big := FileOf(gitrepo.Entry{Path: "Big.java", Mode: "100644", Size: 3 * FileMaxBytes})
+	if got, _ := RouterListing([]File{big}, StageZero{}, 1000); !big.Cut || !strings.Contains(got, "head only") {
 		t.Error("a file read as its head is not marked so")
 	}
 }

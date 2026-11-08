@@ -48,8 +48,10 @@ type routerItem struct {
 // "dir/*"; when that is not enough, whole subtrees fold as "dir/", the
 // deepest first. Sizes in kB of 1024 bytes, as the budgets are given; a
 // file read only as its head says so. In path order, so the listing reads
-// as the tree does.
-func RouterListing(files []File, z StageZero, ceiling int) string {
+// as the tree does. Folded is the files the listing names only by a folded
+// line: a dry run tells a pick the router passed over from one it never saw
+// by name.
+func RouterListing(files []File, z StageZero, ceiling int) (listing string, folded map[string]bool) {
 	items := make([]*routerItem, 0, len(files))
 	for _, f := range files {
 		items = append(items, &routerItem{key: f.Path, first: f.Path, files: []File{f}, best: routerScore(f.Path, z), bytes: f.Size,
@@ -115,11 +117,17 @@ func RouterListing(files []File, z StageZero, ceiling int) string {
 	}
 	slices.SortFunc(items, func(a, b *routerItem) int { return strings.Compare(a.first, b.first) })
 	var b strings.Builder
+	folded = map[string]bool{}
 	for _, it := range items {
 		b.WriteString(it.line)
 		b.WriteString(shown[it.key])
+		if !it.file {
+			for _, f := range it.files {
+				folded[f.Path] = true
+			}
+		}
 	}
-	return b.String()
+	return b.String(), folded
 }
 
 // foldItems merges the items key groups, the lowest best score first, into

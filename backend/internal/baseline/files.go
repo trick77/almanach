@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"path"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 
@@ -156,24 +155,27 @@ func Readable(e gitrepo.Entry) bool {
 }
 
 // Files is the readable part of a tree, by path, a file over FileMaxBytes
-// as the head of it. Tests are left out unless they are most of it
-// (TestFile, keepTests): the catalogue was asked to leave them out and
+// as the head of it. Each kind of tests is left out unless it is most of
+// it (kindOf, keepTests): the catalogue was asked to leave them out and
 // did not, and a step's budget went to them.
 func Files(entries []gitrepo.Entry) []File {
-	out := []File{}
-	tests := 0
+	var all []File
+	kinds := map[string]testKind{}
+	count := map[testKind]int{}
 	for _, e := range entries {
 		if Readable(e) {
 			f := FileOf(e)
-			if TestFile(f.Path) {
-				tests++
-			}
-			out = append(out, f)
+			k := kindOf(f.Path)
+			kinds[f.Path] = k
+			count[k]++
+			all = append(all, f)
 		}
 	}
-	all := len(out)
-	if !keepTests(tests, all) {
-		out = slices.DeleteFunc(out, func(f File) bool { return TestFile(f.Path) })
+	out := []File{}
+	for _, f := range all {
+		if k := kinds[f.Path]; k == noTest || keepTests(count[k], len(all)) {
+			out = append(out, f)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
