@@ -11,11 +11,16 @@ import (
 // → "Service-Registry"); an inflected one there is a joint ("Nachrichten-
 // Format"), left alone. plural: the English for the same German form read
 // as a plural ("die Schlüssel" → "die Keys"), "" when the German plural is
-// a form of its own.
+// a form of its own. noun: the form is an adjective or adverb as often
+// ("Binär kodiert", "Binär- und Textdateien"), so it is the software word
+// only after an article or determiner, one word between at most ("das
+// Binär", "des neuen Binärs"), or as a hyphenated compound's last part
+// ("Go-Binär").
 type term struct {
 	en     string
 	head   bool
 	plural string
+	noun   bool
 }
 
 // terms are the software words a German developer says in English (user,
@@ -43,6 +48,7 @@ var terms = map[string]term{
 	"Repositorium": {en: "Repository", head: true}, "Repositoriums": {en: "Repositorys"}, "Repositorien": {en: "Repositories"},
 	"Warteschlange": {en: "Queue", head: true}, "Warteschlangen": {en: "Queues"},
 	"Zwischenspeicher": {en: "Cache", head: true, plural: "Caches"}, "Zwischenspeichers": {en: "Caches"}, "Zwischenspeichern": {en: "Caches"},
+	"Binär": {en: "Binary", noun: true}, "Binärs": {en: "Binarys", plural: "Binaries", noun: true},
 }
 
 // Older text may write the umlauts out ("Schluessel", "Abhaengigkeit"),
@@ -63,7 +69,7 @@ func init() {
 // stems is what every form above begins with: a text holding none is left
 // as it is without a walk.
 var stems = []string{"Dienst", "Bibliothek", "Schlüssel", "Sitzung", "Abhängigkeit", "Kennung", "Zugangsdaten", "Endpunkt",
-	"Geheimnis", "Nachricht", "Umgebungsvariable", "Einstiegspunkt", "Repositori", "Warteschlange", "Zwischenspeicher"}
+	"Geheimnis", "Nachricht", "Umgebungsvariable", "Einstiegspunkt", "Repositori", "Warteschlange", "Zwischenspeicher", "Binär"}
 
 // singularCues are the articles that make such a form a singular, whatever
 // stands before them: "die Klasse, die den Schlüssel hält" holds one key.
@@ -139,6 +145,9 @@ func termFor(w, before, after, prev, prev2 string) string {
 	if w == "Abhängigkeit" && prev == "in" {
 		return w
 	}
+	if t.noun && !strings.HasSuffix(before, "-") && !nounCue(prev) && !nounCue(prev2) {
+		return w
+	}
 	if t.plural != "" && !singularCues[prev] && (pluralCues[prev] || pluralCues[prev2] || numberBefore(before)) {
 		return t.plural
 	}
@@ -164,6 +173,12 @@ func partOfCode(before, after string) bool {
 		return unicode.IsLetter(next)
 	}
 	return false
+}
+
+// nounCue reports whether a word before a form makes it a noun: an article
+// or determiner of either number, the neuter's too.
+func nounCue(w string) bool {
+	return singularCues[w] || pluralCues[w] || w == "das" || w == "jenes" || w == "welches"
 }
 
 // numberBefore reports whether a count above one stands right before the

@@ -18,6 +18,13 @@ func TestTerms(t *testing.T) {
 		"Jede Umgebungsvariable hat einen Einstiegspunkt": "Jede Environment-Variable hat einen Entry Point",
 		"Das Repositorium und seine Repositorien.":        "Das Repository und seine Repositories.",
 		"Eine Warteschlange vor dem Zwischenspeicher.":    "Eine Queue vor dem Cache.",
+		"Das Go-Binär liest die Grösse des Binärs.":       "Das Go-Binary liest die Grösse des Binarys.",
+		"Das Binaer startet, das neue Binär auch.":        "Das Binary startet, das neue Binary auch.",
+		"Die Binärs liegen im Artifactory.":               "Die Binaries liegen im Artifactory.",
+		// Binär as an adjective or adverb stays: no article before it.
+		"Binär kodierte Felder, binär gespeichert.":                  "Binär kodierte Felder, binär gespeichert.",
+		"- Binär gespeichert, von Binär nach Dezimal.":               "- Binär gespeichert, von Binär nach Dezimal.",
+		"Binär- und Textdateien, eine binäre Datei, die Binärdatei.": "Binär- und Textdateien, eine binäre Datei, die Binärdatei.",
 		// One form for both numbers: a word before it tells the plural.
 		"Der Schlüssel des Topics.":                   "Der Key des Topics.",
 		"Die Schlüssel des Topics.":                   "Die Keys des Topics.",
