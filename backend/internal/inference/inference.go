@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -336,7 +337,7 @@ func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
 	}
 	m, ok := ParseMerge(content)
 	if !ok {
-		out.Outcome = OutcomeUnparseable
+		c.unparseable(&out.Call, content, new(Merge))
 		return out
 	}
 	out.Merge = m
@@ -492,15 +493,91 @@ func restyleCap(prompt string) int {
 // Redacted whole, then cut: a window starting past a key would leave its
 // value unrecognised.
 func (c *Client) logCut(callID, content string) {
-	tail := redact.Text(content)
-	if n := len(tail); n > cutTail {
-		tail = strings.ToValidUTF8(tail[n-cutTail:], "")
+	text := redact.Text(content)
+	head, tail := window(text)
+	if tail == "" {
+		tail = head
 	}
 	c.log.Warn("answer cut", "model", c.model, "call_id", callID, "chars", len(content), "tail", tail)
 }
 
+// window is a redacted answer's head and end for the log, cutTail bytes
+// each on a rune; an answer within twice that is its head alone.
+func window(text string) (head, tail string) {
+	if len(text) <= 2*cutTail {
+		return text, ""
+	}
+	return strings.ToValidUTF8(text[:cutTail], ""), strings.ToValidUTF8(text[len(text)-cutTail:], "")
+}
+
 // cutTail is how much of a cut answer's end the log keeps.
 const cutTail = 400
+
+// unparseable logs an answer that arrived whole but is no answer to its
+// schema, credentials redacted, its head and its end: what the model wrote
+// instead (prose around the JSON, a field of the wrong type) is what the
+// prompt or the schema needs fixed, and an unlogged "unparseable" tells
+// nothing (a catalogue failed so, 2026-11-08). It sets the call's outcome.
+//
+// The call's Err says why, so every place that logs or stores a failed
+// call carries it (the run's error, the queue's "Fehlgeschlagen:"): the
+// JSON's own error, or valid JSON that is not the schema's answer, and
+// how the answer begins.
+//
+// reasons say what was refused: the answer's target (decoded again for the
+// JSON's own error, a field of the wrong type deep in a long answer among
+// them) or an error a later check of the answer returned.
+func (c *Client) unparseable(call *Call, content string, reasons ...any) {
+	text := redact.Text(content)
+	head, tail := window(text)
+	why := redact.Text(whyUnparseable(content, reasons))
+	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "why", why, "head", head, "tail", tail)
+	begins := []rune(strings.Join(strings.Fields(head), " "))
+	if len(begins) > 120 {
+		begins = append(begins[:120], '…')
+	}
+	call.Outcome, call.Err = OutcomeUnparseable, fmt.Errorf("%s; the answer begins %q", why, string(begins))
+}
+
+// whyUnparseable is what is wrong with an answer parse refused: a check's
+// error, the target's decode error, no JSON at all, broken JSON (its
+// error), or JSON that is no answer to the schema.
+func whyUnparseable(content string, reasons []any) string {
+	t := strings.TrimSpace(content)
+	if t == "" {
+		return "empty answer"
+	}
+	for _, r := range reasons {
+		switch r := r.(type) {
+		case error:
+			if r != nil {
+				return r.Error()
+			}
+		case nil:
+		default:
+			// A fresh value of the target's type: its decode error names
+			// the field and the offset.
+			if v := reflect.ValueOf(r); v.Kind() == reflect.Pointer && !v.IsNil() {
+				if err := parseErr(content, reflect.New(v.Type().Elem()).Interface()); err != nil {
+					return "the schema's answer refused: " + err.Error()
+				}
+			}
+		}
+	}
+	var v any
+	err := json.Unmarshal([]byte(t), &v)
+	if err != nil {
+		// The object parse would have taken, by the same rule.
+		if raw, ok := answerObject(t); ok && json.Unmarshal(raw, &v) == nil {
+			return "valid JSON inside, not the schema's answer (a field missing, null or of the wrong type)"
+		}
+		return "no valid JSON: " + err.Error()
+	}
+	if v == nil {
+		return "the answer is null"
+	}
+	return "valid JSON, not the schema's answer (a field missing, null or of the wrong type)"
+}
 
 // loopGuard watches a streamed answer for a loop: the same stretch of text
 // again and again at its end (2026-11-07: a heading and paragraph pair, "so
@@ -616,7 +693,25 @@ func ParseMerge(content string) (Merge, bool) {
 }
 
 // parse reads a JSON answer into dst, a fence around it tolerated.
-func parse(content string, dst any) bool {
+func parse(content string, dst any) bool { return parseErr(content, dst) == nil }
+
+// answerShare is how much of an answer an object found in prose must be to
+// be the answer: a sentence around it ("Hier ist der Katalog: {...}") is,
+// an example a refusal quotes ("ich kann nicht, erwartet wäre {...}") is
+// not, and that refusal stays unparseable rather than an empty answer.
+const answerShare = 0.8
+
+// answerProse is the prose a short answer may carry around its object, the
+// object itself at least that long: a line before a small catalogue.
+const answerProse = 200
+
+// parseErr is parse with the reason: the JSON's error as it stands. When
+// the answer is no JSON as it stands and opens with no list, an object in
+// it is tried, decoded from each "{" on (prose may hold a brace of its
+// own), the first that decodes and makes up answerShare of the answer. A
+// strict schema asks for the object alone; a model does not always hold
+// to it.
+func parseErr(content string, dst any) error {
 	content = strings.TrimSpace(content)
 	if strings.HasPrefix(content, "```") {
 		lines := strings.Split(content, "\n")
@@ -626,9 +721,41 @@ func parse(content string, dst any) bool {
 		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
 			lines = lines[:len(lines)-1]
 		}
-		content = strings.Join(lines, "\n")
+		content = strings.TrimSpace(strings.Join(lines, "\n"))
 	}
-	return json.Unmarshal([]byte(content), dst) == nil
+	err := json.Unmarshal([]byte(content), dst)
+	if err != nil {
+		if raw, ok := answerObject(content); ok {
+			return json.Unmarshal(raw, dst)
+		}
+	}
+	return err
+}
+
+// answerObject is the one object in an answer that may be the answer when
+// the whole is no JSON: the answer's own when it opens with "{" (prose
+// after it), else the first "{" that opens a line (a sentence before it);
+// never an object inside a broken one, never a "{}" mid-sentence, never a
+// list's element. It must decode and make up answerShare of the answer,
+// or be at least answerProse with no more than that around it.
+func answerObject(content string) (json.RawMessage, bool) {
+	at := 0
+	if !strings.HasPrefix(content, "{") {
+		i := strings.Index(content, "\n{")
+		if i < 0 {
+			return nil, false
+		}
+		at = i + 1
+	}
+	var raw json.RawMessage
+	if json.NewDecoder(strings.NewReader(content[at:])).Decode(&raw) != nil {
+		return nil, false
+	}
+	prose := len(content) - len(raw)
+	if float64(len(raw)) < answerShare*float64(len(content)) && (len(raw) < answerProse || prose > answerProse) {
+		return nil, false
+	}
+	return raw, true
 }
 
 // costFrom is a stream's usage, cost and call id; Answered is the caller's

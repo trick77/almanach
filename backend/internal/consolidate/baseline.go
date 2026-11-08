@@ -23,6 +23,7 @@ import (
 	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/prompts"
+	"github.com/trick77/almanach/internal/redact"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
 )
@@ -479,6 +480,16 @@ func readsAfresh(r *store.BaselineRun) {
 	}
 }
 
+// callFailed is a failed call as a run's error, the reason with it: the
+// queue shows a run's error, and "unparseable" alone told nothing. The
+// reason passes redact.Text: a gateway's message is shown, never a key.
+func callFailed(what string, c inference.Call) error {
+	if c.Err != nil {
+		return fmt.Errorf("%s failed: %s: %s", what, c.Outcome, redact.Text(c.Err.Error()))
+	}
+	return fmt.Errorf("%s failed: %s", what, c.Outcome)
+}
+
 // call records one model call in the ledger and classes its failure. ok
 // false with errStop is a gateway hold; ok false and nil is a failure of
 // this call, which the step handles.
@@ -629,7 +640,7 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	}
 	r.Bytes += size
 	if !ok {
-		return fmt.Errorf("the catalogue failed: %s", res.Outcome)
+		return callFailed("the catalogue", res.Call)
 	}
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
 	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())

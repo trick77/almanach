@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -41,12 +42,72 @@ func TestCatalogue(t *testing.T) {
 		t.Errorf("schema = %q", name)
 	}
 
-	for _, reply := range []string{"no json", `{"subjects": null}`, "null"} {
+	for _, reply := range []string{"no json", `{"subjects": null}`, "null", "Hier: {kein json}"} {
 		srv.SetReply(reply)
 		res := testClient(srv.Client()).Catalogue(context.Background(), "p")
 		if res.Outcome != OutcomeUnparseable || res.Catalogue.Subjects != nil {
 			t.Errorf("reply %q: Outcome = %s catalogue %+v, want unparseable and empty", reply, res.Outcome, res.Catalogue)
 		}
+	}
+
+	// Prose around the object: the object is the answer.
+	srv.SetReply("Hier ist der Katalog:\n" + `{"subjects": [{"name": "Kern", "purpose": "Der Kern des Repositorys mit Regeln, Abläufen und Schnittstellen.", "paths": ["a.go", "b.go", "core/", "cmd/main.go", "internal/rules/"]}]}` + "\nViel Erfolg.")
+	if res := testClient(srv.Client()).Catalogue(context.Background(), "p"); res.Outcome != OutcomeOK || len(res.Catalogue.Subjects) != 1 {
+		t.Errorf("prose around the JSON: Outcome = %s catalogue %+v", res.Outcome, res.Catalogue)
+	}
+
+	// An answer no parse takes is logged, head and end, credentials out.
+	var logs strings.Builder
+	c := testClient(srv.Client())
+	c.log = slog.New(slog.NewTextHandler(&logs, nil))
+	srv.SetReply(`Ich habe den Katalog nicht erstellt. token ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8`) // ship:allow-secret: invented fixture
+	res = c.Catalogue(context.Background(), "p")
+	if res.Outcome != OutcomeUnparseable || res.Err == nil || !strings.Contains(res.Err.Error(), "invalid character") ||
+		!strings.Contains(res.Err.Error(), "Ich habe den Katalog") || strings.Contains(res.Err.Error(), "ghp_A1b2") {
+		t.Fatalf("Outcome = %s, err %v: want the reason and the answer's head, redacted", res.Outcome, res.Err)
+	}
+	srv.SetReply(`{"subjects": null}`)
+	if res := c.Catalogue(context.Background(), "p"); res.Err == nil || !strings.Contains(res.Err.Error(), "not the schema's answer") {
+		t.Errorf("valid JSON, wrong shape: err %v", res.Err)
+	}
+	if out := logs.String(); !strings.Contains(out, "answer unparseable") || !strings.Contains(out, "Ich habe den Katalog") || strings.Contains(out, "ghp_A1b2") {
+		t.Errorf("log = %s", out)
+	}
+}
+
+// parse takes an object in prose only when it is the answer: a brace in
+// the prose, a fence with prose after it; never a refusal's example, never
+// a list around the object. A long answer's log shows its head and end,
+// the field a decode refused named.
+func TestParseFallbackAndWhy(t *testing.T) {
+	type answer struct {
+		Subjects []string `json:"subjects"`
+	}
+	obj := `{"subjects": ["` + strings.Repeat("a", 200) + `"]}`
+	for in, ok := range map[string]bool{
+		"Hier der Katalog für {repo}:\n" + obj: true,
+		obj + "\nViel Erfolg :-}":              true,
+		"```json\n" + obj + "\n```\nSo weit.":  true,
+		`Ich kann nicht, erwartet wäre {"subjects": []}, aber dafür fehlt mir der Inhalt des Repositorys vollständig.`: false,
+		"[" + obj + "]":                          false,
+		"Hier die Antwort:\n[" + obj + "]":       false,
+		"Format wie verlangt {} - hier:\n" + obj: true,
+		// A broken answer's inner object is no answer.
+		`{"repository": {"statements": ["` + strings.Repeat("x", 300) + `"]}, "project": {`: false,
+	} {
+		var a answer
+		if got := parse(in, &a); got != ok {
+			t.Errorf("parse(%.60q) = %v, want %v", in, got, ok)
+		}
+	}
+	long := `{"subjects": "` + strings.Repeat("ä", 600) + `"}`
+	var logs strings.Builder
+	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil))}
+	var call Call
+	c.unparseable(&call, long, &answer{})
+	if !strings.Contains(call.Err.Error(), "cannot unmarshal string") || !strings.Contains(logs.String(), "tail=") ||
+		strings.Contains(logs.String(), "�") {
+		t.Errorf("err %v, log %s", call.Err, logs.String())
 	}
 }
 

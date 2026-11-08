@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/trick77/toolkit/llmwire"
@@ -29,12 +30,15 @@ func (c *Client) Brief(ctx context.Context, prompt string) BriefResult {
 		Brief json.RawMessage `json:"brief"`
 	}
 	if !parse(content, &answer) || answer == nil {
-		out.Outcome = OutcomeUnparseable
+		c.unparseable(&out.Call, content, &answer)
 		return out
 	}
 	text, ok, err := laid(answer.Brief)
 	if err != nil || !ok || strings.TrimSpace(text) == "" {
-		out.Outcome = OutcomeUnparseable
+		if err == nil {
+			err = errors.New("the brief is empty or no blocks")
+		}
+		c.unparseable(&out.Call, content, err)
 		return out
 	}
 	out.Text = text

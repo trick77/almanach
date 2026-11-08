@@ -3,6 +3,8 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"slices"
 	"sort"
 
@@ -144,7 +146,7 @@ func (c *Client) Route(ctx context.Context, prompt string) RouteResult {
 		Subjects []RouteSubject `json:"subjects"`
 	}
 	if call.Outcome == OutcomeOK && (!parse(content, &answer) || answer.Subjects == nil) {
-		out.Outcome = OutcomeUnparseable
+		c.unparseable(&out.Call, content, &answer)
 		return out
 	}
 	out.Subjects = answer.Subjects
@@ -175,7 +177,8 @@ func (c *Client) Restyle(ctx context.Context, prompt string, project bool) Resty
 		Outline json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &out.Patch) || out.Patch.Statements == nil || !parse(content, &outline) {
-		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
+		c.unparseable(&out.Call, content, &out.Patch)
+		out.Patch = Patch{}
 		return out
 	}
 	out.Outline = parseOutline(outline.Outline)
@@ -213,7 +216,8 @@ func (c *Client) Catalogue(ctx context.Context, prompt string) CatalogueResult {
 	content, call := c.call(ctx, prompt, catalogueFormat(), capCatalogue)
 	out := CatalogueResult{Call: call}
 	if call.Outcome == OutcomeOK && (!parse(content, &out.Catalogue) || out.Catalogue.Subjects == nil) {
-		out.Outcome, out.Catalogue = OutcomeUnparseable, Catalogue{}
+		c.unparseable(&out.Call, content, &out.Catalogue)
+		out.Catalogue = Catalogue{}
 	}
 	return out
 }
@@ -223,7 +227,8 @@ func (c *Client) Patch(ctx context.Context, prompt string) PatchResult {
 	content, call := c.call(ctx, prompt, patchFormat(c.diagrams), capPatch)
 	out := PatchResult{Call: call}
 	if call.Outcome == OutcomeOK && (!parse(content, &out.Patch) || out.Patch.Statements == nil) {
-		out.Outcome, out.Patch = OutcomeUnparseable, Patch{}
+		c.unparseable(&out.Call, content, &out.Patch)
+		out.Patch = Patch{}
 	}
 	return out
 }
@@ -242,7 +247,7 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 		Outline     json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &answer) || answer == nil || answer.Description == nil {
-		out.Outcome = OutcomeUnparseable
+		c.unparseable(&out.Call, content, &answer)
 		return out
 	}
 	out.Outline = parseOutline(answer.Outline)
@@ -253,8 +258,11 @@ func (c *Client) Describe(ctx context.Context, prompt string) DescriptionResult 
 	// The map may be null (a project too large to draw); whether it should
 	// be is the worker's to judge, and a missing one never sinks the text.
 	var d Description
-	if json.Unmarshal(answer.Description, &d) != nil || d.Statements == nil {
-		out.Outcome = OutcomeUnparseable
+	if err := json.Unmarshal(answer.Description, &d); err != nil || d.Statements == nil {
+		if err == nil {
+			err = errors.New("the description has no statements")
+		}
+		c.unparseable(&out.Call, content, fmt.Errorf("the description refused: %w", err))
 		return out
 	}
 	out.Description = &d
@@ -288,7 +296,7 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 		Outline json.RawMessage `json:"outline"`
 	}
 	if !parse(content, &answer) || answer == nil || answer.Map == nil {
-		out.Outcome = OutcomeUnparseable
+		c.unparseable(&out.Call, content, &answer)
 		return out
 	}
 	if outline {
@@ -298,8 +306,8 @@ func (c *Client) mapCall(ctx context.Context, prompt string, format llmwire.Resp
 		return out
 	}
 	var d diagram.Diagram
-	if json.Unmarshal(answer.Map, &d) != nil {
-		out.Outcome = OutcomeUnparseable
+	if err := json.Unmarshal(answer.Map, &d); err != nil {
+		c.unparseable(&out.Call, content, fmt.Errorf("the map refused: %w", err))
 		return out
 	}
 	out.Map = &d
