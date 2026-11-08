@@ -55,16 +55,6 @@ const (
 	RestyleMapStep     = 2
 )
 
-// RestyleState is what is due of a repository's restyle at an epoch: its
-// page, its project's. One answer for the poller's queueing and the run's
-// steps, so the two never disagree and a run never ends with a page left
-// due that it judged not due.
-type RestyleState struct {
-	RepoDue, ProjectDue bool
-	// Open: a restyle is open somewhere in the wiki.
-	Open bool
-}
-
 // Epochs is the prompts' generation per scope (prompts.RepoEpoch,
 // prompts.ProjectEpoch): a page restyled below its scope's is due, and is
 // marked restyled at its scope's own. Run is the newer, what a restyle run
@@ -115,14 +105,6 @@ func (s *Store) RestyleState(ctx context.Context, key, slug string, e Epochs, fa
 		return RestyleState{}, nil
 	}
 	return st, err
-}
-
-// Queue reports whether the poller queues a restyle of the repository: its
-// page or its project's is due, and no restyle is open anywhere, so a bump
-// trickles through the wiki one page at a time and never crowds out the
-// notes and the reading.
-func (st RestyleState) Queue() bool {
-	return (st.RepoDue || st.ProjectDue) && !st.Open
 }
 
 // MarkProjectRestyled puts the project page of run runID's repository at

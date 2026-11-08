@@ -53,50 +53,6 @@ const (
 // ErrNoRepo is a run asked for a repository that is no source repository.
 var ErrNoRepo = errors.New("no such source repository")
 
-// BaselineRun is one run as stored. Plan is the catalogue, the worker's to
-// read; the store keeps it verbatim.
-type BaselineRun struct {
-	ID         int64
-	ProjectKey string
-	Slug       string
-	Mode       string
-	Trigger    string
-	BaseCommit string
-	Commit     string
-	State      string
-	Step       int
-	Steps      int
-	Plan       json.RawMessage
-	Attempts   int
-	Calls      int
-	Bytes      int64
-	// ReadableBytes is what a full run could have read, the tree's readable
-	// files at its commit; ReadBytes the distinct files its folded parts
-	// read. Bytes is the budget's count, every call's input. A reconcile
-	// carries the documented run's pair.
-	ReadableBytes int64
-	ReadBytes     int64
-	Skipped       int
-	Error         string
-	QueuedAt      time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
-	// Epoch is the prompts.Epoch a full or restyle run ran under, the
-	// worker's to set when it starts one; 0 on any other run. A full run
-	// done with one restyles its repository's page (RestyleState).
-	Epoch int
-	// RepoID and ProjectID are the repository's ids; ProjectKey and Slug
-	// its current names.
-	RepoID    int64
-	ProjectID int64
-	// Reason is why it was queued (SetRunReason), nil for a run from before
-	// or one whose queuer gave none.
-	Reason *RunReason
-}
-
-// Open reports whether the run is neither done nor failed.
-func (r BaselineRun) Open() bool { return r.State != RunDone && r.State != RunFailed }
-
 // runsFrom is a run (b) with its repository (r) and project (p), whose
 // current names it carries.
 const runsFrom = `baseline_runs b JOIN repos r ON r.id = b.repo_id JOIN projects p ON p.id = r.project_id`

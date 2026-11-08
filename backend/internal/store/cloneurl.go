@@ -62,14 +62,6 @@ func (e *ClonedElsewhereError) Error() string {
 	return "the repository is cloned as " + e.ProjectKey + "/" + e.Slug + " already"
 }
 
-// heldRow is a source row holding a clone URL.
-type heldRow struct {
-	repoID     int64
-	projectID  int64
-	projectKey string
-	slug       string
-}
-
 // clonesHeld is every source row by CloneKey. A row gone missing from its
 // listing holds nothing: the repository moved (to a folder, another
 // project) must not wait for its old row's removal, and the old project's

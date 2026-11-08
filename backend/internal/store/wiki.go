@@ -2,13 +2,9 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
@@ -80,40 +76,6 @@ type Statement struct {
 	Area string `json:"area,omitempty"`
 }
 
-// Page is a description as currently published.
-type Page struct {
-	Scope      string
-	ProjectKey string
-	RepoSlug   string
-	RevisionID int64
-	Revision   int
-	Summary    string
-	Statements []Statement
-	// SourceKind says which of SourcePR and SourceCommit made the revision.
-	SourceKind   string
-	SourcePR     string
-	SourceCommit string
-	// BatchPRKeys is every pull request the revision's fold took, in merge
-	// order, SourcePR the first; nil for a fold of one note, or a run's.
-	BatchPRKeys []string
-	UpdatedAt   time.Time
-	// Map is a project page's system map, nil on a repository page and on
-	// a project page no baseline project step has drawn yet.
-	Map *diagram.Diagram
-	// RepoMap is a repository page's map of itself, nil on a project page
-	// and on a repository page no run's map step has drawn yet.
-	RepoMap *diagram.Diagram
-	// RepoMapBasis is the description the map step last answered for, as
-	// it hashed it: RepoMap drawn from it, or none when the model drew none;
-	// "" before any answer. A basis that no longer matches the page's text
-	// is a map due again.
-	RepoMapBasis string
-	// Shape is what a project page's last judgment found the project to be
-	// (ShapeSystem, ShapeCollection); "" on a repository page and on a
-	// project page no step has judged yet, read as a system.
-	Shape string
-}
-
 // A project's shape: one system its repositories make together, or a
 // holder of repositories that each stand on their own, whose page is a
 // short summary alone: no statements, no map.
@@ -122,9 +84,6 @@ const (
 	ShapeCollection = "collection"
 )
 
-// Collection reports whether the page is a collection's.
-func (p Page) Collection() bool { return p.Shape == ShapeCollection }
-
 // ShapeMoves reports whether judging a page shaped before as after changes
 // what the page shows: another shape, but a system judged on a page
 // written before shapes ("", its NULL), which changes nothing but the
@@ -132,51 +91,6 @@ func (p Page) Collection() bool { return p.Shape == ShapeCollection }
 // names one.
 func ShapeMoves(before, after string) bool {
 	return after != before && (before != "" || after != ShapeSystem)
-}
-
-// MapStands reports whether the map step answered for a repository page's
-// description as it stands, a map drawn or none (a model that drew none
-// for this text is not asked again until it changes): then a run has
-// nothing new to draw from. A map stored before the tags never stands.
-func (p Page) MapStands() bool {
-	// TRANSITIONAL(untagged-map): Remove when every stored map carries tags.
-	return p.RepoMapBasis != "" && p.RepoMapBasis == p.MapBasis() && !diagram.Untagged(p.RepoMap)
-}
-
-// MapBasis is the description a repository map is drawn from, as a hash:
-// the summary and each statement's kind, name, text and files, never its
-// sources or last check, which change without the text. Nor their order
-// or area: laying a page out anew (baseline.Arrange) draws no map again.
-// The shape hashed is what every stored basis was: change it and every map
-// is due again (sorted by id once, 2026-11-02, when every page was due for
-// its first layout anyway).
-func (p Page) MapBasis() string {
-	type part struct {
-		Kind, Name, Text string
-		Files            []string
-	}
-	byID := slices.Clone(p.Statements)
-	slices.SortStableFunc(byID, func(a, b Statement) int { return strings.Compare(a.ID, b.ID) })
-	parts := make([]part, 0, len(byID))
-	for _, s := range byID {
-		parts = append(parts, part{s.Kind, s.Name, s.Text, s.Files})
-	}
-	raw, _ := json.Marshal(struct {
-		Summary    string
-		Statements []part
-	}{p.Summary, parts})
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
-}
-
-// QueuedNote is the next note the worker folds in. DeliveryID is the
-// delivery that wrote this version of the note: a second note for the same
-// PR replaces the row and queues it again, and the mark of a fold that
-// read the first must not take the second off the queue.
-type QueuedNote struct {
-	Note
-	ReceivedAt time.Time
-	DeliveryID string
 }
 
 // queuedColumns are a queued note's columns as scanQueued reads them. The
