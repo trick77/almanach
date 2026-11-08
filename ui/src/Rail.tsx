@@ -5,6 +5,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -80,6 +81,33 @@ export function shortcutFree(e: KeyboardEvent): boolean {
   return document.querySelector('[role="dialog"]') === null;
 }
 
+/** useShortcut runs onKey when one of keys is pressed on the page while
+ *  shortcutFree, a held key once. It listens from the commit that renders
+ *  the control it serves on (a layout effect): a key pressed the moment the
+ *  control shows is heard, never a paint later. */
+export function useShortcut(
+  keys: readonly string[],
+  onKey: (key: string) => void,
+  enabled = true,
+) {
+  const latest = useRef(onKey);
+  useLayoutEffect(() => {
+    latest.current = onKey;
+  });
+  const joined = keys.join("\n");
+  useLayoutEffect(() => {
+    if (!enabled) return;
+    const wanted = joined.split("\n");
+    const onDown = (e: KeyboardEvent) => {
+      if (!wanted.includes(e.key) || e.repeat || !shortcutFree(e)) return;
+      e.preventDefault();
+      latest.current(e.key);
+    };
+    document.addEventListener("keydown", onDown);
+    return () => document.removeEventListener("keydown", onDown);
+  }, [joined, enabled]);
+}
+
 /** Rail is the search and the sections, under head when given (the
  *  repository page's project and its sibling switch, one control, never a
  *  list). A section in the other tab switches the tab, then scrolls to it;
@@ -121,15 +149,7 @@ export function Rail({
   }, [tab]);
 
   // "/" finds, as on most sites with a search.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || !shortcutFree(e)) return;
-      e.preventDefault();
-      input.current?.focus();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  useShortcut(["/"], () => input.current?.focus());
 
   function go(item: RailItem) {
     if (item.tab !== tab) {
@@ -357,13 +377,17 @@ export function useHashTab(
     return { tab, target: cut === -1 ? "" : h.slice(cut + 1), landed: true };
   }, [names, start]);
   const [at, setAt] = useState(read);
-  useEffect(() => {
+  // From the commit that renders the tabs (a layout effect), and the
+  // address read once more as it attaches: a link followed the moment the
+  // page shows is never missed.
+  useLayoutEffect(() => {
     // The same address again (a canonical replace's popstate, a
     // hashchange the page wrote itself) is no change: the state object
     // stays, landed as it was, nothing re-renders.
     const sync = () => setAt((prev) => same(prev, read()));
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
+    sync();
     return () => {
       window.removeEventListener("hashchange", sync);
       window.removeEventListener("popstate", sync);

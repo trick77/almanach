@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type { Me, QueueCount, Sources } from "./api";
 import { CostsPage } from "./CostsPage";
 import { DepsPage } from "./DepsPage";
@@ -70,7 +70,9 @@ function Shell({ me }: { me: Me }) {
   const [route, setRoute] = useState<Route>(here);
   const [signOutFailed, setSignOutFailed] = useState(false);
 
-  useEffect(() => {
+  // From the commit that renders the shell (a layout effect): an address
+  // change the moment it shows is heard.
+  useLayoutEffect(() => {
     const onPop = () => setRoute(here());
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
