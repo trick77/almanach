@@ -92,6 +92,74 @@ type Invoice struct{ ID int }`, []string{"package billing", "import (", "\t\"sho
 	}
 }
 
+// The review's cases: an interface's methods, a column or annotation
+// repeated further on, a table closed on its last column, a doc line too
+// long for its declaration, a config of another format, a continuation.
+func TestSkeletonEdges(t *testing.T) {
+	for _, c := range []struct {
+		path, body  string
+		want, never []string
+	}{
+		{"src/ClaimRepository.java", "public interface ClaimRepository extends JpaRepository<Claim, Long> {\n    List<Claim> findByOwner(String owner);\n    Optional<Claim> findFirstByNumber(String n) throws IOException;\n    void touch();\n}\nclass Helper {\n    int count(List<String> xs) {\n        return size(xs);\n        if (x) {\n    }\n}\n",
+			[]string{"List<Claim> findByOwner(String owner);", "Optional<Claim> findFirstByNumber(String n) throws IOException;", "void touch();", "int count(List<String> xs)"},
+			[]string{"return size", "if (x)"}},
+		{"src/Two.java", "class Two {\n    @Transactional\n    public void a() {}\n    @Transactional\n    public void b() {}\n}\n",
+			[]string{"@Transactional\n    public void a()", "@Transactional\n    public void b()"}, nil},
+		{"db/V2__two.sql", "CREATE TABLE claim (\n  id BIGINT,\n  amount NUMERIC NOT NULL);\nINSERT INTO claim VALUES (1);\nUPDATE claim SET amount = 2;\nCREATE TABLE invoice (\n  id BIGINT,\n  amount NUMERIC\n);\nALTER TABLE invoice\n  ADD COLUMN due DATE;\n",
+			[]string{"CREATE TABLE claim (\n  id\n  amount\nCREATE TABLE invoice (\n  id\n  amount\nALTER TABLE invoice"}, []string{"INSERT", "UPDATE", "  ADD"}},
+		{"internal/long.go", "package long\n\n// " + strings.Repeat("Viel Text ", 30) + "\nfunc Run() error { return nil }\n",
+			[]string{"func Run() error", "// Viel Text"}, nil},
+		{"config/app.toml", "[database]\nurl = \"postgres://x\"\npassword = \"Winter2026!\"\n", []string{"[database]", "url", "password"}, []string{"Winter2026!", "postgres"}},
+		{".env.production", "DB_PASSWORD=Winter2026!\n", []string{"DB_PASSWORD"}, []string{"Winter2026!"}},
+		{"conf/app.ini", "; comment\n[mail]\nhost=smtp.example.invalid\n", []string{"[mail]", "host"}, []string{"smtp", "comment"}},
+		{"a.properties", "key.one=abc\\\n  abcDEF123=\nkey.two=2\n", []string{"key.one", "key.two"}, []string{"abcDEF123"}},
+	} {
+		got := Skeleton(c.path, []byte(c.body))
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: skeleton lacks %q:\n%s", c.path, w, got)
+			}
+		}
+		for _, n := range c.never {
+			if strings.Contains(got, n) {
+				t.Errorf("%s: skeleton keeps %q:\n%s", c.path, n, got)
+			}
+		}
+	}
+}
+
+// Fan-in's review cases: a nested Go module, two of them; a Java wildcard
+// and a type of the own package used by name; a Kotlin file of other
+// types; an ESM import naming the built file.
+func TestFanInEdges(t *testing.T) {
+	bodies := map[string][]byte{
+		"backend/go.mod":              []byte("module example.invalid/app\n"),
+		"backend/internal/store/s.go": []byte("package store\n"),
+		"backend/cmd/main.go":         []byte("package main\nimport \"example.invalid/app/internal/store\"\n"),
+		"tool/go.mod":                 []byte("module example.invalid/tool\n"),
+		"tool/lib/l.go":               []byte("package lib\n"),
+		"tool/main.go":                []byte("package main\nimport \"example.invalid/tool/lib\"\n"),
+		"src/shop/core/Money.java":    []byte("package shop.core;\nclass Money {}\n"),
+		"src/shop/core/Ledger.java":   []byte("package shop.core;\nclass Ledger { Money total; MoneyBag bag; }\n"),
+		"src/shop/core/Unused.java":   []byte("package shop.core;\nclass Unused { int Moneys; }\n"),
+		"src/shop/app/App.java":       []byte("package shop.app;\nimport shop.core.*;\n"),
+		"src/shop/core/Types.kt":      []byte("package shop.core\ndata class Claim(val id: String)\nobject Ids\n"),
+		"src/shop/app/Use.kt":         []byte("package shop.app\nimport shop.core.Claim\n"),
+		"web/src/api.ts":              []byte("export const api = 1;\n"),
+		"web/src/main.ts":             []byte("import { api } from './api.js';\n"),
+	}
+	in := FanIn(bodies)
+	for p, want := range map[string]int{
+		"backend/internal/store/s.go": 1, "tool/lib/l.go": 1,
+		"src/shop/core/Money.java": 2, "src/shop/core/Ledger.java": 1, "src/shop/core/Unused.java": 1,
+		"src/shop/core/Types.kt": 2, "web/src/api.ts": 1,
+	} {
+		if in[p] != want {
+			t.Errorf("fan-in of %s = %d, want %d (all: %v)", p, in[p], want, in)
+		}
+	}
+}
+
 // A skeleton is capped, a long line cut on a rune, an empty body none.
 func TestSkeletonCaps(t *testing.T) {
 	var b strings.Builder

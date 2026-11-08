@@ -33,6 +33,8 @@ func TestChurn(t *testing.T) {
 	commit("Ada", "ada@example.invalid", "chore(deps): bump y", map[string]string{"go.mod": "2", "billing/run.go": "3"})
 	commit("Ada", "ada@example.invalid", "Bump z from 1 to 2", map[string]string{"pom.xml": "1"})
 	commit("Ada", "ada@example.invalid", "docs: umlaut", map[string]string{"docs/für.md": "2"})
+	commit("Ada", "ada@example.invalid", "Update retry delay to 5 seconds", map[string]string{"billing/run.go": "4", `odd "name".go`: "1"})
+	commit("dependabot[bot]", "1+dependabot[bot]@users.noreply.invalid", "Bump x from 1.0 to 1.1", map[string]string{"pom.xml": "2"})
 	head := gitRun(t, work, "rev-parse", "HEAD")
 	dir := filepath.Join(base, "remote.git")
 	gitRun(t, base, "clone", "-q", "--bare", work, dir)
@@ -43,7 +45,8 @@ func TestChurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for p, want := range map[string]int{"billing/run.go": 2, "docs/für.md": 2, "go.mod": 0, "pom.xml": 0} {
+	// A human's "Update ... to 5 seconds" counts; a bump, a bot never.
+	for p, want := range map[string]int{"billing/run.go": 3, "docs/für.md": 2, `odd "name".go`: 1, "go.mod": 0, "pom.xml": 0} {
 		if got[p] != want {
 			t.Errorf("churn of %s = %d, want %d (all: %v)", p, got[p], want, got)
 		}

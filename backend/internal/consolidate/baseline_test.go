@@ -1612,7 +1612,7 @@ func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 	x.models.project = inference.DescriptionResult{Call: called}
 	for lap := range 3 {
 		x.w.drain(context.Background())
-		// Two reads, both the catalogue's: stage 0's tree, then the docs.
+		// Two reads, both the catalogue's: the docs, then stage 0's tree.
 		if r := x.run(); r.State != store.RunDescribing || r.Step != 0 || len(x.models.prompts) != 1 || len(x.code.read) != 2 {
 			t.Fatalf("lap %d: run %+v, %d prompts, %d reads; want the first describe step held", lap, r, len(x.models.prompts), len(x.code.read))
 		}

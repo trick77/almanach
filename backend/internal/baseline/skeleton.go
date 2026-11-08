@@ -25,12 +25,17 @@ const SkeletonMaxBytes = 4096
 const skeletonLineMax = 160
 
 var (
-	reJavaKeep   = regexp.MustCompile(`^\s*(package|import)\s|^\s*@[A-Za-z]|\b(class|interface|enum|record|object)\s+[A-Z]\w*|^\s*(public|protected|private|internal|override|static|abstract|default|suspend|fun|open)\b[^=;]*\(`)
+	reJavaKeep = regexp.MustCompile(`^\s*(package|import)\s|^\s*@[A-Za-z]|\b(class|interface|enum|record|object)\s+[A-Z]\w*|^\s*(public|protected|private|internal|override|static|abstract|default|suspend|fun|open)\b[^=;]*\(`)
+	// reJavaMethod is a signature with no modifier: an interface's methods
+	// (a Spring Data repository, a Feign client), a package-private one. A
+	// return type, a lower-case name, its parameters, an end of ; or {.
+	reJavaMethod = regexp.MustCompile(`^\s*([\w.?]+(?:<[^=;]*>)?(?:\[\])*)\s+([a-z]\w*)\s*\([^=;{]*\)\s*(?:throws\s+[\w.,\s]+)?\s*[;{]?\s*$`)
 	reTSKeep     = regexp.MustCompile(`^\s*(import|export)\s|^\s*@[A-Za-z]\w*\(|\bpath:\s*['"]`)
 	reGoKeep     = regexp.MustCompile(`^package\s|^import\s|^func\s+[A-Z]|^func\s+\([^)]*\)\s+[A-Z]|^type\s+[A-Z]`)
 	rePyKeep     = regexp.MustCompile(`^\s*(import|from)\s|^\s*(class|def|async\s+def)\s|^\s*@[A-Za-z]`)
 	reYAMLKey    = regexp.MustCompile(`^( {0,2})(- )?["']?([A-Za-z0-9_.$/{}\-]+)["']?\s*:`)
-	rePropKey    = regexp.MustCompile(`^\s*([A-Za-z0-9_.\-\[\]]+)\s*[=:]`)
+	rePropKey    = regexp.MustCompile(`^\s*([A-Za-z0-9_.\-\[\]"]+)\s*[=:]`)
+	reSection    = regexp.MustCompile(`^\[\[?[A-Za-z0-9_.\-" ]+\]\]?$`)
 	reSQLKeep    = regexp.MustCompile(`(?i)^\s*(create|alter|drop)\s+(table|view|index|unique\s+index|sequence|schema|type)\b`)
 	reSQLColumn  = regexp.MustCompile(`^\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\s+[A-Za-z]`)
 	rePomKeep    = regexp.MustCompile(`<(groupId|artifactId|version|packaging|module|parent)>`)
@@ -57,7 +62,7 @@ func Skeleton(p string, body []byte) string {
 	var keep func(line string) (string, bool)
 	switch {
 	case ext == ".java" || ext == ".kt" || ext == ".kts" || ext == ".scala" || ext == ".groovy" && !strings.HasPrefix(base, "jenkinsfile"):
-		keep = docAnd(matching(reJavaKeep))
+		keep = docAnd(javaKeep)
 	case ext == ".ts" || ext == ".tsx" || ext == ".js" || ext == ".jsx" || ext == ".mjs" || ext == ".cjs" || ext == ".vue":
 		keep = matching(reTSKeep)
 	case ext == ".go":
@@ -66,8 +71,8 @@ func Skeleton(p string, body []byte) string {
 		keep = matching(rePyKeep)
 	case ext == ".yaml" || ext == ".yml":
 		keep = yamlKey
-	case ext == ".properties" || ext == ".env" || base == ".env":
-		keep = propKey
+	case configFile(base, ext):
+		keep = propKeys()
 	case ext == ".sql":
 		keep = sqlKeep()
 	case ext == ".xml" || ext == ".bpmn" || ext == ".dmn":
@@ -88,29 +93,68 @@ func Skeleton(p string, body []byte) string {
 	return collect(body, keep)
 }
 
-// collect is the lines keep keeps, as keep rewrites them, within the caps.
+// collect is the lines keep keeps, as keep rewrites them, within the caps:
+// each line of what keep returns cut on its own (a doc line never pushes
+// its declaration out), a line the same as the one before it once. A line
+// repeated further on stays: the second table's id column, the annotation
+// on the second method.
 func collect(body []byte, keep func(string) (string, bool)) string {
 	var b strings.Builder
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 0, 64*1024), len(body)+1)
-	seen := map[string]bool{}
+	last := ""
 	for sc.Scan() {
-		line, ok := keep(sc.Text())
+		kept, ok := keep(sc.Text())
 		if !ok {
 			continue
 		}
-		line = strings.TrimRight(line, " \t\r{")
-		if line = cutLine(line); line == "" || seen[line] {
-			continue
+		for _, line := range strings.Split(kept, "\n") {
+			line = cutLine(strings.TrimRight(line, " \t\r{"))
+			if line == "" || line == last {
+				continue
+			}
+			if b.Len()+len(line)+1 > SkeletonMaxBytes {
+				return b.String()
+			}
+			last = line
+			b.WriteString(line)
+			b.WriteByte('\n')
 		}
-		seen[line] = true
-		if b.Len()+len(line)+1 > SkeletonMaxBytes {
-			break
-		}
-		b.WriteString(line)
-		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// javaKeep keeps a JVM file's package, imports, annotations, types and
+// signatures, with a modifier or without one (reJavaMethod), never a
+// statement that only looks like one ("return x(y);", "new A(b);").
+func javaKeep(line string) (string, bool) {
+	if reJavaKeep.MatchString(line) {
+		return line, true
+	}
+	m := reJavaMethod.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	switch m[1] {
+	case "return", "new", "throw", "else", "case", "yield", "await", "assert", "goto", "do":
+		return "", false
+	}
+	switch m[2] {
+	case "if", "for", "while", "switch", "catch", "synchronized", "try":
+		return "", false
+	}
+	return line, true
+}
+
+// configFile reports whether a file is a configuration of keys and values
+// (properties, env, ini, toml, conf, tfvars, npmrc): its keys alone go into
+// the skeleton, as a YAML's do, never a value a credential may be.
+func configFile(base, ext string) bool {
+	switch ext {
+	case ".properties", ".env", ".ini", ".toml", ".conf", ".cfg", ".tfvars", ".npmrc":
+		return true
+	}
+	return base == ".env" || strings.HasPrefix(base, ".env.") || base == ".npmrc"
 }
 
 func cutLine(line string) string {
@@ -205,27 +249,39 @@ func yamlKey(line string) (string, bool) {
 	return m[1] + m[2] + m[3] + ":", true
 }
 
-// propKey keeps a property's key, never its value.
-func propKey(line string) (string, bool) {
-	t := strings.TrimSpace(line)
-	if strings.HasPrefix(t, "#") || strings.HasPrefix(t, "!") {
-		return "", false
+// propKeys keeps a property's key, never its value, and a section header
+// of an ini or toml file; a line a backslash continues is the value's, not
+// a key of its own.
+func propKeys() func(string) (string, bool) {
+	continued := false
+	return func(line string) (string, bool) {
+		t := strings.TrimSpace(line)
+		wasContinued := continued
+		continued = strings.HasSuffix(t, `\`)
+		switch {
+		case wasContinued, t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "!"), strings.HasPrefix(t, ";"):
+			return "", false
+		case reSection.MatchString(t):
+			return t, true
+		}
+		m := rePropKey.FindStringSubmatch(line)
+		if m == nil {
+			return "", false
+		}
+		return m[1], true
 	}
-	m := rePropKey.FindStringSubmatch(line)
-	if m == nil {
-		return "", false
-	}
-	return m[1], true
 }
 
 // sqlKeep keeps the statements that make a schema and each column a CREATE
-// TABLE names, by its name alone.
+// TABLE names, by its name alone. A table ends at a line opening with ")"
+// or ending with ";", its last column kept first: "amount NUMERIC);".
 func sqlKeep() func(string) (string, bool) {
 	inTable := false
 	return func(line string) (string, bool) {
 		t := strings.TrimSpace(line)
 		if reSQLKeep.MatchString(line) {
-			inTable = strings.Contains(strings.ToLower(t), "table") && !strings.HasSuffix(t, ";")
+			lower := strings.ToLower(t)
+			inTable = strings.HasPrefix(lower, "create") && strings.Contains(lower, "table") && !strings.HasSuffix(t, ";")
 			return t, true
 		}
 		if !inTable {
@@ -234,6 +290,9 @@ func sqlKeep() func(string) (string, bool) {
 		if strings.HasPrefix(t, ")") {
 			inTable = false
 			return "", false
+		}
+		if strings.HasSuffix(t, ";") {
+			inTable = false
 		}
 		if m := reSQLColumn.FindStringSubmatch(line); m != nil {
 			switch strings.ToLower(m[1]) {

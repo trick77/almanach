@@ -617,7 +617,6 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if r.Calls >= w.base.Limits.MaxCalls {
 		return errors.New("no call left for the catalogue")
 	}
-	w.stageZero(ctx, r, files)
 	docs, size, err := w.readDocs(ctx, r, files, baseline.CatalogueDocsBytes)
 	if err != nil {
 		return err
@@ -632,6 +631,9 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if !ok {
 		return fmt.Errorf("the catalogue failed: %s", res.Outcome)
 	}
+	// After the call, once: a hold or a busy clone before it repeats the
+	// step, and stage 0 would read the whole tree again each time.
+	w.stageZero(ctx, r, files, at)
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
 	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
 	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true}
@@ -649,7 +651,7 @@ const churnWindow = 365 * 24 * time.Hour
 // it came to: what a router would read against what the run could read.
 // Nothing reads it yet, so it never fails or holds the run: a read that
 // fails is logged and the run goes on as before.
-func (w *Worker) stageZero(ctx context.Context, r *store.BaselineRun, files []baseline.File) {
+func (w *Worker) stageZero(ctx context.Context, r *store.BaselineRun, files []baseline.File, at time.Time) {
 	whole := make([]baseline.File, len(files))
 	for i, f := range files {
 		f.Cut = true
@@ -660,11 +662,7 @@ func (w *Worker) stageZero(ctx context.Context, r *store.BaselineRun, files []ba
 		w.log.WarnContext(ctx, "baseline: stage 0 skipped, the tree could not be read", logging.Err(err))
 		return
 	}
-	at, err := w.base.Code.CommitTime(ctx, r.ProjectKey, r.Slug, r.Commit)
-	var churn map[string]int
-	if err == nil {
-		churn, err = w.base.Code.Churn(ctx, r.ProjectKey, r.Slug, r.Commit, at.Add(-churnWindow))
-	}
+	churn, err := w.base.Code.Churn(ctx, r.ProjectKey, r.Slug, r.Commit, at.Add(-churnWindow))
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: stage 0 without churn", logging.Err(err))
 	}
