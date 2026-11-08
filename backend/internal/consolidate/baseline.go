@@ -23,6 +23,7 @@ import (
 	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/prompts"
+	"github.com/trick77/almanach/internal/redact"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/logging"
 )
@@ -480,11 +481,11 @@ func readsAfresh(r *store.BaselineRun) {
 }
 
 // callFailed is a failed call as a run's error, the reason with it: the
-// queue shows a run's error, and "unparseable" alone told nothing (user,
-// 2026-11-08: "dann musst du aber das logging verbessern!!!!!").
+// queue shows a run's error, and "unparseable" alone told nothing. The
+// reason passes redact.Text: a gateway's message is shown, never a key.
 func callFailed(what string, c inference.Call) error {
 	if c.Err != nil {
-		return fmt.Errorf("%s failed: %s: %w", what, c.Outcome, c.Err)
+		return fmt.Errorf("%s failed: %s: %s", what, c.Outcome, redact.Text(c.Err.Error()))
 	}
 	return fmt.Errorf("%s failed: %s", what, c.Outcome)
 }

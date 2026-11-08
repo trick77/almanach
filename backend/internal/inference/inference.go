@@ -16,7 +16,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/redact"
@@ -338,7 +337,7 @@ func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
 	}
 	m, ok := ParseMerge(content)
 	if !ok {
-		out.Outcome = c.unparseable(&out.Call, content, new(Merge))
+		c.unparseable(&out.Call, content, new(Merge))
 		return out
 	}
 	out.Merge = m
@@ -499,7 +498,7 @@ func (c *Client) logCut(callID, content string) {
 	if tail == "" {
 		tail = head
 	}
-	c.log.Warn("answer cut", "model", c.model, "call_id", callID, "chars", utf8.RuneCountInString(text), "tail", tail)
+	c.log.Warn("answer cut", "model", c.model, "call_id", callID, "chars", len(content), "tail", tail)
 }
 
 // window is a redacted answer's head and end for the log, cutTail bytes
@@ -518,7 +517,7 @@ const cutTail = 400
 // schema, credentials redacted, its head and its end: what the model wrote
 // instead (prose around the JSON, a field of the wrong type) is what the
 // prompt or the schema needs fixed, and an unlogged "unparseable" tells
-// nothing (a catalogue failed so, 2026-11-08). Returns the outcome.
+// nothing (a catalogue failed so, 2026-11-08). It sets the call's outcome.
 //
 // The call's Err says why, so every place that logs or stores a failed
 // call carries it (the run's error, the queue's "Fehlgeschlagen:"): the
@@ -528,17 +527,16 @@ const cutTail = 400
 // reasons say what was refused: the answer's target (decoded again for the
 // JSON's own error, a field of the wrong type deep in a long answer among
 // them) or an error a later check of the answer returned.
-func (c *Client) unparseable(call *Call, content string, reasons ...any) Outcome {
+func (c *Client) unparseable(call *Call, content string, reasons ...any) {
 	text := redact.Text(content)
 	head, tail := window(text)
-	why := whyUnparseable(content, reasons)
-	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", utf8.RuneCountInString(text), "why", why, "head", head, "tail", tail)
+	why := redact.Text(whyUnparseable(content, reasons))
+	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "why", why, "head", head, "tail", tail)
 	begins := []rune(strings.Join(strings.Fields(head), " "))
 	if len(begins) > 120 {
 		begins = append(begins[:120], '…')
 	}
 	call.Outcome, call.Err = OutcomeUnparseable, fmt.Errorf("%s; the answer begins %q", why, string(begins))
-	return OutcomeUnparseable
 }
 
 // whyUnparseable is what is wrong with an answer parse refused: a check's
@@ -569,10 +567,9 @@ func whyUnparseable(content string, reasons []any) string {
 	var v any
 	err := json.Unmarshal([]byte(t), &v)
 	if err != nil {
-		if start, end := strings.Index(t, "{"), strings.LastIndex(t, "}"); start >= 0 && end > start {
-			if json.Unmarshal([]byte(t[start:end+1]), &v) == nil {
-				return "valid JSON inside, not the schema's answer (a field missing, null or of the wrong type)"
-			}
+		// The object parse would have taken, by the same rule.
+		if raw, ok := answerObject(t); ok && json.Unmarshal(raw, &v) == nil {
+			return "valid JSON inside, not the schema's answer (a field missing, null or of the wrong type)"
 		}
 		return "no valid JSON: " + err.Error()
 	}
@@ -727,24 +724,38 @@ func parseErr(content string, dst any) error {
 		content = strings.TrimSpace(strings.Join(lines, "\n"))
 	}
 	err := json.Unmarshal([]byte(content), dst)
-	if err == nil || strings.HasPrefix(content, "[") {
-		return err
-	}
-	for i := 0; i < len(content); i++ {
-		if content[i] != '{' {
-			continue
+	if err != nil {
+		if raw, ok := answerObject(content); ok {
+			return json.Unmarshal(raw, dst)
 		}
-		var raw json.RawMessage
-		if json.NewDecoder(strings.NewReader(content[i:])).Decode(&raw) != nil {
-			continue
-		}
-		prose := len(content) - len(raw)
-		if float64(len(raw)) < answerShare*float64(len(content)) && (len(raw) < answerProse || prose > answerProse) {
-			break
-		}
-		return json.Unmarshal(raw, dst)
 	}
 	return err
+}
+
+// answerObject is the one object in an answer that may be the answer when
+// the whole is no JSON: the answer's own when it opens with "{" (prose
+// after it), else the first "{" that opens a line (a sentence before it);
+// never an object inside a broken one, never a "{}" mid-sentence, never a
+// list's element. It must decode and make up answerShare of the answer,
+// or be at least answerProse with no more than that around it.
+func answerObject(content string) (json.RawMessage, bool) {
+	at := 0
+	if !strings.HasPrefix(content, "{") {
+		i := strings.Index(content, "\n{")
+		if i < 0 {
+			return nil, false
+		}
+		at = i + 1
+	}
+	var raw json.RawMessage
+	if json.NewDecoder(strings.NewReader(content[at:])).Decode(&raw) != nil {
+		return nil, false
+	}
+	prose := len(content) - len(raw)
+	if float64(len(raw)) < answerShare*float64(len(content)) && (len(raw) < answerProse || prose > answerProse) {
+		return nil, false
+	}
+	return raw, true
 }
 
 // costFrom is a stream's usage, cost and call id; Answered is the caller's

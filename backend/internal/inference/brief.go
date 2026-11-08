@@ -30,7 +30,7 @@ func (c *Client) Brief(ctx context.Context, prompt string) BriefResult {
 		Brief json.RawMessage `json:"brief"`
 	}
 	if !parse(content, &answer) || answer == nil {
-		out.Outcome = c.unparseable(&out.Call, content, &answer)
+		c.unparseable(&out.Call, content, &answer)
 		return out
 	}
 	text, ok, err := laid(answer.Brief)
@@ -38,7 +38,7 @@ func (c *Client) Brief(ctx context.Context, prompt string) BriefResult {
 		if err == nil {
 			err = errors.New("the brief is empty or no blocks")
 		}
-		out.Outcome = c.unparseable(&out.Call, content, err)
+		c.unparseable(&out.Call, content, err)
 		return out
 	}
 	out.Text = text

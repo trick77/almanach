@@ -89,7 +89,11 @@ func TestParseFallbackAndWhy(t *testing.T) {
 		obj + "\nViel Erfolg :-}":              true,
 		"```json\n" + obj + "\n```\nSo weit.":  true,
 		`Ich kann nicht, erwartet wäre {"subjects": []}, aber dafür fehlt mir der Inhalt des Repositorys vollständig.`: false,
-		"[" + obj + "]": false,
+		"[" + obj + "]":                          false,
+		"Hier die Antwort:\n[" + obj + "]":       false,
+		"Format wie verlangt {} - hier:\n" + obj: true,
+		// A broken answer's inner object is no answer.
+		`{"repository": {"statements": ["` + strings.Repeat("x", 300) + `"]}, "project": {`: false,
 	} {
 		var a answer
 		if got := parse(in, &a); got != ok {
