@@ -1,9 +1,11 @@
 package consolidate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -28,7 +30,7 @@ func restyleWorld(t *testing.T) world {
 	page := store.Page{RevisionID: 5, Revision: 5, Summary: "svc rechnet ab. Ablauf: Login, dann Abrechnung.",
 		Statements: []store.Statement{
 			{ID: "s1", Kind: "component", Name: "Kern", Text: "Der Kern. Ablauf: erst Login, dann Abrechnung.",
-				Files: []string{"core.go", "billing/run.go"}, Sources: []store.Source{svcRun}, Checked: head},
+				Files: []string{"core.go", "billing/run.go"}, Sources: []store.Source{svcRun}, Checked: head, Area: "Kern"},
 			{ID: "s2", Kind: "rule", Name: "Anmeldung", Text: "Nur angemeldet.", Files: []string{"auth/login.go"},
 				Sources: []store.Source{svcPR}, Area: "Zugriff"},
 		}}
@@ -220,6 +222,55 @@ func TestRestyle_LayoutInPlace(t *testing.T) {
 	}
 	if x.st.repoEpoch != prompts.RepoEpoch {
 		t.Errorf("repository epoch = %d", x.st.repoEpoch)
+	}
+}
+
+// A statement returned as stored, its area alone moved, is no change: the
+// layout in place, no revision, and the log says the answer held more than
+// the diff the prompt asks for.
+func TestRestyle_UnchangedEditsLogged(t *testing.T) {
+	x := restyleWorld(t)
+	x.st.projectEpoch = prompts.ProjectEpoch
+	var logs bytes.Buffer
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	x.models.restyles = []inference.RestyleResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{
+		stmt(ref("s2"), "rule", "Anmeldung", "Nur angemeldet."),
+	}}, Outline: []inference.OutlineArea{{Area: "Kern", IDs: []string{"s1", "s2"}}}}}
+	x.w.drain(context.Background())
+	if len(x.st.revisions) != 0 || x.st.arranges != 1 || x.repoPage().Statements[1].Area != "Kern" {
+		t.Fatalf("revisions %d, layouts %d, page %+v: want the layout in place", len(x.st.revisions), x.st.arranges, x.repoPage().Statements)
+	}
+	if !strings.Contains(logs.String(), "1 statement returned without a change of kind, name or text") {
+		t.Errorf("log lacks the unchanged count:\n%s", logs.String())
+	}
+}
+
+// A layout the rules ask for is a change, never counted as an echo; an
+// answer with no outline for a page whose statements lack an area fails
+// the step, the page below the epoch still.
+func TestRestyle_LayoutCountsAndAnOutlineIsNeeded(t *testing.T) {
+	x := restyleWorld(t)
+	x.st.projectEpoch = prompts.ProjectEpoch
+	var logs bytes.Buffer
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	listed := stmt(ref("s2"), "rule", "Anmeldung", "Nur angemeldet.")
+	listed.Text = "- Nur angemeldet."
+	x.models.restyles = []inference.RestyleResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{listed}},
+		Outline: []inference.OutlineArea{{Area: "Kern", IDs: []string{"s1"}}, {Area: "Zugriff", IDs: []string{"s2"}}}}}
+	x.w.drain(context.Background())
+	if strings.Contains(logs.String(), "returned without a change") || len(x.st.revisions) != 1 {
+		t.Fatalf("revisions %d, log:\n%s\nwant the list a revision, never an echo", len(x.st.revisions), logs.String())
+	}
+
+	y := restyleWorld(t)
+	y.st.projectEpoch = prompts.ProjectEpoch
+	page := y.repoPage()
+	page.Statements[0].Area = ""
+	y.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = page
+	y.models.restyles = []inference.RestyleResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}}}
+	y.w.drain(context.Background())
+	if r := y.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "no outline") || y.st.repoEpoch == prompts.RepoEpoch {
+		t.Errorf("run = %+v, repository epoch %d: want failed, the page still due", r, y.st.repoEpoch)
 	}
 }
 

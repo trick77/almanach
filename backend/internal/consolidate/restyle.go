@@ -251,6 +251,7 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	// and a restyle drops nothing nor draws what no reading taught. One a
 	// left-out statement came from stays as stored.
 	edits := make([]inference.Statement, 0, len(patch.Statements))
+	returned := map[string]bool{}
 	for _, s := range patch.Statements {
 		if s.ID != nil {
 			if kept[*s.ID] {
@@ -258,6 +259,7 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 			}
 			if old, ok := byID[*s.ID]; ok {
 				s.Files, s.Diagram = old.Files, old.Diagram
+				returned[*s.ID] = true
 			}
 		}
 		edits = append(edits, s)
@@ -268,6 +270,12 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	applied := baseline.ApplyPatch(page.Statements, patch, func(string) bool { return true }, validFor(scope))
 	if len(applied.BadEdits) > 0 {
 		w.log.WarnContext(ctx, fmt.Sprintf("%s: edit left out: %s", at, strings.Join(applied.BadEdits, ", ")))
+	}
+	// An edit left out leaves its statement as stored: no unchanged echo.
+	for _, bad := range applied.BadEdits {
+		if f := strings.Fields(bad); len(f) > 0 {
+			delete(returned, f[0])
+		}
 	}
 	if len(applied.BadNew) > 0 {
 		w.log.WarnContext(ctx, fmt.Sprintf("%s: new statement left out: %s", at, strings.Join(applied.BadNew, ", ")))
@@ -289,13 +297,30 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	for i, src := range sources {
 		newSources[fmt.Sprintf("s%d", next+i)] = src
 	}
+	unchanged := 0
 	for i := range statements {
 		s := &statements[i]
 		if old, ok := byID[s.ID]; ok {
 			s.Sources, s.Checked = old.Sources, old.Checked
+			if returned[s.ID] && s.Kind == old.Kind && s.Name == old.Name && s.Text == old.Text {
+				unchanged++
+			}
 			continue
 		}
 		s.Sources, s.Checked = newSources[s.ID], ""
+	}
+	// The prompt asks for the changed statements alone (prompts.RestyleEdits):
+	// one returned exactly as stored, for its area alone or nothing, is answer
+	// the call paid for and a big page cannot afford.
+	if unchanged > 0 {
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: %s returned without a change of kind, name or text", at, plural(unchanged, "statement")))
+	}
+	// An area goes by the outline alone (prompts.RestyleEdits), which may be
+	// null only when every statement has one: none for a page that lacks
+	// some leaves it unarranged under the new epoch, so the step fails and
+	// counts against the page's tries.
+	if res.Outline == nil && !baseline.Arranged(statements) {
+		return store.Restyled{}, fmt.Errorf("restyle refused: no outline, and the page has statements without an area")
 	}
 	statements = w.applyOutline(ctx, at, statements, res.Outline)
 	summary := stored.Summary
