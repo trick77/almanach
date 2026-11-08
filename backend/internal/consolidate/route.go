@@ -47,6 +47,11 @@ type RouteDry struct {
 	Listing         string
 	Tree            map[string]bool
 	Folded, Dropped map[string]bool
+	// RouterSubjects is how many subjects the router answered; Unresolved
+	// its paths that name no readable file, by subject ("subject: path"),
+	// which the plan drops unseen.
+	RouterSubjects int
+	Unresolved     []string
 }
 
 // errNoRouter is a catalogue model that cannot route; errTreeTooWide a
@@ -96,7 +101,7 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 		return RouteDry{}, err
 	}
 	listing, folded := baseline.RouterListing(files, z, baseline.RouterMaxBytes)
-	prompt := renderRouter(*r, listing, len(files), readable, w.base.Limits.MaxBytes, w.maxSubjects())
+	prompt := renderRouter(*r, listing, len(files), readable, routerRunBytes(w.base.Limits.MaxBytes, files, contracts), w.routerSubjects())
 	if err := routeFits(prompt); err != nil {
 		return RouteDry{}, err
 	}
@@ -113,7 +118,13 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	subjects := make([]inference.Subject, 0, len(res.Subjects))
 	for _, s := range res.Subjects {
 		subjects = append(subjects, s.Subject)
+		for _, p := range s.Paths {
+			if !picksAny([]string{p}, files) {
+				out.Unresolved = append(out.Unresolved, s.Name+": "+p)
+			}
+		}
 	}
+	out.RouterSubjects = len(subjects)
 	p := baseline.BuildPlan(subjects, files, w.maxSubjects())
 	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
 	// A run skips a part that would pass the run's byte budget and reads
@@ -185,6 +196,38 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 		}
 	}
 	return out, nil
+}
+
+// routerSubjects is the subjects the router is asked for: one short of the
+// plan's, so the subject EnsureAnchors opens for the anchors it left out
+// takes no router subject's place (at the cap, the router's last subject
+// gave way, every file only it named unread). The price: a router that
+// picks every anchor itself leaves a slot unused. A plan of one subject or
+// none has no slot to spare.
+func (w *Worker) routerSubjects() int {
+	if m := w.maxSubjects(); m > 1 {
+		return m - 1
+	}
+	return w.maxSubjects()
+}
+
+// routerRunBytes is the run's bytes the router is told it may pick: the
+// run's, less the docs the overview reads first and the anchors, up to a
+// step, EnsureAnchors reads whatever it picks; else the anchors' subject,
+// read first, pushes the router's last past the run's bytes.
+func routerRunBytes(maxBytes int, files []baseline.File, contracts map[string]bool) int {
+	var docs, anchors int64
+	read := map[string]bool{}
+	for _, d := range baseline.Docs(files, baseline.DocsMaxBytes) {
+		docs += d.Size
+		read[d.Path] = true
+	}
+	for _, f := range files {
+		if !read[f.Path] && (baseline.AnchorRank(f.Path) > 0 || contracts[f.Path]) {
+			anchors += f.Size
+		}
+	}
+	return max(maxBytes-int(docs)-int(min(anchors, baseline.StepMaxBytes)), 0)
 }
 
 // picksAny reports whether a router subject's paths name any of files: a

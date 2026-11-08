@@ -97,9 +97,8 @@ func TestRouterListing(t *testing.T) {
 	}
 }
 
-// A thousand-file service with JVM-long paths, its names near 150 kB as
-// measured (2026-11-08: folded at the first ceiling, half of what the router
-// missed stood only folded), is named file by file; its skeletons fill the
+// A thousand-file service with JVM-long paths, near 150 kB of names (folded
+// at the first ceiling), is named file by file; its skeletons fill the
 // rest, the listing within the ceiling.
 func TestRouterListingNamesAThousandFileService(t *testing.T) {
 	var files []File
