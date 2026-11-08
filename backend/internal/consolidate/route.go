@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -58,26 +60,18 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	if err != nil {
 		return RouteDry{}, err
 	}
-	whole := make([]baseline.File, len(files))
 	var readable int64
-	for i, f := range files {
-		f.Cut = true
-		whole[i] = f
+	for _, f := range files {
 		readable += f.Size
-	}
-	bodies, err := w.base.Code.ReadFiles(ctx, key, slug, commit, whole)
-	if err != nil {
-		return RouteDry{}, err
 	}
 	at, err := w.base.Code.CommitTime(ctx, key, slug, commit)
 	if err != nil {
 		return RouteDry{}, err
 	}
-	churn, err := w.base.Code.Churn(ctx, key, slug, commit, at.Add(-churnWindow))
+	z, err := w.stageZeroOf(ctx, r, files, at)
 	if err != nil {
-		w.log.WarnContext(ctx, "baseline: route without churn", "err", err.Error())
+		return RouteDry{}, err
 	}
-	z := baseline.BuildStageZero(bodies, churn)
 	listing := baseline.RouterListing(files, z, baseline.RouterMaxBytes)
 	res := router.Route(ctx, renderRouter(*r, listing, len(files), readable, w.base.Limits.MaxBytes, w.maxSubjects()))
 	out := RouteDry{Files: files, Docs: baseline.Docs(files, baseline.DocsMaxBytes), Call: res.Call, Questions: map[string][]string{},
@@ -88,18 +82,37 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	subjects := make([]inference.Subject, 0, len(res.Subjects))
 	for _, s := range res.Subjects {
 		subjects = append(subjects, s.Subject)
-		out.Questions[s.Name] = s.Questions
 	}
 	p := baseline.BuildPlan(subjects, files, w.maxSubjects())
 	out.Plan = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
+	// The plan names a subject as stored (lang.Prose) and merges two the
+	// same but for spelling: its questions are theirs, in their order, each
+	// stored prose, at most RouteMaxQuestions.
+	for _, ps := range out.Plan.Subjects {
+		var qs []string
+		for _, s := range res.Subjects {
+			if !lang.SameName(lang.Prose(s.Name), ps.Name) {
+				continue
+			}
+			for _, q := range s.Questions {
+				if q = lang.Prose(q); q != "" && !slices.Contains(qs, q) && len(qs) < inference.RouteMaxQuestions {
+					qs = append(qs, q)
+				}
+			}
+		}
+		if len(qs) > 0 {
+			out.Questions[ps.Name] = qs
+		}
+	}
 	return out, nil
 }
 
-// renderRouter is a router call's prompt.
+// renderRouter is a router call's prompt. Budgets in kB of 1024 bytes, as
+// the listing gives the sizes (baseline.RouterListing).
 func renderRouter(r store.BaselineRun, listing string, files int, readable int64, runBytes, maxSubjects int) string {
 	return strings.NewReplacer(
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{files}", fmt.Sprint(files), "{readable_kb}", fmt.Sprint((readable+512)/1024),
-		"{step_kb}", fmt.Sprint(baseline.StepMaxBytes/1000), "{run_kb}", fmt.Sprint(runBytes/1000),
+		"{step_kb}", fmt.Sprint(baseline.StepMaxBytes/1024), "{run_kb}", fmt.Sprint(runBytes/1024),
 		"{max_subjects}", fmt.Sprint(maxSubjects), "{listing}", listing,
 	).Replace(prompts.Router)
 }

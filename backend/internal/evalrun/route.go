@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -44,7 +43,9 @@ type RouteRepo struct {
 	CachedTokens int            `json:"cached_tokens"`
 	OutputTokens int            `json:"output_tokens"`
 	CostUSD      *float64       `json:"cost_usd,omitempty"`
-	// Scored against the labels, when the repository has them.
+	// Scored against the labels, when the repository has them (Labelled):
+	// a 0 of an unlabelled one is no score.
+	Labelled       bool     `json:"labelled"`
 	MustReadRecall float64  `json:"must_read_recall"`
 	MustReadMissed []string `json:"must_read_missed,omitempty"`
 	NoiseFiles     []string `json:"noise_files,omitempty"`
@@ -60,22 +61,36 @@ type RouteSubject struct {
 	Questions []string `json:"questions,omitempty"`
 }
 
+// routeParallel is how many repositories the dry run routes at once: a
+// clone and a paid call each, kept below a gateway's rate limit.
+const routeParallel = 4
+
 // RouteOnly is the router's dry run over the folder: each repository laid
-// down in a database of its own, all side by side, one router call each.
+// down in a database of its own, routeParallel at a time, one router call
+// each, within opt.Deadline. Repeat and Split do not apply: every
+// repository is its own, once.
 func RouteOnly(ctx context.Context, opt Options) (*RouteReport, error) {
 	e, err := setup(ctx, opt)
 	if err != nil {
 		return nil, err
 	}
+	if opt.Deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opt.Deadline)
+		defer cancel()
+	}
 	start := time.Now()
 	rep := &RouteReport{Model: opt.Model, Started: start}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	slots := make(chan struct{}, routeParallel)
 	for _, p := range e.projects {
 		for _, r := range p.Repos {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				slots <- struct{}{}
+				defer func() { <-slots }()
 				rr := routeRepo(ctx, Project{Key: p.Key, Repos: []Repo{r}}, r, filepath.Join(opt.Out, p.Key, r.Slug), e, opt)
 				mu.Lock()
 				defer mu.Unlock()
@@ -151,27 +166,9 @@ func routeReport(rr RouteRepo, dry consolidate.RouteDry, l *Labels) RouteRepo {
 	if l == nil {
 		return rr
 	}
-	hit := 0
-	for _, m := range l.MustRead {
-		if _, ok := picked[m.Path]; ok {
-			hit++
-		} else {
-			rr.MustReadMissed = append(rr.MustReadMissed, m.Path)
-		}
-	}
-	if n := len(l.MustRead); n > 0 {
-		rr.MustReadRecall = float64(hit) / float64(n)
-	}
-	noise := newGlobSet(append(append([]Glob{}, l.NeverRead...), l.Generated...))
-	var noiseBytes int64
-	for path, size := range picked {
-		if noise.match(path) {
-			rr.NoiseFiles = append(rr.NoiseFiles, path)
-			noiseBytes += size
-		}
-	}
-	slices.Sort(rr.NoiseFiles)
-	rr.NoiseKB = kib(noiseBytes)
+	s := scorePicked(picked, l)
+	rr.Labelled = true
+	rr.MustReadRecall, rr.MustReadMissed, rr.NoiseFiles, rr.NoiseKB = s.recall, s.missed, s.noise, kib(s.noiseBytes)
 	return rr
 }
 
@@ -186,9 +183,14 @@ func (r *RouteReport) Markdown() string {
 		fmt.Fprintf(&b, " (%d unpriced)", r.Unpriced)
 	}
 	b.WriteString("\n\n| repo | files | readable kB | skeleton kB | listing kB | picked kB | picked files | must-read | noise kB | outcome |\n|---|---|---|---|---|---|---|---|---|---|\n")
+	cell := strings.NewReplacer("|", `\|`, "\n", " ", "\r", " ")
 	for _, x := range r.Repos {
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %.0f%% | %d | %s%s |\n", x.Repo, x.Files, x.ReadableKB, x.SkeletonKB, x.ListingKB,
-			x.PickedKB, x.PickedFiles, x.MustReadRecall*100, x.NoiseKB, x.Outcome, x.Error)
+		recall := "–"
+		if x.Labelled {
+			recall = fmt.Sprintf("%.0f%%", x.MustReadRecall*100)
+		}
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %s | %d | %s |\n", x.Repo, x.Files, x.ReadableKB, x.SkeletonKB, x.ListingKB,
+			x.PickedKB, x.PickedFiles, recall, x.NoiseKB, cell.Replace(strings.TrimSpace(x.Outcome+" "+x.Error)))
 	}
 	for _, x := range r.Repos {
 		fmt.Fprintf(&b, "\n## %s\n", x.Repo)

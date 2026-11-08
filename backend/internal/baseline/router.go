@@ -28,112 +28,188 @@ func routerScore(p string, z StageZero) int {
 	return s
 }
 
+// routerItem is one line of the router's listing: a file, or a folded
+// directory standing for files the router picks only by the directory's
+// path ("dir/*" its own files, "dir/" everything under it).
+type routerItem struct {
+	key   string // a file's path, or the path the router picks it by
+	first string // the first path it stands for, for the listing's order
+	files []File
+	best  int
+	bytes int64
+	line  string
+	file  bool
+}
+
 // RouterListing is what the router reads of a tree: every file by path,
 // size and hints, and as many skeletons as fit ceiling, the
 // highest-scored first. When the names alone pass half the ceiling, the
-// directories of the lowest scores fold into one line each ("dir/ (40
-// files, 120 kB)"), whose files the router can pick only as the
-// directory. In path order, so the listing reads as the tree does.
+// lowest-scored directories fold into one line each, their own files as
+// "dir/*"; when that is not enough, whole subtrees fold as "dir/", the
+// deepest first. Sizes in kB of 1024 bytes, as the budgets are given; a
+// file read only as its head says so. In path order, so the listing reads
+// as the tree does.
 func RouterListing(files []File, z StageZero, ceiling int) string {
-	sorted := slices.Clone(files)
-	slices.SortFunc(sorted, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
-	line := func(f File) string {
-		hints := []string{kb(f.Size)}
-		if AnchorRank(f.Path) > 0 {
-			hints = append(hints, "anchor")
-		}
-		if n := z.FanIn[f.Path]; n > 0 {
-			hints = append(hints, fmt.Sprintf("in %d", n))
-		}
-		if n := z.Churn[f.Path]; n > 0 {
-			hints = append(hints, fmt.Sprintf("churn %d", n))
-		}
-		return f.Path + " (" + strings.Join(hints, ", ") + ")\n"
+	items := make([]*routerItem, 0, len(files))
+	for _, f := range files {
+		items = append(items, &routerItem{key: f.Path, first: f.Path, files: []File{f}, best: routerScore(f.Path, z), bytes: f.Size,
+			line: routerLine(f, z), file: true})
 	}
-	// Fold directories, the lowest best score first, until the names fit.
-	type dir struct {
-		files []File
-		best  int
-		bytes int64
-	}
-	dirs := map[string]*dir{}
+	budget := ceiling / routerNamesShare
 	names := 0
-	for _, f := range sorted {
-		d := dirs[path.Dir(f.Path)]
-		if d == nil {
-			d = &dir{}
-			dirs[path.Dir(f.Path)] = d
-		}
-		d.files = append(d.files, f)
-		d.best = max(d.best, routerScore(f.Path, z))
-		d.bytes += f.Size
-		names += len(line(f))
+	for _, it := range items {
+		names += len(it.line)
 	}
-	order := make([]string, 0, len(dirs))
-	for k := range dirs {
-		order = append(order, k)
+	// Each file's own directory first, then subtrees, deepest first.
+	group := func(depth int) func(*routerItem) (string, bool) {
+		if depth < 0 {
+			return func(it *routerItem) (string, bool) {
+				if !it.file {
+					return "", false
+				}
+				return dirOf(it.key) + "*", true
+			}
+		}
+		return func(it *routerItem) (string, bool) {
+			parts := strings.Split(dirOf(it.first), "/")
+			if len(parts) <= depth+1 {
+				return "", false
+			}
+			return strings.Join(parts[:depth+1], "/") + "/", true
+		}
 	}
-	slices.SortFunc(order, func(a, b string) int {
-		if dirs[a].best != dirs[b].best {
-			return dirs[a].best - dirs[b].best
+	maxDepth := 0
+	for _, f := range files {
+		maxDepth = max(maxDepth, strings.Count(f.Path, "/"))
+	}
+	for depth := -1; depth < maxDepth && names > budget; depth++ {
+		key := group(depth)
+		if depth >= 0 {
+			// Subtrees: the deepest level that still holds several entries.
+			key = group(maxDepth - 1 - depth)
 		}
-		return strings.Compare(a, b)
-	})
-	folded := map[string]bool{}
-	for _, k := range order {
-		if names <= ceiling/routerNamesShare {
-			break
-		}
-		d := dirs[k]
-		if len(d.files) < 2 {
-			continue
-		}
-		for _, f := range d.files {
-			names -= len(line(f))
-		}
-		names += len(foldLine(k, d.files, d.bytes))
-		folded[k] = true
+		items, names = foldItems(items, key, names, budget)
 	}
 	// Skeletons into what is left, the highest score first.
-	byScore := slices.Clone(sorted)
-	slices.SortStableFunc(byScore, func(a, b File) int { return routerScore(b.Path, z) - routerScore(a.Path, z) })
+	byScore := slices.Clone(items)
+	slices.SortStableFunc(byScore, func(a, b *routerItem) int {
+		if a.best != b.best {
+			return b.best - a.best
+		}
+		return strings.Compare(a.key, b.key)
+	})
 	left := ceiling - names
-	shown := map[string]bool{}
-	for _, f := range byScore {
-		s := z.Skeletons[f.Path]
-		if folded[path.Dir(f.Path)] || s == "" {
+	shown := map[string]string{}
+	for _, it := range byScore {
+		if !it.file {
 			continue
 		}
-		if size := len(indent(s)); size <= left {
-			shown[f.Path] = true
-			left -= size
+		s := z.Skeletons[it.key]
+		if s == "" {
+			continue
+		}
+		if in := indent(s); len(in) <= left {
+			shown[it.key] = in
+			left -= len(in)
 		}
 	}
+	slices.SortFunc(items, func(a, b *routerItem) int { return strings.Compare(a.first, b.first) })
 	var b strings.Builder
-	done := map[string]bool{}
-	for _, f := range sorted {
-		k := path.Dir(f.Path)
-		if folded[k] {
-			if !done[k] {
-				done[k] = true
-				b.WriteString(foldLine(k, dirs[k].files, dirs[k].bytes))
-			}
-			continue
-		}
-		b.WriteString(line(f))
-		if shown[f.Path] {
-			b.WriteString(indent(z.Skeletons[f.Path]))
-		}
+	for _, it := range items {
+		b.WriteString(it.line)
+		b.WriteString(shown[it.key])
 	}
 	return b.String()
 }
 
-// foldLine is a folded directory's one line.
-func foldLine(dir string, files []File, bytes int64) string {
-	if dir == "." {
-		dir = ""
+// foldItems merges the items key groups, the lowest best score first, into
+// one folded line each, until names fits budget. An item key does not
+// group stays; a group of one is no fold.
+func foldItems(items []*routerItem, key func(*routerItem) (string, bool), names, budget int) ([]*routerItem, int) {
+	groups := map[string][]*routerItem{}
+	for _, it := range items {
+		if k, ok := key(it); ok {
+			groups[k] = append(groups[k], it)
+		}
 	}
-	return fmt.Sprintf("%s/ (folded: %d files, %s)\n", dir, len(files), kb(bytes))
+	order := make([]string, 0, len(groups))
+	for k, g := range groups {
+		if len(g) > 1 {
+			order = append(order, k)
+		}
+	}
+	best := func(g []*routerItem) int {
+		b := 0
+		for _, it := range g {
+			b = max(b, it.best)
+		}
+		return b
+	}
+	slices.SortFunc(order, func(a, b string) int {
+		if x, y := best(groups[a]), best(groups[b]); x != y {
+			return x - y
+		}
+		return strings.Compare(a, b)
+	})
+	gone := map[*routerItem]bool{}
+	var folded []*routerItem
+	for _, k := range order {
+		if names <= budget {
+			break
+		}
+		g := groups[k]
+		it := &routerItem{key: k, first: g[0].first, best: best(g)}
+		for _, x := range g {
+			names -= len(x.line)
+			gone[x] = true
+			it.files = append(it.files, x.files...)
+			it.bytes += x.bytes
+			it.first = min(it.first, x.first)
+		}
+		it.line = foldLine(k, len(it.files), it.bytes)
+		names += len(it.line)
+		folded = append(folded, it)
+	}
+	out := make([]*routerItem, 0, len(items))
+	for _, it := range items {
+		if !gone[it] {
+			out = append(out, it)
+		}
+	}
+	return append(out, folded...), names
+}
+
+// dirOf is a path's directory as a pick names it: "" at the root, else
+// with its slash.
+func dirOf(p string) string {
+	if d := path.Dir(p); d != "." {
+		return d + "/"
+	}
+	return ""
+}
+
+// routerLine is a file's line: its path, size and hints.
+func routerLine(f File, z StageZero) string {
+	hints := []string{kb(f.Size)}
+	if f.Size > FileMaxBytes {
+		hints = append(hints, "head only")
+	}
+	if AnchorRank(f.Path) > 0 {
+		hints = append(hints, "anchor")
+	}
+	if n := z.FanIn[f.Path]; n > 0 {
+		hints = append(hints, fmt.Sprintf("in %d", n))
+	}
+	if n := z.Churn[f.Path]; n > 0 {
+		hints = append(hints, fmt.Sprintf("churn %d", n))
+	}
+	return f.Path + " (" + strings.Join(hints, ", ") + ")\n"
+}
+
+// foldLine is a folded directory's one line, by the path the router picks
+// it by.
+func foldLine(key string, files int, bytes int64) string {
+	return fmt.Sprintf("%s (folded: %d files, %s)\n", key, files, kb(bytes))
 }
 
 // indent sets a skeleton under its file's line.
@@ -147,7 +223,7 @@ func indent(s string) string {
 	return b.String()
 }
 
-// kb is a size as the router reads it.
+// kb is a size as the router reads it, in kB of 1024 bytes.
 func kb(n int64) string {
 	if n < 1024 {
 		return fmt.Sprintf("%d B", n)

@@ -8,6 +8,27 @@ import (
 	"github.com/trick77/almanach/internal/inference"
 )
 
+// Two router subjects the plan merges (one name but for case and the word
+// rule) give it both their questions, stored prose, at most five.
+func TestRoute_QuestionsFollowThePlan(t *testing.T) {
+	x := newWorld(t, 16)
+	x.models.route = inference.RouteResult{Call: called, Subjects: []inference.RouteSubject{
+		{Subject: inference.Subject{Name: "Dienst-Anmeldung", Purpose: "p", Paths: []string{"auth/"}},
+			Questions: []string{"Wo liegt die Straße?", "Q2", "Q3"}},
+		{Subject: inference.Subject{Name: "Dienst-anmeldung", Purpose: "p", Paths: []string{"billing/"}},
+			Questions: []string{"Q2", "Q4", "Q5", "Q6", "Q7"}},
+	}}
+	dry, err := x.w.Route(context.Background(), "tools", "svc", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qs := dry.Questions["Service-Anmeldung"]
+	if len(dry.Plan.Subjects) == 0 || dry.Plan.Subjects[0].Name != "Service-Anmeldung" ||
+		len(qs) != 5 || qs[0] != "Wo liegt die Strasse?" || qs[4] != "Q5" {
+		t.Errorf("subjects %+v, questions %v", dry.Plan.Subjects, dry.Questions)
+	}
+}
+
 // The dry run reads the tree as a full run would, shows the router every
 // file with its skeleton, and holds the picks to the plan's rules (paths
 // the tree has, anchors added); it writes nothing and records no call.

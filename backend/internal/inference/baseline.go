@@ -124,6 +124,9 @@ type RouteSubject struct {
 	Questions []string `json:"questions"`
 }
 
+// RouteMaxQuestions is how many reader questions one subject carries.
+const RouteMaxQuestions = 5
+
 // RouteResult is one router call: stage 1 of the filter stage.
 type RouteResult struct {
 	Call
@@ -132,9 +135,10 @@ type RouteResult struct {
 
 // Route asks which files of a repository a writer must read in full, by
 // subject, from every file's skeleton and hints (baseline.RouterListing).
-// The catalogue model's call, capped as the catalogue is.
+// The catalogue model's call; its answer names files one by one and asks
+// questions, so it is capped above the catalogue's (capRoute).
 func (c *Client) Route(ctx context.Context, prompt string) RouteResult {
-	content, call := c.call(ctx, prompt, routeFormat(), capCatalogue)
+	content, call := c.call(ctx, prompt, routeFormat(), capRoute)
 	out := RouteResult{Call: call}
 	var answer struct {
 		Subjects []RouteSubject `json:"subjects"`
@@ -153,7 +157,7 @@ func routeFormat() llmwire.ResponseFormat {
 			"name":      map[string]any{"type": "string", "minLength": 1},
 			"purpose":   map[string]any{"type": "string", "minLength": 1},
 			"paths":     map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 1}},
-			"questions": map[string]any{"type": "array", "items": map[string]any{"type": "string", "minLength": 1}},
+			"questions": map[string]any{"type": "array", "maxItems": RouteMaxQuestions, "items": map[string]any{"type": "string", "minLength": 1}},
 		})),
 	})
 }

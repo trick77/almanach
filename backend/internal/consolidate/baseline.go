@@ -655,21 +655,11 @@ const churnWindow = 365 * 24 * time.Hour
 // Nothing reads it yet, so it never fails or holds the run: a read that
 // fails is logged and the run goes on as before.
 func (w *Worker) stageZero(ctx context.Context, r *store.BaselineRun, files []baseline.File, at time.Time) {
-	whole := make([]baseline.File, len(files))
-	for i, f := range files {
-		f.Cut = true
-		whole[i] = f
-	}
-	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, whole)
+	z, err := w.stageZeroOf(ctx, r, files, at)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: stage 0 skipped, the tree could not be read", logging.Err(err))
 		return
 	}
-	churn, err := w.base.Code.Churn(ctx, r.ProjectKey, r.Slug, r.Commit, at.Add(-churnWindow))
-	if err != nil {
-		w.log.WarnContext(ctx, "baseline: stage 0 without churn", logging.Err(err))
-	}
-	z := baseline.BuildStageZero(bodies, churn)
 	most, imported := 0, 0
 	for _, n := range z.FanIn {
 		imported++
@@ -687,6 +677,27 @@ func (w *Worker) stageZero(ctx context.Context, r *store.BaselineRun, files []ba
 	}
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: stage 0: %s, skeletons %s of %s (%d%%); %d imported by others (most %d), %d changed in a year",
 		plural(len(z.Skeletons), "file"), kib(z.SkeletonBytes), kib(z.Bytes), share, imported, most, touched))
+}
+
+// stageZeroOf is stage 0 over a run's readable files at its commit: every
+// file read whole (a big one as its head), redacted, its skeleton and
+// hints. Churn that cannot be read is logged and left out; a tree that
+// cannot be read is the error.
+func (w *Worker) stageZeroOf(ctx context.Context, r *store.BaselineRun, files []baseline.File, at time.Time) (baseline.StageZero, error) {
+	whole := make([]baseline.File, len(files))
+	for i, f := range files {
+		f.Cut = true
+		whole[i] = f
+	}
+	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, whole)
+	if err != nil {
+		return baseline.StageZero{}, err
+	}
+	churn, err := w.base.Code.Churn(ctx, r.ProjectKey, r.Slug, r.Commit, at.Add(-churnWindow))
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: stage 0 without churn", logging.Err(err))
+	}
+	return baseline.BuildStageZero(bodies, churn), nil
 }
 
 // kib is a byte count as the log shows it.
