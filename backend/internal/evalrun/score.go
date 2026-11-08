@@ -199,29 +199,52 @@ func files(rep *RepoReport, l *Labels, rr RepoResult) {
 			}
 		}
 	}
-	var hit, citedHit int
+	citedHit := 0
 	for _, m := range l.MustRead {
-		if _, ok := rr.Picked[m.Path]; ok {
-			hit++
-		} else {
-			rep.MustReadMissed = append(rep.MustReadMissed, m.Path)
-		}
 		if cited[m.Path] {
 			citedHit++
 		}
 	}
 	if n := len(l.MustRead); n > 0 {
-		rep.MustReadRecall = float64(hit) / float64(n)
 		rep.CitedMustRead = float64(citedHit) / float64(n)
 	}
-	noise := newGlobSet(append(append([]Glob{}, l.NeverRead...), l.Generated...))
-	for path, size := range rr.Picked {
-		if noise.match(path) {
-			rep.NoiseFiles = append(rep.NoiseFiles, path)
-			rep.NoiseBytes += size
+	s := scorePicked(rr.Picked, l)
+	rep.MustReadRecall, rep.MustReadMissed, rep.NoiseFiles, rep.NoiseBytes = s.recall, s.missed, s.noise, s.noiseBytes
+}
+
+// pickedScore is what the labels say of the files a run read: the share
+// of must-read files among them, those missed, and the noise read.
+type pickedScore struct {
+	recall     float64
+	missed     []string
+	noise      []string
+	noiseBytes int64
+}
+
+// scorePicked scores read files (path → bytes) against labels: one rule for
+// a full run and the router's dry run alike.
+func scorePicked(picked map[string]int64, l *Labels) pickedScore {
+	var s pickedScore
+	hit := 0
+	for _, m := range l.MustRead {
+		if _, ok := picked[m.Path]; ok {
+			hit++
+		} else {
+			s.missed = append(s.missed, m.Path)
 		}
 	}
-	sort.Strings(rep.NoiseFiles)
+	if n := len(l.MustRead); n > 0 {
+		s.recall = float64(hit) / float64(n)
+	}
+	noise := newGlobSet(append(append([]Glob{}, l.NeverRead...), l.Generated...))
+	for path, size := range picked {
+		if noise.match(path) {
+			s.noise = append(s.noise, path)
+			s.noiseBytes += size
+		}
+	}
+	sort.Strings(s.noise)
+	return s
 }
 
 // advice is wording a page that documents never uses.

@@ -31,6 +31,7 @@ func runEval(log *slog.Logger) error {
 	repeat := fs.Int("repeat", 1, "run everything this many times side by side; the report gives the means")
 	split := fs.Bool("split", false, "run every repository in its own database, all side by side (no project step)")
 	reasoning := fs.String("reasoning", "", "the writer's reasoning level (BACKEND_MODEL_REASONING_EFFORT): a level, off, or empty for the model's balanced one")
+	routeOnly := fs.Bool("route-only", false, "the filter stage's dry run: one router call a repository, no page written, no judge (route.json, route.md); -repeat and -split do not apply")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -61,7 +62,11 @@ func runEval(log *slog.Logger) error {
 	}
 	ctx, stop := run.Context(context.Background())
 	defer stop()
-	rep, err := evalrun.Run(ctx, evalrun.Options{Dir: *dir, Out: *out, Model: *model, Judge: *judge, Lookup: lookup, Deadline: *deadline, Split: *split, Repeat: *repeat, Log: log})
+	opt := evalrun.Options{Dir: *dir, Out: *out, Model: *model, Judge: *judge, Lookup: lookup, Deadline: *deadline, Split: *split, Repeat: *repeat, Log: log}
+	if *routeOnly {
+		return writeRoute(ctx, opt)
+	}
+	rep, err := evalrun.Run(ctx, opt)
 	if err != nil {
 		return err
 	}
@@ -74,6 +79,32 @@ func runEval(log *slog.Logger) error {
 	}
 	md := rep.Markdown()
 	if err := os.WriteFile(filepath.Join(*out, "report.md"), []byte(md), 0o600); err != nil {
+		return err
+	}
+	fmt.Println(md)
+	return nil
+}
+
+// writeRoute runs the router's dry run and writes route.json and route.md;
+// a folder that holds a dry run's report already is refused before any
+// call, so a paid report is never overwritten.
+func writeRoute(ctx context.Context, opt evalrun.Options) error {
+	if _, err := os.Stat(filepath.Join(opt.Out, "route.json")); err == nil {
+		return fmt.Errorf("eval: %s holds a dry run already: give -out a new folder", opt.Out)
+	}
+	rep, err := evalrun.RouteOnly(ctx, opt)
+	if err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(rep, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(opt.Out, "route.json"), b, 0o600); err != nil {
+		return err
+	}
+	md := rep.Markdown()
+	if err := os.WriteFile(filepath.Join(opt.Out, "route.md"), []byte(md), 0o600); err != nil {
 		return err
 	}
 	fmt.Println(md)

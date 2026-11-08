@@ -466,13 +466,17 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 const (
 	reasoningRoom = 16_000
 	capCatalogue  = 12_000
-	capPatch      = 32_000
-	capDescribe   = 32_000
-	capMap        = 12_000
-	capMerge      = 24_000
-	capBrief      = 8_000
-	capRestyleLo  = 4_000
-	capRestyleHi  = 32_000
+	// capRoute: the router names files one by one, with up to five
+	// questions a subject: 16 subjects of 30 paths and their questions run
+	// near 12k.
+	capRoute     = 24_000
+	capPatch     = 32_000
+	capDescribe  = 32_000
+	capMap       = 12_000
+	capMerge     = 24_000
+	capBrief     = 8_000
+	capRestyleLo = 4_000
+	capRestyleHi = 32_000
 )
 
 // restyleCap is a restyle's cap: the answer rewrites the page the prompt

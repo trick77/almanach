@@ -381,6 +381,7 @@ func (c *fakeCode) ReadFiles(_ context.Context, _, _, _ string, files []baseline
 // when set, answers in order before it. projectMaps answers the system map
 // asked again, in order.
 type fakeModels struct {
+	route       inference.RouteResult
 	catalogue   []inference.CatalogueResult
 	patches     []inference.PatchResult
 	project     inference.DescriptionResult
@@ -423,6 +424,11 @@ func (m *fakeModels) ProjectMap(_ context.Context, prompt string) inference.Repo
 	res := m.projectMaps[0]
 	m.projectMaps = m.projectMaps[1:]
 	return res
+}
+
+func (m *fakeModels) Route(_ context.Context, prompt string) inference.RouteResult {
+	m.prompts = append(m.prompts, prompt)
+	return m.route
 }
 
 func (m *fakeModels) Catalogue(_ context.Context, prompt string) inference.CatalogueResult {

@@ -1018,7 +1018,15 @@ resumes after a restart. The run pins the clone's head when it starts.
    bots and dependency bumps left out, a human's "Update ... to 5 seconds"
    counted). Line-based, no parser (a cgo dependency per grammar). Nothing
    reads it yet: the run logs its size against the tree's, and a read that
-   fails is logged, never the run's failure. A full
+   fails is logged, never the run's failure. Stage 1, the router
+   (`almanach_router.txt`, the catalogue model), is built but no run uses
+   it yet: it reads every file by path, size and hints and the skeletons,
+   highest-scored first, within `baseline.RouterMaxBytes` (150 kB; a tree
+   whose names pass half of it folds its lowest-scored directories into one
+   line each), and answers subjects with the files to read in full and the
+   reader questions they answer; the plan's rules hold its answer as a
+   catalogue's (`BuildPlan`, `EnsureAnchors`); `Worker.Route` runs stages
+   0 and 1 alone, nothing written. A full
    run asks the catalogue model
    (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,

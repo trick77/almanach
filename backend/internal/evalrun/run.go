@@ -46,9 +46,17 @@ type Options struct {
 	Log    *slog.Logger
 }
 
-// Run runs every project's repositories through a full baseline run, the
-// projects side by side, each in its own database, then scores the pages.
-func Run(ctx context.Context, opt Options) (*Report, error) {
+// env is what every eval mode needs: the folder's projects, git, the
+// pipeline's settings and its model.
+type env struct {
+	projects []Project
+	gitBin   string
+	app      *config.App
+	llm      *inference.Client
+}
+
+// setup loads the folder and the pipeline as a run of opt sees them.
+func setup(ctx context.Context, opt Options) (*env, error) {
 	projects, err := Load(opt.Dir)
 	if err != nil {
 		return nil, err
@@ -80,6 +88,17 @@ func Run(ctx context.Context, opt Options) (*Report, error) {
 	} else if warning != "" {
 		opt.Log.Warn("eval: " + warning)
 	}
+	return &env{projects: projects, gitBin: gitBin, app: app, llm: llm}, nil
+}
+
+// Run runs every project's repositories through a full baseline run, the
+// projects side by side, each in its own database, then scores the pages.
+func Run(ctx context.Context, opt Options) (*Report, error) {
+	e, err := setup(ctx, opt)
+	if err != nil {
+		return nil, err
+	}
+	projects, gitBin, app, llm := e.projects, e.gitBin, e.app, e.llm
 	judge, err := newJudge(opt.Judge, opt.Lookup, opt.Log)
 	if err != nil {
 		return nil, err
@@ -188,28 +207,42 @@ func cloneURL(key, slug string) string {
 	return "https://eval.invalid/" + key + "/" + slug + ".git"
 }
 
-func runProject(ctx context.Context, p Project, out, gitBin string, app *config.App, llm *inference.Client, log *slog.Logger) (ProjectResult, error) {
-	res := ProjectResult{Key: p.Key, Repos: map[string]RepoResult{}}
+// prepared is a project laid down for a run: its database, the clones the
+// poller reads, and each repository's head.
+type prepared struct {
+	db     *store.Store
+	poller *clone.Poller
+	git    *gitrepo.Client
+	heads  map[string]string
+}
+
+// prepare makes out a project's run folder: a database migrated, the
+// project's repositories registered, cloned from their folders and their
+// manifests read. The caller closes db.
+func prepare(ctx context.Context, p Project, out, gitBin string, log *slog.Logger) (*prepared, error) {
 	if _, err := os.Stat(out); err == nil {
-		return res, fmt.Errorf("%s holds a run already: give -out a new folder", out)
+		return nil, fmt.Errorf("%s holds a run already: give -out a new folder", out)
 	}
 	clones := filepath.Join(out, "clones")
 	if err := os.MkdirAll(clones, 0o750); err != nil {
-		return res, err
+		return nil, err
 	}
 	db, err := store.Open(ctx, filepath.Join(out, "almanach.db"), log)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
-	defer db.Close()
+	pr := &prepared{db: db, heads: map[string]string{}}
+	fail := func(err error) (*prepared, error) {
+		db.Close()
+		return nil, err
+	}
 	if err := db.Migrate(ctx); err != nil {
-		return res, err
+		return fail(err)
 	}
-	git, err := gitrepo.New(gitBin, clones, "")
-	if err != nil {
-		return res, err
+	if pr.git, err = gitrepo.New(gitBin, clones, ""); err != nil {
+		return fail(err)
 	}
-	poller := clone.New(clone.Deps{Store: db, Git: git, Log: log, Manifests: clone.Manifests{Store: db, Reads: git}})
+	pr.poller = clone.New(clone.Deps{Store: db, Git: pr.git, Log: log, Manifests: clone.Manifests{Store: db, Reads: pr.git}})
 	for i, r := range p.Repos {
 		sr := store.SourceRepo{ProjectKey: p.Key, Slug: r.Slug, CloneURL: cloneURL(p.Key, r.Slug)}
 		if i == 0 {
@@ -218,23 +251,42 @@ func runProject(ctx context.Context, p Project, out, gitBin string, app *config.
 			err = db.AddSourceRepo(ctx, sr)
 		}
 		if err != nil {
-			return res, fmt.Errorf("register %s: %w", r.Slug, err)
+			return fail(fmt.Errorf("register %s: %w", r.Slug, err))
 		}
 	}
 	for _, r := range p.Repos {
-		head, err := layDown(ctx, db, poller, git, gitBin, p.Key, r)
+		head, err := layDown(ctx, db, pr.poller, pr.git, gitBin, p.Key, r)
 		if err != nil {
-			return res, fmt.Errorf("clone %s: %w", r.Slug, err)
+			return fail(fmt.Errorf("clone %s: %w", r.Slug, err))
 		}
-		if err := poller.ReadManifestsNow(ctx, p.Key, r.Slug, head); err != nil {
+		if err := pr.poller.ReadManifestsNow(ctx, p.Key, r.Slug, head); err != nil {
 			log.Warn("eval: manifests", "project", p.Key, "repo", r.Slug, "err", err.Error())
 		}
-		if _, err := db.EnqueueRun(ctx, p.Key, r.Slug, store.RunFull, store.TriggerFirstReady, "", head); err != nil {
+		pr.heads[r.Slug] = head
+	}
+	return pr, nil
+}
+
+// worker is the pipeline's worker over a prepared project.
+func (pr *prepared) worker(app *config.App, llm *inference.Client, log *slog.Logger) *consolidate.Worker {
+	return consolidate.New(pr.db, llm, app.Limits, log).WithBaseline(consolidate.Baseline{Store: pr.db, Code: clone.NewCode(pr.poller, pr.git),
+		Catalogue: llm, Describer: llm, Limits: app.Baseline})
+}
+
+func runProject(ctx context.Context, p Project, out, gitBin string, app *config.App, llm *inference.Client, log *slog.Logger) (ProjectResult, error) {
+	res := ProjectResult{Key: p.Key, Repos: map[string]RepoResult{}}
+	pr, err := prepare(ctx, p, out, gitBin, log)
+	if err != nil {
+		return res, err
+	}
+	db := pr.db
+	defer db.Close()
+	for _, r := range p.Repos {
+		if _, err := db.EnqueueRun(ctx, p.Key, r.Slug, store.RunFull, store.TriggerFirstReady, "", pr.heads[r.Slug]); err != nil {
 			return res, fmt.Errorf("queue %s: %w", r.Slug, err)
 		}
 	}
-	worker := consolidate.New(db, llm, app.Limits, log).WithBaseline(consolidate.Baseline{Store: db, Code: clone.NewCode(poller, git),
-		Catalogue: llm, Describer: llm, Limits: app.Baseline})
+	worker := pr.worker(app, llm, log)
 	worker.Start(context.WithoutCancel(ctx))
 	res.TimedOut = waitRuns(ctx, db)
 	// Past the deadline the step in flight is cut off: it is not scored.

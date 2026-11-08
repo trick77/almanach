@@ -112,7 +112,55 @@ const (
 	RepoMapSchemaName     = "almanach_repo_map"
 	ProjectMapSchemaName  = "almanach_project_map"
 	RestyleSchemaName     = "almanach_restyle"
+	RouteSchemaName       = "almanach_route"
 )
+
+// RouteSubject is one subject the router picks: a catalogue subject whose
+// paths are the files to read in full, with the reader's questions they
+// answer for this repository (a single reader's question list, the
+// filter stage's candidate A).
+type RouteSubject struct {
+	Subject
+	Questions []string `json:"questions"`
+}
+
+// RouteMaxQuestions is how many reader questions one subject carries.
+const RouteMaxQuestions = 5
+
+// RouteResult is one router call: stage 1 of the filter stage.
+type RouteResult struct {
+	Call
+	Subjects []RouteSubject
+}
+
+// Route asks which files of a repository a writer must read in full, by
+// subject, from every file's skeleton and hints (baseline.RouterListing).
+// The catalogue model's call; its answer names files one by one and asks
+// questions, so it is capped above the catalogue's (capRoute).
+func (c *Client) Route(ctx context.Context, prompt string) RouteResult {
+	content, call := c.call(ctx, prompt, routeFormat(), capRoute)
+	out := RouteResult{Call: call}
+	var answer struct {
+		Subjects []RouteSubject `json:"subjects"`
+	}
+	if call.Outcome == OutcomeOK && (!parse(content, &answer) || answer.Subjects == nil) {
+		out.Outcome = OutcomeUnparseable
+		return out
+	}
+	out.Subjects = answer.Subjects
+	return out
+}
+
+func routeFormat() llmwire.ResponseFormat {
+	return strict(RouteSchemaName, map[string]any{
+		"subjects": array(object(map[string]any{
+			"name":      map[string]any{"type": "string", "minLength": 1},
+			"purpose":   map[string]any{"type": "string", "minLength": 1},
+			"paths":     map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 1}},
+			"questions": map[string]any{"type": "array", "maxItems": RouteMaxQuestions, "items": map[string]any{"type": "string", "minLength": 1}},
+		})),
+	})
+}
 
 // Restyle asks for a stored page brought to the rules of today: the
 // repository's, the page alone in the prompt, or with project the
