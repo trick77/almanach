@@ -3,6 +3,7 @@ package evalrun
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -53,8 +54,16 @@ type RouteRepo struct {
 	Labelled       bool     `json:"labelled"`
 	MustReadRecall float64  `json:"must_read_recall"`
 	MustReadMissed []string `json:"must_read_missed,omitempty"`
-	NoiseFiles     []string `json:"noise_files,omitempty"`
-	NoiseKB        int64    `json:"noise_kb"`
+	// Of the missed: a label naming no file at the commit; a file not
+	// readable (left out before the router: a test, generated, binary); one
+	// the router picked and the plan dropped (budget, cap); one it saw only
+	// in a folded line. The rest it saw by name and passed over.
+	MustReadNotInTree  []string `json:"must_read_not_in_tree,omitempty"`
+	MustReadUnreadable []string `json:"must_read_unreadable,omitempty"`
+	MustReadDropped    []string `json:"must_read_dropped,omitempty"`
+	MustReadFolded     []string `json:"must_read_folded,omitempty"`
+	NoiseFiles         []string `json:"noise_files,omitempty"`
+	NoiseKB            int64    `json:"noise_kb"`
 }
 
 // RouteSubject is one subject the router made, as the plan holds it.
@@ -132,6 +141,11 @@ func routeRepo(ctx context.Context, p Project, r Repo, out string, e *env, opt O
 		rr.Error = err.Error()
 		return rr
 	}
+	// The listing is for a human reading the picks: a failed write is
+	// logged, the route's outcome stays the call's.
+	if err := os.WriteFile(filepath.Join(out, "listing.txt"), []byte(dry.Listing), 0o600); err != nil {
+		opt.Log.Warn("the router's listing not written", "repo", r.Slug, "err", err)
+	}
 	return routeReport(rr, dry, r.Labels)
 }
 
@@ -139,7 +153,7 @@ func routeRepo(ctx context.Context, p Project, r Repo, out string, e *env, opt O
 func routeReport(rr RouteRepo, dry consolidate.RouteDry, l *Labels) RouteRepo {
 	rr.Outcome = dry.Call.Outcome.String()
 	rr.Files = len(dry.Files)
-	rr.ReadableKB, rr.SkeletonKB, rr.ListingKB = kib(dry.ReadableBytes), kib(dry.SkeletonBytes), kib(dry.ListingBytes)
+	rr.ReadableKB, rr.SkeletonKB, rr.ListingKB = kib(dry.ReadableBytes), kib(dry.SkeletonBytes), kib(int64(len(dry.Listing)))
 	rr.OverBudget = dry.OverBudget
 	cost := dry.Call.Cost
 	// Billed: an answer began to arrive or one came (store's rule), so a
@@ -178,6 +192,22 @@ func routeReport(rr RouteRepo, dry consolidate.RouteDry, l *Labels) RouteRepo {
 	s := scorePicked(picked, l)
 	rr.Labelled = true
 	rr.MustReadRecall, rr.MustReadMissed, rr.NoiseFiles, rr.NoiseKB = s.recall, s.missed, s.noise, kib(s.noiseBytes)
+	readable := make(map[string]bool, len(dry.Files))
+	for _, f := range dry.Files {
+		readable[f.Path] = true
+	}
+	for _, m := range s.missed {
+		switch {
+		case !dry.Tree[m]:
+			rr.MustReadNotInTree = append(rr.MustReadNotInTree, m)
+		case !readable[m]:
+			rr.MustReadUnreadable = append(rr.MustReadUnreadable, m)
+		case dry.Dropped[m]:
+			rr.MustReadDropped = append(rr.MustReadDropped, m)
+		case dry.Folded[m]:
+			rr.MustReadFolded = append(rr.MustReadFolded, m)
+		}
+	}
 	return rr
 }
 
@@ -208,6 +238,19 @@ func (r *RouteReport) Markdown() string {
 		}
 		if len(x.MustReadMissed) > 0 {
 			fmt.Fprintf(&b, "\nMust-read missed: %s\n", strings.Join(x.MustReadMissed, ", "))
+		}
+		for _, of := range []struct {
+			why   string
+			paths []string
+		}{
+			{"no file at the commit (the label)", x.MustReadNotInTree},
+			{"not readable (left out before the router)", x.MustReadUnreadable},
+			{"picked by the router, dropped by the plan (budget, cap)", x.MustReadDropped},
+			{"only in a folded line", x.MustReadFolded},
+		} {
+			if len(of.paths) > 0 {
+				fmt.Fprintf(&b, "\nOf those, %s: %s\n", of.why, strings.Join(of.paths, ", "))
+			}
 		}
 		if len(x.NoiseFiles) > 0 {
 			fmt.Fprintf(&b, "\nNoise picked: %s\n", strings.Join(x.NoiseFiles, ", "))

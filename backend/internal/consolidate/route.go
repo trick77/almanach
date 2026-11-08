@@ -37,9 +37,16 @@ type RouteDry struct {
 	// OverBudget is the subjects a run would skip, past the run's bytes.
 	OverBudget []string
 	Call       inference.Call
-	// ReadableBytes is the tree's; SkeletonBytes stage 0's; ListingBytes
-	// what the router read of it.
-	ReadableBytes, SkeletonBytes, ListingBytes int64
+	// ReadableBytes is the tree's; SkeletonBytes stage 0's.
+	ReadableBytes, SkeletonBytes int64
+	// Listing is what the router read. What it missed tells apart by what
+	// the run knew of it: Tree every path at the commit, Folded the files
+	// the listing named only by a folded line, Dropped those the router
+	// picked that the plan does not hold (a step's budget, the subject cap,
+	// the run's bytes).
+	Listing         string
+	Tree            map[string]bool
+	Folded, Dropped map[string]bool
 }
 
 // errNoRouter is a catalogue model that cannot route.
@@ -74,10 +81,14 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	if err != nil {
 		return RouteDry{}, err
 	}
-	listing := baseline.RouterListing(files, z, baseline.RouterMaxBytes)
+	listing, folded := baseline.RouterListing(files, z, baseline.RouterMaxBytes)
 	res := router.Route(ctx, renderRouter(*r, listing, len(files), readable, w.base.Limits.MaxBytes, w.maxSubjects()))
 	out := RouteDry{Files: files, Docs: baseline.Docs(files, baseline.DocsMaxBytes), Call: res.Call, Questions: map[string][]string{},
-		ReadableBytes: readable, SkeletonBytes: z.SkeletonBytes, ListingBytes: int64(len(listing))}
+		ReadableBytes: readable, SkeletonBytes: z.SkeletonBytes, Listing: listing, Tree: map[string]bool{}, Folded: folded,
+		Dropped: map[string]bool{}}
+	for _, e := range tree {
+		out.Tree[e.Path] = true
+	}
 	if res.Outcome != inference.OutcomeOK {
 		return out, nil
 	}
@@ -104,6 +115,37 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 		read.Subjects = append(read.Subjects, s)
 	}
 	out.Plan = read
+	held := map[string]bool{}
+	for _, s := range read.Subjects {
+		for _, f := range s.Files {
+			held[f.Path] = true
+		}
+	}
+	// What the router named, as picksAny reads a path: a file, its own
+	// directory ("dir/*", "*"), a subtree ("dir/"); one pass over the files.
+	exact, ownDir, subtrees := map[string]bool{}, map[string]bool{}, []string{}
+	for _, s := range subjects {
+		for _, p := range s.Paths {
+			p = strings.TrimPrefix(strings.TrimSpace(p), "./")
+			switch {
+			case strings.HasSuffix(p, "*"):
+				ownDir[strings.TrimSuffix(p, "*")] = true
+			case strings.HasSuffix(p, "/"):
+				subtrees = append(subtrees, p)
+			default:
+				exact[p] = true
+			}
+		}
+	}
+	for _, f := range files {
+		if held[f.Path] {
+			continue
+		}
+		dir := f.Path[:strings.LastIndex(f.Path, "/")+1]
+		if exact[f.Path] || ownDir[dir] || slices.ContainsFunc(subtrees, func(s string) bool { return strings.HasPrefix(f.Path, s) }) {
+			out.Dropped[f.Path] = true
+		}
+	}
 	// The plan names a subject as stored (lang.Prose) and merges two the
 	// same but for spelling: its questions are theirs, in their order, each
 	// stored prose, at most RouteMaxQuestions; never those of a router

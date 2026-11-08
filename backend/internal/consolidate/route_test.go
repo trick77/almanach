@@ -65,7 +65,29 @@ func TestRoute_DryRun(t *testing.T) {
 	if len(anmeldung) != 1 || anmeldung[0] != "auth/login.go" || dry.Questions["Anmeldung"][0] != "Wie meldet man sich an?" {
 		t.Errorf("plan = %+v, questions %v: want the subject held to the tree", dry.Plan.Subjects, dry.Questions)
 	}
-	if dry.ReadableBytes == 0 || dry.ListingBytes == 0 || len(x.st.calls) != 0 || len(x.st.revisions) != 0 {
+	if !dry.Tree["auth/login.go"] || len(dry.Dropped) != 0 {
+		t.Errorf("tree %v, dropped %v: want the tree's paths, nothing the router picked dropped", dry.Tree, dry.Dropped)
+	}
+	if dry.ReadableBytes == 0 || dry.Listing == "" || len(x.st.calls) != 0 || len(x.st.revisions) != 0 {
 		t.Errorf("dry = %+v, calls %d, revisions %d: want sizes and nothing written", dry, len(x.st.calls), len(x.st.revisions))
+	}
+}
+
+// A file the router picked that the plan does not hold (past the run's
+// bytes here) is Dropped: a dry run tells it from one the router passed
+// over.
+func TestRoute_DroppedPicks(t *testing.T) {
+	x := newWorld(t, 16)
+	x.w.base.Limits.MaxBytes = 10
+	x.models.route = inference.RouteResult{Call: called, Subjects: []inference.RouteSubject{
+		{Subject: inference.Subject{Name: "Anmeldung", Purpose: "p", Paths: []string{"auth/"}}},
+		{Subject: inference.Subject{Name: "Abrechnung", Purpose: "p", Paths: []string{"billing/*"}}},
+	}}
+	dry, err := x.w.Route(context.Background(), "tools", "svc", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dry.Dropped["auth/login.go"] || !dry.Dropped["billing/run.go"] || dry.Dropped["README.md"] || len(dry.Plan.Subjects) != 0 {
+		t.Errorf("dropped %v, plan %+v: want both picks dropped past the run's bytes", dry.Dropped, dry.Plan.Subjects)
 	}
 }
