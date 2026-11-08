@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	"github.com/trick77/almanach/internal/redact"
 )
@@ -27,28 +26,6 @@ const (
 	// the reader copies the text instead.
 	PushFailed = "failed"
 )
-
-// Brief is a repository's brief as stored. Markdown is "" before the
-// first was written, and in the listing (Briefs), which carries
-// HasMarkdown alone.
-type Brief struct {
-	Markdown     string
-	HasMarkdown  bool
-	PageRevision int
-	WrittenAt    *time.Time
-	// RequestedAt is a request waiting for the worker, Attempts the calls
-	// tried for it so far (each counted before it is made).
-	RequestedAt *time.Time
-	Attempts    int
-	// FailedAt and Failed are the last request's failure, the brief
-	// before it kept.
-	FailedAt     *time.Time
-	Failed       string
-	PushState    string
-	PushError    string
-	PushedCommit string
-	PushAt       *time.Time
-}
 
 const briefColumns = `b.page_revision, b.written_at, b.requested_at, b.attempts, b.failed_at, b.failed, b.push_state,
 	b.push_error, b.pushed_commit, b.push_at`
@@ -134,22 +111,6 @@ func (s *Store) Briefs(ctx context.Context, key string) (map[int64]Brief, error)
 		out[id] = b
 	}
 	return out, rows.Err()
-}
-
-// BriefJob is the worker's next brief: a request to write it (Write), or
-// a written one to push (Markdown).
-type BriefJob struct {
-	RepoID     int64
-	ProjectKey string
-	Slug       string
-	Write      bool
-	Markdown   string
-	// PushedCommit is the commit Almanach last pushed to the branch, ""
-	// for none: the one a push may replace there.
-	PushedCommit string
-	// RequestSeq is the request taken: WriteBrief and FailBrief end it
-	// only while no other came since.
-	RequestSeq int64
 }
 
 // NextBrief is the brief the worker owes next, of a repository that is a

@@ -53,12 +53,6 @@ func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, 
 	return err
 }
 
-// RepoRef names a source repository in the dependency graph.
-type RepoRef struct {
-	ProjectKey string
-	Slug       string
-}
-
 // Edge is one repository using another: From requires coordinates To
 // provides. Coords are those coordinates, sorted; Scope the strongest of
 // their scopes (manifest.Scope*); Version is what From names for the first

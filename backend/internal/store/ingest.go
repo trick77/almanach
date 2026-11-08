@@ -7,7 +7,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"time"
 )
 
 // Delivery is one webhook body as received.
@@ -50,34 +49,6 @@ func (e *OwnedError) Error() string { return "project owned by team " + e.Owner 
 type Claim struct {
 	ProjectKey string
 	RepoSlug   string
-}
-
-// Note is one merged PR's note as the sender described it, lifted into
-// columns beside the raw object.
-type Note struct {
-	ProjectKey string
-	RepoSlug   string
-	PRID       int
-	Team       string
-	PRKey      string
-	PRTitle    string
-	TicketKey  string
-	IssueType  string
-	ChangeKind string
-	// Bugfix is the note's bugfix object, nil unless a bugfix; Area and
-	// Component are what the problem areas group by, computed at ingest.
-	Bugfix          json.RawMessage
-	BugfixArea      string
-	BugfixComponent string
-	Body            json.RawMessage
-	ReviewedCommit  string
-	SourceCommit    string
-	MergeCommit     string
-	MergedAt        time.Time
-	RunID           int64
-	ModelLabel      string
-	IssuesPosted    int
-	Suggestions     int
 }
 
 // NoteCall is what the sender reported about the round's gateway call.

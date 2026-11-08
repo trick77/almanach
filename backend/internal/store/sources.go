@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/trick77/almanach/internal/urlorigin"
 )
@@ -40,69 +39,6 @@ const (
 
 // ErrExists is a create of a key that is already there.
 var ErrExists = errors.New("already exists")
-
-// ProjectSource is one configured project source.
-type ProjectSource struct {
-	// ProjectID is the project's id, ProjectKey its current key.
-	ProjectID  int64
-	ProjectKey string
-	Kind       string
-	// Host is the Bitbucket base URL; "" for a static source.
-	Host      string
-	TokenAuth string
-	TokenUser string
-	// TokenEnc is the encrypted token, nil when the source has none.
-	TokenEnc     []byte
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	LastListedAt *time.Time
-	LastError    string
-}
-
-// HasToken reports whether a credential is stored.
-func (s ProjectSource) HasToken() bool { return len(s.TokenEnc) > 0 }
-
-// SourceRow is a source with its repositories counted by state.
-type SourceRow struct {
-	ProjectSource
-	Repos   int
-	Ready   int
-	Active  int // pending or syncing
-	Failed  int
-	Missing int
-	// Inactive is the deactivated ones, missing or not; Ready, Active,
-	// Failed and Missing count the others only.
-	Inactive int
-	// LastSyncedAt is the newest sync of any of its repositories, nil
-	// before the first: a static source is never listed, so this is its
-	// last run.
-	LastSyncedAt *time.Time
-}
-
-// SourceRepo is one clone. ProjectID and RepoID are its ids, ProjectKey and
-// Slug its current names.
-type SourceRepo struct {
-	ProjectID  int64
-	RepoID     int64
-	ProjectKey string
-	Slug       string
-	CloneURL   string
-	Origin     string
-	// Branch is "" until resolved from the remote.
-	Branch       string
-	HeadCommit   string
-	State        string
-	LastSyncedAt *time.Time
-	LastError    string
-	CreatedAt    time.Time
-	// DeactivatedAt is when the repository was deactivated, nil while it is
-	// active; ReactivatedAt the last time it came back.
-	DeactivatedAt *time.Time
-	ReactivatedAt *time.Time
-}
-
-// Active reports whether the repository is a source: not deactivated.
-func (r SourceRepo) Active() bool { return r.DeactivatedAt == nil }
 
 // activeRow is the one predicate of a source repository that counts, over
 // a source_repos row aliased sr: not deactivated. Every reader that means

@@ -20,18 +20,6 @@ func noteOut(title string, bugfix, body []byte) (string, json.RawMessage, json.R
 	return redact.Text(title), redact.JSON(bugfix), redact.JSON(body)
 }
 
-// ProjectRow is one project in the list.
-type ProjectRow struct {
-	Key      string
-	Team     string
-	Repos    int
-	Notes    int
-	Revision int
-	// Summary is the current project page's, whole; "" before the first.
-	Summary   string
-	LastMerge *time.Time
-}
-
 // What the wiki lists. With the sources on (sourced), a project is a source
 // and a repository a source repository: the source is the starting point,
 // and a project noergler named without one is no page anyone reaches. The
@@ -81,24 +69,6 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// RepoRow is one repository of a project.
-type RepoRow struct {
-	Slug      string
-	Revision  int
-	Summary   string
-	Notes     int
-	LastMerge *time.Time
-}
-
-// RepoSummary is a source repository and its current summary, whole, with
-// Contracts, its statements other repositories rely on: its interfaces
-// and entities, in the page's order.
-type RepoSummary struct {
-	Slug      string
-	Summary   string
-	Contracts []Statement
 }
 
 // RepoSummaries lists a project's source repositories by slug with the
@@ -256,20 +226,6 @@ func scopeIDs(ctx context.Context, q rowQuerier, project, repo string) (pid, rid
 	return pid, rid, err == nil, err
 }
 
-// RevisionRow is one entry of a page's history.
-type RevisionRow struct {
-	Revision int
-	// SourceKind says which of SourcePR and SourceCommit made the revision.
-	SourceKind   string
-	SourcePR     string
-	SourceCommit string
-	// BatchPRKeys is every pull request a fold of several notes took.
-	BatchPRKeys []string
-	Statements  int
-	Chars       int
-	CreatedAt   time.Time
-}
-
 // Revisions is a page's history, newest first.
 func (s *Store) Revisions(ctx context.Context, scope, project, repo string, limit int) ([]RevisionRow, error) {
 	pid, rid, ok, err := scopeIDs(ctx, s.db, project, repo)
@@ -299,20 +255,6 @@ func (s *Store) Revisions(ctx context.Context, scope, project, repo string, limi
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// NoteRow is one note as listed.
-type NoteRow struct {
-	PRID        int
-	PRKey       string
-	PRTitle     string
-	RepoSlug    string
-	TicketKey   string
-	ChangeKind  string
-	MergedAt    time.Time
-	Items       int
-	Issues      int
-	Suggestions int
 }
 
 // itemsSQL counts a note's components, rules, invariants and entities. Only
@@ -352,33 +294,6 @@ func (s *Store) Notes(ctx context.Context, project, repo string, limit int) ([]N
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// NoteDetail is one note in full.
-type NoteDetail struct {
-	Note
-	// Items is the count the list shows: components, rules, invariants and
-	// entities.
-	Items          int
-	ReceivedAt     time.Time
-	ConsolidatedAt *time.Time
-	Call           *NoteCallRow
-}
-
-// NoteCallRow is the recorded note call, the lanes a reader wants.
-type NoteCallRow struct {
-	Outcome         string
-	NoteStatus      string
-	Model           string
-	InputTokens     *int64
-	CacheReadTokens *int64
-	OutputTokens    *int64
-	CostNanoUSD     *int64
-	// Rounds is every note call the PR made, summed by the sender.
-	Rounds             int
-	RoundsInputTokens  int64
-	RoundsOutputTokens int64
-	RoundsCost         *int64
 }
 
 // NoteByKey reads one note, ok false when none.
@@ -432,17 +347,6 @@ func (s *Store) NoteByKey(ctx context.Context, project, repo string, prID int) (
 	return d, true, nil
 }
 
-// TaughtRow is one current statement a pull request's note is a source
-// of: where it stands, and enough to name and link it.
-type TaughtRow struct {
-	Scope      string
-	ProjectKey string
-	RepoSlug   string
-	ID         string
-	Kind       string
-	Name       string
-}
-
 // Taught lists the statements on the project's current pages that carry
 // the repository's PR among their sources, the repository page's before
 // the project's, each page in its stored order: the note page's reverse
@@ -490,17 +394,6 @@ func (s *Store) Taught(ctx context.Context, project, repo string, prID int, sour
 	return out, rows.Err()
 }
 
-// PageText is a current page's words, the search's read: its names and
-// summary, each statement's words alone (no sources, no diagram, which
-// a search neither reads nor shows).
-type PageText struct {
-	Scope      string
-	ProjectKey string
-	RepoSlug   string
-	Summary    string
-	Statements []StatementText
-}
-
 // StatementText is a statement as the search reads it.
 type StatementText struct {
 	ID    string   `json:"id"`
@@ -545,22 +438,6 @@ func (s *Store) CurrentPages(ctx context.Context, sourced bool) ([]PageText, err
 		out = append(out, p)
 	}
 	return out, rows.Err()
-}
-
-// ProblemArea is one cluster of bugfixes: a repo and the directory the
-// fixes' components share, with the cause class seen most and the posted
-// findings on those PRs.
-type ProblemArea struct {
-	RepoSlug    string
-	Area        string
-	Component   string
-	Bugfixes    int
-	TopCause    string
-	TopCauseN   int
-	Issues      int
-	Suggestions int
-	LastFixPR   string
-	LastFixAt   time.Time
 }
 
 // Problems lists the project's problem areas within the window, most

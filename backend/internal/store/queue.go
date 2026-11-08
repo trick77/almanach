@@ -15,21 +15,6 @@ import (
 // is the worker's (NextQueued, NextRun); which of the two goes first is
 // the worker's rule, the API's to lay out.
 
-// PendingNote is a note the worker has not folded yet.
-type PendingNote struct {
-	ProjectKey string
-	RepoSlug   string
-	PRKey      string
-	PRTitle    string
-	ChangeKind string
-	ReceivedAt time.Time
-	// Attempts is the gateway failures counted against it so far.
-	Attempts int
-	// HeldBy is the started run of its repository it waits for, 0 when
-	// none: NextQueued skips it until that run is over.
-	HeldBy int64
-}
-
 // startedRunOfNote is the started run of note n's repository, the run its
 // note waits for: NextQueued skips a note that has one, PendingNotes names
 // it. One rule, so the page shows the hold the worker keeps.
@@ -147,16 +132,6 @@ func (s *Store) runs(ctx context.Context, query string, args ...any) ([]Baseline
 	return out, rows.Err()
 }
 
-// RunCall is one model call of a run, for its steps on the queue page.
-type RunCall struct {
-	Purpose string
-	// Step is the reading step, nil for the catalogue, project and map.
-	Step        *int
-	Outcome     string
-	CostNanoUSD *int64
-	At          time.Time
-}
-
 // RunCalls is a run's calls in the order they were made.
 func (s *Store) RunCalls(ctx context.Context, runID int64) ([]RunCall, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -180,23 +155,6 @@ func (s *Store) RunCalls(ctx context.Context, runID int64) ([]RunCall, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
-}
-
-// FoldedNote is a note the worker took off the queue: folded, refused or
-// ignored. Outcome and cost are the last merge call of this delivery
-// (made between its arrival and its fold), one it shared with its
-// repository's other notes too; "" and nil when it made none (a note for
-// a repository that is no source). Batch is how many notes that call
-// folded, 1 for one: its cost is the whole call's, not this note's share.
-type FoldedNote struct {
-	ProjectKey     string
-	RepoSlug       string
-	PRKey          string
-	PRTitle        string
-	ConsolidatedAt time.Time
-	Outcome        string
-	CostNanoUSD    *int64
-	Batch          int
 }
 
 // FoldedNotes is the notes taken off the queue at or after since, newest
@@ -233,19 +191,6 @@ func (s *Store) FoldedNotes(ctx context.Context, since time.Time, limit int) ([]
 		out = append(out, n)
 	}
 	return out, rows.Err()
-}
-
-// FailedNote is a note the merge call failed on, off the queue until the
-// repository's next run (RequeueFailed) or, at the worker's bound of
-// attempts, for good.
-type FailedNote struct {
-	ProjectKey string
-	RepoSlug   string
-	PRKey      string
-	PRTitle    string
-	FailedAt   time.Time
-	Reason     string
-	Attempts   int
 }
 
 // FailedNotes is the failed notes, newest failure first, at most limit.
@@ -318,13 +263,6 @@ type CostRow struct {
 	Merges     CostSum
 	Runs       CostSum
 	Briefs     CostSum
-}
-
-// CostSum is calls and their cost; NanoUSD nil when none was priced.
-type CostSum struct {
-	Calls    int
-	Unpriced int
-	NanoUSD  *int64
 }
 
 // CostsMonths is how far back Costs looks: the ledger only grows, and the
@@ -405,21 +343,6 @@ func OverBudget(spent *int64, budget int64) bool {
 	return budget > 0 && spent != nil && *spent >= budget
 }
 
-// Spend is what Almanach's own model calls since a time cost.
-type Spend struct {
-	// NanoUSD sums the priced calls; nil when none was.
-	NanoUSD *int64
-	Calls   int
-	// Unpriced is the calls the gateway billed without a price coming back:
-	// answered, or cut mid-answer (a loop cut, the output cap, a stall), the
-	// stream ended before its usage. Their cost is unknown, not zero. A call
-	// that got no answer (refused, no headers) billed nothing and is not one.
-	Unpriced int
-	// Dearest is the costliest priced call of the last dearestWindow: a day
-	// of nothing but unpriced calls still has one.
-	Dearest int64
-}
-
 // dearestWindow is how far back Spend.Dearest looks, from the start of
 // the spend's window (the UTC day). "30 Tage" in strings.ts' unpricedHint
 // and openapi.yaml's unpriced say it: they follow a change.
@@ -428,21 +351,6 @@ const dearestWindow = 30 * 24 * time.Hour
 // billed is a ledger row the gateway billed: streamed, or from before the
 // column with an outcome that answered (inference.Outcome's strings).
 const billed = `(streamed = 1 OR outcome IN ('ok', 'unparseable', 'too_long'))`
-
-// Budgeted is the spend a daily budget counts: each unpriced call as the
-// costliest priced one, never as nothing (2026-11-07: a night of unpriced
-// runaways never reached the budget). Nil when nothing is known.
-func (s Spend) Budgeted() *int64 {
-	if s.NanoUSD == nil && (s.Unpriced == 0 || s.Dearest == 0) {
-		return nil
-	}
-	var sum int64
-	if s.NanoUSD != nil {
-		sum = *s.NanoUSD
-	}
-	sum += int64(s.Unpriced) * s.Dearest
-	return &sum
-}
 
 // Spent is what Almanach's own model calls since a time cost: one read, so
 // the sum and the counts agree.
