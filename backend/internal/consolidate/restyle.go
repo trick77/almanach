@@ -112,7 +112,7 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 			return err
 		}
 		if !okCall {
-			return fmt.Errorf("the restyle call failed: %s", res.Outcome)
+			return callFailed("the restyle call", res.Call)
 		}
 		if out, err = w.restyled(ctx, at, *r, store.ScopeRepository, page, res); err != nil {
 			return err
@@ -157,7 +157,7 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		return err
 	}
 	if !okCall {
-		return fmt.Errorf("the project restyle call failed: %s", res.Outcome)
+		return callFailed("the project restyle call", res.Call)
 	}
 	out, err := w.restyled(ctx, at, *r, store.ScopeProject, page, res)
 	if err != nil {

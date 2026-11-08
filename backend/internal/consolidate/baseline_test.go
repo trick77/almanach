@@ -1308,9 +1308,11 @@ func TestRun_Reconcile(t *testing.T) {
 func TestRun_Failures(t *testing.T) {
 	x := newWorld(t, 16)
 	x.queue(store.RunFull, "")
-	x.models.catalogue = []inference.CatalogueResult{{Call: inference.Call{Outcome: inference.OutcomeUnparseable}}}
+	x.models.catalogue = []inference.CatalogueResult{{Call: inference.Call{Outcome: inference.OutcomeUnparseable,
+		Err: errors.New(`no valid JSON; the answer begins "Hier"`)}}}
 	x.w.drain(context.Background())
-	if r := x.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "catalogue failed") {
+	// The run's error, what the queue shows, carries the call's reason.
+	if r := x.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "catalogue failed: unparseable: no valid JSON") {
 		t.Fatalf("catalogue off the schema: %+v", r)
 	}
 

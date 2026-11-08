@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/redact"
@@ -336,7 +338,7 @@ func (c *Client) Merge(ctx context.Context, req MergeRequest) MergeResult {
 	}
 	m, ok := ParseMerge(content)
 	if !ok {
-		out.Outcome = c.unparseable(out.Call, content)
+		out.Outcome = c.unparseable(&out.Call, content, new(Merge))
 		return out
 	}
 	out.Merge = m
@@ -492,11 +494,21 @@ func restyleCap(prompt string) int {
 // Redacted whole, then cut: a window starting past a key would leave its
 // value unrecognised.
 func (c *Client) logCut(callID, content string) {
-	tail := redact.Text(content)
-	if n := len(tail); n > cutTail {
-		tail = strings.ToValidUTF8(tail[n-cutTail:], "")
+	text := redact.Text(content)
+	head, tail := window(text)
+	if tail == "" {
+		tail = head
 	}
-	c.log.Warn("answer cut", "model", c.model, "call_id", callID, "chars", len(content), "tail", tail)
+	c.log.Warn("answer cut", "model", c.model, "call_id", callID, "chars", utf8.RuneCountInString(text), "tail", tail)
+}
+
+// window is a redacted answer's head and end for the log, cutTail bytes
+// each on a rune; an answer within twice that is its head alone.
+func window(text string) (head, tail string) {
+	if len(text) <= 2*cutTail {
+		return text, ""
+	}
+	return strings.ToValidUTF8(text[:cutTail], ""), strings.ToValidUTF8(text[len(text)-cutTail:], "")
 }
 
 // cutTail is how much of a cut answer's end the log keeps.
@@ -507,15 +519,67 @@ const cutTail = 400
 // instead (prose around the JSON, a field of the wrong type) is what the
 // prompt or the schema needs fixed, and an unlogged "unparseable" tells
 // nothing (a catalogue failed so, 2026-11-08). Returns the outcome.
-func (c *Client) unparseable(call Call, content string) Outcome {
+//
+// The call's Err says why, so every place that logs or stores a failed
+// call carries it (the run's error, the queue's "Fehlgeschlagen:"): the
+// JSON's own error, or valid JSON that is not the schema's answer, and
+// how the answer begins.
+//
+// reasons say what was refused: the answer's target (decoded again for the
+// JSON's own error, a field of the wrong type deep in a long answer among
+// them) or an error a later check of the answer returned.
+func (c *Client) unparseable(call *Call, content string, reasons ...any) Outcome {
 	text := redact.Text(content)
-	head, tail := text, ""
-	if len(text) > 2*cutTail {
-		head = strings.ToValidUTF8(text[:cutTail], "")
-		tail = strings.ToValidUTF8(text[len(text)-cutTail:], "")
+	head, tail := window(text)
+	why := whyUnparseable(content, reasons)
+	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", utf8.RuneCountInString(text), "why", why, "head", head, "tail", tail)
+	begins := []rune(strings.Join(strings.Fields(head), " "))
+	if len(begins) > 120 {
+		begins = append(begins[:120], '…')
 	}
-	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "head", head, "tail", tail)
+	call.Outcome, call.Err = OutcomeUnparseable, fmt.Errorf("%s; the answer begins %q", why, string(begins))
 	return OutcomeUnparseable
+}
+
+// whyUnparseable is what is wrong with an answer parse refused: a check's
+// error, the target's decode error, no JSON at all, broken JSON (its
+// error), or JSON that is no answer to the schema.
+func whyUnparseable(content string, reasons []any) string {
+	t := strings.TrimSpace(content)
+	if t == "" {
+		return "empty answer"
+	}
+	for _, r := range reasons {
+		switch r := r.(type) {
+		case error:
+			if r != nil {
+				return r.Error()
+			}
+		case nil:
+		default:
+			// A fresh value of the target's type: its decode error names
+			// the field and the offset.
+			if v := reflect.ValueOf(r); v.Kind() == reflect.Pointer && !v.IsNil() {
+				if err := parseErr(content, reflect.New(v.Type().Elem()).Interface()); err != nil {
+					return "the schema's answer refused: " + err.Error()
+				}
+			}
+		}
+	}
+	var v any
+	err := json.Unmarshal([]byte(t), &v)
+	if err != nil {
+		if start, end := strings.Index(t, "{"), strings.LastIndex(t, "}"); start >= 0 && end > start {
+			if json.Unmarshal([]byte(t[start:end+1]), &v) == nil {
+				return "valid JSON inside, not the schema's answer (a field missing, null or of the wrong type)"
+			}
+		}
+		return "no valid JSON: " + err.Error()
+	}
+	if v == nil {
+		return "the answer is null"
+	}
+	return "valid JSON, not the schema's answer (a field missing, null or of the wrong type)"
 }
 
 // loopGuard watches a streamed answer for a loop: the same stretch of text
@@ -632,7 +696,25 @@ func ParseMerge(content string) (Merge, bool) {
 }
 
 // parse reads a JSON answer into dst, a fence around it tolerated.
-func parse(content string, dst any) bool {
+func parse(content string, dst any) bool { return parseErr(content, dst) == nil }
+
+// answerShare is how much of an answer an object found in prose must be to
+// be the answer: a sentence around it ("Hier ist der Katalog: {...}") is,
+// an example a refusal quotes ("ich kann nicht, erwartet wäre {...}") is
+// not, and that refusal stays unparseable rather than an empty answer.
+const answerShare = 0.8
+
+// answerProse is the prose a short answer may carry around its object, the
+// object itself at least that long: a line before a small catalogue.
+const answerProse = 200
+
+// parseErr is parse with the reason: the JSON's error as it stands. When
+// the answer is no JSON as it stands and opens with no list, an object in
+// it is tried, decoded from each "{" on (prose may hold a brace of its
+// own), the first that decodes and makes up answerShare of the answer. A
+// strict schema asks for the object alone; a model does not always hold
+// to it.
+func parseErr(content string, dst any) error {
 	content = strings.TrimSpace(content)
 	if strings.HasPrefix(content, "```") {
 		lines := strings.Split(content, "\n")
@@ -642,19 +724,27 @@ func parse(content string, dst any) bool {
 		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
 			lines = lines[:len(lines)-1]
 		}
-		content = strings.Join(lines, "\n")
+		content = strings.TrimSpace(strings.Join(lines, "\n"))
 	}
-	if json.Unmarshal([]byte(content), dst) == nil {
-		return true
+	err := json.Unmarshal([]byte(content), dst)
+	if err == nil || strings.HasPrefix(content, "[") {
+		return err
 	}
-	// Prose before or after the object ("Hier ist der Katalog: {...}"): the
-	// outermost object, when it is the answer. A strict schema asks for the
-	// object alone, and a model does not always hold to it.
-	start, end := strings.Index(content, "{"), strings.LastIndex(content, "}")
-	if start < 0 || end <= start || start == 0 && end == len(content)-1 {
-		return false
+	for i := 0; i < len(content); i++ {
+		if content[i] != '{' {
+			continue
+		}
+		var raw json.RawMessage
+		if json.NewDecoder(strings.NewReader(content[i:])).Decode(&raw) != nil {
+			continue
+		}
+		prose := len(content) - len(raw)
+		if float64(len(raw)) < answerShare*float64(len(content)) && (len(raw) < answerProse || prose > answerProse) {
+			break
+		}
+		return json.Unmarshal(raw, dst)
 	}
-	return json.Unmarshal([]byte(content[start:end+1]), dst) == nil
+	return err
 }
 
 // costFrom is a stream's usage, cost and call id; Answered is the caller's
