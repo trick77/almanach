@@ -1393,8 +1393,10 @@ statement whose kind, name or text the rules change, never one reworded to
 polish it, and an area alone by the outline, never by returning the
 statement. A page whose rewrite would not fit one answer (an 86k prompt cut
 at 59-68k answer tokens, every attempt, 2026-11-07) fits as its diff; a
-statement returned with no change of kind, name or text is logged, the
-answer having paid for more than it needed. It
+statement returned exactly as stored is logged, the answer having paid for
+more than it needed. With areas by the outline alone, an answer without
+one for a page that lacks some fails the step (a try spent), never a page
+left unarranged at the new epoch. It
 learns nothing, so it neither credits nor checks: an edit keeps its files,
 sources, last check and diagram (none drawn where there was none); a new
 statement keeps only files of what it came from (any file of the page
