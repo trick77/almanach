@@ -19,7 +19,7 @@ func shapeWorld(t *testing.T, page store.Page, res inference.DescriptionResult) 
 	x.queue(store.RunFull, "")
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = page
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 	res.Call = called
 	x.models.project = res
 	return x
@@ -40,15 +40,15 @@ func systemPage(shape string) store.Page {
 // map.
 func TestProjectStep_JudgesACollection(t *testing.T) {
 	x := shapeWorld(t, systemPage(""), inference.DescriptionResult{
-		Shape: inference.Shape{Kind: store.ShapeCollection, Reason: "Bibliotheken für sich."},
-		Description: &inference.Description{Summary: "Die Bibliotheken des Teams.", Statements: []inference.Statement{stmt(ref("s2"), "rule", "Regel", "Neu.")},
+		Shape: inference.Shape{Kind: store.ShapeCollection, Reason: "Libraries für sich."},
+		Description: &inference.Description{Summary: "Die Libraries des Teams.", Statements: []inference.Statement{stmt(ref("s2"), "rule", "Regel", "Neu.")},
 			Added: []inference.Statement{stmt(nil, "interface", "API", "Neu.")}, Map: drawnMap("svc")}})
 	x.st.inner = map[string][]store.Edge{"tools": {{From: store.RepoRef{ProjectKey: "tools", Slug: "web"}, To: store.RepoRef{ProjectKey: "tools", Slug: "svc"},
 		Coords: []string{"npm:svc"}}}}
 	x.w.drain(context.Background())
 
 	page := x.projectPage()
-	if page.Shape != store.ShapeCollection || page.Summary != "Die Bibliotheken des Teams." || len(page.Statements) != 0 || page.Map != nil {
+	if page.Shape != store.ShapeCollection || page.Summary != "Die Libraries des Teams." || len(page.Statements) != 0 || page.Map != nil {
 		t.Fatalf("project page = %+v, want the collection's summary alone", page)
 	}
 	var prompt string
@@ -74,7 +74,7 @@ func TestProjectStep_JudgesACollection(t *testing.T) {
 // A collection judged a system again draws its map in the same answer;
 // one that answers none leaves it NULL, due, never the sentinel.
 func TestProjectStep_CollectionBecomesASystem(t *testing.T) {
-	collection := store.Page{Scope: store.ScopeProject, RevisionID: 1, Revision: 1, Summary: "Bibliotheken.", Shape: store.ShapeCollection,
+	collection := store.Page{Scope: store.ScopeProject, RevisionID: 1, Revision: 1, Summary: "Libraries.", Shape: store.ShapeCollection,
 		Statements: []store.Statement{}}
 	for name, c := range map[string]struct {
 		answer  *inference.Description
@@ -131,7 +131,7 @@ func TestProjectStep_ShapeAloneWrites(t *testing.T) {
 		t.Fatal("a blank collection page was written")
 	}
 	// An answer naming no shape keeps the page's.
-	collection := store.Page{Scope: store.ScopeProject, RevisionID: 1, Revision: 1, Summary: "Bibliotheken.", Shape: store.ShapeCollection,
+	collection := store.Page{Scope: store.ScopeProject, RevisionID: 1, Revision: 1, Summary: "Libraries.", Shape: store.ShapeCollection,
 		Statements: []store.Statement{}}
 	x = shapeWorld(t, collection, inference.DescriptionResult{})
 	x.w.drain(context.Background())
@@ -145,8 +145,8 @@ func TestProjectStep_ShapeAloneWrites(t *testing.T) {
 func TestFold_CollectionTakesTheSummaryAlone(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeProject, "PLAT", "")] = store.Page{Scope: store.ScopeProject, ProjectKey: "PLAT", RevisionID: 3, Revision: 1,
-		Summary: "Bibliotheken.", Shape: store.ShapeCollection, Statements: []store.Statement{}}
-	project := &inference.Description{Summary: "Bibliotheken, eine mehr.", Statements: []inference.Statement{
+		Summary: "Libraries.", Shape: store.ShapeCollection, Statements: []store.Statement{}}
+	project := &inference.Description{Summary: "Libraries, eine mehr.", Statements: []inference.Statement{
 		{Kind: "interface", Name: "API", Text: "Neu.", Files: []string{"api.go"}},
 	}}
 	m := &fakeMerger{result: okResult(nil, project)}
@@ -157,7 +157,7 @@ func TestFold_CollectionTakesTheSummaryAlone(t *testing.T) {
 			rev = &st.revisions[i]
 		}
 	}
-	if rev == nil || rev.Summary != "Bibliotheken, eine mehr." || len(rev.Statements) != 0 || rev.Shape != "" {
+	if rev == nil || rev.Summary != "Libraries, eine mehr." || len(rev.Statements) != 0 || rev.Shape != "" {
 		t.Fatalf("project revision = %+v, want the summary alone, the shape carried by the store", rev)
 	}
 	if !strings.Contains(m.prompts[0], collectionProject) {
@@ -173,7 +173,7 @@ func TestRestyle_ProjectJudgesAndDrops(t *testing.T) {
 	x := restyleWorld(t)
 	x.st.repoEpoch = prompts.RepoEpoch
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = systemPage("")
-	x.st.others = []store.RepoSummary{{Slug: "svc", Summary: "Der Dienst."}, {Slug: "web", Summary: "Die Oberfläche."}}
+	x.st.others = []store.RepoSummary{{Slug: "svc", Summary: "Der Service."}, {Slug: "web", Summary: "Die Oberfläche."}}
 	x.models.restyles = []inference.RestyleResult{{Call: called, Shape: inference.Shape{Kind: store.ShapeSystem, Reason: "web ruft svc."},
 		Patch: inference.Patch{Statements: []inference.Statement{},
 			Added: []inference.Statement{{Kind: "interface", Name: "API", Text: "svc bietet sie web.", Area: "Schnittstellen", From: []string{"s1"}}},
@@ -183,7 +183,7 @@ func TestRestyle_ProjectJudgesAndDrops(t *testing.T) {
 	if !slices.Equal(x.models.restyledProject, []bool{true}) {
 		t.Fatalf("restyle calls = %v, want the project's alone (the repository page at its epoch)", x.models.restyledProject)
 	}
-	if p := x.models.prompts[0]; !strings.Contains(p, "Der Dienst.") || !strings.Contains(p, "Die Oberfläche.") || !strings.Contains(p, "_None: no repository") ||
+	if p := x.models.prompts[0]; !strings.Contains(p, "Der Service.") || !strings.Contains(p, "Die Oberfläche.") || !strings.Contains(p, "_None: no repository") ||
 		!strings.Contains(p, "_Not judged yet") {
 		t.Errorf("project restyle prompt lacks the summaries, the edges or the shape:\n%s", p)
 	}

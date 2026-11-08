@@ -376,7 +376,7 @@ func newWorker(st *fakeStore, m Merger) *Worker {
 func existingRepoPage() store.Page {
 	return store.Page{
 		Scope: store.ScopeRepository, ProjectKey: "PLAT", RepoSlug: "files", RevisionID: 5, Revision: 2,
-		Summary: "Der Dienst speichert Dateien.",
+		Summary: "Der Service speichert Dateien.",
 		Statements: []store.Statement{{
 			ID: "s1", Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an.", Files: []string{"internal/files/upload.go"},
 			Sources: []store.Source{{PRKey: "PLAT/files#1", MergedAt: older}},
@@ -450,7 +450,7 @@ func TestFoldPanicFailsTheNote(t *testing.T) {
 	st = newFakeStore()
 	st.projectPanic = true
 	m := &fakeMerger{result: okResult(
-		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
+		&inference.Description{Summary: "Der Service speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
 		&inference.Description{Summary: "Das Projekt.", Statements: []inference.Statement{}})}
 	if next := newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42")); !next {
 		t.Errorf("Fold after a late panic = false, want the drain to go on")
@@ -467,7 +467,7 @@ func TestFoldProjectRefused(t *testing.T) {
 	emptyProject := &inference.Description{Statements: []inference.Statement{{Kind: "rule", Name: "Quer", Text: "Über Repositories."}}}
 	st := newFakeStore()
 	newWorker(st, &fakeMerger{result: okResult(
-		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{}}, emptyProject)}).
+		&inference.Description{Summary: "Der Service speichert Dateien.", Statements: []inference.Statement{}}, emptyProject)}).
 		Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.marked) != 1 || len(st.revisions) != 1 || len(st.failed) != 0 {
 		t.Errorf("after the repository's revision: marked %v revisions %d failed %v; want consolidated", st.marked, len(st.revisions), st.failed)
@@ -488,7 +488,7 @@ func TestFoldRespellingIsNoChange(t *testing.T) {
 	flow := &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR", Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}}}
 	page.Statements[0].Name, page.Statements[0].Text, page.Statements[0].Checked, page.Statements[0].Diagram = "Gebuehren", "Fuer jede Datei.", "c0ffee", flow
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Gebühren", Text: "Für jede Datei.", Files: []string{"internal/files/upload.go"}}},
 		Added:      []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.revisions) != 1 {
@@ -509,7 +509,7 @@ func TestFoldLayoutIsNoChange(t *testing.T) {
 	page := existingRepoPage()
 	page.Statements[0].Text = "Nimmt Dateien an: Bilder, Texte und Archive."
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "## Zweck\nDer Dienst.",
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "## Zweck\nDer Service.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader",
 			Text: "Nimmt **Dateien** an:\n* Bilder\n* Texte\n  und Archive", Files: []string{"internal/files/upload.go"}}},
 		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
@@ -517,7 +517,7 @@ func TestFoldLayoutIsNoChange(t *testing.T) {
 		t.Fatalf("revisions = %+v", st.revisions)
 	}
 	r := st.revisions[0]
-	if want := "#### Zweck\n\nDer Dienst."; r.Summary != want {
+	if want := "#### Zweck\n\nDer Service."; r.Summary != want {
 		t.Errorf("summary = %q, want %q", r.Summary, want)
 	}
 	s := r.Statements[0]
@@ -576,7 +576,7 @@ func TestFoldNoChange(t *testing.T) {
 func TestFoldNewStatement(t *testing.T) {
 	st := newFakeStore()
 	m := &fakeMerger{result: okResult(&inference.Description{
-		Summary:    "  Der Dienst speichert Dateien auf der Straße. ",
+		Summary:    "  Der Service speichert Dateien auf der Straße. ",
 		Statements: []inference.Statement{{ID: nil, Kind: "rule", Name: "Größe", Text: "Höchstens 10 MB, außer PDFs.", Files: []string{" a.go ", ""}}},
 	}, nil)}
 	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
@@ -587,7 +587,7 @@ func TestFoldNewStatement(t *testing.T) {
 	if rev.Scope != store.ScopeRepository || rev.ProjectKey != "PLAT" || rev.RepoSlug != "files" || rev.SourcePR != "PLAT/files#42" {
 		t.Errorf("revision identity = %+v", rev)
 	}
-	if rev.Summary != "Der Dienst speichert Dateien auf der Strasse." {
+	if rev.Summary != "Der Service speichert Dateien auf der Strasse." {
 		t.Errorf("Summary = %q", rev.Summary)
 	}
 	if rev.LLMCallID == nil || *rev.LLMCallID != 77 {
@@ -615,7 +615,7 @@ func TestFoldNewStatement(t *testing.T) {
 // extension and pitfall on the repository's, decision and pitfall on the
 // project's, a new pitfall only from a bugfix note.
 func TestFoldAgentKinds(t *testing.T) {
-	repo := &inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{
+	repo := &inference.Description{Summary: "Der Service speichert Dateien.", Statements: []inference.Statement{
 		{Kind: "decision", Name: "Ein Worker", Text: "Seriell, weil zwei Schreiber eine Seite verlieren.", Files: []string{"w.go"}},
 		{Kind: "extension", Name: "Neue Route", Text: "api.go, dann openapi.yaml.", Files: []string{"api.go", "openapi.yaml"}},
 		{Kind: "pitfall", Name: "Retry ohne Backoff", Text: "Brach den Upload ab.", Files: []string{"upload.go"}},
@@ -658,7 +658,7 @@ func TestFoldAgentKinds(t *testing.T) {
 func TestFoldEditsAndAdded(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
-	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an.", Files: []string{"internal/files/upload.go"}}},
 		Added:      []inference.Statement{{ID: str("s36"), Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}},
 	}, nil)}
@@ -675,7 +675,7 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	// written.
 	st = newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
-	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.",
 		Statements: []inference.Statement{
 			{ID: str("s9"), Kind: "rule", Name: "Erfunden", Text: "Gibt es nicht."},
 			{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an, bis 10 MB.", Files: []string{"internal/files/upload.go"}},
@@ -711,7 +711,7 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	// On a page without statements nothing can be edited: an edit, its id
 	// invented or missing, is a new statement, numbered by the code.
 	st = newFakeStore()
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.",
 		Statements: []inference.Statement{{ID: str("s9"), Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}, {Kind: "rule", Name: "Takt", Text: "Jede Minute.", Files: []string{"b.go"}}},
 		Added:      []inference.Statement{{Kind: "component", Name: "Uploader", Text: "Nimmt an.", Files: []string{"c.go"}}},
 	}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
@@ -728,7 +728,7 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	// An edit repeating a new statement, or an earlier edit (an id used
 	// twice), is that statement once.
 	st = newFakeStore()
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}},
 		Added:      []inference.Statement{{Kind: "rule", Name: "Grenze", Text: "Zehn MB.", Files: []string{"a.go"}}},
 	}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
@@ -737,7 +737,7 @@ func TestFoldEditsAndAdded(t *testing.T) {
 	}
 	st = newFakeStore()
 	twice := inference.Statement{ID: str("s1"), Kind: "rule", Name: "Grenze", Text: "10 MB.", Files: []string{"a.go"}}
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.",
 		Statements: []inference.Statement{twice, twice}, Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.revisions) != 1 || len(st.revisions[0].Statements) != 1 || st.revisions[0].Statements[0].ID != "s1" {
 		t.Errorf("empty page, id used twice: %+v, want the statement once", st.revisions)
@@ -761,7 +761,7 @@ func TestFoldDropsJudgedByTheTree(t *testing.T) {
 			Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}})
 	tree := []gitrepo.Entry{{Path: "internal/files/upload.go", Mode: "100644", Size: 1}, {Path: "internal/files/limit.go", Mode: "100644", Size: 1},
 		{Path: "internal/files/keep.go", Mode: "100644", Size: 1}}
-	drop := &inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{}, Added: []inference.Statement{}, Drop: []string{"s1", "s2", "s3"}}
+	drop := &inference.Description{Summary: "Der Service.", Statements: []inference.Statement{}, Added: []inference.Statement{}, Drop: []string{"s1", "s2", "s3"}}
 	q := queued("PLAT/files#42")
 	q.MergeCommit = "m42"
 	ids := func(rev store.NewRevision) []string {
@@ -838,7 +838,7 @@ func TestFoldDropsJudgedByTheTree(t *testing.T) {
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
 	rs = &runStore{fakeStore: st, repos: []store.SourceRepo{{ProjectKey: "PLAT", Slug: "files", HeadCommit: "h1"}}}
 	code = &fakeCode{tree: tree, held: map[string]bool{"m42": true}}
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst, neu.", Statements: []inference.Statement{}}, nil)}).
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service, neu.", Statements: []inference.Statement{}}, nil)}).
 		WithBaseline(Baseline{Store: rs, Code: code}).Fold(context.Background(), q)
 	if len(code.treesAt) != 0 || code.asked != 0 {
 		t.Errorf("no drop: trees %v contains asked %d, want no git read", code.treesAt, code.asked)
@@ -886,11 +886,11 @@ func TestFoldDropsJudgedByTheTree(t *testing.T) {
 // the repository's applied.
 func TestFoldProjectExtensionRefused(t *testing.T) {
 	st := newFakeStore()
-	repo := &inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+	repo := &inference.Description{Summary: "Der Service.", Statements: []inference.Statement{
 		{Kind: "extension", Name: "Neue Route", Text: "api.go.", Files: []string{"api.go"}},
 	}}
 	project := &inference.Description{Summary: "Das Projekt.", Statements: []inference.Statement{
-		{Kind: "extension", Name: "Neuer Dienst", Text: "Überall.", Files: []string{"x.go"}},
+		{Kind: "extension", Name: "Neuer Service", Text: "Überall.", Files: []string{"x.go"}},
 	}}
 	for _, kind := range []string{"extension", "tutorial"} {
 		project.Statements[0].Kind = kind
@@ -986,7 +986,7 @@ func TestFoldKeptIDUnchangedKeepsSources(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
 	m := &fakeMerger{result: okResult(&inference.Description{
-		Summary:    "Der Dienst speichert Dateien, neu formuliert.",
+		Summary:    "Der Service speichert Dateien, neu formuliert.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an.", Files: []string{"internal/files/upload.go"}}},
 	}, nil)}
 	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
@@ -1003,7 +1003,7 @@ func TestFoldKeptIDChangedAppendsPROnce(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
 	m := &fakeMerger{result: okResult(&inference.Description{
-		Summary:    "Der Dienst speichert Dateien.",
+		Summary:    "Der Service speichert Dateien.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien bis 10 MB an.", Files: []string{"internal/files/upload.go"}}},
 	}, nil)}
 	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
@@ -1055,7 +1055,7 @@ func TestFoldItemsLeftOut(t *testing.T) {
 			if len(st.revisions) != 1 || st.revisions[0].Statements[0].Text != tc.text {
 				t.Fatalf("revisions = %+v, want one with s1 %q", st.revisions, tc.text)
 			}
-			if tc.name == "empty summary" && (st.revisions[0].Summary != "Der Dienst speichert Dateien." || len(st.revisions[0].Statements) != 2) {
+			if tc.name == "empty summary" && (st.revisions[0].Summary != "Der Service speichert Dateien." || len(st.revisions[0].Statements) != 2) {
 				t.Errorf("revision = %+v, want the stored summary and the new statement", st.revisions[0])
 			}
 			if len(st.marked) != 1 || len(st.failed) != 0 {
@@ -1080,7 +1080,7 @@ func TestFoldItemsLeftOut(t *testing.T) {
 	// it into the repository page twice.
 	st = newFakeStore()
 	newWorker(st, &fakeMerger{result: okResult(
-		&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t"}}},
+		&inference.Description{Summary: "Der Service.", Statements: []inference.Statement{{Kind: "rule", Name: "n", Text: "t"}}},
 		&inference.Description{Summary: " ", Statements: []inference.Statement{{Kind: "rule", Name: "p", Text: "q"}}})}).
 		Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.revisions) != 1 || st.revisions[0].Scope != store.ScopeRepository || len(st.marked) != 1 || len(st.failed) != 0 {
@@ -1104,7 +1104,7 @@ func TestFoldTakesEveryStatementWhole(t *testing.T) {
 	for i := range 50 {
 		added = append(added, inference.Statement{Kind: "rule", Name: fmt.Sprintf("R%d", i), Text: "t", Files: []string{"a.go"}})
 	}
-	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.",
+	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: long, Text: "Nimmt Dateien an.", Files: files}},
 		Added:      added}, nil)})
 	var logs strings.Builder
@@ -1129,7 +1129,7 @@ func TestFoldIdenticalNoRevision(t *testing.T) {
 	st := newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
 	m := &fakeMerger{result: okResult(&inference.Description{
-		Summary:    "Der Dienst speichert Dateien.",
+		Summary:    "Der Service speichert Dateien.",
 		Statements: []inference.Statement{{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an.", Files: []string{"internal/files/upload.go"}}},
 	}, nil)}
 	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
@@ -1377,7 +1377,7 @@ func TestFoldBusyDatabaseDefers(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
 	st.revisionErr = fmt.Errorf("insert revision: %w", store.ErrBusy)
-	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{}}, nil)}
+	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service speichert Dateien.", Statements: []inference.Statement{}}, nil)}
 	w := newWorker(st, m)
 	w.now = func() time.Time { return mergedAt }
 	if next := w.Fold(ctx, queued("PLAT/files#42")); next || len(st.marked) != 0 || st.attempts["PLAT|files|42"] != 1 || !w.holding() {
@@ -1457,7 +1457,7 @@ func TestFoldBusyDatabaseDefers(t *testing.T) {
 	st.pages[pageKey(store.ScopeProject, "PLAT", "")] = store.Page{Scope: store.ScopeProject, ProjectKey: "PLAT", RevisionID: 7, Revision: 1, Summary: "Das Projekt."}
 	st.projectRevisionErr = store.ErrBusy
 	m = &fakeMerger{result: okResult(
-		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
+		&inference.Description{Summary: "Der Service speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
 		&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}})}
 	w = newWorker(st, m)
 	w.now = func() time.Time { return mergedAt }
@@ -1482,7 +1482,7 @@ func TestFoldBusyDatabaseDefers(t *testing.T) {
 	st.pages[pageKey(store.ScopeProject, "PLAT", "")] = store.Page{Scope: store.ScopeProject, ProjectKey: "PLAT", RevisionID: 7, Revision: 1, Summary: "Das Projekt."}
 	st.projectRevisionErr = store.ErrFull
 	m = &fakeMerger{result: okResult(
-		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
+		&inference.Description{Summary: "Der Service speichert Dateien.", Statements: []inference.Statement{{Kind: "rule", Name: "Neu", Text: "Neu."}}},
 		&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}})}
 	w = newWorker(st, m)
 	w.now = func() time.Time { return mergedAt }
@@ -1526,7 +1526,7 @@ func TestRender(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"`files`", "`PLAT`", "### PR PLAT/files#42 (ticket none, kind unknown, merged 2026-10-20)", "1 note of repository `files` in project `PLAT`", noProblems,
-		"Der Dienst speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
+		"Der Service speichert Dateien.", "### [s1] component: Uploader\n\nNimmt Dateien an.",
 		noneYet, `{"components":[{"name":"x"}]}`, "At most 4 nodes", "and 3 edges", "At most 1 statement diagrams on a page", "null keeps the diagram",
 		// A PR-taught statement is marked, the prompt naming the mark: a
 		// drop of one unmarked is judged by the tree.
@@ -1565,7 +1565,7 @@ func TestDescribe(t *testing.T) {
 	p := existingRepoPage()
 	p.Statements = append(p.Statements, store.Statement{ID: "s2", Kind: "rule", Name: "R", Text: "T"})
 	got := describe(p)
-	want := "Der Dienst speichert Dateien.\n\n### [s1] component: Uploader\n\nNimmt Dateien an.\n\nFiles: internal/files/upload.go\n\n### [s2] rule: R\n\nT\n"
+	want := "Der Service speichert Dateien.\n\n### [s1] component: Uploader\n\nNimmt Dateien an.\n\nFiles: internal/files/upload.go\n\n### [s2] rule: R\n\nT\n"
 	if got != want {
 		t.Errorf("describe =\n%q\nwant\n%q", got, want)
 	}
@@ -1613,7 +1613,7 @@ func TestFoldKeepsAStoredFileList(t *testing.T) {
 	page := existingRepoPage()
 	page.Statements[0].Files = []string{"docs/Design Notes.md"}
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.", Statements: []inference.Statement{
 		{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an, neu.", Files: []string{"docs/Design Notes.md"}}},
 		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#42"))
 	if len(st.revisions) != 1 || !slices.Equal(st.revisions[0].Statements[0].Files, []string{"docs/Design Notes.md"}) {
@@ -1622,7 +1622,7 @@ func TestFoldKeepsAStoredFileList(t *testing.T) {
 	// An edit whose every new path is bad keeps the stored list, never none.
 	st = newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = existingRepoPage()
-	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+	newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.", Statements: []inference.Statement{
 		{ID: str("s1"), Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an.", Files: []string{"a/b.go (handler)"}}},
 		Added: []inference.Statement{}}, nil)}).Fold(context.Background(), queued("PLAT/files#43"))
 	if len(st.revisions) != 1 || !slices.Equal(st.revisions[0].Statements[0].Files, []string{"internal/files/upload.go"}) {

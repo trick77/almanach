@@ -348,6 +348,46 @@ func Equal(a, b *Diagram) bool {
 	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
 
+// Relabel is d with f applied to every piece of its prose: zone titles,
+// labels, a field's comment. Ids, kinds and a field's name and type are
+// code's and stay. Returns whether anything changed; nil changes nothing.
+func (d *Diagram) Relabel(f func(string) string) bool {
+	if d == nil {
+		return false
+	}
+	changed := false
+	set := func(s *string) {
+		if v := f(*s); v != *s {
+			*s, changed = v, true
+		}
+	}
+	for i := range d.Zones {
+		set(&d.Zones[i].Title)
+	}
+	for i := range d.Nodes {
+		set(&d.Nodes[i].Label)
+	}
+	for i := range d.Edges {
+		set(&d.Edges[i].Label)
+	}
+	for i := range d.Actors {
+		set(&d.Actors[i].Label)
+	}
+	for i := range d.Rows {
+		set(&d.Rows[i].Label)
+	}
+	for i := range d.Entities {
+		set(&d.Entities[i].Label)
+		for j := range d.Entities[i].Attrs {
+			set(&d.Entities[i].Attrs[j].Comment)
+		}
+	}
+	for i := range d.Rels {
+		set(&d.Rels[i].Label)
+	}
+	return changed
+}
+
 // canonical is a diagram with every list whose order says nothing sorted:
 // a flow's nodes and zones by id, its edges by their ends and label, an
 // entity model's tables by id and relationships likewise. A table's

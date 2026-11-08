@@ -25,7 +25,7 @@ func TestRun_SingleLeavesTheProjectOut(t *testing.T) {
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}},
 	}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{stmt(nil, "component", "Dienst", "Der Dienst.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{stmt(nil, "component", "Service", "Der Service.", "README.md")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Erfunden.", Statements: []inference.Statement{}}}
@@ -57,10 +57,10 @@ func TestRun_SecondRepoFoldsTheProject(t *testing.T) {
 	delete(x.st.pages, pageKey(store.ScopeProject, "tools", ""))
 	raw, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 	x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 	x.queue(store.RunReconcile, older40)
-	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Zwei Dienste.",
+	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Zwei Services.",
 		Statements: []inference.Statement{}, Map: drawnMap("svc", "web")}}
 	x.models.repoMap = inference.RepoMapResult{Call: called, Map: drawnRepoMap()}
 	x.w.drain(context.Background())
@@ -86,7 +86,7 @@ func TestRun_RepoNewerThanThePageFoldsTheProject(t *testing.T) {
 			{ProjectKey: "tools", Slug: "web", CreatedAt: added}}
 		raw, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}}})
 		x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
-		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 		x.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 		x.queue(store.RunReconcile, older40)
 		x.models.project = inference.DescriptionResult{Call: called}
@@ -116,7 +116,7 @@ func TestFoldSingleLeavesTheProjectOut(t *testing.T) {
 	st.pages[pageKey(store.ScopeProject, "PLAT", "")] = store.Page{Scope: store.ScopeProject, ProjectKey: "PLAT", RevisionID: 9, Revision: 1,
 		Summary: "Eine frühere Projektseite."}
 	m := &fakeMerger{result: okResult(
-		&inference.Description{Summary: "Der Dienst speichert Dateien.", Statements: []inference.Statement{{Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an."}}},
+		&inference.Description{Summary: "Der Service speichert Dateien.", Statements: []inference.Statement{{Kind: "component", Name: "Uploader", Text: "Nimmt Dateien an."}}},
 		&inference.Description{Summary: "Erfunden.", Statements: []inference.Statement{}},
 	)}
 	newWorker(st, m).WithBaseline(Baseline{Store: &runStore{fakeStore: st}}).Fold(context.Background(), queued("PLAT/files#42"))

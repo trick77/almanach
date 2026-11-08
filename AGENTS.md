@@ -27,7 +27,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   500, never swallowed.
 - Envelope strict; `note`, `review_totals` verbatim. Each 500 its own line; 401 access log only.
   openapi.yaml = api.go.
-- Swiss German (`lang.Prose` on model prose, never paths), generic masculine, no Eszett.
+- Swiss German (`lang.Prose` on model prose, never paths), generic masculine, no Eszett. IT words English
+  by code (`lang.Terms`), never listed in a prompt (user: keep prompts lean); stored pages respelled by `migrate`.
 - Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
   read (rows verbatim), `lang.Prose`/`Laid`. Shapes need a value's mark, prose stays. New shape → test.
 - Description = documentation, no one-liners: statement as long as subject needs, no

@@ -40,6 +40,16 @@ func TestArrange(t *testing.T) {
 	}
 }
 
+// The areas the code places by name keep it through the word rule: a
+// respelled "Betrieb und Überwachung" would sort as any other area.
+func TestFixedAreasKeepTheirWords(t *testing.T) {
+	for _, a := range []string{OpsArea, LastArea} {
+		if got := CleanArea(a); got != a {
+			t.Errorf("CleanArea(%q) = %q", a, got)
+		}
+	}
+}
+
 // The prompts name the last two areas as the code stores them, in the
 // code's order, and every prompt that lays a page out places them.
 func TestLastAreaInThePrompts(t *testing.T) {

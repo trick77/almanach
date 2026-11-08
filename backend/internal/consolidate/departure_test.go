@@ -30,7 +30,7 @@ func departureWorld(t *testing.T, calls int) world {
 			{ID: "s4", Kind: "decision", Name: "Ohne Quelle", Text: "old bleibt aussen vor."},
 		},
 		Map: drawnMap("svc", "web", "old")}
-	x.st.others = []store.RepoSummary{{Slug: "svc", Summary: "Der Dienst."}, {Slug: "web", Summary: "Die Oberfläche."}}
+	x.st.others = []store.RepoSummary{{Slug: "svc", Summary: "Der Service."}, {Slug: "web", Summary: "Die Oberfläche."}}
 	x.st.departed = []string{"old"}
 	x.st.departureDue = true
 	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "old", Mode: store.RunFull,
@@ -78,7 +78,7 @@ func TestDeparture_MapThenCall(t *testing.T) {
 		t.Fatalf("ledger = %+v", x.st.calls)
 	}
 	prompt := x.models.prompts[0]
-	for _, want := range []string{"Project `tools`.", "Departed: `old`.", "Remaining: `svc`, `web`.", "Nur old.", "svc bietet sie, old nutzt sie.", "Der Dienst."} {
+	for _, want := range []string{"Project `tools`.", "Departed: `old`.", "Remaining: `svc`, `web`.", "Nur old.", "svc bietet sie, old nutzt sie.", "Der Service."} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
@@ -247,7 +247,7 @@ func TestProjectStep_TakesADueDepartureOut(t *testing.T) {
 	}
 
 	x.st.departed = []string{"old"}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Der Dienst.",
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Der Service.",
 		Statements: []store.Statement{}}
 	x.models.project = inference.DescriptionResult{Call: called}
 	plan := []byte(`{"read":[]}`)

@@ -1773,6 +1773,21 @@ so the choice is not undone as a cleanup.
   speaking; the spelling is enforced in code (`lang.SwissSS`) on every
   prose field because the model drifts to the sharp s. File paths are never
   touched.
+- **Software words in English, as a German developer says them.**
+  Service, not Dienst; Repository, not Repositorium. Code replaces them
+  (`lang.Terms`, in `lang.Prose` and `lang.Laid`), no prompt lists them, so
+  the prompts stay lean: whole words outside code spans, never a path, a
+  file name or an identifier, a compound only by hyphen ("Dienst-Registry"),
+  "in Abhängigkeit von" left alone. Only words whose English takes the
+  German article and whose German means only the software thing: "eine
+  Anfrage" would become "eine Request", and "Paket", "Ereignis", "Laufzeit"
+  are business terms too; those stay as the model writes them. A stored
+  German word is the same statement as today's
+  English one (`lang.SameButSpelling`): no credit for the swap. `almanach
+  migrate` respells every stored revision once more after its migrations
+  (`store.Respell`, idempotent, no model call, no new revision), the
+  history too so revisions compare like with like, and carries a
+  repository map's basis along so no run redraws a map for spelling.
 - **The UI is in the binary, and reads the wiki, writes only the sources.**
   It ships with the process so a deployment is one image,
   and it talks to `/api/...` alone (`backend/api/openapi.yaml`); nothing in

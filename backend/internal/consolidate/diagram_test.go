@@ -38,7 +38,7 @@ func dangling() *diagram.Diagram {
 // that breaks a rule, or one too many on the page, is left out.
 func TestFoldStatementDiagram(t *testing.T) {
 	st := newFakeStore()
-	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+	m := &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.", Statements: []inference.Statement{
 		{Kind: "component", Name: "Ablage", Text: "Legt ab.", Diagram: seq("  Größe prüfen ")},
 	}}, nil)}
 	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
@@ -57,7 +57,7 @@ func TestFoldStatementDiagram(t *testing.T) {
 	s := page.Statements[0]
 	st = newFakeStore()
 	st.pages[pageKey(store.ScopeRepository, "PLAT", "files")] = page
-	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst, neu.", Statements: []inference.Statement{
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service, neu.", Statements: []inference.Statement{
 		{ID: str(s.ID), Kind: s.Kind, Name: s.Name, Text: s.Text, Files: s.Files, Diagram: dangling()},
 		{Kind: "rule", Name: "R", Text: "T", Diagram: dangling()}}}, nil)}
 	newWorker(st, m).Fold(context.Background(), queued("PLAT/files#42"))
@@ -105,7 +105,7 @@ func TestFoldStatementDiagram(t *testing.T) {
 	// One diagram past the page's count (1 here) costs that diagram, not the
 	// rewrite: the later one is left out, its statement kept.
 	st = newFakeStore()
-	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+	m = &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.", Statements: []inference.Statement{
 		{Kind: "rule", Name: "R1", Text: "T", Diagram: seq("a")},
 		{Kind: "rule", Name: "R2", Text: "T", Diagram: seq("b")},
 	}}, nil)}
@@ -125,7 +125,7 @@ func TestFoldFlowSelfAndRepeatedEdgesTakenOut(t *testing.T) {
 		Nodes: []diagram.Node{{ID: "a", Label: "A", Shape: "step"}, {ID: "b", Label: "B", Shape: "step"}},
 		Edges: []diagram.Edge{{From: "a", To: "a", Head: "end"}, {From: "a", To: "b", Label: "Strasse", Head: "end"}, {From: "a", To: "b", Label: " Straße ", Head: "end"}}}
 	st := newFakeStore()
-	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Dienst.", Statements: []inference.Statement{
+	w := newWorker(st, &fakeMerger{result: okResult(&inference.Description{Summary: "Der Service.", Statements: []inference.Statement{
 		{Kind: "component", Name: "Ablage", Text: "Legt ab.", Diagram: flow}}}, nil)})
 	var logs strings.Builder
 	w.log = slog.New(slog.NewTextHandler(&logs, nil))
@@ -176,7 +176,7 @@ func TestRun_DiagramOverTheCountKeepsReading(t *testing.T) {
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{
 			{Kind: "component", Name: "Eins", Text: "T", Files: []string{"README.md"}, Diagram: seq("a")},
 			{Kind: "component", Name: "Zwei", Text: "T", Files: []string{"README.md"}, Diagram: seq("b")}}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
@@ -480,7 +480,7 @@ func reconcileQuietly(x world, answer ...bool) world {
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: plan, State: store.RunDone}
 	// The repository has its map, drawn from its text as it stands: only
 	// the project's is in question.
-	repo := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
+	repo := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
 	repo.RepoMapBasis = repo.MapBasis()
 	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = repo
 	x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
@@ -500,15 +500,15 @@ func reconcileQuietly(x world, answer ...bool) world {
 func TestRun_NullKeepsTheDiagram(t *testing.T) {
 	x := newWorld(t, 16)
 	src := []store.Source{{Kind: store.FromBaseline, Commit: older40, Repo: "svc"}}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
-		Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Dienst", Text: "Alt.", Files: []string{"README.md"}, Sources: src, Diagram: seq("ruft")}}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.",
+		Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Service", Text: "Alt.", Files: []string{"README.md"}, Sources: src, Diagram: seq("ruft")}}}
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Map: drawnMap("svc"),
 		Statements: []store.Statement{{ID: "s1", Kind: "entity", Name: "Werkzeug", Text: "Alt.", Files: []string{}, Sources: src, Diagram: seq("liest")}}}
 	x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst, neu."),
-		Statements: []inference.Statement{stmt(ref("s1"), "component", "Dienst", "Neu.", "README.md")}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service, neu."),
+		Statements: []inference.Statement{stmt(ref("s1"), "component", "Service", "Neu.", "README.md")}}}}
 	again := stmt(ref("s1"), "entity", "Werkzeug", "Neu.")
 	again.Diagram = seq("liest")
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
@@ -534,14 +534,14 @@ func TestRun_InvalidDiagramCostsOnlyItself(t *testing.T) {
 	var logs strings.Builder
 	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	src := []store.Source{{Kind: store.FromBaseline, Commit: older40, Repo: "svc"}}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
-		Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Dienst", Text: "Alt.", Files: []string{"README.md"}, Sources: src, Diagram: seq("ruft")}}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.",
+		Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Service", Text: "Alt.", Files: []string{"README.md"}, Sources: src, Diagram: seq("ruft")}}}
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Map: drawnMap("svc"),
 		Statements: []store.Statement{{ID: "s1", Kind: "entity", Name: "Werkzeug", Text: "Alt.", Files: []string{}, Sources: src, Checked: older40, Diagram: seq("liest")}}}
 	x.st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	edit := stmt(ref("s1"), "component", "Dienst", "Neu.", "README.md")
+	edit := stmt(ref("s1"), "component", "Service", "Neu.", "README.md")
 	edit.Diagram = dangling()
 	added := stmt(nil, "rule", "Regel", "Gilt.", "README.md")
 	added.Diagram = dangling()
@@ -575,7 +575,7 @@ func TestRun_ProjectWithoutAMap(t *testing.T) {
 	delete(x.st.pages, pageKey(store.ScopeProject, "tools", ""))
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 	if r := x.run(); r.State != store.RunDone || r.Skipped != 1 || !x.plan(t).StepSkipped(baseline.PartProject) {
@@ -600,7 +600,7 @@ func TestRun_ProjectMap(t *testing.T) {
 			Statements: []store.Statement{}, Map: drawnMap("svc")}
 		x.queue(store.RunFull, "")
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: summary,
 			Statements: []inference.Statement{}, Map: m}}
 		x.w.drain(context.Background())
@@ -682,7 +682,7 @@ func TestRun_MapSentinel(t *testing.T) {
 		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = page
 		x.queue(store.RunFull, "")
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: answer}
 		// A refused map refused again on both retries.
 		refused := inference.RepoMapResult{Call: called, Map: &diagram.Diagram{Kind: diagram.KindFlow, Direction: "LR"}}
@@ -745,7 +745,7 @@ func TestRun_CarriedMapDropsDeparted(t *testing.T) {
 			Statements: []store.Statement{}, Map: stored}
 		x.queue(store.RunFull, "")
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: answer}
 		x.w.drain(context.Background())
 		if m := x.st.pages[pageKey(store.ScopeProject, "tools", "")].Map; !diagram.Equal(m, want) {
@@ -769,7 +769,7 @@ func TestRun_ProjectTooLargeForAMap(t *testing.T) {
 	x.st.others = many()
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge.",
 		Statements: []inference.Statement{}, Map: drawnMap("svc")}}
 	x.w.drain(context.Background())

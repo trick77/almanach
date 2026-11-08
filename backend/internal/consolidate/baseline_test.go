@@ -673,7 +673,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		{Name: "Abrechnung", Purpose: "Rechnungen.", Paths: []string{"billing/run.go", "invented.go"}},
 	}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst für Werkzeuge."), Statements: []inference.Statement{stmt(nil, "component", "Dienst", "Der Dienst.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service für Werkzeuge."), Statements: []inference.Statement{stmt(nil, "component", "Service", "Der Service.", "README.md")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s2"), "rule", "Login", "Zweistufig, mit Sperre.", "auth/login.go")}, Confirmed: []string{"s1"}}},
 	}
@@ -718,7 +718,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		t.Fatalf("revisions = %d, want three repository steps and the project; the map takes none", len(x.st.revisions))
 	}
 	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
-	if page.Summary != "Ein Dienst für Werkzeuge." || len(page.Statements) != 2 {
+	if page.Summary != "Ein Service für Werkzeuge." || len(page.Statements) != 2 {
 		t.Fatalf("page = %+v", page)
 	}
 	// The map is set on the page's current revision in place, with the
@@ -727,7 +727,7 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		t.Errorf("repository map: revision %d, map %+v, basis %q, writes %d", page.Revision, page.RepoMap, page.RepoMapBasis, x.st.mapWrites)
 	}
 	mapPrompt := x.models.prompts[len(x.models.prompts)-1]
-	if !strings.Contains(mapPrompt, "Ein Dienst für Werkzeuge.") || !strings.Contains(mapPrompt, "_None yet: draw it._") ||
+	if !strings.Contains(mapPrompt, "Ein Service für Werkzeuge.") || !strings.Contains(mapPrompt, "_None yet: draw it._") ||
 		!strings.Contains(mapPrompt, "At most 22 nodes and 33 edges") || strings.Contains(mapPrompt, "{repo") ||
 		strings.Contains(mapPrompt, "{map_refused}") || strings.Contains(mapPrompt, "refused and not drawn") {
 		t.Errorf("repository map prompt:\n%s", mapPrompt)
@@ -755,12 +755,12 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 		t.Errorf("overview prompt:\n%s", overview)
 	}
 	if !strings.Contains(auth, `the subject "Anmeldung": Login.`) || !strings.Contains(auth, "<<<FILE auth/login.go>>>\npackage auth") ||
-		!strings.Contains(auth, "[s1] component: Dienst") {
+		!strings.Contains(auth, "[s1] component: Service") {
 		t.Errorf("subject prompt:\n%s", auth)
 	}
 	proj := x.models.prompts[len(x.models.prompts)-2]
 	if !strings.Contains(proj, "### portal\n\nDas Portal ruft svc auf.") || strings.Contains(proj, "Alte Fassung.") ||
-		!strings.Contains(proj, "Ein Dienst für Werkzeuge.") || strings.Contains(proj, "{other_repos}") {
+		!strings.Contains(proj, "Ein Service für Werkzeuge.") || strings.Contains(proj, "{other_repos}") {
 		t.Errorf("project prompt:\n%s", proj)
 	}
 	// The map the model may draw: these slugs, the current map to repeat.
@@ -859,7 +859,7 @@ func TestRun_OverviewLeavesCodeAlone(t *testing.T) {
 	key := pageKey(store.ScopeRepository, "tools", "svc")
 	login := store.Statement{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}}
 	billing := store.Statement{ID: "s2", Kind: "rule", Name: "Rechnung", Text: "Monatlich.", Files: []string{"billing/run.go"}}
-	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{login, billing}}
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{login, billing}}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
@@ -893,7 +893,7 @@ func TestRun_StepGrowthLogged(t *testing.T) {
 	key := pageKey(store.ScopeRepository, "tools", "svc")
 	login := store.Statement{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}}
 	billing := store.Statement{ID: "s2", Kind: "rule", Name: "Rechnung", Text: "Monatlich.", Files: []string{"billing/run.go"}}
-	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{login, billing}}
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{login, billing}}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
@@ -915,11 +915,11 @@ func TestRun_StepGrowthLogged(t *testing.T) {
 			}
 		}
 	}
-	// Net: the summary 8 runes longer; then s2 11 longer and a new statement
+	// Net: the summary 7 runes longer; then s2 11 longer and a new statement
 	// of 26, s1 returned as stored.
 	out := logs.String()
 	for _, want := range []string{
-		"the overview: page grew by 8 chars of prose; 0 new statements; 0 returned unchanged",
+		"the overview: page grew by 7 chars of prose; 0 new statements; 0 returned unchanged",
 		"Anmeldung: page grew by 37 chars of prose; 1 new statement; 1 returned unchanged",
 	} {
 		if !strings.Contains(out, want) {
@@ -992,8 +992,8 @@ func TestShorten(t *testing.T) {
 		// An abbreviation is no sentence end.
 		{"Erster Satz hier. Danach z. B. Kafka und mehr Text dahinter.", 46, "Erster Satz hier." + shortenedMark},
 		// A part's heading without its text goes with the cut.
-		{"#### Zweck\n\nDer Dienst liest Notizen.\n\n#### Arbeiten daran\n\nGate: make check und mehr Text.", 79,
-			"#### Zweck\n\nDer Dienst liest Notizen." + shortenedMark},
+		{"#### Zweck\n\nDer Service liest Notizen.\n\n#### Arbeiten daran\n\nGate: make check und mehr Text.", 79,
+			"#### Zweck\n\nDer Service liest Notizen." + shortenedMark},
 	} {
 		if got := shorten(c.in, c.n); got != c.want || len(got) > max(c.n, len(c.in)) {
 			t.Errorf("shorten(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
@@ -1015,7 +1015,7 @@ func TestRun_GatewayHoldThenResume(t *testing.T) {
 	}
 	x.w.retryAt = time.Time{}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
@@ -1030,7 +1030,7 @@ func TestRun_GatewayHoldThenResume(t *testing.T) {
 // taken again. Busy in a row past maxFoldAttempts, the run fails.
 func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
 	subjects := []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
-	patch := inference.PatchResult{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}
+	patch := inference.PatchResult{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}
 
 	x := newWorld(t, 16)
 	x.queue(store.RunFull, "")
@@ -1101,7 +1101,7 @@ func TestRun_SkipsAndNoCeiling(t *testing.T) {
 		many = append(many, stmt(nil, "rule", fmt.Sprintf("R%d", i), strings.Repeat("T", 2000)))
 	}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}},
 		{Call: inference.Call{Outcome: inference.OutcomeUnparseable}},
 		{Call: called, Patch: inference.Patch{Statements: many}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Kurz", "Gilt.", "README.md")}}},
@@ -1132,7 +1132,7 @@ func TestRun_SubjectNamedLikeAStep(t *testing.T) {
 		{Name: "the overview", Purpose: "p", Paths: []string{"auth/"}}, {Name: "the project", Purpose: "p", Paths: []string{"billing/"}},
 	}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}},
 		{Call: inference.Call{Outcome: inference.OutcomeUnparseable}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
 	}
@@ -1162,7 +1162,7 @@ func TestRun_LargePageReadWhole(t *testing.T) {
 		statements[i] = store.Statement{ID: fmt.Sprintf("s%d", i+1), Kind: "rule", Name: fmt.Sprintf("R%d", i), Text: strings.Repeat("x", 1000)}
 	}
 	x := newWorld(t, 16)
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: statements}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: statements}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
@@ -1191,7 +1191,7 @@ func TestRun_Reconcile(t *testing.T) {
 	}}}
 	raw, _ := json.Marshal(old)
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.",
 		Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "Login", Text: "Einstufig.", Files: []string{"auth/login.go"},
 			Sources: []store.Source{{PRKey: "tools/svc#4"}}}}}
 	x.code.diff = []gitrepo.Entry{{Path: "auth/login.go", Mode: "100644", Size: 31}}
@@ -1246,7 +1246,7 @@ func TestRun_Reconcile(t *testing.T) {
 	// the project's call still skipped, the map step taken.
 	m := newWorld(t, 16)
 	m.st.documented = x.st.documented
-	m.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	m.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 	m.code.diff = []gitrepo.Entry{{Path: "go.sum", Mode: "100644", Size: 6}}
 	m.queue(store.RunReconcile, older40)
 	m.models.repoMap = inference.RepoMapResult{Call: called, Map: drawnRepoMap()}
@@ -1314,7 +1314,7 @@ func TestRun_Failures(t *testing.T) {
 	p.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
 	p.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
 	}
 	p.st.othersErr, p.st.othersOK = errors.New("db down"), 1
@@ -1576,7 +1576,7 @@ func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 	x.queue(store.RunFull, "")
 	broken := strings.Repeat("c", 40)
 	x.code.containsErr = map[string]error{broken: errors.New("bad object")}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.",
 		Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "Alt", Text: "Aus einem PR.", Files: []string{"auth/login.go"},
 			Sources: []store.Source{{PRKey: "tools/svc#3", Commit: broken, MergedAt: mergedAt.Add(-48 * time.Hour)}}}}}
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
@@ -1615,7 +1615,7 @@ func TestRun_UnplacedMergeCommitDefersTheStep(t *testing.T) {
 func TestRun_NewerPRFactsAndInventedPaths(t *testing.T) {
 	x := newWorld(t, 16)
 	x.queue(store.RunFull, "")
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.",
 		Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "Neu", Text: "Aus einem jüngeren PR.", Files: []string{"billing/x.go"},
 			Sources: []store.Source{{PRKey: "tools/svc#42", MergedAt: mergedAt.Add(time.Hour)}}}}}
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
@@ -1655,7 +1655,7 @@ func TestRun_ReconcileReadsAgainWhatWasHeld(t *testing.T) {
 	raw, _ := json.Marshal(runPlan{Plan: baseline.Plan{Format: baseline.PlanFormat, Subjects: subjects, Again: []string{"A"}, AgainOverview: true}})
 	x := newWorld(t, 16)
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 	x.queue(store.RunReconcile, older40)
 	x.models.patches = []inference.PatchResult{{Call: called}, {Call: called}}
 	x.models.project = inference.DescriptionResult{Call: called}
@@ -1702,7 +1702,7 @@ func TestRun_ReconcileRetriesWhatTheLastRunSkipped(t *testing.T) {
 func reconcileRetries(t *testing.T, raw []byte) {
 	x := newWorld(t, 16)
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 	x.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 40}}
 	x.queue(store.RunReconcile, older40)
 	// The placing answers without the new file.
@@ -1735,7 +1735,7 @@ func TestRun_ReconcileAtTheSameCommitReadsTheSkipped(t *testing.T) {
 		Skipped: []string{"A"}, Why: map[string]baseline.Skip{"A": baseline.SkipFailed}}})
 	x := newWorld(t, 16)
 	x.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 	x.queue(store.RunReconcile, older40)
 	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Added: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}}}
 	x.models.project = inference.DescriptionResult{Call: called}
@@ -1817,7 +1817,7 @@ func TestRun_RepoMapStep(t *testing.T) {
 		x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
 		key := pageKey(store.ScopeRepository, "tools", "svc")
 		if c.page {
-			p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.",
+			p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Service.",
 				Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Area: "Abrechnung"}}, RepoMap: c.stored}
 			if c.stored != nil || c.current {
 				p.RepoMapBasis = "drawn from an older text"
@@ -1893,9 +1893,9 @@ func TestRun_RepoMapStepLaysThePageOut(t *testing.T) {
 	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	key := pageKey(store.ScopeRepository, "tools", "svc")
 	src := []store.Source{{PRKey: "PR-1"}}
-	p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.", RepoMap: drawnRepoMap(), Statements: []store.Statement{
+	p := store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Service.", RepoMap: drawnRepoMap(), Statements: []store.Statement{
 		{ID: "s1", Kind: "component", Name: "Gradle-Build", Text: "T", Sources: src},
-		{ID: "s2", Kind: "component", Name: "Dienst", Text: "T", Sources: src},
+		{ID: "s2", Kind: "component", Name: "Service", Text: "T", Sources: src},
 		{ID: "s3", Kind: "component", Name: "Export", Text: "T", Sources: src},
 		{ID: "s4", Kind: "rule", Name: "Pruefgate", Text: "T", Sources: src},
 		{ID: "s5", Kind: "rule", Name: "Zugriff", Text: "T", Sources: src, Area: "Abfrage"},
@@ -1984,7 +1984,7 @@ func TestRun_RepoMapAskedAgain(t *testing.T) {
 		var logs strings.Builder
 		x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
 		key := pageKey(store.ScopeRepository, "tools", "svc")
-		x.st.pages[key] = store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.",
+		x.st.pages[key] = store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Service.",
 			Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Teil", Text: "T"}}}
 		plan, _ := json.Marshal(runPlan{ProjectDone: true})
 		x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
@@ -2024,7 +2024,7 @@ func TestRun_RepoMapRetrySteps(t *testing.T) {
 	key := pageKey(store.ScopeRepository, "tools", "svc")
 	setup := func(calls, used int) world {
 		x := newWorld(t, calls)
-		x.st.pages[key] = store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.",
+		x.st.pages[key] = store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Service.",
 			Statements: []store.Statement{{ID: "s1", Kind: "component", Name: "Teil", Text: "T"}}}
 		plan, _ := json.Marshal(runPlan{ProjectDone: true})
 		x.st.runs = append(x.st.runs, store.BaselineRun{ID: int64(len(x.st.runs) + 1), ProjectKey: "tools", Slug: "svc", Mode: store.RunFull,
@@ -2096,7 +2096,7 @@ func TestRun_ProjectMapAskedAgain(t *testing.T) {
 		"no call to spare": {2, nil, drawnMap("svc"), []string{"project", "repo_map"}},
 	} {
 		x := newWorld(t, c.calls)
-		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 		plan, _ := json.Marshal(runPlan{SummaryChanged: true})
 		x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
 			Commit: head, State: store.RunProject, Plan: plan})
@@ -2125,7 +2125,7 @@ func TestRun_ProjectMapAskedAgain(t *testing.T) {
 	// the gateway on the retry leaves the step open on its retry, never the
 	// description's call again; the next drain resumes it.
 	h := newWorld(t, 16)
-	h.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	h.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 	plan, _ := json.Marshal(runPlan{SummaryChanged: true})
 	h.st.runs = append(h.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
 		Commit: head, State: store.RunProject, Plan: plan})
@@ -2152,7 +2152,7 @@ func TestRun_ProjectMapAskedAgain(t *testing.T) {
 	// run asks again.
 	x := newWorld(t, 2)
 	x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Statements: []store.Statement{}}
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
 		Commit: head, State: store.RunProject, Plan: plan})
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Werkzeuge, neu.",
@@ -2181,7 +2181,7 @@ func TestKeptCalls(t *testing.T) {
 	} {
 		x := newWorld(t, c.calls)
 		x.st.repoCount = map[string]int{"tools": c.repos}
-		p := store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		p := store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 		if c.stands {
 			p.RepoMap, p.RepoMapBasis = drawnRepoMap(), p.MapBasis()
 		}
@@ -2210,7 +2210,7 @@ func TestRun_PartsKeepTheMapCall(t *testing.T) {
 		if c.repos == 1 {
 			x.st.others = []store.RepoSummary{{Slug: "svc"}}
 		}
-		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 2, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{}}
 		kept := 16 - c.calls
 		plan, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 30}}}}},
 			Read: []string{"A"}, SummaryChanged: true, Kept: &kept})
@@ -2246,7 +2246,7 @@ func TestMaxSubjects_KeepsTheMapCall(t *testing.T) {
 // last check move without it, its text, name, kind or files and the
 // summary move it.
 func TestMapBasis(t *testing.T) {
-	base := store.Page{Summary: "Ein Dienst.", Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Files: []string{"a.go"}}}}
+	base := store.Page{Summary: "Ein Service.", Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Files: []string{"a.go"}}}}
 	b := base.MapBasis()
 	same := base
 	same.Statements = []store.Statement{{ID: "s1", Kind: "rule", Name: "R", Text: "T", Files: []string{"a.go"}, Checked: "abc",
@@ -2255,7 +2255,7 @@ func TestMapBasis(t *testing.T) {
 		t.Error("a check or a source moved the basis")
 	}
 	for name, change := range map[string]func(p *store.Page){
-		"summary": func(p *store.Page) { p.Summary = "Zwei Dienste." },
+		"summary": func(p *store.Page) { p.Summary = "Zwei Services." },
 		"text":    func(p *store.Page) { p.Statements[0].Text = "U" },
 		"name":    func(p *store.Page) { p.Statements[0].Name = "S" },
 		"kind":    func(p *store.Page) { p.Statements[0].Kind = "invariant" },
@@ -2280,7 +2280,7 @@ func TestMapBasis(t *testing.T) {
 func TestRun_RepoMapBusyEndsDone(t *testing.T) {
 	x := newWorld(t, 16)
 	key := pageKey(store.ScopeRepository, "tools", "svc")
-	x.st.pages[key] = store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Dienst.", Statements: []store.Statement{}}
+	x.st.pages[key] = store.Page{RevisionID: 4, Revision: 4, Summary: "Ein Service.", Statements: []store.Statement{}}
 	plan, _ := json.Marshal(runPlan{ProjectDone: true})
 	x.st.runs = append(x.st.runs, store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Mode: store.RunFull, Trigger: store.TriggerManual,
 		Commit: head, State: store.RunProject, Plan: plan, Calls: 3})
@@ -2312,7 +2312,7 @@ func TestRun_StaleMapRedrawnByQuietReconcile(t *testing.T) {
 		x := newWorld(t, 16)
 		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Werkzeuge.", Statements: []store.Statement{},
 			Map: drawnMap("svc")}
-		p := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst, nach dem Merge.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
+		p := store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service, nach dem Merge.", Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
 		p.RepoMapBasis = basis(p)
 		x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = p
 		planned, _ := json.Marshal(runPlan{Plan: baseline.Plan{Subjects: []baseline.Subject{{Name: "A", Purpose: "p",
@@ -2341,12 +2341,12 @@ func TestRun_StaleMapRedrawnByQuietReconcile(t *testing.T) {
 // stored one rides along on each, never erased.
 func TestRun_DescribeStepsCarryTheRepoMap(t *testing.T) {
 	x := newWorld(t, 16)
-	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.",
+	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.",
 		Statements: []store.Statement{}, RepoMap: drawnRepoMap()}
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst, neu."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service, neu."), Statements: []inference.Statement{}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
@@ -2355,7 +2355,7 @@ func TestRun_DescribeStepsCarryTheRepoMap(t *testing.T) {
 		t.Fatalf("run = %+v, revisions %d", r, len(x.st.revisions))
 	}
 	// The map step ran on the new text (its basis stale) and kept the map.
-	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; p.Summary != "Ein Dienst, neu." || !diagram.Equal(p.RepoMap, drawnRepoMap()) {
+	if p := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; p.Summary != "Ein Service, neu." || !diagram.Equal(p.RepoMap, drawnRepoMap()) {
 		t.Errorf("page = %+v, want the new text and the stored map", p)
 	}
 }
@@ -2375,7 +2375,7 @@ func TestRun_ProjectItemCostsOnlyItself(t *testing.T) {
 			delete(x.st.pages, pageKey(store.ScopeProject, "tools", ""))
 		}
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: d}
 		x.w.drain(context.Background())
 		return x
@@ -2416,10 +2416,10 @@ func TestRun_ProjectStepLaysThePageOut(t *testing.T) {
 		x.st.pages[pageKey(store.ScopeProject, "tools", "")] = store.Page{RevisionID: 77, Revision: 1, Summary: "Das Projekt.", Map: diagram.Sentinel(),
 			Statements: []store.Statement{
 				{ID: "s1", Kind: "component", Name: "Pipeline", Text: "Baut."},
-				{ID: "s2", Kind: "component", Name: "Dienst", Text: "Dient."},
+				{ID: "s2", Kind: "component", Name: "Service", Text: "Dient."},
 			}}
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: d, Outline: []inference.OutlineArea{
 			{Area: "Entwicklung und Auslieferung", IDs: []string{"s1"}}, {Area: "Gesamtsystem", IDs: []string{"s2"}},
 		}}
@@ -2456,7 +2456,7 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 				{ID: "s2", Kind: "rule", Name: "Alt", Text: "Geht.", Files: []string{"old.go"}, Sources: []store.Source{{Kind: store.FromBaseline, Commit: "c0ffee"}}},
 			}}
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: d}
 		x.w.drain(context.Background())
 		return x.st.pages[pageKey(store.ScopeProject, "tools", "")]
@@ -2487,7 +2487,7 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 	x := newWorld(t, 4)
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."),
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."),
 		Statements: []inference.Statement{stmt(ref("s4"), "rule", "Erfunden", "Neu.", "README.md")}}}}
 	x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Neu.",
 		Statements: []inference.Statement{stmt(ref("s2"), "rule", "Quer", "Gilt.", "x.go")}, Added: []inference.Statement{}}}
@@ -2505,7 +2505,7 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 		x := newWorld(t, 4)
 		x.queue(store.RunFull, "")
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: &inference.Description{Summary: "Viel.", Statements: statements}}
 		x.w.drain(context.Background())
 		return x.st.pages[pageKey(store.ScopeProject, "tools", "")]
@@ -2539,7 +2539,7 @@ func TestRun_ProjectAnswersAPatch(t *testing.T) {
 	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 1, Revision: 1, Summary: "Alt.",
 		Statements: []store.Statement{{ID: "s1", Kind: "rule", Name: "Regel", Text: "Alt.", Files: []string{"README.md"}, Checked: "old"}}}
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."),
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."),
 		Statements: []inference.Statement{stmt(ref("s1"), "rule", long, "Neu.", "README.md")}}}}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
@@ -2559,7 +2559,7 @@ func TestRun_CallsCap(t *testing.T) {
 	x := newWorld(t, 4)
 	x.queue(store.RunFull, "")
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{{Name: "A", Purpose: "p", Paths: []string{"auth/"}}}}}}
-	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 	if r := x.run(); r.State != store.RunDone || r.Calls != 4 || len(x.plan(t).Read) != 0 || x.st.calls[3].Purpose != store.PurposeRepoMap {
@@ -2629,7 +2629,7 @@ func TestRun_SubjectItemCostsOnlyItself(t *testing.T) {
 	var logs strings.Builder
 	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
 	key := pageKey(store.ScopeRepository, "tools", "svc")
-	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Dienst.", Statements: []store.Statement{
+	x.st.pages[key] = store.Page{RevisionID: 1, Revision: 1, Summary: "Ein Service.", Statements: []store.Statement{
 		{ID: "s1", Kind: "rule", Name: "Login", Text: "Zweistufig.", Files: []string{"auth/login.go"}, Checked: "old"},
 		{ID: "s2", Kind: "rule", Name: "Sperre", Text: "Nach fünf.", Files: []string{"auth/login.go"}, Checked: "old"}}}
 	x.queue(store.RunFull, "")
@@ -2670,7 +2670,7 @@ func TestRun_UnknownIDsLeftOut(t *testing.T) {
 	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}, {Name: "Abrechnung", Purpose: "Rechnungen.", Paths: []string{"billing/"}}}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Confirmed: []string{"8b0d8f4a"}, Drop: []string{"s77"},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Confirmed: []string{"8b0d8f4a"}, Drop: []string{"s77"},
 			Statements: []inference.Statement{}, Added: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "README.md")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(ref("s9"), "rule", "Erfunden", "Gibt es nicht.", "auth/login.go")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
@@ -2678,7 +2678,7 @@ func TestRun_UnknownIDsLeftOut(t *testing.T) {
 	x.models.project = inference.DescriptionResult{Call: called}
 	x.w.drain(context.Background())
 	page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]
-	if page.Summary != "Ein Dienst." || len(page.Statements) != 1 || page.Statements[0].ID != "s1" {
+	if page.Summary != "Ein Service." || len(page.Statements) != 1 || page.Statements[0].ID != "s1" {
 		t.Errorf("page = %+v, want the overview's patch applied", page)
 	}
 	if !strings.Contains(buf.String(), `the overview: unknown ids left out" ids="[s77 8b0d8f4a]"`) {
@@ -2724,7 +2724,7 @@ func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}, {Name: "Abrechnung", Purpose: "Rechnungen.", Paths: []string{"billing/"}}}}}}
 	// The overview, shown no problem area, has no evidence for its pitfall.
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{},
 			Added: []inference.Statement{stmt(nil, "pitfall", "Geraten", "Aus dem Code gelesen.", "README.md")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "pitfall", "Sperre vergessen", "Brach.", "auth/login.go")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
@@ -2757,7 +2757,7 @@ func TestRun_ProblemAreasReachTheSubjectStep(t *testing.T) {
 	y.st.problemsErr = errors.New("db gone")
 	y.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}}}}}}
-	y.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{}}}}
+	y.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 	y.w.drain(context.Background())
 	if r := y.run(); r.State != store.RunDescribing || r.Calls != 2 {
 		t.Errorf("run after a failed problem read = %+v, want the subject step held", r)

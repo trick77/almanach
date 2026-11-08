@@ -10,28 +10,32 @@ import (
 
 // Prose is a piece of the model's prose as stored: trimmed, any credential
 // shape replaced (a model echoes what it read, and the input filters are
-// regexes), Swiss spelling. Deterministic, so an unchanged rewrite stays
-// unchanged.
-func Prose(s string) string { return SwissSS(redact.Text(strings.TrimSpace(s))) }
+// regexes), Swiss spelling, the software words English (Terms).
+// Deterministic, so an unchanged rewrite stays unchanged.
+func Prose(s string) string { return Terms(SwissSS(redact.Text(strings.TrimSpace(s)))) }
 
 // Laid is Prose for laid-out text, a statement's or a summary's: the
 // credential shapes replaced first, while the text is as the model wrote
 // it (a PEM block's header ends its line only there), then the stored
-// layout (markup.Normalize), then Swiss spelling, which so sees no line as
-// indented code.
+// layout (markup.Normalize), then Swiss spelling and Terms, which so see no
+// line as indented code.
 //
 // A model's <br> becomes a newline first (markup.Breaks): a credential it
 // split is one to the redaction, every shape of it.
 func Laid(s string) string {
-	return SwissSS(markup.Normalize(redact.Text(markup.Breaks(strings.TrimSpace(s)))))
+	return Terms(SwissSS(markup.Normalize(redact.Text(markup.Breaks(strings.TrimSpace(s))))))
 }
 
 var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae", "Ö", "Oe", "Ü", "Ue")
 
 // SameButSpelling reports whether a and b say the same, umlauts written
-// out as two letters or not: a model writing "fuer" once and "für" later
-// said one thing. The prompts ask for umlauts; older text may lack them.
-func SameButSpelling(a, b string) bool { return a == b || umlauts.Replace(a) == umlauts.Replace(b) }
+// out as two letters or not, a software word German or English: a model
+// writing "fuer" once and "für" later said one thing, and so did a stored
+// "Dienst" against today's "Service". The prompts ask for umlauts; older
+// text may lack them, and text stored before Terms has the German word.
+func SameButSpelling(a, b string) bool {
+	return a == b || umlauts.Replace(Terms(a)) == umlauts.Replace(Terms(b))
+}
 
 // SwissSS writes the model's German prose with Swiss spelling: ß becomes ss
 // (ẞ becomes SS). The prompt asks for it, and a model does not always obey;
@@ -42,6 +46,12 @@ func SwissSS(s string) string {
 	if !strings.ContainsAny(s, "ßẞ") {
 		return s
 	}
+	return outsideCode(s, strings.NewReplacer("ß", "ss", "ẞ", "SS").Replace)
+}
+
+// outsideCode applies f to the prose of s alone: fenced blocks, indented
+// code blocks and inline backtick spans stay as written.
+func outsideCode(s string, f func(string) string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
 	fence := ""
@@ -65,12 +75,12 @@ func SwissSS(s string) string {
 			b.WriteString(line)
 			continue
 		}
-		b.WriteString(swissLine(line))
+		b.WriteString(proseLine(line, f))
 	}
 	return b.String()
 }
 
-func swissLine(line string) string {
+func proseLine(line string, f func(string) string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); {
 		if line[i] == '`' {
@@ -88,7 +98,7 @@ func swissLine(line string) string {
 		if next < 0 {
 			next = len(line) - i
 		}
-		b.WriteString(strings.NewReplacer("ß", "ss", "ẞ", "SS").Replace(line[i : i+next]))
+		b.WriteString(f(line[i : i+next]))
 		i += next
 	}
 	return b.String()

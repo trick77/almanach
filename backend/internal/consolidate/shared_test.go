@@ -33,7 +33,7 @@ func TestRun_LibrariesAsContext(t *testing.T) {
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}},
 	}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{stmt(nil, "component", "Dienst", "Der Dienst.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{stmt(nil, "component", "Service", "Der Service.", "README.md")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}
@@ -95,7 +95,7 @@ func TestTopicsShown(t *testing.T) {
 		{Name: "Anmeldung", Purpose: "Login.", Paths: []string{"auth/"}},
 	}}}}
 	x.models.patches = []inference.PatchResult{
-		{Call: called, Patch: inference.Patch{Summary: ref("Ein Dienst."), Statements: []inference.Statement{stmt(nil, "component", "Dienst", "Der Dienst.", "README.md")}}},
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{stmt(nil, "component", "Service", "Der Service.", "README.md")}}},
 		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{stmt(nil, "rule", "Login", "Zweistufig.", "auth/login.go")}}},
 	}
 	x.models.project = inference.DescriptionResult{Call: called}

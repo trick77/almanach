@@ -133,7 +133,7 @@ func briefWorld(t *testing.T) (world, *fakeBriefs) {
 	t.Helper()
 	x := newWorld(t, 16)
 	x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")] = store.Page{RevisionID: 9, Revision: 3,
-		Summary: "Der Dienst rechnet ab.", Statements: []store.Statement{{ID: "s1", Kind: "decision", Name: "Kein ORM",
+		Summary: "Der Service rechnet ab.", Statements: []store.Statement{{ID: "s1", Kind: "decision", Name: "Kein ORM",
 			Text: "Abgelehnt, weil die Abfragen von Hand schneller sind.", Sources: []store.Source{{Kind: store.FromPR, PRKey: "tools/svc#4"}}}}}
 	b := &fakeBriefs{rows: []*briefRow{{repoID: 7, key: "tools", slug: "svc", requested: true}},
 		graph: store.Graph{Edges: []store.Edge{
@@ -153,7 +153,7 @@ func briefAnswer(text string) inference.BriefResult {
 // on the ledger as a brief's.
 func TestBrief_WriteThenPush(t *testing.T) {
 	x, b := briefWorld(t)
-	b.answers = []inference.BriefResult{briefAnswer("Der Dienst rechnet ab, die Webseite ruft ihn.\n\n#### Was gelten muss\n\n- Beträge heißen Rappen.")}
+	b.answers = []inference.BriefResult{briefAnswer("Der Service rechnet ab, die Webseite ruft ihn.\n\n#### Was gelten muss\n\n- Beträge heißen Rappen.")}
 	x.w.drain(context.Background())
 	if len(b.prompts) != 1 {
 		t.Fatalf("calls = %d, want 1", len(b.prompts))
@@ -172,7 +172,7 @@ func TestBrief_WriteThenPush(t *testing.T) {
 		}
 	}
 	r := b.rows[0]
-	want := "# tools/svc\n\nDer Dienst rechnet ab, die Webseite ruft ihn.\n\n## Was gelten muss\n\n- Beträge heissen Rappen.\n"
+	want := "# tools/svc\n\nDer Service rechnet ab, die Webseite ruft ihn.\n\n## Was gelten muss\n\n- Beträge heissen Rappen.\n"
 	if r.markdown != want || r.pageRevision != 3 {
 		t.Errorf("stored = %q (revision %d), want %q", r.markdown, r.pageRevision, want)
 	}
