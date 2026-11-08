@@ -80,7 +80,7 @@ func TestBatch_WaitsThenOneCall(t *testing.T) {
 	}
 	p := m.prompts[0]
 	i1, i2, i3 := strings.Index(p, "### PR PLAT/files#1 ("), strings.Index(p, "### PR PLAT/files#2 ("), strings.Index(p, "### PR PLAT/files#3 (")
-	if i1 < 0 || i2 < i1 || i3 < i2 || !strings.Contains(p, "(3 notes)") {
+	if i1 < 0 || i2 < i1 || i3 < i2 || !strings.Contains(p, "3 notes of repository `files`") {
 		t.Errorf("notes not in merge order, or missing: %d %d %d", i1, i2, i3)
 	}
 	if len(st.marked) != 3 {

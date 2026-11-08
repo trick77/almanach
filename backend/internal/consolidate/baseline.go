@@ -2202,7 +2202,7 @@ func refusedMap(retry *mapRetry, only bool) string {
 		again = "Answer with the map alone this time, `{\"map\": <flow>}`, the whole map with that fixed; your description is taken from your last answer"
 	}
 	return "\n- Your last map, shown below after the current one, was refused and not drawn: " + retry.Why + ". " + again +
-		". Every rule here still holds."
+		". Every map rule above still holds."
 }
 
 // refusedDraft is the refused draft as the data shows it, after the
