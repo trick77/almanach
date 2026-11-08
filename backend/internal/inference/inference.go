@@ -480,6 +480,23 @@ const (
 	capRestyleHi = 32_000
 )
 
+// RouteReserve is the context a router call keeps for its answer and a
+// think, as the wire's max_tokens asks it (llmwire adds its reasoning
+// overhead on top): what its listing's ceiling must leave free
+// (baseline.RouterMaxBytes). RouteContext is the context the router's
+// model is held to, the smallest the deployment's profiles give.
+const (
+	RouteReserve = capRoute + reasoningRoom + llmwire.DefaultReasoningOverhead
+	RouteContext = 128_000
+)
+
+// RoutePromptTokens is a router prompt's size in tokens beside the system
+// message, at 3 bytes a token (a listing measured 3.6, 2026-11-08), framing
+// rounded up: an estimate held to fail early.
+func RoutePromptTokens(prompt string) int {
+	return (len(prompt)+len(SystemMessage))/3 + 500
+}
+
 // restyleCap is a restyle's cap: the answer rewrites the page the prompt
 // carries, so it is the prompt's size in tokens (about 3 chars each) with
 // room to grow, held between capRestyleLo and capRestyleHi.

@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/inference"
+	"github.com/trick77/almanach/internal/prompts"
 )
 
 // Every file is named with its hints; skeletons fill what is left, the
-// highest score first; when the names pass half the ceiling, the
+// highest score first; when the names pass two thirds of the ceiling, the
 // lowest-scored directories fold, an anchor's never before them.
 func TestRouterListing(t *testing.T) {
 	files := []File{{Path: "src/core/Rules.java", Size: 4000}, {Path: "Containerfile", Size: 300}}
@@ -31,7 +33,7 @@ func TestRouterListing(t *testing.T) {
 		t.Errorf("listing not in path order:\n%s", got)
 	}
 
-	// A tree whose names alone pass half the ceiling: the plain directory
+	// A tree whose names alone pass two thirds of the ceiling: the plain directory
 	// folds, the anchors' stays; skeletons go to the highest score.
 	var many []File
 	z = StageZero{Skeletons: map[string]string{}, FanIn: map[string]int{}, Churn: map[string]int{}}
@@ -92,5 +94,54 @@ func TestRouterListing(t *testing.T) {
 	big := FileOf(gitrepo.Entry{Path: "Big.java", Mode: "100644", Size: 3 * FileMaxBytes})
 	if got, _ := RouterListing([]File{big}, StageZero{}, 1000); !big.Cut || !strings.Contains(got, "head only") {
 		t.Error("a file read as its head is not marked so")
+	}
+}
+
+// A thousand-file service with JVM-long paths, its names near 150 kB as
+// measured (2026-11-08: folded at the first ceiling, half of what the router
+// missed stood only folded), is named file by file; its skeletons fill the
+// rest, the listing within the ceiling.
+func TestRouterListingNamesAThousandFileService(t *testing.T) {
+	var files []File
+	z := StageZero{Skeletons: map[string]string{}, FanIn: map[string]int{}, Churn: map[string]int{}}
+	for i := range 1000 {
+		p := fmt.Sprintf("service/order-intranet-service/src/main/java/com/acme/eservices/orders/intranet/fulfilment/handling/inbound/m%02d/OrderFulfilmentController%03d.java", i%40, i)
+		files = append(files, File{Path: p, Size: 4000})
+		z.Skeletons[p] = strings.Repeat("public class OrderController { }\n", 10)
+	}
+	got, folded := RouterListing(files, z, RouterMaxBytes)
+	names := 0
+	for _, l := range strings.Split(got, "\n") {
+		if l != "" && !strings.HasPrefix(l, "    ") {
+			names += len(l) + 1
+		}
+	}
+	if names < 140_000 || len(folded) != 0 || len(got) > RouterMaxBytes || !strings.Contains(got, "    public class") {
+		t.Errorf("names %d bytes, %d files folded, listing %d bytes: want every file named, skeletons within the ceiling", names, len(folded), len(got))
+	}
+}
+
+// A tree of many top-level directories of one file each, which no group
+// folds: each folds alone, its folded line the shorter, and the listing
+// keeps within the ceiling, every file still standing for a line.
+func TestRouterListingFoldsAWideTree(t *testing.T) {
+	var files []File
+	for i := range 600 {
+		files = append(files, File{Path: fmt.Sprintf("module-%03d/src/main/java/com/acme/module/OnlyClassOfItsModule.java", i), Size: 4000})
+	}
+	got, folded := RouterListing(files, StageZero{}, 30_000)
+	if len(got) > 30_000 || len(folded) != 600 || !strings.Contains(got, "module-001/ (folded: 1 files, 4 kB)\n") {
+		t.Errorf("listing %d bytes, %d folded: want each module folded alone within the ceiling:\n%.300s", len(got), len(folded), got)
+	}
+}
+
+// The listing at its ceiling, with the prompt's instructions and the
+// system message beside it, leaves the router's answer, a think and the
+// wire's reasoning overhead inside the context: a gateway refuses a prompt
+// whose max_tokens passes it.
+func TestRouterListingFitsTheContext(t *testing.T) {
+	prompt := prompts.Router + strings.Repeat("x", RouterMaxBytes)
+	if tokens := inference.RoutePromptTokens(prompt) + inference.RouteReserve; tokens > inference.RouteContext {
+		t.Errorf("a full router call needs %d tokens of a %d context", tokens, inference.RouteContext)
 	}
 }

@@ -2,6 +2,7 @@ package consolidate
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -89,5 +90,16 @@ func TestRoute_DroppedPicks(t *testing.T) {
 	}
 	if !dry.Dropped["auth/login.go"] || !dry.Dropped["billing/run.go"] || dry.Dropped["README.md"] || len(dry.Plan.Subjects) != 0 {
 		t.Errorf("dropped %v, plan %+v: want both picks dropped past the run's bytes", dry.Dropped, dry.Plan.Subjects)
+	}
+}
+
+// A router prompt past the context with its answer reserved is refused
+// before it is paid; one within it passes.
+func TestRouteFits(t *testing.T) {
+	if err := routeFits(strings.Repeat("x", 200_000)); err != nil {
+		t.Errorf("a 200 kB prompt refused: %v", err)
+	}
+	if err := routeFits(strings.Repeat("x", 300_000)); !errors.Is(err, errTreeTooWide) {
+		t.Errorf("a 300 kB prompt: %v, want errTreeTooWide", err)
 	}
 }
