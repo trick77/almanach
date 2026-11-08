@@ -85,8 +85,13 @@ func runEval(log *slog.Logger) error {
 	return nil
 }
 
-// writeRoute runs the router's dry run and writes route.json and route.md.
+// writeRoute runs the router's dry run and writes route.json and route.md;
+// a folder that holds a dry run's report already is refused before any
+// call, so a paid report is never overwritten.
 func writeRoute(ctx context.Context, opt evalrun.Options) error {
+	if _, err := os.Stat(filepath.Join(opt.Out, "route.json")); err == nil {
+		return fmt.Errorf("eval: %s holds a dry run already: give -out a new folder", opt.Out)
+	}
 	rep, err := evalrun.RouteOnly(ctx, opt)
 	if err != nil {
 		return err

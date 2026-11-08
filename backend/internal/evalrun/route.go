@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/consolidate"
+	"github.com/trick77/almanach/internal/inference"
 )
 
 // RouteReport is a router dry run: stages 0 and 1 of the filter stage over
@@ -43,6 +45,9 @@ type RouteRepo struct {
 	CachedTokens int            `json:"cached_tokens"`
 	OutputTokens int            `json:"output_tokens"`
 	CostUSD      *float64       `json:"cost_usd,omitempty"`
+	Billed       bool           `json:"billed"`
+	// OverBudget is the subjects a run would skip past its bytes.
+	OverBudget []string `json:"over_budget,omitempty"`
 	// Scored against the labels, when the repository has them (Labelled):
 	// a 0 of an unlabelled one is no score.
 	Labelled       bool     `json:"labelled"`
@@ -105,7 +110,7 @@ func RouteOnly(ctx context.Context, opt Options) (*RouteReport, error) {
 	for _, r := range rep.Repos {
 		if r.CostUSD != nil {
 			rep.CostUSD += *r.CostUSD
-		} else if r.Outcome != "" {
+		} else if r.Billed {
 			rep.Unpriced++
 		}
 	}
@@ -135,7 +140,11 @@ func routeReport(rr RouteRepo, dry consolidate.RouteDry, l *Labels) RouteRepo {
 	rr.Outcome = dry.Call.Outcome.String()
 	rr.Files = len(dry.Files)
 	rr.ReadableKB, rr.SkeletonKB, rr.ListingKB = kib(dry.ReadableBytes), kib(dry.SkeletonBytes), kib(dry.ListingBytes)
+	rr.OverBudget = dry.OverBudget
 	cost := dry.Call.Cost
+	// Billed: an answer began to arrive or one came (store's rule), so a
+	// call without a price is unknown spend, never one that cost nothing.
+	rr.Billed = cost.Streamed || dry.Call.Outcome == inference.OutcomeOK
 	rr.InputTokens, rr.CachedTokens, rr.OutputTokens = int(cost.InputTokens), int(cost.CachedTokens), int(cost.OutputTokens)
 	if cost.NanoUSD != nil {
 		usd := float64(*cost.NanoUSD) / 1e9
@@ -172,7 +181,7 @@ func routeReport(rr RouteRepo, dry consolidate.RouteDry, l *Labels) RouteRepo {
 	return rr
 }
 
-func kib(n int64) int64 { return (n + 512) / 1024 }
+func kib(n int64) int64 { return baseline.KiB(n) }
 
 // Markdown is the dry run for a human: per repository its numbers, then
 // each subject with its files and questions.
@@ -189,11 +198,14 @@ func (r *RouteReport) Markdown() string {
 		if x.Labelled {
 			recall = fmt.Sprintf("%.0f%%", x.MustReadRecall*100)
 		}
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %s | %d | %s |\n", x.Repo, x.Files, x.ReadableKB, x.SkeletonKB, x.ListingKB,
+		fmt.Fprintf(&b, "| %s/%s | %d | %d | %d | %d | %d | %d | %s | %d | %s |\n", x.Project, x.Repo, x.Files, x.ReadableKB, x.SkeletonKB, x.ListingKB,
 			x.PickedKB, x.PickedFiles, recall, x.NoiseKB, cell.Replace(strings.TrimSpace(x.Outcome+" "+x.Error)))
 	}
 	for _, x := range r.Repos {
-		fmt.Fprintf(&b, "\n## %s\n", x.Repo)
+		fmt.Fprintf(&b, "\n## %s/%s\n", x.Project, x.Repo)
+		if len(x.OverBudget) > 0 {
+			fmt.Fprintf(&b, "\nPast the run's bytes, a run would skip: %s\n", strings.Join(x.OverBudget, ", "))
+		}
 		if len(x.MustReadMissed) > 0 {
 			fmt.Fprintf(&b, "\nMust-read missed: %s\n", strings.Join(x.MustReadMissed, ", "))
 		}

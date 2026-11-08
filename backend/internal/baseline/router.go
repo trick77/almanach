@@ -138,16 +138,15 @@ func foldItems(items []*routerItem, key func(*routerItem) (string, bool), names,
 			order = append(order, k)
 		}
 	}
-	best := func(g []*routerItem) int {
-		b := 0
-		for _, it := range g {
-			b = max(b, it.best)
+	best := make(map[string]int, len(order))
+	for _, k := range order {
+		for _, it := range groups[k] {
+			best[k] = max(best[k], it.best)
 		}
-		return b
 	}
 	slices.SortFunc(order, func(a, b string) int {
-		if x, y := best(groups[a]), best(groups[b]); x != y {
-			return x - y
+		if best[a] != best[b] {
+			return best[a] - best[b]
 		}
 		return strings.Compare(a, b)
 	})
@@ -158,7 +157,7 @@ func foldItems(items []*routerItem, key func(*routerItem) (string, bool), names,
 			break
 		}
 		g := groups[k]
-		it := &routerItem{key: k, first: g[0].first, best: best(g)}
+		it := &routerItem{key: k, first: g[0].first, best: best[k]}
 		for _, x := range g {
 			names -= len(x.line)
 			gone[x] = true
@@ -191,7 +190,8 @@ func dirOf(p string) string {
 // routerLine is a file's line: its path, size and hints.
 func routerLine(f File, z StageZero) string {
 	hints := []string{kb(f.Size)}
-	if f.Size > FileMaxBytes {
+	// Files caps a big file at FileMaxBytes and marks it Cut: its head.
+	if f.Cut || f.Size > FileMaxBytes {
 		hints = append(hints, "head only")
 	}
 	if AnchorRank(f.Path) > 0 {
@@ -223,10 +223,14 @@ func indent(s string) string {
 	return b.String()
 }
 
+// KiB is a byte count in kB of 1024, rounded: one rounding for the
+// router's listing, its prompt and the dry run's report.
+func KiB(n int64) int64 { return (n + 512) / 1024 }
+
 // kb is a size as the router reads it, in kB of 1024 bytes.
 func kb(n int64) string {
 	if n < 1024 {
 		return fmt.Sprintf("%d B", n)
 	}
-	return fmt.Sprintf("%d kB", (n+512)/1024)
+	return fmt.Sprintf("%d kB", KiB(n))
 }

@@ -48,10 +48,10 @@ func TestRouteOnlyAgainstAFakeModel(t *testing.T) {
 		t.Fatalf("report = %+v", rep)
 	}
 	r := rep.Repos[0]
-	if r.Outcome != "ok" || r.MustReadRecall != 1 || len(r.Subjects) == 0 || r.Subjects[0].Questions[0] != "Was startet?" || r.ListingKB == 0 && r.Files == 0 {
+	if r.Outcome != "ok" || r.MustReadRecall != 1 || len(r.Subjects) == 0 || r.Subjects[0].Questions[0] != "Was startet?" || r.Files != 3 || !r.Billed {
 		t.Errorf("repo = %+v, want both must-reads, the docs counted", r)
 	}
-	if md := rep.Markdown(); !strings.Contains(md, "| r1 |") {
+	if md := rep.Markdown(); !strings.Contains(md, "| p1/r1 |") {
 		t.Errorf("markdown = %q", md)
 	}
 	again, err := RouteOnly(context.Background(), Options{Dir: dir, Out: filepath.Join(dir, "out"), Model: "mimo-v2.6-pro",
@@ -83,7 +83,7 @@ func TestRouteReport(t *testing.T) {
 		t.Errorf("report = %+v", rr)
 	}
 	md := (&RouteReport{Model: "m", Repos: []RouteRepo{rr}, CostUSD: 0.02}).Markdown()
-	for _, want := range []string{"| r | 3 |", "### Kern (3 kB)", "- `a.go`", "- Was tut der Kern?", "Must-read missed: b.go", "Noise picked: gen/x.go"} {
+	for _, want := range []string{"| p/r | 3 |", "### Kern (3 kB)", "- `a.go`", "- Was tut der Kern?", "Must-read missed: b.go", "Noise picked: gen/x.go"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown lacks %q:\n%s", want, md)
 		}

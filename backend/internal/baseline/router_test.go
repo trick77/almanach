@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/trick77/almanach/internal/gitrepo"
 )
 
 // Every file is named with its hints; skeletons fill what is left, the
@@ -80,7 +82,9 @@ func TestRouterListing(t *testing.T) {
 	if shown != len(deep) {
 		t.Errorf("the listing stands for %d files, the tree has %d:\n%s", shown, len(deep), got)
 	}
-	if !strings.Contains(RouterListing([]File{{Path: "big.java", Size: FileMaxBytes + 1}}, StageZero{}, 1000), "head only") {
+	// As Files hands a big file on: capped at FileMaxBytes, marked Cut.
+	if big := FileOf(gitrepo.Entry{Path: "Big.java", Mode: "100644", Size: 3 * FileMaxBytes}); !big.Cut ||
+		!strings.Contains(RouterListing([]File{big}, StageZero{}, 1000), "head only") {
 		t.Error("a file read as its head is not marked so")
 	}
 }

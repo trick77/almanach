@@ -34,7 +34,9 @@ type RouteDry struct {
 	Docs []baseline.File
 	// Questions is each subject's reader questions, by its name.
 	Questions map[string][]string
-	Call      inference.Call
+	// OverBudget is the subjects a run would skip, past the run's bytes.
+	OverBudget []string
+	Call       inference.Call
 	// ReadableBytes is the tree's; SkeletonBytes stage 0's; ListingBytes
 	// what the router read of it.
 	ReadableBytes, SkeletonBytes, ListingBytes int64
@@ -84,14 +86,32 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 		subjects = append(subjects, s.Subject)
 	}
 	p := baseline.BuildPlan(subjects, files, w.maxSubjects())
-	out.Plan = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
+	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
+	// A run skips a part that would pass the run's byte budget and reads
+	// on (the docs read first): the dry run reads what a run would.
+	var bytes int64
+	for _, d := range out.Docs {
+		bytes += d.Size
+	}
+	read := p
+	read.Subjects = nil
+	for _, s := range p.Subjects {
+		if bytes+s.Bytes() > int64(w.base.Limits.MaxBytes) {
+			out.OverBudget = append(out.OverBudget, s.Name)
+			continue
+		}
+		bytes += s.Bytes()
+		read.Subjects = append(read.Subjects, s)
+	}
+	out.Plan = read
 	// The plan names a subject as stored (lang.Prose) and merges two the
 	// same but for spelling: its questions are theirs, in their order, each
-	// stored prose, at most RouteMaxQuestions.
+	// stored prose, at most RouteMaxQuestions; never those of a router
+	// subject the plan dropped, none of its paths a file of the subject.
 	for _, ps := range out.Plan.Subjects {
 		var qs []string
 		for _, s := range res.Subjects {
-			if !lang.SameName(lang.Prose(s.Name), ps.Name) {
+			if !lang.SameName(lang.Prose(s.Name), ps.Name) || !picksAny(s.Paths, ps.Files) {
 				continue
 			}
 			for _, q := range s.Questions {
@@ -107,11 +127,33 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	return out, nil
 }
 
+// picksAny reports whether a router subject's paths name any of files: a
+// file's path, its own directory ("dir/*", "*"), or one above it ("dir/").
+func picksAny(paths []string, files []baseline.File) bool {
+	for _, p := range paths {
+		p = strings.TrimPrefix(strings.TrimSpace(p), "./")
+		for _, f := range files {
+			switch {
+			case p == f.Path:
+				return true
+			case strings.HasSuffix(p, "*"):
+				dir := strings.TrimSuffix(p, "*")
+				if strings.HasPrefix(f.Path, dir) && !strings.Contains(f.Path[len(dir):], "/") {
+					return true
+				}
+			case strings.HasSuffix(p, "/") && strings.HasPrefix(f.Path, p):
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // renderRouter is a router call's prompt. Budgets in kB of 1024 bytes, as
 // the listing gives the sizes (baseline.RouterListing).
 func renderRouter(r store.BaselineRun, listing string, files int, readable int64, runBytes, maxSubjects int) string {
 	return strings.NewReplacer(
-		"{repo}", r.Slug, "{project}", r.ProjectKey, "{files}", fmt.Sprint(files), "{readable_kb}", fmt.Sprint((readable+512)/1024),
+		"{repo}", r.Slug, "{project}", r.ProjectKey, "{files}", fmt.Sprint(files), "{readable_kb}", fmt.Sprint(baseline.KiB(readable)),
 		"{step_kb}", fmt.Sprint(baseline.StepMaxBytes/1024), "{run_kb}", fmt.Sprint(runBytes/1024),
 		"{max_subjects}", fmt.Sprint(maxSubjects), "{listing}", listing,
 	).Replace(prompts.Router)
