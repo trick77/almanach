@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import type { Repo } from "./api";
 import { useEscape } from "./dialog";
 import { plain } from "./format";
-import { shortcutFree } from "./Rail";
+import { useShortcut } from "./Rail";
 import { navigateTo, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { Link, Teaser, matchesQuery, teaserLines } from "./ui";
@@ -80,18 +80,13 @@ export function RepoSwitcher({
   const prev = steps ? repos[(i - 1 + repos.length) % repos.length]!.slug : "";
   const next = steps ? repos[(i + 1) % repos.length]!.slug : "";
 
-  useEffect(() => {
-    if (!steps) return;
-    const onKey = (e: KeyboardEvent) => {
-      // A held key steps once: each repeat would push a page and fetch it.
-      if ((e.key !== "[" && e.key !== "]") || e.repeat || !shortcutFree(e))
-        return;
-      e.preventDefault();
-      navigateTo(repoPath(projectKey, e.key === "[" ? prev : next));
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [steps, projectKey, prev, next]);
+  // "[" and "]" step as ‹ and › do; a held key once, as each repeat would
+  // push a page and fetch it (useShortcut).
+  useShortcut(
+    ["[", "]"],
+    (key) => navigateTo(repoPath(projectKey, key === "[" ? prev : next)),
+    steps,
+  );
 
   function toggle(e: MouseEvent<HTMLButtonElement>) {
     setOpener(opener === null ? e.currentTarget : null);
