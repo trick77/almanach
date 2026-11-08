@@ -157,13 +157,14 @@ func Readable(e gitrepo.Entry) bool {
 // Files is the readable part of a tree, by path, a file over FileMaxBytes
 // as the head of it. Each kind of tests is left out unless it is most of
 // it (kindOf, keepTests): the catalogue was asked to leave them out and
-// did not, and a step's budget went to them.
+// did not, and a step's budget went to them. Schema migrations are left
+// out (MigrationFile).
 func Files(entries []gitrepo.Entry) []File {
 	var all []File
 	kinds := map[string]testKind{}
 	count := map[testKind]int{}
 	for _, e := range entries {
-		if Readable(e) {
+		if Readable(e) && !MigrationFile(e.Path) {
 			f := FileOf(e)
 			k := kindOf(f.Path)
 			kinds[f.Path] = k

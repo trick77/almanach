@@ -982,7 +982,11 @@ resumes after a restart. The run pins the clone's head when it starts.
 
 1. *Catalogue.* The tree at the commit (`ls-tree`, modes and sizes), held
    to what a run may read: regular files, not vendored, built, locked,
-   binary or generated; one over 100 kB is read as its first 100 kB
+   binary or generated, no schema migration (Liquibase changelogs, Flyway,
+   Alembic, Rails, a `migrations` folder: how the database got there, never
+   what it is, and not every store has a schema: the data model is
+   learned from the code that uses it; a schema dump stays
+   (`baseline.MigrationFile`); one over 100 kB is read as its first 100 kB
    (`File.Cut`, the listing and the step's file marker say so), never left
    out, since the one class a repository turns on is as often as not such
    a file, up to 2 MB, past which it is data and refused by its size as
