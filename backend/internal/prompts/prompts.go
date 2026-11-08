@@ -14,6 +14,12 @@ var Merge string
 //go:embed almanach_catalogue.txt
 var Catalogue string
 
+// Router picks, from every file's skeleton and hints, the files a writer
+// reads in full by subject: stage 1 of the filter stage.
+//
+//go:embed almanach_router.txt
+var Router string
+
 // Describe asks what one part of a repository's code teaches its page, as a
 // patch: the overview step and every subject step.
 //

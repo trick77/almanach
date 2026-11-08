@@ -9,7 +9,8 @@ import (
 // Every prompt that reads code or notes says what the redaction marker is.
 func TestPromptsStateTheRedactionMarker(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
-		"project departure": ProjectDeparture, "repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle, "brief": Brief} {
+		"project departure": ProjectDeparture, "repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle, "brief": Brief,
+		"router": Router} {
 		if !strings.Contains(p, Redacted) {
 			t.Errorf("%s prompt lacks the redaction sentence %q", name, Redacted)
 		}
@@ -20,7 +21,7 @@ func TestPromptsStateTheRedactionMarker(t *testing.T) {
 func TestPromptsStateTheSpelling(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
 		"project departure": ProjectDeparture, "repo map": RepoMap, "diagrams": Diagrams, "restyle": Restyle, "project restyle": ProjectRestyle,
-		"brief": Brief} {
+		"brief": Brief, "router": Router} {
 		if !strings.Contains(p, Spelling) {
 			t.Errorf("%s prompt lacks the spelling rule %q", name, Spelling)
 		}
@@ -174,7 +175,7 @@ func TestPromptsPutTheCallLast(t *testing.T) {
 	repoMap := map[string]bool{"{map_max_nodes}": true, "{map_max_edges}": true}
 	placeholder := regexp.MustCompile(`\{[a-z_]+\}`)
 	for name, p := range map[string]string{"merge": Merge, "describe": Describe, "project": Project, "project departure": ProjectDeparture,
-		"repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle} {
+		"repo map": RepoMap, "restyle": Restyle, "project restyle": ProjectRestyle, "router": Router} {
 		format, untrusted := strings.Index(p, "## Output format"), strings.Index(p, "## Untrusted input")
 		if format < 0 || untrusted < format {
 			t.Fatalf("%s prompt has no output format, or its untrusted input before it", name)
