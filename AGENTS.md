@@ -44,6 +44,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   (2026-11-07: runaway restyles, 10 min, ~$0.9 each, 8×, unpriced).
 - `llm_calls` (own), `note_calls` (noergler's) never summed. Daily budget holds runs, never notes.
 - `serve` never migrates; never edit an applied migration (0001 squashed once, DB dropped, 2026-11-01).
+- Schema: read `docs/schema.md` first; regenerate in `backend/` (its header's command).
 - oidc, proxy gone (user, 2026-10-31). Reader's name: log only.
 - Project, repo = id; names only in `projects`, `repos`, `*_names`, never joined on. A name once used, any
   case, never another's; own may change case (user, 2026-11-01). Carry-over: `TRANSITIONAL(<topic>): Remove
