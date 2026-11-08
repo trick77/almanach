@@ -53,7 +53,14 @@ export interface Costs {
   months: CostMonth[];
   /** BACKEND_DAILY_BUDGET_USD; absent when none is set. */
   budget_usd?: string;
-  today: { cost_usd?: string; calls: number; unpriced: number };
+  today: {
+    cost_usd?: string;
+    calls: number;
+    unpriced: number;
+    /** What the daily budget counts: the cost and each unpriced call as
+     *  the dearest priced one. */
+    budgeted_usd?: string;
+  };
 }
 
 export interface Projects {
@@ -763,7 +770,12 @@ export interface Queue {
     next_at: string | null;
   } | null;
   /** unpriced: calls cut before their usage arrived, not in cost_usd. */
-  spent: { cost_usd?: string; calls: number; unpriced: number };
+  spent: {
+    cost_usd?: string;
+    calls: number;
+    unpriced: number;
+    budgeted_usd?: string;
+  };
   recent: QueueRecent[];
   failed: QueueFailed[];
   poll_seconds: number;

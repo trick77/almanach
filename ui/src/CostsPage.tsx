@@ -53,16 +53,25 @@ export function CostsPage() {
 
 function Body({ c }: { c: Costs }) {
   const spent = c.today.calls === 0 ? S.queue.idle : money(c.today.cost_usd);
-  // Against the budget an amount always: no priced call yet is $0.00, as
-  // the budget counts priced calls only.
-  const againstBudget = money(c.today.cost_usd || "0");
+  // Against the budget an amount always, as the worker counts it: an
+  // unpriced call as the dearest priced one; nothing known yet is $0.00.
+  const againstBudget = money(c.today.budgeted_usd || c.today.cost_usd || "0");
+  const unpriced = c.today.unpriced > 0;
   return (
     <>
       <Tiles>
         <Tile
           label={S.costs.tiles.today}
           value={spent}
-          note={S.costs.calls(c.today.calls)}
+          note={
+            unpriced
+              ? [
+                  S.costs.calls(c.today.calls),
+                  S.queue.unpriced(c.today.unpriced),
+                ].join(` ${S.common.sep} `)
+              : S.costs.calls(c.today.calls)
+          }
+          noteTitle={unpriced ? S.queue.unpricedHint : undefined}
         />
         <Tile
           label={S.costs.tiles.budget}
@@ -71,6 +80,9 @@ function Body({ c }: { c: Costs }) {
             c.budget_usd
               ? S.costs.tiles.budgetNote(againstBudget, money(c.budget_usd))
               : S.costs.tiles.noBudget
+          }
+          noteTitle={
+            c.budget_usd && unpriced ? S.costs.tiles.budgetUnpriced : undefined
           }
         />
       </Tiles>

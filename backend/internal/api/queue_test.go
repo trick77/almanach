@@ -274,7 +274,7 @@ func TestQueue_TheWorkersOrder(t *testing.T) {
 	if s := out.Sync; s == nil || !s.Running || s.Repo != "web" || s.Done != 2 || s.Total != 14 {
 		t.Errorf("sync = %+v", out.Sync)
 	}
-	if out.Spent.CostUSD != "1.284" || out.Spent.Calls != 23 || out.Spent.Unpriced != 2 || out.PollSeconds != 30 || out.MaxAttempts != 8 {
+	if out.Spent.CostUSD != "1.284" || out.Spent.Calls != 23 || out.Spent.Unpriced != 2 || out.Spent.BudgetedUSD != "1.884" || out.PollSeconds != 30 || out.MaxAttempts != 8 {
 		t.Errorf("spent = %+v poll %d max %d", out.Spent, out.PollSeconds, out.MaxAttempts)
 	}
 	// The queued run has made no call: its calls are never read.
