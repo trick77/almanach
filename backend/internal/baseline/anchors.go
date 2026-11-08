@@ -62,8 +62,8 @@ func unitTest(p string) bool {
 
 // e2eFile is a file of an end-to-end project: an e2e folder at the root or
 // right in a workspace folder. Page objects, logins, stubs, test accounts
-// say nothing of the product, and a router given them made a whole subject
-// of them (2026-11-08). Deeper, an e2e folder is a package of the product
+// say nothing of the product, and a router given them can make a subject of
+// them alone. Deeper, an e2e folder is a package of the product
 // (end-to-end encryption), never a suite. The project's runner config and
 // build files stay: how the tests run and are built is what a reader needs
 // (anchors).

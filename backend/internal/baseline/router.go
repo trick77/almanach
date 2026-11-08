@@ -9,17 +9,17 @@ import (
 
 // RouterMaxBytes is the router's listing ceiling, from the context: with
 // the prompt's instructions and the system message, at 3 bytes a token (a
-// listing measured 3.6: 293 kB, 82k tokens, 2026-11-08), it leaves
-// inference.RouteReserve inside inference.RouteContext
+// listing's paths and skeletons run denser than prose, never below), it
+// leaves inference.RouteReserve inside inference.RouteContext
 // (TestRouterListingFitsTheContext); a prompt past it anyway is refused
 // before the call (consolidate's routeFits). About 70k tokens a call, a
-// full run's one router call, near twice the 40k it cost at first.
+// full run's one router call, near twice what it cost at first.
 //
-// 150 kB at first, the names half of it: the dry runs (user, 2026-11-08)
-// found a thousand-file service's names alone at 149 kB, its directories
-// folded, and half the files the router missed seen only in a folded line.
-// A larger tree still folds, its lowest-scored directories first; the
-// skeletons of a large service (774 kB measured) never fit whole.
+// 150 kB at first, the names half of it: a JVM service of a thousand files
+// has as many bytes of names alone, so its directories folded and the
+// router never saw by name much of what it should have picked. A larger
+// tree still folds, its lowest-scored directories first; a large service's
+// skeletons never fit whole.
 const RouterMaxBytes = 250_000
 
 // routerNamesThirds is the share of the ceiling, in thirds, the file names

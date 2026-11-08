@@ -49,6 +49,10 @@ type RouteRepo struct {
 	Billed       bool           `json:"billed"`
 	// OverBudget is the subjects a run would skip past its bytes.
 	OverBudget []string `json:"over_budget,omitempty"`
+	// RouterSubjects is how many subjects the router answered; Unresolved
+	// its paths naming no readable file, which the plan drops unseen.
+	RouterSubjects int      `json:"router_subjects"`
+	Unresolved     []string `json:"unresolved,omitempty"`
 	// Scored against the labels, when the repository has them (Labelled):
 	// a 0 of an unlabelled one is no score.
 	Labelled       bool     `json:"labelled"`
@@ -155,6 +159,7 @@ func routeReport(rr RouteRepo, dry consolidate.RouteDry, l *Labels) RouteRepo {
 	rr.Files = len(dry.Files)
 	rr.ReadableKB, rr.SkeletonKB, rr.ListingKB = kib(dry.ReadableBytes), kib(dry.SkeletonBytes), kib(int64(len(dry.Listing)))
 	rr.OverBudget = dry.OverBudget
+	rr.RouterSubjects, rr.Unresolved = dry.RouterSubjects, dry.Unresolved
 	cost := dry.Call.Cost
 	// Billed: an answer began to arrive or one came (store's rule), so a
 	// call without a price is unknown spend, never one that cost nothing.
@@ -232,7 +237,10 @@ func (r *RouteReport) Markdown() string {
 			x.PickedKB, x.PickedFiles, recall, x.NoiseKB, cell.Replace(strings.TrimSpace(x.Outcome+" "+x.Error)))
 	}
 	for _, x := range r.Repos {
-		fmt.Fprintf(&b, "\n## %s/%s\n", x.Project, x.Repo)
+		fmt.Fprintf(&b, "\n## %s/%s\n\nThe router answered %d subjects, the plan holds %d.\n", x.Project, x.Repo, x.RouterSubjects, len(x.Subjects))
+		if len(x.Unresolved) > 0 {
+			fmt.Fprintf(&b, "\nRouter paths naming no file (dropped unseen): %s\n", strings.Join(x.Unresolved, ", "))
+		}
 		if len(x.OverBudget) > 0 {
 			fmt.Fprintf(&b, "\nPast the run's bytes, a run would skip: %s\n", strings.Join(x.OverBudget, ", "))
 		}

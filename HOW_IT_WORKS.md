@@ -1026,11 +1026,13 @@ resumes after a restart. The run pins the clone's head when it starts.
    two thirds of it folds its lowest-scored directories into one line
    each, down to a top-level directory alone, and a prompt still past the
    context is refused before the call), and answers subjects with the
-   files to read in full and the reader questions they answer; the plan's
-   rules hold its answer as a
-   catalogue's (`BuildPlan`, `EnsureAnchors`); `Worker.Route` runs stages
-   0 and 1 alone, nothing written. A full
-   run asks the catalogue model
+   files to read in full and the reader questions they answer. It is asked
+   one subject short of the plan's cap, and told the run's bytes less the
+   docs and the anchors, so the subject `EnsureAnchors` opens for the
+   anchors it left out pushes none of its own out (a plan of one subject
+   spares no slot); the plan's rules hold its answer as a catalogue's
+   (`BuildPlan`, `EnsureAnchors`); `Worker.Route` runs stages 0 and 1
+   alone, nothing written. A full run asks the catalogue model
    (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
    from the listing and the docs. Over 4000 files the listing is the tree

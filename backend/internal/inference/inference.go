@@ -491,8 +491,8 @@ const (
 )
 
 // RoutePromptTokens is a router prompt's size in tokens beside the system
-// message, at 3 bytes a token (a listing measured 3.6, 2026-11-08), framing
-// rounded up: an estimate held to fail early.
+// message, at 3 bytes a token (a listing's paths and skeletons run denser
+// than prose), framing rounded up: an estimate held to fail early.
 func RoutePromptTokens(prompt string) int {
 	return (len(prompt)+len(SystemMessage))/3 + 500
 }

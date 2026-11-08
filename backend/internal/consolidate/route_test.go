@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/almanach/internal/baseline"
+	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 )
 
@@ -47,7 +49,7 @@ func TestRoute_DryRun(t *testing.T) {
 		t.Fatalf("%d prompts, want the router's one", len(x.models.prompts))
 	}
 	prompt := x.models.prompts[0]
-	for _, want := range []string{"Repository `svc` in project `tools`", "auth/login.go (", "at most 12 subjects"} {
+	for _, want := range []string{"Repository `svc` in project `tools`", "auth/login.go (", "at most 11 subjects"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("router prompt lacks %q", want)
 		}
@@ -90,6 +92,41 @@ func TestRoute_DroppedPicks(t *testing.T) {
 	}
 	if !dry.Dropped["auth/login.go"] || !dry.Dropped["billing/run.go"] || dry.Dropped["README.md"] || len(dry.Plan.Subjects) != 0 {
 		t.Errorf("dropped %v, plan %+v: want both picks dropped past the run's bytes", dry.Dropped, dry.Plan.Subjects)
+	}
+}
+
+// The router is asked one subject short of the plan, so the anchors' own
+// subject takes no router subject's place; a plan of one subject or none
+// spares no slot. Its run bytes leave the docs and the anchors out.
+func TestRoute_AnchorsKeepTheirSlot(t *testing.T) {
+	for calls, want := range map[int]int{16: 11, 6: 1, 5: 1, 4: 0} {
+		x := newWorld(t, calls)
+		if got := x.w.routerSubjects(); got != want {
+			t.Errorf("MaxCalls %d: router asked for %d subjects, want %d", calls, got, want)
+		}
+	}
+	files := []baseline.File{{Path: "README.md", Size: 1000}, {Path: "cmd/app/main.go", Size: 300}, {Path: "billing/run.go", Size: 5000}}
+	if got := routerRunBytes(10_000, files, nil); got != 10_000-1000-300 {
+		t.Errorf("router run bytes = %d, want the run's less docs and anchors", got)
+	}
+
+	// Two subjects a plan: the router names one and leaves the anchor out;
+	// both stand, the anchors' first.
+	x := newWorld(t, 6)
+	x.code.tree = append(x.code.tree, gitrepo.Entry{Path: "cmd/app/main.go", Mode: "100644", Size: 10})
+	x.code.bodies["cmd/app/main.go"] = "package main"
+	x.models.route = inference.RouteResult{Call: called, Subjects: []inference.RouteSubject{
+		{Subject: inference.Subject{Name: "Abrechnung", Purpose: "p", Paths: []string{"billing/", "billing/*.go"}}},
+	}}
+	dry, err := x.w.Route(context.Background(), "tools", "svc", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dry.Plan.Subjects) != 2 || dry.Plan.Subjects[0].Name != baseline.AnchorSubject || dry.Plan.Subjects[1].Name != "Abrechnung" {
+		t.Errorf("plan = %+v: want the anchors' subject and the router's", dry.Plan.Subjects)
+	}
+	if dry.RouterSubjects != 1 || len(dry.Unresolved) != 1 || dry.Unresolved[0] != "Abrechnung: billing/*.go" {
+		t.Errorf("router subjects %d, unresolved %v: want the glob no file is named by", dry.RouterSubjects, dry.Unresolved)
 	}
 }
 
