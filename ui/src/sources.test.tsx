@@ -456,7 +456,7 @@ describe("SourcePage baseline", () => {
     expect(writes).toHaveLength(1);
     expect(
       screen.getByText(
-        /acme-cli neu beschreiben\? .*bis zu 16 Modellaufrufe; der letzte Lauf kostete \$2\.42\./,
+        /acme-cli neu beschreiben\? .*bis zu 16 Modellaufrufe; der letzte Run kostete \$2\.42\./,
       ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByText(S.baseline.yesFull));
@@ -720,7 +720,7 @@ describe("SourcePage baseline", () => {
     // The skipped parts by reason, one line each, the run's order kept.
     expect(
       screen.getByText(
-        "Lesebudget des Laufs überschritten: Überblick, Auth, B und 2 weitere",
+        "Lesebudget des Runs überschritten: Überblick, Auth, B und 2 weitere",
       ),
     ).toBeInTheDocument();
     expect(
@@ -837,7 +837,7 @@ describe("SourcePage baseline", () => {
     // said once, not under the gone subject.
     expect(
       screen.getAllByText(
-        "Der nächste Lauf liest sie erneut, Aktualisieren sofort.",
+        "Der nächste Run liest sie erneut, Aktualisieren sofort.",
       ),
     ).toHaveLength(1);
   });
@@ -1205,7 +1205,7 @@ describe("App with sources", () => {
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
     expect(await screen.findByText("Quellen")).toBeInTheDocument();
-    // Abhängigkeiten before Quellen, no FAQ. The label alone: the queue's
+    // Dependencies before Quellen, no FAQ. The label alone: the queue's
     // count sits in its link beside it.
     const entries = () =>
       within(screen.getByRole("navigation", { name: "Seiten" }))
@@ -1213,9 +1213,9 @@ describe("App with sources", () => {
         .map((a) => a.firstElementChild?.textContent);
     expect(entries()).toEqual([
       "Projekte",
-      "Abhängigkeiten",
+      "Dependencies",
       "Quellen",
-      "Warteschlange",
+      "Queue",
       "Kosten",
     ]);
     unmount();
@@ -1231,6 +1231,6 @@ describe("App with sources", () => {
     await waitFor(() =>
       expect(screen.queryByText("Quellen")).not.toBeInTheDocument(),
     );
-    expect(entries()).toEqual(["Projekte", "Warteschlange", "Kosten"]);
+    expect(entries()).toEqual(["Projekte", "Queue", "Kosten"]);
   });
 });

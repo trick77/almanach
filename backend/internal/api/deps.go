@@ -122,7 +122,7 @@ func markdownDeps(uses []useBody, usedBy []depBody) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n## Abhängigkeiten\n\n")
+	b.WriteString("\n## Dependencies\n\n")
 	line := func(d depBody) {
 		fmt.Fprintf(&b, "- `%s/%s`", d.Project, d.Slug)
 		// A version is a manifest's text: one line, in a code span with no

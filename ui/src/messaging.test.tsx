@@ -61,7 +61,7 @@ describe("topicGraph", () => {
       "from:shop/billing>in:payment.done",
     ]);
     // Zones titled for the reader; a named topic is not drawn.
-    expect(ir.zones.find((z) => z.id === "in")?.title).toBe("Konsumiert");
+    expect(ir.zones.find((z) => z.id === "in")?.title).toBe("Consumed");
     expect(ir.nodes.some((n) => n.label === "ledger")).toBe(false);
     expect(ir.nodes.find((n) => n.id === "to:ops/audit")?.label).toBe(
       "ops/audit",

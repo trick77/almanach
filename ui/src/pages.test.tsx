@@ -2006,9 +2006,7 @@ describe("session gate", () => {
     answer({ status: 401, body: { error: "sign-in required" } });
     render(<App />);
     await waitFor(() => expect(loc.href).toBe("/api/auth/login"));
-    expect(
-      screen.getByText("Weiterleitung zur Anmeldung …"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Weiterleitung zum Login …")).toBeInTheDocument();
     expect(screen.queryByText("PAY")).not.toBeInTheDocument();
   });
 
@@ -2077,7 +2075,7 @@ describe("session gate", () => {
     answer({ status: 401 });
     render(<App />);
     expect(
-      await screen.findByText(/hat gerade eben keine Sitzung ergeben/),
+      await screen.findByText(/hat gerade eben keine Session ergeben/),
     ).toBeInTheDocument();
     expect(loc.href).toBe("/");
   });
@@ -2087,7 +2085,7 @@ describe("session gate", () => {
     render(<App />);
     expect(
       await screen.findByText(
-        "Die Sitzung konnte nicht geprüft werden (HTTP 500).",
+        "Die Session konnte nicht geprüft werden (HTTP 500).",
       ),
     ).toBeInTheDocument();
   });
@@ -2122,7 +2120,7 @@ describe("session gate", () => {
     answer({ status: 401 });
     render(<App />);
     expect(
-      await screen.findByText(/der Identitätsanbieter antwortet nicht/),
+      await screen.findByText(/der Identity Provider antwortet nicht/),
     ).toBeInTheDocument();
     expect(screen.getByText("Erneut versuchen").closest("a")).toHaveAttribute(
       "href",
@@ -2177,7 +2175,7 @@ describe("session gate", () => {
     answer({ status: 401 });
     render(<App />);
     expect(
-      await screen.findByText(/Die Anmeldung ist falsch eingerichtet/),
+      await screen.findByText(/Der Login ist falsch eingerichtet/),
     ).toBeInTheDocument();
   });
 });
