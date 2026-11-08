@@ -10,6 +10,7 @@ import (
 	// ir, not diagram: docs.go's diagram() reads diagram sources.
 	ir "github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/lang"
+	"github.com/trick77/almanach/internal/store"
 )
 
 // A diagram is a claim like a statement: the model's structure, held to
@@ -386,7 +387,11 @@ func checkFlow(d *ir.Diagram, caps DiagramCaps, tagged bool) (*ir.Diagram, strin
 		text := ""
 		if n.Shape != "start" && n.Shape != "stop" {
 			var reason string
-			if text, reason = label("node "+n.ID, n.Label, true); reason != "" {
+			labelled := label
+			if slugLabel(n) {
+				labelled = spelledLabel
+			}
+			if text, reason = labelled("node "+n.ID, n.Label, true); reason != "" {
 				return nil, reason
 			}
 		}
@@ -622,9 +627,19 @@ func checkID(what, id string, seen map[string]bool) string {
 }
 
 // label is a piece of a diagram's prose as stored: trimmed, Swiss, capped,
-// and present when it must be.
+// and present when it must be, its software words English (labelTerms).
 func label(at, s string, required bool) (string, string) {
-	s = lang.Prose(s)
+	s, why := spelledLabel(at, s, required)
+	if why != "" {
+		return "", why
+	}
+	return labelTerms(s), ""
+}
+
+// spelledLabel is label without the words made English: a repository
+// node's label is its slug, an identifier.
+func spelledLabel(at, s string, required bool) (string, string) {
+	s = lang.Spelled(s)
 	if required && s == "" {
 		return "", at + ": empty label"
 	}
@@ -632,4 +647,52 @@ func label(at, s string, required bool) (string, string) {
 		return "", fmt.Sprintf("%s: label over %d characters", at, labelMaxChars)
 	}
 	return s, ""
+}
+
+// labelTerms is a label within the cap with its software words English,
+// as written where the English would run over it: a stored label is
+// checked again by every later run, so it never exceeds the cap.
+func labelTerms(s string) string {
+	if t := lang.Terms(s); utf8.RuneCountInString(t) <= labelMaxChars {
+		return t
+	}
+	return s
+}
+
+// slugLabel reports whether n is a map's repository node labelled by its
+// slug (LabelRepos): an identifier, never respelled.
+func slugLabel(n ir.Node) bool { return n.Zone == ir.ZoneRepositories && n.Label == n.ID }
+
+// Respeller is the word rule (lang.Terms) as store.Respell applies it to a
+// stored page: prose made English, diagram labels as label makes them
+// (within the cap, a repository's slug as it is), and the page arranged
+// again, an area respelled into one it already has joining it.
+type Respeller struct{}
+
+// Prose is a stored summary, statement name, text or area made English.
+func (Respeller) Prose(s string) string { return lang.Terms(s) }
+
+// Arrange is the page laid out by its areas again (Arrange).
+func (Respeller) Arrange(st []store.Statement) []store.Statement { return Arrange(st) }
+
+// Diagram makes a stored diagram's labels English in place, as label
+// does; reports whether one changed.
+func (Respeller) Diagram(d *ir.Diagram) bool {
+	if d == nil {
+		return false
+	}
+	// A slug label is set aside while the rest is relabelled: an empty
+	// label stays empty, so only the others count as a change.
+	slugs := map[int]string{}
+	for i, n := range d.Nodes {
+		if slugLabel(n) {
+			slugs[i] = n.Label
+			d.Nodes[i].Label = ""
+		}
+	}
+	changed := d.Relabel(labelTerms)
+	for i, l := range slugs {
+		d.Nodes[i].Label = l
+	}
+	return changed
 }

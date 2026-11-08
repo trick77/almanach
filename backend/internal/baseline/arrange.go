@@ -45,7 +45,7 @@ var tailAreas = []string{OpsArea, LastArea}
 func CleanArea(a string) string {
 	a = strings.Join(strings.Fields(lang.Prose(a)), " ")
 	for _, fixed := range tailAreas {
-		if lang.SameButSpelling(strings.ToLower(a), strings.ToLower(fixed)) {
+		if lang.SameName(a, fixed) {
 			return fixed
 		}
 	}

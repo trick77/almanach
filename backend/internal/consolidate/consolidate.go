@@ -2076,9 +2076,5 @@ func diagramLine(d *diagram.Diagram) string {
 // prose is the runes a revision's chars counts: the summary and every
 // statement's name and text. Paths and ids are not prose.
 func prose(summary string, statements []store.Statement) int {
-	n := utf8.RuneCountInString(summary)
-	for _, s := range statements {
-		n += utf8.RuneCountInString(s.Name) + utf8.RuneCountInString(s.Text)
-	}
-	return n
+	return store.ProseChars(summary, statements)
 }

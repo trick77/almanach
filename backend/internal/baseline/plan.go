@@ -232,12 +232,12 @@ func (p Plan) Bytes() int64 {
 	return n
 }
 
-// find is the index of the subject with this name, ignoring case and
-// umlauts written out ("Datenueberpruefung" is "Datenüberprüfung"); -1
-// when none.
+// find is the index of the subject with this name, ignoring case, umlauts
+// written out ("Datenueberpruefung" is "Datenüberprüfung") and a software
+// word stored in German (lang.SameName); -1 when none.
 func (p Plan) find(name string) int {
 	for i, s := range p.Subjects {
-		if lang.SameButSpelling(strings.ToLower(s.Name), strings.ToLower(name)) {
+		if lang.SameName(s.Name, name) {
 			return i
 		}
 	}
@@ -545,7 +545,9 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 	ix := newIndex(files)
 	out := Plan{Subjects: []Subject{}}
 	for _, s := range old.Subjects {
-		kept := Subject{Name: s.Name, Purpose: s.Purpose}
+		// A name and purpose stored before the word rule come out English,
+		// as the catalogue writes them today (lang.Terms).
+		kept := Subject{Name: lang.Terms(s.Name), Purpose: lang.Terms(s.Purpose)}
 		paths := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
 			if _, ok := ix.byPath[f.Path]; ok {

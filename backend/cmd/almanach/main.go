@@ -31,6 +31,7 @@ import (
 
 	"github.com/trick77/almanach/internal/api"
 	"github.com/trick77/almanach/internal/auth"
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/bitbucket"
 	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/config"
@@ -195,6 +196,14 @@ func migrate(log *slog.Logger) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	log.Info("migrations up to date")
+	// Pages stored before a word rule read as pages written after it: the
+	// rule is code's (lang.Terms), so this costs no model call, and it is
+	// idempotent, a page already respelled left as it is.
+	n, err := db.Respell(ctx, baseline.Respeller{})
+	if err != nil {
+		return fmt.Errorf("respell: %w", err)
+	}
+	log.Info("pages respelled", "revisions", n)
 	return nil
 }
 

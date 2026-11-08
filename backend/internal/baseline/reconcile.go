@@ -2,6 +2,7 @@ package baseline
 
 import (
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -88,13 +89,15 @@ func FullInstead(p Plan, c Changes) bool {
 // subject holds, for the catalogue step to place.
 func Touched(p Plan, c Changes) (touched []string, unplaced []File) {
 	changed := c.Paths()
+	// A name stored before the word rule (lang.Terms) is the same subject
+	// as its English one.
 	skipped := map[string]bool{}
 	for _, name := range p.Skipped {
-		skipped[name] = true
+		skipped[lang.Terms(name)] = true
 	}
 	held := map[string]bool{}
 	for _, s := range p.Subjects {
-		hit := skipped[s.Name]
+		hit := skipped[lang.Terms(s.Name)]
 		for _, f := range s.Files {
 			held[f.Path] = true
 			hit = hit || changed[f.Path]
