@@ -1000,7 +1000,25 @@ resumes after a restart. The run pins the clone's head when it starts.
    all; `bytes` stays the budget's
    count of every call's input), a reconcile carrying the documented run's
    pair, and the source page shows the share: twelve subjects of a large
-   repository once read a tenth and the page said nothing of it. A full
+   repository once read a tenth and the page said nothing of it. Before
+   it, stage 0 of the filter stage (user, 2026-11-07: "you really cannot
+   send ALL code to a model, there has to be a filter stage first") reads
+   the whole tree once, after the catalogue's call (a hold before it
+   repeats the step, never the read), and builds, by code alone, every
+   file's skeleton (`baseline.Skeleton`: package, imports, types and
+   signatures with their annotations, an interface's too, the first doc
+   sentence; the keys of a YAML two levels deep and of a properties, env,
+   ini, toml, conf or tfvars file, never a value; a schema's tables and
+   columns; a POM's coordinates; a BPMN's process elements by id and name;
+   any other file its first three lines; at most 4 kB a file) and its hints
+   (`baseline.FanIn`: users of a Java/Kotlin type by import, package
+   wildcard or name in its own package; of a relative TS/JS module, the
+   ESM `./x.js` naming x.ts; of a Go package, by the longest module of the
+   tree's `go.mod` files; `gitrepo.Churn`: commits of the last year, merges,
+   bots and dependency bumps left out, a human's "Update ... to 5 seconds"
+   counted). Line-based, no parser (a cgo dependency per grammar). Nothing
+   reads it yet: the run logs its size against the tree's, and a read that
+   fails is logged, never the run's failure. A full
    run asks the catalogue model
    (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
