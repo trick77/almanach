@@ -3,6 +3,7 @@ package consolidate
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -101,7 +102,7 @@ func TestRoute_DroppedPicks(t *testing.T) {
 func TestRoute_AnchorsKeepTheirSlot(t *testing.T) {
 	for calls, want := range map[int]int{16: 11, 6: 1, 5: 1, 4: 0} {
 		x := newWorld(t, calls)
-		if got := x.w.routerSubjects(); got != want {
+		if got := x.w.askedSubjects(); got != want {
 			t.Errorf("MaxCalls %d: router asked for %d subjects, want %d", calls, got, want)
 		}
 	}
@@ -127,6 +128,30 @@ func TestRoute_AnchorsKeepTheirSlot(t *testing.T) {
 	}
 	if dry.RouterSubjects != 1 || len(dry.Unresolved) != 1 || dry.Unresolved[0] != "Abrechnung: billing/*.go" {
 		t.Errorf("router subjects %d, unresolved %v: want the glob no file is named by", dry.RouterSubjects, dry.Unresolved)
+	}
+}
+
+// A router answering more subjects than the plan holds: the smallest join,
+// and the joined subject carries the questions of each it stands for.
+func TestRoute_JoinedSubjectsKeepTheirQuestions(t *testing.T) {
+	x := newWorld(t, 5) // a plan of one subject
+	x.models.route = inference.RouteResult{Call: called, Subjects: []inference.RouteSubject{
+		{Subject: inference.Subject{Name: "Anmeldung", Purpose: "a", Paths: []string{"auth/"}}, Questions: []string{"Wer meldet sich an?", "Wie lange?"}},
+		{Subject: inference.Subject{Name: "Abrechnung", Purpose: "b", Paths: []string{"billing/"}},
+			Questions: []string{"Wer zahlt?", "Wann?", "Wie viel?", "Wohin?", "Womit?"}},
+		// The same part again, spelled otherwise: within its part's cap.
+		{Subject: inference.Subject{Name: "anmeldung", Purpose: "a", Paths: []string{"auth/"}},
+			Questions: []string{"Q1?", "Q2?", "Q3?", "Q4?", "Q5?"}},
+	}}
+	dry, err := x.w.Route(context.Background(), "tools", "svc", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dry.Plan.Subjects) != 1 || dry.Plan.Subjects[0].Name != "Abrechnung und Anmeldung" {
+		t.Fatalf("plan = %+v, want both joined", dry.Plan.Subjects)
+	}
+	if qs := dry.Questions["Abrechnung und Anmeldung"]; len(qs) != 10 || !slices.Contains(qs, "Womit?") {
+		t.Errorf("questions = %v, want each part's, five a part", dry.Questions)
 	}
 }
 

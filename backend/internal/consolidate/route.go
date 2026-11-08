@@ -101,7 +101,7 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 		return RouteDry{}, err
 	}
 	listing, folded := baseline.RouterListing(files, z, baseline.RouterMaxBytes)
-	prompt := renderRouter(*r, listing, len(files), readable, routerRunBytes(w.base.Limits.MaxBytes, files, contracts), w.routerSubjects())
+	prompt := renderRouter(*r, listing, len(files), readable, routerRunBytes(w.base.Limits.MaxBytes, files, contracts), w.askedSubjects())
 	if err := routeFits(prompt); err != nil {
 		return RouteDry{}, err
 	}
@@ -177,16 +177,23 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	}
 	// The plan names a subject as stored (lang.Prose) and merges two the
 	// same but for spelling: its questions are theirs, in their order, each
-	// stored prose, at most RouteMaxQuestions; never those of a router
-	// subject the plan dropped, none of its paths a file of the subject.
+	// stored prose, at most RouteMaxQuestions a subject it stands for;
+	// never those of a router subject the plan dropped, none of its paths a
+	// file of the subject. A subject the plan joined has the questions of
+	// each it stands for.
 	for _, ps := range out.Plan.Subjects {
+		names := ps.Names()
 		var qs []string
+		per := map[int]int{} // questions taken by part
 		for _, s := range res.Subjects {
-			if !lang.SameName(lang.Prose(s.Name), ps.Name) || !picksAny(s.Paths, ps.Files) {
+			part := slices.IndexFunc(names, func(n string) bool { return lang.SameName(lang.Prose(s.Name), n) })
+			if part < 0 || !picksAny(s.Paths, ps.Files) {
 				continue
 			}
 			for _, q := range s.Questions {
-				if q = lang.Prose(q); q != "" && !slices.Contains(qs, q) && len(qs) < inference.RouteMaxQuestions {
+				if q = lang.Prose(q); q != "" && !slices.Contains(qs, q) && per[part] < inference.RouteMaxQuestions &&
+					len(qs) < inference.RouteMaxQuestions*baseline.JoinedShown {
+					per[part]++
 					qs = append(qs, q)
 				}
 			}
@@ -198,13 +205,13 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	return out, nil
 }
 
-// routerSubjects is the subjects the router is asked for: one short of the
-// plan's, so the subject EnsureAnchors opens for the anchors it left out
-// takes no router subject's place (at the cap, the router's last subject
-// gave way, every file only it named unread). The price: a router that
-// picks every anchor itself leaves a slot unused. A plan of one subject or
-// none has no slot to spare.
-func (w *Worker) routerSubjects() int {
+// askedSubjects is the subjects a full run's router or catalogue is asked
+// for: one short of the plan's, so the subject EnsureAnchors opens for the
+// anchors it left out needs no join or drop to stand (at the cap, the
+// model's last subject gave way, every file only it named unread). The
+// price: a model that picks every anchor itself leaves a slot unused. A
+// plan of one subject or none has no slot to spare.
+func (w *Worker) askedSubjects() int {
 	if m := w.maxSubjects(); m > 1 {
 		return m - 1
 	}
