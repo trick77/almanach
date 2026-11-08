@@ -50,8 +50,17 @@ var terms = map[string]term{
 var stems = []string{"Dienst", "Bibliothek", "Schlüssel", "Sitzung", "Abhängigkeit", "Kennung", "Zugangsdaten", "Endpunkt",
 	"Geheimnis", "Nachricht", "Umgebungsvariable", "Einstiegspunkt", "Repositori", "Warteschlange", "Zwischenspeicher"}
 
+// singularCues are the articles that make such a form a singular, whatever
+// stands before them: "die Klasse, die den Schlüssel hält" holds one key.
+var singularCues = map[string]bool{
+	"der": true, "den": true, "dem": true, "des": true, "ein": true, "einen": true, "einem": true, "eines": true,
+	"kein": true, "keinen": true, "keinem": true, "keines": true, "jeder": true, "jeden": true, "jedem": true, "jedes": true,
+	"diesen": true, "diesem": true, "dieses": true, "sein": true, "seinen": true, "seinem": true, "ihren": true, "ihrem": true,
+}
+
 // pluralCues are the words before a noun that make a form the same in both
-// numbers ("Schlüssel") a plural: "die Schlüssel", "alle Schlüssel".
+// numbers ("Schlüssel") a plural: "die Schlüssel", "alle Schlüssel", and
+// two words back across an adjective, "alle geheimen Schlüssel".
 var pluralCues = map[string]bool{
 	"die": true, "alle": true, "keine": true, "mehrere": true, "beide": true, "beiden": true, "diese": true, "jene": true,
 	"welche": true, "solche": true, "viele": true, "vielen": true, "einige": true, "wenige": true, "ihre": true, "seine": true,
@@ -115,7 +124,7 @@ func termFor(w, before, after, prev, prev2 string) string {
 	if w == "Abhängigkeit" && prev == "in" {
 		return w
 	}
-	if t.plural != "" && (pluralCues[prev] || pluralCues[prev2] || numberBefore(before)) {
+	if t.plural != "" && !singularCues[prev] && (pluralCues[prev] || pluralCues[prev2] || numberBefore(before)) {
 		return t.plural
 	}
 	return t.en
@@ -142,13 +151,21 @@ func partOfCode(before, after string) bool {
 	return false
 }
 
-// numberBefore reports whether a count stands right before the word, a
-// space between: "3 Schlüssel".
+// numberBefore reports whether a count above one stands right before the
+// word, a space between: "3 Schlüssel", never "1 Schlüssel".
 func numberBefore(before string) bool {
 	trimmed := strings.TrimRight(before, "  ")
 	if trimmed == before {
 		return false
 	}
-	r, _ := utf8.DecodeLastRuneInString(trimmed)
-	return unicode.IsDigit(r)
+	start := len(trimmed)
+	for start > 0 {
+		r, n := utf8.DecodeLastRuneInString(trimmed[:start])
+		if !unicode.IsDigit(r) {
+			break
+		}
+		start -= n
+	}
+	digits := strings.TrimLeft(trimmed[start:], "0")
+	return start < len(trimmed) && digits != "1"
 }

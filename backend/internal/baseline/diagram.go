@@ -622,14 +622,15 @@ func checkID(what, id string, seen map[string]bool) string {
 }
 
 // label is a piece of a diagram's prose as stored: trimmed, Swiss, capped,
-// and present when it must be.
+// and present when it must be. The cap is on what the model wrote
+// (lang.Spelled): a word made English after it may run a few letters over.
 func label(at, s string, required bool) (string, string) {
-	s = lang.Prose(s)
+	s = lang.Spelled(s)
 	if required && s == "" {
 		return "", at + ": empty label"
 	}
 	if utf8.RuneCountInString(s) > labelMaxChars {
 		return "", fmt.Sprintf("%s: label over %d characters", at, labelMaxChars)
 	}
-	return s, ""
+	return lang.Terms(s), ""
 }

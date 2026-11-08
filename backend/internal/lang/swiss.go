@@ -12,7 +12,7 @@ import (
 // shape replaced (a model echoes what it read, and the input filters are
 // regexes), Swiss spelling, the software words English (Terms).
 // Deterministic, so an unchanged rewrite stays unchanged.
-func Prose(s string) string { return Terms(SwissSS(redact.Text(strings.TrimSpace(s)))) }
+func Prose(s string) string { return Terms(Spelled(s)) }
 
 // Laid is Prose for laid-out text, a statement's or a summary's: the
 // credential shapes replaced first, while the text is as the model wrote
@@ -36,6 +36,19 @@ var umlauts = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "Ä", "Ae"
 func SameButSpelling(a, b string) bool {
 	return a == b || umlauts.Replace(Terms(a)) == umlauts.Replace(Terms(b))
 }
+
+// SameName is SameButSpelling ignoring case, for a name the model may
+// write in any: a subject, an area. The words are made English before the
+// case is dropped, as Terms reads nouns as written: a plan stored with
+// "Nachrichten" names today's "Messages".
+func SameName(a, b string) bool {
+	return strings.EqualFold(a, b) || strings.EqualFold(umlauts.Replace(Terms(a)), umlauts.Replace(Terms(b)))
+}
+
+// Spelled is Prose before Terms: trimmed, redacted, Swiss. A cap on what
+// the model wrote is held to it, so a word made English, a few letters
+// longer, never pushes a text the model kept within the cap over it.
+func Spelled(s string) string { return SwissSS(redact.Text(strings.TrimSpace(s))) }
 
 // SwissSS writes the model's German prose with Swiss spelling: ß becomes ss
 // (ẞ becomes SS). The prompt asks for it, and a model does not always obey;

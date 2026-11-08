@@ -22,7 +22,7 @@ func TestRespell(t *testing.T) {
 	}
 	for _, text := range []string{"Der Dienst rechnet.", "Der Dienst rechnet monatlich."} {
 		if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc",
-			Summary: "Ein Dienst.", Statements: st(text), SourceKind: FromBaseline, SourceCommit: "abc"}); err != nil {
+			Summary: "Ein Dienst.", Statements: st(text), Chars: proseChars("Ein Dienst.", st(text)), SourceKind: FromBaseline, SourceCommit: "abc"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -57,6 +57,12 @@ func TestRespell(t *testing.T) {
 	old, _, _ := s.Revision(ctx, ScopeRepository, "PRJ", "svc", 1)
 	if old.Statements[0].Text != "Der Service rechnet." {
 		t.Errorf("history not respelled: %q", old.Statements[0].Text)
+	}
+	// The stored size moves with the text: summary, name and text one
+	// letter longer each.
+	var chars int
+	if err := s.db.QueryRowContext(ctx, `SELECT chars FROM revisions WHERE id = ?`, p.RevisionID).Scan(&chars); err != nil || chars != proseChars(p.Summary, p.Statements) {
+		t.Errorf("chars = %d (%v), want %d", chars, err, proseChars(p.Summary, p.Statements))
 	}
 	if n, err := s.Respell(ctx, f); err != nil || n != 0 {
 		t.Errorf("second Respell = %d, %v; want nothing left", n, err)
