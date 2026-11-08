@@ -4,83 +4,68 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 
 ## Commands
 
-- Prompts compiled in, never configurable; a rule meant for stored pages bumps its scope's epoch.
-  UI: German, IT words English (user: "No one ever says Repositorium"), copy only in `strings.ts`, `/api/...` only;
-  `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
-  browser write, and pausing the queue (operations, not wiki; user, 2026-11-07). Text, summary: schema blocks, never newlines in a JSON string (models drop
-  them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
-  rongo's code; maps by `mapLayout.ts`, banded, grow down (ELK holds no rows in zones).
 - Gate = `make check`. GitHub never first to find failure.
 - Commit subjects + PR titles: Go style `area: what`, ship-gated.
 - Fresh clone: `ship hooks` before the first push (check, conform and init install it too); without the pre-push hook a push skips the gate.
-- Release: `gh workflow run Release`, GitHub-hosted runners only.
-- ship, kit never hand-pinned: `ship init`, kit `@latest`, Dependabot.
-- No web framework, ORM, logging lib beyond kit's.
+- Release: `gh workflow run Release`, GitHub-hosted runners only. ship, kit never hand-pinned (`ship init`,
+  kit `@latest`, Dependabot). No web framework, ORM, logging lib beyond kit's.
+
+## UI
+
+- German, IT words English (user: "No one ever says Repositorium"); copy only in `strings.ts`; capital only if
+  first char letter ("Bereit", "7 bereit"); "Slug" (Bitbucket's "Projektschlüssel" only).
+- `/api/...` only; `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; browser writes only Quellen
+  (`/api/sources*`) and the queue pause (operations; user, 2026-11-07).
+- Maps by `mapLayout.ts`, banded, grow down (ELK holds no rows in zones).
 
 ## Everywhere
 
-- Bearer token IS the team, no payload names one; webhook: bearer only. Constant-time compare,
-  each entry. Project = first team whose note named it, set once; other team's note: log →
-  stored + warn, enforce → 403, unless keys file lists it (shares, never claims). `claims`:
-  self-declared, never trusted.
-- `deliveries` append-only, keyed by dedup id; retry = `deduped`, never update. Persist failure =
-  500, never swallowed.
-- Envelope strict; `note`, `review_totals` verbatim. Each 500 its own line; 401 access log only.
-  openapi.yaml = api.go.
-- Swiss German, IT words English (`lang.Prose`/`Terms` on model prose, never paths; no prompt list,
-  user), generic masculine, no Eszett.
-- Credentials never leave, by regex, not prompt: `redact.File` in `ReadFiles`, note text per store
-  read (rows verbatim), `lang.Prose`/`Laid`. Shapes need a value's mark, prose stays. New shape → test.
-- Description = documentation, no one-liners: statement as long as subject needs, no
-  sentence/paragraph quota (user, 2026-10-28). Nothing dropped for size, no page/name/file cap
-  (user, 2026-11-01); bad path: off file list.
-- Provenance is code's: `sources` carried by id, current PR/run appended on text change; departure
-  run neither credits nor adds (removal teaches nothing; user, 2026-11-02), restyle never credits. Bad item
-  (unknown/repeated id, bad kind, empty): left out of patch, logged, stored kept (user, 2026-11-01).
-  New statements in id-less `added`; ids never reissued.
-- Problem areas: `bugfix_area` (shared dir, at ingest), never model's component. Pitfall: bugfix
-  evidence only. `.md` export: bearer opens only it.
-- One worker, serial, oldest first. Merge = patch. Repo revision written = note done (refold dups).
-  Repo's notes = one call a day (docs a day behind ok; user, 2026-11-06); credit = model's
-  `from_prs`, held to the fold's PRs, never all PRs on every statement.
-  Code drop: files gone at head, never merge tree. Call failure: note failed, never consolidated.
-  `gatewayClass`: hold, note kept. Refused write: hold, note kept, retry counts once before its
-  call (a pause repaid the call each poll). All ≤ `maxFoldAttempts`: none blocks queue forever.
-- One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict
-  schema, no in-call retry. Every call capped (`MaxAnswerTokens`); call cap hit while streaming =
-  `too_long`, the call's, never a gateway hold (2026-11-07: runaway restyles, 10 min, ~$0.9 each, 8×, unpriced).
-- Money: nano-USD INTEGER, no float. `llm_calls` (own), `note_calls` (noergler's) never summed.
-  Daily budget holds runs, never notes.
-- SQLite: `serve` never migrates; never edit applied migration (0001 squashed once, DB dropped,
-  2026-11-01). Probes exec.
-- oidc gates `/api` but login+callback; proxy gone (user, 2026-10-31). Reader's name: log only,
-  gates nothing.
-- Project, repo = id; names only in `projects`, `repos`, `*_names`; never join on one. Name once
-  used, any case, never to another; own may change case (user, 2026-11-01). Carry-over:
-  `TRANSITIONAL(<topic>): Remove when <cond>.`, tests too.
-- Sources: Almanach clones, noergler never indexes. git binary (`os/exec`), never go-git (rejected
-  2026-10-30). Clone paths `filepath.Rel`-checked before `RemoveAll`; removal: lock, folder, row. Token never in URL,
-  stderr, response or log; sealed at rest; one origin only (static folder = one host).
-  One forge write: brief, only what code can't tell, size-capped (user: "reasonable in size", page rule not
-  for it); refused push = text to copy (user, 2026-11-06).
-  Origin URL = identity: mismatch re-clones; unresolvable HEAD = cut off, redone. One sequential
-  poller; repo failure on its row. Run due = read from rows each cycle, never from an event.
-  UI copy: capital only if first char letter ("Bereit", "7 bereit"); "Slug", never "Schlüssel" (Bitbucket's "Projektschlüssel" only). Bitbucket
-  source key: from project URL, case-only rename.
-- Listing folds where files are, never 2 fixed levels (Maven = one line). Big file = head, never left
-  out (god class is one); redacted whole, then cut. What a run reads is code's where code can tell,
-  never the catalogue's alone (it read tests, not routing; user, 2026-11-07): tests out unless most of
-  the tree; anchors (contracts, entry points, build) always, first in a folder; WSDL/XSD only build-named;
-  generated (folder or head mark) and own `.agents/PROJECT.md` never (a page citing itself).
-- Baseline: sources on: source = starting point; non-source repo's note = 202 `ignored`, never
-  stored (user, 2026-10-30). Gate: key, slug any case (user, 2026-11-03). Runs = worker steps, notes first, one call/step, commit pinned at
-  start; repo's notes wait out its run. Step answers a patch: unnamed ids kept; repo page: PR statement
-  dropped only when all its files left tree; edit keeps rest. No `git checkout`, no parallel writer.
-  1 source repo = project of one: no project call/page. Project = system (page: wiring, no
-  `component`) or collection (summary alone); model judges, no switch (user, 2026-11-04); its
-  drops the model's word, PR-taught too.
-- Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, no
-  kind, not "library"; map zone UI-drawn. Maps, prompts, uses: main scope only (test, dev, pins
-  dashed on Dependencies alone); parent POM a pin. Topics likewise (user, 2026-11-07: "listed, where
-  data comes from or goes to"): code-read, joined by name; a name code can't resolve = left out, never guessed.
-- Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice): model's tags, `RuntimeOnly`.
+- Prompts compiled in, never configurable; a rule meant for stored pages bumps its scope's epoch. Text,
+  summary: schema blocks, never newlines in a JSON string (models drop them); notes plain.
+- Bearer token IS the team, no payload names one. Project = first team whose note named it, set once; other
+  team's note: log → stored + warn, enforce → 403, unless the keys file shares it. `claims` never trusted.
+- Persist failure = 500, never swallowed; each 500 its own line, 401 access log only. `note`, `review_totals` verbatim. openapi.yaml = api.go.
+- Swiss German, generic masculine, no Eszett; IT words English by code (`lang.Terms`), no prompt list (user).
+- Credentials never leave, by regex, not prompt (`redact`): a shape needs a value's mark, so prose stays.
+  New shape → test.
+- Description = documentation: a statement as long as its subject needs, no quota (user, 2026-10-28).
+  Nothing dropped for size, no page/name/file cap (user, 2026-11-01); bad path: off file list.
+- Provenance is code's: `sources` by id, current PR/run appended on text change; departure run neither
+  credits nor adds (removal teaches nothing; user, 2026-11-02); restyle never credits. Bad item: left out,
+  logged, stored kept (user, 2026-11-01).
+- Problem areas: `bugfix_area`, never model's component. Pitfall: bugfix evidence only. Bearer opens only
+  the `.md` export.
+- One worker, serial. Repo's notes = one call a day (docs a day behind ok; user,
+  2026-11-06); credit = model's `from_prs`, held to the fold's PRs. Code drop = files gone at head, never
+  merge tree. Call failure: note failed, never consolidated. Gateway hold, refused write: note kept, retry
+  counted once before its call (a pause repaid the call each poll). All ≤ `maxFoldAttempts`.
+- One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict schema, no in-call
+  retry. Every call capped; cap hit while streaming = `too_long`, the call's, never a gateway hold
+  (2026-11-07: runaway restyles, 10 min, ~$0.9 each, 8×, unpriced).
+- `llm_calls` (own), `note_calls` (noergler's) never summed. Daily budget holds runs, never notes.
+- `serve` never migrates; never edit an applied migration (0001 squashed once, DB dropped, 2026-11-01).
+- oidc, proxy gone (user, 2026-10-31). Reader's name: log only.
+- Project, repo = id; names only in `projects`, `repos`, `*_names`, never joined on. A name once used, any
+  case, never another's; own may change case (user, 2026-11-01). Carry-over: `TRANSITIONAL(<topic>): Remove
+  when <cond>.`, tests too.
+
+## Sources and runs
+
+- Almanach clones, noergler never indexes. git binary, never go-git (rejected 2026-10-30). Removal: lock,
+  folder, row; clone paths `filepath.Rel`-checked first. Token never in URL, stderr, response or log; sealed
+  at rest; one origin only.
+- One forge write: the brief, only what code can't tell, size-capped (user: "reasonable in size"); refused
+  push = text to copy (user, 2026-11-06).
+- A run is due by the rows, read each cycle, never by an event.
+- What a run reads is code's where code can tell, never the catalogue's alone (it read tests, not routing;
+  user, 2026-11-07): tests out unless most of the tree; anchors always; WSDL/XSD only build-named; generated
+  and own `.agents/PROJECT.md` never. Big file = head, never left out (god class is one); redacted whole,
+  then cut. Listing folds where files are (Maven = one line).
+- Sources on: a non-source repo's note = 202 `ignored`, never stored (user, 2026-10-30); gate key/slug any
+  case (user, 2026-11-03). A PR statement drops only when all its files left the tree. No `git checkout`, no
+  parallel writer. Project = system (wiring, no `component`) or collection (summary alone, PR-taught too);
+  model judges, no switch (user, 2026-11-04).
+- Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, not "library".
+  Maps, prompts, uses: main scope only (others dashed on Dependencies alone); parent POM a pin. Topics
+  likewise (user, 2026-11-07): code-read, a name code can't resolve left out, never guessed.
+- Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice).
