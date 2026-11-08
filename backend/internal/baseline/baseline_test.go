@@ -329,6 +329,39 @@ func names(p Plan) []string {
 	return out
 }
 
+// A path leading folders short of what it names resolves there, a file, a
+// folder or its own files; never where two places could hold it, never a
+// bare name. Space, "./" and "/" are forgiven first.
+func TestResolveRooted(t *testing.T) {
+	r := NewResolver([]File{fl("backend/internal/a/x.go", 1), fl("backend/internal/a/sub/y.go", 1), fl("backend/main.go", 1),
+		fl("svc1/pkg/z.go", 1), fl("svc2/pkg/z.go", 1), fl("repo/deep/lib/q.go", 1),
+		fl("m1/ui/web/sub/n.go", 1), fl("m2/ui/web/n.go", 1)})
+	for p, want := range map[string][]string{
+		"internal/a/x.go":   {"backend/internal/a/x.go"},
+		"internal/a/":       {"backend/internal/a/sub/y.go", "backend/internal/a/x.go"},
+		"internal/a":        {"backend/internal/a/sub/y.go", "backend/internal/a/x.go"},
+		"internal/a/*":      {"backend/internal/a/x.go"},
+		"pkg/z.go":          nil, // svc1 or svc2
+		"main.go":           nil, // a bare name
+		" internal/a/x.go":  {"backend/internal/a/x.go"},
+		"./internal/a/x.go": {"backend/internal/a/x.go"},
+		"./backend/main.go": {"backend/main.go"},
+		"/backend/main.go":  {"backend/main.go"},
+		"backend/main.go":   {"backend/main.go"},
+		"deep/lib/q.go":     {"repo/deep/lib/q.go"}, // two folders short
+		"ui/web/*":          {"m2/ui/web/n.go"},     // m1's web holds none right in it
+	} {
+		var got []string
+		for _, f := range r.Resolve(p) {
+			got = append(got, f.Path)
+		}
+		sort.Strings(got)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Resolve(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
 func TestBuildPlan_HoldsTheCatalogueToTheTree(t *testing.T) {
 	files := []File{
 		fl("auth/login.go", 100), fl("auth/session.go", 200), fl("auth/token/jwt.go", 50),

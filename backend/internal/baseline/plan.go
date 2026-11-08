@@ -482,10 +482,70 @@ func inPathOrder(files []File) []File {
 // resolve turns one path the model named into readable files: the file
 // itself, or every readable file under it when it names a directory (with
 // or without the trailing slash), or only the files right under it when it
-// is the listing's `dir/*` (the root's `*`, `./*` or `/*`). A path naming
-// nothing readable resolves to nothing: the model inventing one, or one
-// the filter refused.
+// is the listing's `dir/*` (the root's `*`, `./*` or `/*`); space, a
+// leading "./" or "/" and a trailing "/" forgiven (normPath). A path
+// naming nothing so, but one or more leading folders short of what it
+// names, resolves there where only one place fits (rooted): a model once
+// dropped `backend/` from every path of five subjects, which then read
+// nothing. A path naming nothing readable either way resolves to nothing:
+// the model inventing one, or one the filter refused.
 func (ix index) resolve(p string) []File {
+	p = normPath(p)
+	if out := ix.exact(p); len(out) > 0 {
+		return out
+	}
+	if root, ok := ix.rooted(p); ok {
+		return ix.exact(root + p)
+	}
+	return nil
+}
+
+// rooted is the one leading folder path that, put before p (normPath's),
+// makes it name readable files; ok false where none or several do. Only a
+// path of folders is rooted, never a bare name (main.go, config): one
+// folder of many could hold it. For `dir/*`, only a root whose dir holds
+// files right in it counts, as only those resolve.
+func (ix index) rooted(p string) (string, bool) {
+	direct := strings.HasSuffix(p, "*")
+	dir := strings.TrimSuffix(strings.TrimSuffix(p, "*"), "/")
+	if !strings.Contains(dir, "/") {
+		return "", false
+	}
+	dir += "/"
+	roots := map[string]bool{}
+	for _, f := range ix.sorted {
+		at := -1
+		if i := strings.Index(f.Path, "/"+dir); i >= 0 && (!direct || !strings.Contains(f.Path[i+1+len(dir):], "/")) {
+			at = i + 1
+		} else if !direct && strings.HasSuffix(f.Path, "/"+p) {
+			at = len(f.Path) - len(p)
+		}
+		if at > 0 {
+			roots[f.Path[:at]] = true
+			if len(roots) > 1 {
+				return "", false
+			}
+		}
+	}
+	for r := range roots {
+		return r, true
+	}
+	return "", false
+}
+
+// Resolver resolves a model's paths to readable files as a plan does
+// (index.resolve), for a caller that must judge them alike: the router's
+// dry run telling a pick dropped from one never resolved.
+type Resolver struct{ ix index }
+
+// NewResolver is a Resolver over files.
+func NewResolver(files []File) Resolver { return Resolver{ix: newIndex(files)} }
+
+// Resolve is the readable files p names, as BuildPlan reads it.
+func (r Resolver) Resolve(p string) []File { return r.ix.resolve(p) }
+
+// exact is resolve without rooting.
+func (ix index) exact(p string) []File {
 	p = strings.TrimSpace(p)
 	if f, ok := ix.byPath[p]; ok {
 		return []File{f}
