@@ -1025,11 +1025,8 @@ resumes after a restart. The run pins the clone's head when it starts.
    whose names pass half of it folds its lowest-scored directories into one
    line each), and answers subjects with the files to read in full and the
    reader questions they answer; the plan's rules hold its answer as a
-   catalogue's (`BuildPlan`, `EnsureAnchors`). `almanach evaluate
-   -route-only` runs stages 0 and 1 alone over the corpus, one router call
-   a repository, no page written (`route.json`, `route.md`: picks, bytes,
-   must-read recall with the overview's docs counted read, noise, cost),
-   for the picks to be read before any pilot. A full
+   catalogue's (`BuildPlan`, `EnsureAnchors`); `Worker.Route` runs stages
+   0 and 1 alone, nothing written. A full
    run asks the catalogue model
    (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
