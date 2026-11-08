@@ -7,15 +7,24 @@ import (
 	"strings"
 )
 
-// RouterMaxBytes is the router's listing ceiling: about 40k tokens, a cent
-// or two a call (user, 2026-11-08: 150 kB, revisited after the dry run).
-// Without it the router would be the next expensive call: the skeletons
-// of a large service run past 100k tokens.
-const RouterMaxBytes = 150_000
+// RouterMaxBytes is the router's listing ceiling, from the context: with
+// the prompt's instructions and the system message, at 3 bytes a token (a
+// listing measured 3.6: 293 kB, 82k tokens, 2026-11-08), it leaves
+// inference.RouteReserve inside inference.RouteContext
+// (TestRouterListingFitsTheContext); a prompt past it anyway is refused
+// before the call (consolidate's routeFits). About 70k tokens a call, a
+// full run's one router call, near twice the 40k it cost at first.
+//
+// 150 kB at first, the names half of it: the dry runs (user, 2026-11-08)
+// found a thousand-file service's names alone at 149 kB, its directories
+// folded, and half the files the router missed seen only in a folded line.
+// A larger tree still folds, its lowest-scored directories first; the
+// skeletons of a large service (774 kB measured) never fit whole.
+const RouterMaxBytes = 250_000
 
-// routerNamesShare is the share of the ceiling the file names may take
-// before directories fold: the rest is skeletons.
-const routerNamesShare = 2
+// routerNamesThirds is the share of the ceiling, in thirds, the file names
+// may take before directories fold (166 kB of 250): the rest is skeletons.
+const routerNamesThirds = 2
 
 // routerScore is how far up a file's skeleton goes in the router's
 // listing when not all fit: an anchor first, then by use and change. A
@@ -43,7 +52,7 @@ type routerItem struct {
 
 // RouterListing is what the router reads of a tree: every file by path,
 // size and hints, and as many skeletons as fit ceiling, the
-// highest-scored first. When the names alone pass half the ceiling, the
+// highest-scored first. When the names alone pass two thirds of the ceiling, the
 // lowest-scored directories fold into one line each, their own files as
 // "dir/*"; when that is not enough, whole subtrees fold as "dir/", the
 // deepest first. Sizes in kB of 1024 bytes, as the budgets are given; a
@@ -57,7 +66,7 @@ func RouterListing(files []File, z StageZero, ceiling int) (listing string, fold
 		items = append(items, &routerItem{key: f.Path, first: f.Path, files: []File{f}, best: routerScore(f.Path, z), bytes: f.Size,
 			line: routerLine(f, z), file: true})
 	}
-	budget := ceiling / routerNamesShare
+	budget := ceiling * routerNamesThirds / 3
 	names := 0
 	for _, it := range items {
 		names += len(it.line)
@@ -90,7 +99,14 @@ func RouterListing(files []File, z StageZero, ceiling int) (listing string, fold
 			// Subtrees: the deepest level that still holds several entries.
 			key = group(maxDepth - 1 - depth)
 		}
-		items, names = foldItems(items, key, names, budget)
+		items, names = foldItems(items, key, names, budget, 2)
+	}
+	// Still over: a top-level directory of one file or one fold is a line of
+	// its own, which no group folds; it folds alone where its folded line is
+	// the shorter. Past that only a tree of more top-level entries than the
+	// ceiling holds names passes it (the caller refuses such a listing).
+	if names > budget {
+		items, names = foldItems(items, group(0), names, budget, 1)
 	}
 	// Skeletons into what is left, the highest score first.
 	byScore := slices.Clone(items)
@@ -130,10 +146,11 @@ func RouterListing(files []File, z StageZero, ceiling int) (listing string, fold
 	return b.String(), folded
 }
 
-// foldItems merges the items key groups, the lowest best score first, into
-// one folded line each, until names fits budget. An item key does not
-// group stays; a group of one is no fold.
-func foldItems(items []*routerItem, key func(*routerItem) (string, bool), names, budget int) ([]*routerItem, int) {
+// foldItems merges the items key groups of at least minGroup, the lowest
+// best score first, into one folded line each, until names fits budget. An
+// item key does not group stays; a group of one folds only where its folded
+// line is shorter than its own.
+func foldItems(items []*routerItem, key func(*routerItem) (string, bool), names, budget, minGroup int) ([]*routerItem, int) {
 	groups := map[string][]*routerItem{}
 	for _, it := range items {
 		if k, ok := key(it); ok {
@@ -142,19 +159,29 @@ func foldItems(items []*routerItem, key func(*routerItem) (string, bool), names,
 	}
 	order := make([]string, 0, len(groups))
 	for k, g := range groups {
-		if len(g) > 1 {
+		if len(g) >= minGroup && (len(g) > 1 || len(foldLine(k, len(g[0].files), g[0].bytes)) < len(g[0].line)) {
 			order = append(order, k)
 		}
 	}
-	best := make(map[string]int, len(order))
+	// The lowest best score first; of a score, the fold that saves the most
+	// bytes, so the fewest files go into folded lines.
+	best, saved := make(map[string]int, len(order)), make(map[string]int, len(order))
 	for _, k := range order {
+		files, bytes := 0, int64(0)
 		for _, it := range groups[k] {
 			best[k] = max(best[k], it.best)
+			saved[k] += len(it.line)
+			files += len(it.files)
+			bytes += it.bytes
 		}
+		saved[k] -= len(foldLine(k, files, bytes))
 	}
 	slices.SortFunc(order, func(a, b string) int {
 		if best[a] != best[b] {
 			return best[a] - best[b]
+		}
+		if saved[a] != saved[b] {
+			return saved[b] - saved[a]
 		}
 		return strings.Compare(a, b)
 	})

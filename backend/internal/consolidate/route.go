@@ -49,8 +49,22 @@ type RouteDry struct {
 	Folded, Dropped map[string]bool
 }
 
-// errNoRouter is a catalogue model that cannot route.
-var errNoRouter = errors.New("the catalogue model has no router")
+// errNoRouter is a catalogue model that cannot route; errTreeTooWide a
+// router prompt that, its answer beside it, would pass the context: a tree
+// folded to its top level and still past the listing's ceiling.
+var (
+	errNoRouter    = errors.New("the catalogue model has no router")
+	errTreeTooWide = errors.New("the tree is too wide for the router")
+)
+
+// routeFits refuses a router prompt that would pass the context with the
+// answer it reserves, before it is paid: a gateway refuses it, or cuts it.
+func routeFits(prompt string) error {
+	if n := inference.RoutePromptTokens(prompt) + inference.RouteReserve; n > inference.RouteContext {
+		return fmt.Errorf("%w: about %d tokens of a %d context", errTreeTooWide, n, inference.RouteContext)
+	}
+	return nil
+}
 
 // Route runs stages 0 and 1 of the filter stage over a repository at commit
 // and returns the picks; it writes nothing and records no call. A failed
@@ -82,7 +96,11 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 		return RouteDry{}, err
 	}
 	listing, folded := baseline.RouterListing(files, z, baseline.RouterMaxBytes)
-	res := router.Route(ctx, renderRouter(*r, listing, len(files), readable, w.base.Limits.MaxBytes, w.maxSubjects()))
+	prompt := renderRouter(*r, listing, len(files), readable, w.base.Limits.MaxBytes, w.maxSubjects())
+	if err := routeFits(prompt); err != nil {
+		return RouteDry{}, err
+	}
+	res := router.Route(ctx, prompt)
 	out := RouteDry{Files: files, Docs: baseline.Docs(files, baseline.DocsMaxBytes), Call: res.Call, Questions: map[string][]string{},
 		ReadableBytes: readable, SkeletonBytes: z.SkeletonBytes, Listing: listing, Tree: map[string]bool{}, Folded: folded,
 		Dropped: map[string]bool{}}

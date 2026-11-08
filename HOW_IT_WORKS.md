@@ -1021,10 +1021,13 @@ resumes after a restart. The run pins the clone's head when it starts.
    fails is logged, never the run's failure. Stage 1, the router
    (`almanach_router.txt`, the catalogue model), is built but no run uses
    it yet: it reads every file by path, size and hints and the skeletons,
-   highest-scored first, within `baseline.RouterMaxBytes` (150 kB; a tree
-   whose names pass half of it folds its lowest-scored directories into one
-   line each), and answers subjects with the files to read in full and the
-   reader questions they answer; the plan's rules hold its answer as a
+   highest-scored first, within `baseline.RouterMaxBytes` (250 kB, what a
+   128k context leaves beside the router's answer; a tree whose names pass
+   two thirds of it folds its lowest-scored directories into one line
+   each, down to a top-level directory alone, and a prompt still past the
+   context is refused before the call), and answers subjects with the
+   files to read in full and the reader questions they answer; the plan's
+   rules hold its answer as a
    catalogue's (`BuildPlan`, `EnsureAnchors`); `Worker.Route` runs stages
    0 and 1 alone, nothing written. A full
    run asks the catalogue model
