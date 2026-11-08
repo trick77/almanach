@@ -31,6 +31,7 @@ import (
 
 	"github.com/trick77/almanach/internal/api"
 	"github.com/trick77/almanach/internal/auth"
+	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/bitbucket"
 	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/config"
@@ -38,7 +39,6 @@ import (
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/inference"
-	"github.com/trick77/almanach/internal/lang"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
@@ -199,7 +199,7 @@ func migrate(log *slog.Logger) error {
 	// Pages stored before a word rule read as pages written after it: the
 	// rule is code's (lang.Terms), so this costs no model call, and it is
 	// idempotent, a page already respelled left as it is.
-	n, err := db.Respell(ctx, lang.Terms)
+	n, err := db.Respell(ctx, baseline.Respeller{})
 	if err != nil {
 		return fmt.Errorf("respell: %w", err)
 	}

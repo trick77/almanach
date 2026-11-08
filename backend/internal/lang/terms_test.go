@@ -41,6 +41,8 @@ func TestTerms(t *testing.T) {
 		"Text\n\n    Dienst im Code\n":                                   "Text\n\n    Dienst im Code\n",
 		// Lower case or upper case is no noun as written here.
 		"dienst DIENST": "dienst DIENST",
+		// Umlauts written out, as older text has them.
+		"Der Schluessel und die Abhaengigkeiten.": "Der Key und die Dependencies.",
 		// A sentence end is no file name.
 		"Das ist der Dienst. Danach kommt nichts.": "Das ist der Service. Danach kommt nichts.",
 	} {

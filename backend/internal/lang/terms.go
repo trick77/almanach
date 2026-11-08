@@ -45,6 +45,21 @@ var terms = map[string]term{
 	"Zwischenspeicher": {en: "Cache", head: true, plural: "Caches"}, "Zwischenspeichers": {en: "Caches"}, "Zwischenspeichern": {en: "Caches"},
 }
 
+// Older text may write the umlauts out ("Schluessel", "Abhaengigkeit"),
+// which SameButSpelling tolerates: those forms are the same words.
+func init() {
+	for de, t := range terms {
+		if out := umlauts.Replace(de); out != de {
+			terms[out] = t
+		}
+	}
+	for _, st := range stems {
+		if out := umlauts.Replace(st); out != st {
+			stems = append(stems, out)
+		}
+	}
+}
+
 // stems is what every form above begins with: a text holding none is left
 // as it is without a walk.
 var stems = []string{"Dienst", "Bibliothek", "Schlüssel", "Sitzung", "Abhängigkeit", "Kennung", "Zugangsdaten", "Endpunkt",

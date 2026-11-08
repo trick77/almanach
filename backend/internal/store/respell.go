@@ -6,20 +6,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"unicode/utf8"
+
+	"github.com/trick77/almanach/internal/diagram"
 )
 
-// Respell applies f to the prose of every stored revision, the history's
-// as well as the current: summary, each statement's name, text, area and
-// diagram labels, and a page's maps. f is a spelling rule the write path
-// applies too (lang.Terms), so text stored before it reads as text
-// written after it, and the history compares like with like: respelling
-// the current revision alone would show every statement changed against
-// the one before. No model call, no new revision, provenance untouched.
-// f must be idempotent. Each revision is read without a lock; only one f
-// changes takes the write lock, reads it again inside and writes it, so a
-// migrate with nothing left to do never blocks a running serve. Returns
-// the number of revisions rewritten. Run by migrate.
-func (s *Store) Respell(ctx context.Context, f func(string) string) (int, error) {
+// Respeller is a spelling rule the write path applies too (lang.Terms, by
+// baseline.Respeller), as Respell applies it to a stored page: Prose to the
+// summary and each statement's name, text and area, Diagram to a diagram's
+// labels in place (reporting a change), Arrange to lay the page out again
+// when an area moved. Each must be idempotent.
+type Respeller interface {
+	Prose(string) string
+	Diagram(*diagram.Diagram) bool
+	Arrange([]Statement) []Statement
+}
+
+// Respell applies f to every stored revision, the history's as well as the
+// current: its prose, its statements' diagrams and a page's maps. Text
+// stored before the rule then reads as text written after it, and the
+// history compares like with like: respelling the current revision alone
+// would show every statement changed against the one before. No model
+// call, no new revision, provenance untouched. Each revision is read
+// without a lock; only one f changes takes the write lock, reads it again
+// inside and writes it, so a migrate with nothing left to do never blocks
+// a running serve. Returns the number of revisions rewritten. Run by
+// migrate.
+func (s *Store) Respell(ctx context.Context, f Respeller) (int, error) {
 	var ids []int64
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM revisions ORDER BY id`)
 	if err != nil {
@@ -71,7 +83,7 @@ type respelling struct {
 }
 
 // respelled is revision id as f leaves it, nil when f changes nothing.
-func respelled(ctx context.Context, q rowQuerier, id int64, f func(string) string) (*respelling, error) {
+func respelled(ctx context.Context, q rowQuerier, id int64, f Respeller) (*respelling, error) {
 	var summary, basis string
 	var chars int
 	var statements, drawn, repoDrawn []byte
@@ -87,21 +99,30 @@ func respelled(ctx context.Context, q rowQuerier, id int64, f func(string) strin
 	// respelled: its basis is a hash of the text, and a stale one has the
 	// next run draw the map again, a model call for spelling.
 	mapCurrent := basis != "" && basis == (Page{Summary: summary, Statements: st}).MapBasis()
-	before := proseChars(summary, st)
-	changed := false
-	set := func(p *string) {
-		if v := f(*p); v != *p {
+	before := ProseChars(summary, st)
+	changed, areaMoved := false, false
+	set := func(p *string) bool {
+		if v := f.Prose(*p); v != *p {
 			*p, changed = v, true
+			return true
 		}
+		return false
 	}
 	set(&summary)
 	for i := range st {
 		set(&st[i].Name)
 		set(&st[i].Text)
-		set(&st[i].Area)
-		if st[i].Diagram.Relabel(f) {
+		if set(&st[i].Area) {
+			areaMoved = true
+		}
+		if f.Diagram(st[i].Diagram) {
 			changed = true
 		}
+	}
+	// "Dienste" respelled into a "Services" the page already has: one
+	// chapter, not two of one title.
+	if areaMoved {
+		st = f.Arrange(st)
 	}
 	m, err := diagramOf(drawn)
 	if err != nil {
@@ -111,10 +132,10 @@ func respelled(ctx context.Context, q rowQuerier, id int64, f func(string) strin
 	if err != nil {
 		return nil, err
 	}
-	if m.Relabel(f) {
+	if f.Diagram(m) {
 		changed = true
 	}
-	if rm.Relabel(f) {
+	if f.Diagram(rm) {
 		changed = true
 	}
 	if !changed {
@@ -123,7 +144,7 @@ func respelled(ctx context.Context, q rowQuerier, id int64, f func(string) strin
 	r := &respelling{summary: summary, drawn: jsonOrNull(drawn), repoDrawn: jsonOrNull(repoDrawn), basis: basis}
 	// The stored size moves by what f added or took: the writer counts the
 	// summary and every statement's name and text (consolidate's prose).
-	r.chars = chars + proseChars(summary, st) - before
+	r.chars = chars + ProseChars(summary, st) - before
 	if r.statements, err = jsonOf(orEmptyStatements(st)); err != nil {
 		return nil, err
 	}
@@ -149,9 +170,10 @@ func (r *respelling) write(ctx context.Context, q execer, id int64) error {
 	return err
 }
 
-// proseChars is a revision's size as its writer stores it: the summary and
-// every statement's name and text, in runes.
-func proseChars(summary string, st []Statement) int {
+// ProseChars is a revision's size as stored (NewRevision.Chars): the
+// summary and every statement's name and text, in runes. One rule for the
+// writer and Respell.
+func ProseChars(summary string, st []Statement) int {
 	n := utf8.RuneCountInString(summary)
 	for _, s := range st {
 		n += utf8.RuneCountInString(s.Name) + utf8.RuneCountInString(s.Text)

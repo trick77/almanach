@@ -1785,15 +1785,20 @@ so the choice is not undone as a cleanup.
   German word is the same statement as today's
   English one (`lang.SameButSpelling`): no credit for the swap; a subject
   or area name matches in any case (`lang.SameName`), so a plan stored
-  with "Nachrichten" names today's "Messages". A cap holds to what the
-  model wrote (`lang.Spelled`): a word made English, a few letters longer,
-  never pushes a diagram label over it. `almanach migrate` respells every
-  stored revision after its migrations (`store.Respell`, idempotent, no
-  model call, no new revision; read without the write lock, written only
-  where something changes), the history too so revisions compare like
-  with like; it moves the stored size with the text and carries a
-  repository map's basis along, so no run redraws a map for spelling. A
-  PROJECT.md already written stays as pushed, until the next one.
+  with "Nachrichten" names today's "Messages", and a reconcile keeps old
+  subjects under their English names. Written-out umlauts
+  ("Schluessel") are the same words. A diagram label is capped on what
+  the model wrote (`lang.Spelled`) and made English only where it stays
+  within the cap, so a stored map passes every later check; a
+  repository node labelled by its slug keeps the slug. `almanach migrate`
+  respells every stored revision after its migrations (`store.Respell`
+  with `baseline.Respeller`: idempotent, no model call, no new revision;
+  read without the write lock, written only where something changes), the
+  history too so revisions compare like with like; it moves the stored
+  size with the text, lays a page out again when an area moved (two
+  chapters of one name become one) and carries a repository map's basis
+  along, so no run redraws a map for spelling. A PROJECT.md already
+  written stays as pushed, until the next one.
 - **The UI is in the binary, and reads the wiki, writes only the sources.**
   It ships with the process so a deployment is one image,
   and it talks to `/api/...` alone (`backend/api/openapi.yaml`); nothing in

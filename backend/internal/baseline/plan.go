@@ -545,7 +545,9 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 	ix := newIndex(files)
 	out := Plan{Subjects: []Subject{}}
 	for _, s := range old.Subjects {
-		kept := Subject{Name: s.Name, Purpose: s.Purpose}
+		// A name and purpose stored before the word rule come out English,
+		// as the catalogue writes them today (lang.Terms).
+		kept := Subject{Name: lang.Terms(s.Name), Purpose: lang.Terms(s.Purpose)}
 		paths := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
 			if _, ok := ix.byPath[f.Path]; ok {
