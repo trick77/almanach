@@ -951,7 +951,11 @@ ahead of the older runs: one call, no code read, and held it would keep a
 deactivated repository on its project page for the day; each deactivation
 past the budget costs that one call more. The notes never wait: a
 fold is one small call, and holding it would hold what a pull request
-taught. Only priced calls count. The UI says before
+taught. A call billed without a price (a stream cut before its usage
+came, a loop the guard cut) counts as the dearest priced call of the last
+30 days, never as nothing: a night of unpriced runaways once never reached
+the budget. With no priced call in that window it counts nothing; a budget
+needs a priced gateway. The UI says before
 the click what a source or a full run may cost (`max_calls` on the source
 bodies, the last run's cost on the confirm), since a Bitbucket project of
 two hundred repositories once queued two hundred full runs on its first

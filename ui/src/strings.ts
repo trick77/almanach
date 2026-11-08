@@ -41,6 +41,9 @@ export const S = {
         "Kein Budget gesetzt (BACKEND_DAILY_BUDGET_USD, nur mit Quellen: es hält die Läufe)",
       budgetNote: (spent: string, budget: string) =>
         `${spent} von ${budget}; ausgeschöpft, warten die Läufe bis zum nächsten Tag (UTC), die Notizen und das Deaktivieren nicht`,
+      // What the budget counts beyond the priced sum.
+      budgetUnpriced:
+        "Aufrufe ohne Preis zählen gegen das Budget wie der teuerste bepreiste Aufruf der letzten 30 Tage.",
     },
     headers: ["Projekt", "Notizen", "Läufe", "PROJECT.md", "Aufrufe", "Kosten"],
     monthTotal: "Summe",
@@ -826,7 +829,7 @@ export const S = {
     // Beside the calls: those without a price, not in the sum.
     unpriced: (n: number) => `${n} ohne Preis`,
     unpricedHint:
-      "Ohne Preis: ein Aufruf, dessen Antwort abgebrochen wurde, bevor das Gateway die Kosten meldete. Nicht in der Summe; die Kosten sind unbekannt, nicht null. Das Tagesbudget zählt jeden wie den teuersten bepreisten Aufruf des Tages.",
+      "Ohne Preis: ein Aufruf, für den das Gateway keine Kosten meldete, meist eine abgebrochene Antwort. Nicht in der Summe; die Kosten sind unbekannt, nicht null. Gegen das Tagesbudget zählt jeder des laufenden Tages (UTC) wie der teuerste bepreiste Aufruf der letzten 30 Tage; gibt es keinen, zählt er nichts.",
     sync: {
       running: "Läuft",
       ready: "Bereit",

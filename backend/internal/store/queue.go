@@ -420,7 +420,9 @@ type Spend struct {
 	Dearest int64
 }
 
-// dearestWindow is how far back Spend.Dearest looks.
+// dearestWindow is how far back Spend.Dearest looks, from the start of
+// the spend's window (the UTC day). "30 Tage" in strings.ts' unpricedHint
+// and openapi.yaml's unpriced say it: they follow a change.
 const dearestWindow = 30 * 24 * time.Hour
 
 // billed is a ledger row the gateway billed: streamed, or from before the

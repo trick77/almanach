@@ -199,10 +199,13 @@ type spentBody struct {
 	// cut mid-answer, before its usage came. Not in the cost; unknown, not
 	// zero.
 	Unpriced int `json:"unpriced"`
+	// BudgetedUSD is what a daily budget counts: the cost and each unpriced
+	// call as the dearest priced one (store.Spend.Budgeted).
+	BudgetedUSD string `json:"budgeted_usd,omitempty"`
 }
 
 func spentOf(s store.Spend) spentBody {
-	return spentBody{CostUSD: usd(s.NanoUSD), Calls: s.Calls, Unpriced: s.Unpriced}
+	return spentBody{CostUSD: usd(s.NanoUSD), Calls: s.Calls, Unpriced: s.Unpriced, BudgetedUSD: usd(s.Budgeted())}
 }
 
 // recentBody is a run or a note the worker finished.

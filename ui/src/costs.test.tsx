@@ -121,6 +121,29 @@ describe("CostsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("counts the unpriced calls against the budget as the worker does", async () => {
+    serve({
+      costs: {
+        months: [],
+        budget_usd: "5.000",
+        today: {
+          cost_usd: "0.400",
+          calls: 4,
+          unpriced: 3,
+          budgeted_usd: "1.300",
+        },
+      },
+    });
+    render(<CostsPage />);
+    const note = await screen.findByText(
+      S.costs.tiles.budgetNote("$1.30", "$5.00"),
+    );
+    expect(note).toHaveAttribute("title", S.costs.tiles.budgetUnpriced);
+    expect(
+      screen.getByText(`4 Aufrufe ${S.common.sep} ${S.queue.unpriced(3)}`),
+    ).toHaveAttribute("title", S.queue.unpricedHint);
+  });
+
   it("says the page could not be loaded", async () => {
     serve({});
     render(<CostsPage />);

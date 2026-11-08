@@ -1310,6 +1310,12 @@ components:
               description: >-
                 The calls among them billed without a price (answered, or
                 cut mid-answer before its usage arrived): not in cost_usd.
+            budgeted_usd:
+              type: string
+              description: >-
+                What the daily budget counts: cost_usd plus each unpriced
+                call as the dearest priced call of the last 30 days; omitted
+                when nothing is known.
 
     CostSum:
       type: object
@@ -1582,8 +1588,14 @@ components:
                 The calls among them billed without a price (answered, or
                 cut mid-answer before its usage arrived): not in cost_usd,
                 their cost unknown, not zero. A call that got no answer is
-                not one. The daily budget counts each as the day's dearest
-                priced call.
+                not one. The daily budget counts each of the UTC day as the
+                dearest priced call of the last 30 days.
+            budgeted_usd:
+              type: string
+              description: >-
+                The window's spend as a budget counts it: cost_usd plus each
+                unpriced call as the dearest priced one; omitted when
+                nothing is known.
         recent:
           type: array
           description: What the worker finished in the last 24 hours, newest first, at most 50.

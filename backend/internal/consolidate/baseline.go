@@ -286,8 +286,10 @@ func (w *Worker) step(ctx context.Context, r *store.BaselineRun) (err error) {
 
 // overBudget reports whether the worker's own calls of the UTC day have
 // cost the daily budget (BACKEND_DAILY_BUDGET_USD) or more; never with no
-// budget set. Unpriced calls count nothing: a budget needs a priced
-// gateway, the config says so.
+// budget set. A call billed without a price counts as the dearest priced
+// one (store.Spend.Budgeted), never as nothing: a night of unpriced
+// runaways never reached the budget (2026-11-07). With no priced call in
+// the window it counts nothing: a budget needs a priced gateway.
 func (w *Worker) overBudget(ctx context.Context) (bool, error) {
 	budget := w.base.Limits.DailyBudgetNanoUSD
 	if budget <= 0 {
