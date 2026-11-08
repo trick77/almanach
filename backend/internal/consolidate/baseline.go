@@ -632,7 +632,7 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
-	prompt := renderCatalogue(*r, baseline.Listing(files), docs, "", w.maxSubjects())
+	prompt := renderCatalogue(*r, baseline.Listing(files), docs, "", w.askedSubjects())
 	res := w.base.Catalogue.Catalogue(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
 	if err != nil {

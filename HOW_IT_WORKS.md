@@ -1048,7 +1048,17 @@ resumes after a restart. The run pins the clone's head when it starts.
    could only name whole, filled in path order to the step's cap. Code holds
    the answer to the tree: invented paths dropped, directories expanded,
    each subject within 240 kB, at most `BACKEND_BASELINE_MAX_CALLS` less
-   four (the catalogue, the overview, the project, the repository map). A
+   four (the catalogue, the overview, the project, the repository map); a
+   full run's model is asked one short, so the anchors' subject needs no
+   slot freed. A model answering more joins its two smallest new subjects
+   ("A und B", past three parts "und weitere", numbered where the name is
+   taken, a shared file counted once, each part's reader questions kept)
+   while they fit 240 kB, and only then drops the model's last: cutting
+   the last had dropped whatever only they named, a whole data model once.
+   An old subject never joins and stays past a lowered cap; a later
+   proposal naming a part adds to it. The anchors' subject at the cap
+   frees its slot the same way, the last subject giving way only where no
+   two fit a step. A
    reconcile starts from the documented run's plan instead: the
    diff since its commit (`diff-tree`, files that left the readable set
    counted as gone) maps onto the subjects, and only files no subject

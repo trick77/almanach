@@ -349,16 +349,18 @@ func TestBuildPlan_HoldsTheCatalogueToTheTree(t *testing.T) {
 		"Auth:auth/login.go,auth/session.go,auth/token/jwt.go,main.go",
 		// close.go does not fit beside run.go; tiny.go still does.
 		"Billing:billing/run.go,billing/tiny.go",
-		// A directory named without its slash.
-		"Tokens:auth/token/jwt.go",
+		// A directory named without its slash; past the cap, the two
+		// smallest joined, the larger's place and name first.
+		"Tokens und Over:auth/token/jwt.go,main.go",
 	}
 	if got := names(p); !reflect.DeepEqual(got, want) {
 		t.Fatalf("plan = %v\nwant %v", got, want)
 	}
-	if p.Subjects[0].Purpose != "why Auth" {
-		t.Errorf("purpose = %q, want trimmed", p.Subjects[0].Purpose)
+	if p.Subjects[0].Purpose != "why Auth" || !reflect.DeepEqual(p.Subjects[2].Joined, []string{"Tokens", "Over"}) ||
+		p.Subjects[2].Purpose != "why Tokens. why Over." {
+		t.Errorf("subjects = %+v, want the purpose trimmed, the joined one's names and purposes", p.Subjects)
 	}
-	if p.Bytes() != 100+200+50+10+StepMaxBytes-10+5+50 {
+	if p.Bytes() != 100+200+50+10+StepMaxBytes-10+5+50+10 {
 		t.Errorf("Bytes = %d", p.Bytes())
 	}
 	if empty := BuildPlan(nil, files, 3); empty.Subjects == nil || len(empty.Subjects) != 0 {
@@ -472,6 +474,63 @@ func TestPlan_UpgradeMovesTheLegacyStepNames(t *testing.T) {
 	}
 }
 
+// Past the cap the smallest new subjects join while they fit one step; an
+// old subject never joins; what no join brings under the cap is dropped,
+// the last first.
+func TestCompact(t *testing.T) {
+	s := func(name string, size int64) Subject {
+		return Subject{Name: name, Purpose: "p " + name, Files: []File{fl(name+".go", size)}}
+	}
+	got := compact([]Subject{s("old", 1), s("a", 10), s("b", 20), s("c", 30)}, 1, 3)
+	if len(got) != 3 || got[0].Name != "old" || got[1].Name != "b und a" || got[2].Name != "c" {
+		t.Errorf("compact = %+v, want old kept, a joined into b", got)
+	}
+	big := compact([]Subject{s("x", StepMaxBytes-5), s("y", StepMaxBytes-6), s("z", StepMaxBytes-5)}, 0, 2)
+	if len(big) != 2 || big[0].Name != "x" || big[1].Name != "y" {
+		t.Errorf("compact = %+v, want no join past a step, the model's last dropped", big)
+	}
+	// Two subjects sharing files join where their union fits a step.
+	shared := File{Path: "shared.go", Size: StepMaxBytes / 2}
+	sa := Subject{Name: "sa", Files: []File{shared, fl("a.go", 10)}}
+	sb := Subject{Name: "sb", Files: []File{shared, fl("b.go", 10)}}
+	if got := compact([]Subject{sa, sb}, 0, 1); len(got) != 1 || len(got[0].Files) != 3 {
+		t.Errorf("compact = %+v, want the two joined, the shared file once", got)
+	}
+	// Past three parts the name says "und weitere".
+	five := compact([]Subject{s("a", 1), s("b", 2), s("c", 3), s("d", 4), s("e", 5)}, 0, 1)
+	if len(five) != 1 || len(five[0].Joined) != 5 || !strings.HasSuffix(five[0].Name, " und weitere") {
+		t.Errorf("compact = %+v, want five joined under a short name", five)
+	}
+	// A reconcile keeps an old subject's joined names.
+	kept := MergePlan(Plan{Subjects: []Subject{{Name: "a und b", Purpose: "p", Files: []File{fl("a.go", 1)}, Joined: []string{"a", "b"}}}},
+		nil, []File{fl("a.go", 1)}, 2)
+	if len(kept.Subjects) != 1 || !reflect.DeepEqual(kept.Subjects[0].Joined, []string{"a", "b"}) {
+		t.Errorf("merged = %+v, want the joined names kept", kept.Subjects)
+	}
+	// A proposal naming a part adds to the subject that stands for it.
+	placed := MergePlan(kept, []inference.Subject{subject("B", "b.go")}, []File{fl("a.go", 1), fl("b.go", 2)}, 2)
+	if len(placed.Subjects) != 1 || len(placed.Subjects[0].Files) != 2 {
+		t.Errorf("placed = %+v, want b.go in the joined subject", placed.Subjects)
+	}
+	// Old subjects all stay past a lowered cap; the new ones go.
+	olds := compact([]Subject{s("o1", 1), s("o2", 1), s("o3", 1), s("n", 1)}, 3, 2)
+	if len(olds) != 3 || olds[2].Name != "o3" {
+		t.Errorf("compact = %+v, want every old subject kept", olds)
+	}
+	// A joined name another subject has already is numbered.
+	clash := compact([]Subject{s("b und a", 1), s("a", 10), s("b", 20)}, 1, 2)
+	if len(clash) != 2 || clash[1].Name != "b und a (2)" {
+		t.Errorf("compact = %+v, want the joined name numbered", clash)
+	}
+	if none := compact([]Subject{s("a", 1)}, 0, 0); len(none) != 0 {
+		t.Errorf("compact to none = %+v", none)
+	}
+	three := compact([]Subject{s("a", 1), s("b", 2), s("c", 3)}, 0, 1)
+	if len(three) != 1 || !reflect.DeepEqual(three[0].Joined, []string{"b", "a", "c"}) || len(three[0].Files) != 3 {
+		t.Errorf("compact = %+v, want all three joined, their names kept", three)
+	}
+}
+
 func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	old := Plan{Subjects: []Subject{
 		{Name: "Auth", Purpose: "p", Files: []File{fl("auth/login.go", 100), fl("auth/gone.go", 10)}},
@@ -479,7 +538,8 @@ func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	}, Skipped: []string{"Old"}}
 	files := []File{fl("auth/login.go", 120), fl("auth/new.go", 7), fl("jobs/run.go", 9)}
 	p := MergePlan(old, []inference.Subject{subject("AUTH", "auth/new.go"), subject("Jobs", "jobs/"), subject("Third", "jobs/run.go")}, files, 2)
-	want := []string{"Auth:auth/login.go,auth/new.go", "Jobs:jobs/run.go"}
+	// Past the cap the new subjects join, never the old one.
+	want := []string{"Auth:auth/login.go,auth/new.go", "Jobs und Third:jobs/run.go"}
 	if got := names(p); !reflect.DeepEqual(got, want) {
 		t.Fatalf("merged = %v\nwant %v", got, want)
 	}

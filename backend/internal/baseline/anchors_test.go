@@ -175,12 +175,26 @@ func TestEnsureAnchors(t *testing.T) {
 	if len(p.Subjects[1].Files) != 1 {
 		t.Error("the plan passed in was changed")
 	}
+	// A joined last subject keeps the names it stands for.
+	jp := Plan{Subjects: []Subject{p.Subjects[0], {Name: "A und B", Files: []File{fl("pom.xml", 10)}, Joined: []string{"A", "B"}}}}
+	if got := EnsureAnchors(jp, files, nil, 2); !reflect.DeepEqual(got.Subjects[1].Joined, []string{"A", "B"}) {
+		t.Errorf("joined last subject = %+v, want its names kept", got.Subjects[1])
+	}
 	// Where they do not, the last subject gives way; an anchor only it held
 	// is taken in, unless the overview reads it (pom.xml, a manifest).
 	big := Plan{Subjects: []Subject{p.Subjects[0], {Name: "Last", Files: []File{fl("src/main/resources/orders.yml", StepMaxBytes)}}}}
 	full := EnsureAnchors(big, append(files, fl("src/main/resources/orders.yml", StepMaxBytes)), nil, 2)
 	if got := names(full); !reflect.DeepEqual(got, []string{AnchorSubject + ":ev.avsc,src/main/resources/application.yml", "Core:src/A.java"}) {
 		t.Errorf("at the cap, no room: %v", got)
+	}
+	// No room in the last, but two small subjects fit one step: they join,
+	// and every subject's files stay read.
+	three := Plan{Subjects: []Subject{p.Subjects[0], {Name: "Small", Files: []File{fl("src/B.java", 50)}},
+		{Name: "Last", Files: []File{fl("src/main/resources/orders.yml", StepMaxBytes)}}}}
+	roomy := EnsureAnchors(three, append(files, fl("src/B.java", 50), fl("src/main/resources/orders.yml", StepMaxBytes)), nil, 3)
+	if got := names(roomy); !reflect.DeepEqual(got, []string{AnchorSubject + ":ev.avsc,src/main/resources/application.yml",
+		"Core und Small:src/A.java,src/B.java", "Last:src/main/resources/orders.yml"}) {
+		t.Errorf("at the cap, two small subjects: %v", got)
 	}
 	// Nothing missing: the plan as it was.
 	if same := EnsureAnchors(p, []File{fl("src/A.java", 100)}, nil, 5); len(same.Subjects) != 2 {

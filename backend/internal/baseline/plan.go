@@ -18,6 +18,9 @@ type Subject struct {
 	Name    string `json:"name"`
 	Purpose string `json:"purpose"`
 	Files   []File `json:"files"`
+	// Joined is the names of the proposed subjects folded into this one to
+	// keep a plan within its cap (compact), its own first.
+	Joined []string `json:"joined,omitempty"`
 }
 
 // Bytes is the file content the subject's step reads.
@@ -232,13 +235,20 @@ func (p Plan) Bytes() int64 {
 	return n
 }
 
-// find is the index of the subject with this name, ignoring case, umlauts
-// written out ("Datenueberpruefung" is "Datenüberprüfung") and a software
-// word stored in German (lang.SameName); -1 when none.
+// find is the index of the subject with this name, or one joined into it
+// (Joined: a proposal naming a part adds to the subject that stands for
+// it), ignoring case, umlauts written out ("Datenueberpruefung" is
+// "Datenüberprüfung") and a software word stored in German
+// (lang.SameName); -1 when none.
 func (p Plan) find(name string) int {
 	for i, s := range p.Subjects {
 		if lang.SameName(s.Name, name) {
 			return i
+		}
+		for _, j := range s.Joined {
+			if lang.SameName(j, name) {
+				return i
+			}
 		}
 	}
 	return -1
@@ -531,7 +541,8 @@ func (ix index) add(s *Subject, paths []string) {
 // BuildPlan holds the catalogue's answer to rules the model cannot bend:
 // only readable files of the tree, a directory expanded to its files, each
 // subject within StepMaxBytes, a nameless or empty subject dropped, two
-// subjects of one name merged, at most maxSubjects in the model's order.
+// subjects of one name merged, at most maxSubjects in the model's order,
+// the smallest joined before any is dropped (compact).
 func BuildPlan(proposed []inference.Subject, files []File, maxSubjects int) Plan {
 	return MergePlan(Plan{}, proposed, files, maxSubjects)
 }
@@ -540,7 +551,8 @@ func BuildPlan(proposed []inference.Subject, files []File, maxSubjects int) Plan
 // step: the old subjects keep their files, re-sized from the tree and held
 // to StepMaxBytes again in their order (files grow), those gone or no
 // longer readable dropped; a proposal naming an old subject adds its files
-// to it, a new name opens a new subject while fewer than maxSubjects exist.
+// to it, a new name opens a new subject; past maxSubjects the new subjects
+// are joined, the smallest first (compact), never an old one.
 func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects int) Plan {
 	ix := newIndex(files)
 	out := Plan{Subjects: []Subject{}}
@@ -548,6 +560,9 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 		// A name and purpose stored before the word rule come out English,
 		// as the catalogue writes them today (lang.Terms).
 		kept := Subject{Name: lang.Terms(s.Name), Purpose: lang.Terms(s.Purpose)}
+		for _, j := range s.Joined {
+			kept.Joined = append(kept.Joined, lang.Terms(j))
+		}
 		paths := make([]string, 0, len(s.Files))
 		for _, f := range s.Files {
 			if _, ok := ix.byPath[f.Path]; ok {
@@ -559,6 +574,7 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 			out.Subjects = append(out.Subjects, kept)
 		}
 	}
+	olds := len(out.Subjects)
 	for _, p := range proposed {
 		name := lang.Prose(p.Name)
 		if name == "" {
@@ -568,16 +584,162 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 			ix.add(&out.Subjects[i], p.Paths)
 			continue
 		}
-		// A new subject counts against the cap only once it holds a file:
-		// one that names nothing readable must not take a later one's place.
-		if len(out.Subjects) >= maxSubjects {
-			continue
-		}
+		// A new subject counts only once it holds a file: one that names
+		// nothing readable takes no later one's place.
 		s := Subject{Name: name, Purpose: lang.Prose(p.Purpose)}
 		ix.add(&s, p.Paths)
 		if len(s.Files) > 0 {
 			out.Subjects = append(out.Subjects, s)
 		}
 	}
+	out.Subjects = compact(out.Subjects, olds, maxSubjects)
 	return out
+}
+
+// compact holds the new subjects (those from olds on) to maxSubjects all
+// told; the old ones all stay, whatever the cap (a reconcile's plan holds
+// its old subjects and the cap may have been lowered since). A model asked
+// for at most so many answers more at times, and cutting the last dropped
+// whatever only they named, a whole data model once. So the two smallest
+// new subjects join while their files fit one step (joinTo); only what no
+// join brings under the cap is dropped, the last first: the model's order
+// is the one sign of what matters it gives. An old subject never joins:
+// its name is a step's, a page's section.
+func compact(subjects []Subject, olds, maxSubjects int) []Subject {
+	limit := max(maxSubjects, olds, 0)
+	subjects, _ = joinTo(subjects, olds, limit)
+	if len(subjects) > limit {
+		subjects = subjects[:limit]
+	}
+	return subjects
+}
+
+// joinTo joins the two smallest subjects from olds on, while their files
+// (each once: subjects may share some) fit one step, until at most n
+// stand; ok is whether it got there. The larger keeps its place; a joined
+// name another subject has already is numbered.
+func joinTo(subjects []Subject, olds, n int) ([]Subject, bool) {
+	subjects = append([]Subject{}, subjects...)
+	size := make([]int64, len(subjects))
+	for i, s := range subjects {
+		size[i] = s.Bytes()
+	}
+	for len(subjects) > max(n, 0) {
+		a, b, best := -1, -1, int64(0)
+		for i := olds; i < len(subjects); i++ {
+			for j := i + 1; j < len(subjects); j++ {
+				sum := size[i] + size[j]
+				if a >= 0 && sum >= best {
+					continue
+				}
+				if sum > StepMaxBytes {
+					// Shared files count once: the join may fit still.
+					if sum = unionBytes(subjects[i], subjects[j]); sum > StepMaxBytes || (a >= 0 && sum >= best) {
+						continue
+					}
+				}
+				a, b, best = i, j, sum
+			}
+		}
+		if a < 0 {
+			return subjects, false
+		}
+		if size[a] < size[b] {
+			a, b = b, a
+		}
+		joined := join(subjects[a], subjects[b])
+		for base, k := joined.Name, 2; nameTaken(subjects, joined.Name, a, b); k++ {
+			joined.Name = fmt.Sprintf("%s (%d)", base, k)
+		}
+		subjects[a], size[a] = joined, joined.Bytes()
+		subjects = append(subjects[:b:b], subjects[b+1:]...)
+		size = append(size[:b:b], size[b+1:]...)
+	}
+	return subjects, true
+}
+
+// nameTaken reports whether a subject other than a and b has name, or a
+// part joined into it (Plan.find's rule).
+func nameTaken(subjects []Subject, name string, a, b int) bool {
+	for i, s := range subjects {
+		if i == a || i == b {
+			continue
+		}
+		if (Plan{Subjects: []Subject{s}}).find(name) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// unionBytes is the bytes of two subjects' files, a file both hold once.
+func unionBytes(a, b Subject) int64 {
+	n := a.Bytes()
+	have := make(map[string]bool, len(a.Files))
+	for _, f := range a.Files {
+		have[f.Path] = true
+	}
+	for _, f := range b.Files {
+		if !have[f.Path] {
+			n += f.Size
+		}
+	}
+	return n
+}
+
+// JoinedShown is how many of a joined subject's parts its name shows, the
+// rest "und weitere", the name a heading still; and how many parts' reader
+// questions its step is given.
+const JoinedShown = 3
+
+// join is subject b folded into a: a's files then b's not in a yet, the
+// parts' names and purposes joined, each purpose a sentence of its own.
+func join(a, b Subject) Subject {
+	files := append([]File{}, a.Files...)
+	have := map[string]bool{}
+	for _, f := range a.Files {
+		have[f.Path] = true
+	}
+	for _, f := range b.Files {
+		if !have[f.Path] {
+			files = append(files, f)
+		}
+	}
+	parts := append(append([]string{}, a.Names()...), b.Names()...)
+	return Subject{
+		Name:    joinedName(parts),
+		Purpose: strings.TrimSpace(sentence(a.Purpose) + " " + sentence(b.Purpose)),
+		Files:   files,
+		Joined:  parts,
+	}
+}
+
+// joinedName is a joined subject's heading: "A und B", "A, B und C", past
+// JoinedShown "A, B, C und weitere".
+func joinedName(parts []string) string {
+	switch {
+	case len(parts) > JoinedShown:
+		return strings.Join(parts[:JoinedShown], ", ") + " und weitere"
+	case len(parts) > 1:
+		return strings.Join(parts[:len(parts)-1], ", ") + " und " + parts[len(parts)-1]
+	}
+	return strings.Join(parts, "")
+}
+
+// sentence is a purpose ending as a sentence, so two joined read as two.
+func sentence(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasSuffix(s, ".") || strings.HasSuffix(s, "!") || strings.HasSuffix(s, "?") {
+		return s
+	}
+	return s + "."
+}
+
+// Names is the proposed names a subject stands for: those joined into it,
+// else its own.
+func (s Subject) Names() []string {
+	if len(s.Joined) > 0 {
+		return s.Joined
+	}
+	return []string{s.Name}
 }

@@ -202,7 +202,8 @@ const (
 // the plan holds in no subject, and the overview does not read (Docs), into
 // a subject of its own, first, within StepMaxBytes by rank. With the plan at
 // maxSubjects, the missing anchors join its last subject where they fit;
-// where not, that subject, the catalogue's least important, gives way.
+// where not, its two smallest subjects join to free a slot, and only where
+// no two fit one step does the last subject give way.
 func EnsureAnchors(p Plan, files []File, contracts map[string]bool, maxSubjects int) Plan {
 	if maxSubjects <= 0 {
 		return p
@@ -241,13 +242,19 @@ func EnsureAnchors(p Plan, files []File, contracts map[string]bool, maxSubjects 
 			add += f.Size
 		}
 		if used+add <= StepMaxBytes {
-			p.Subjects = append(append([]Subject{}, kept[:len(kept)-1]...), Subject{Name: last.Name, Purpose: last.Purpose,
-				Files: append(append([]File{}, last.Files...), missing...)})
+			last.Files = append(append([]File{}, last.Files...), missing...)
+			p.Subjects = append(append([]Subject{}, kept[:len(kept)-1]...), last)
 			return p
 		}
-		// The subject that gives way goes first, so an anchor only it held
-		// is missing and taken in, never lost with it.
-		kept = kept[:maxSubjects-1]
+		// A slot for the anchors: the two smallest subjects join where
+		// their files fit one step, as past the cap (compact). Else the
+		// last gives way, going first, so an anchor only it held is
+		// missing and taken in, never lost with it.
+		if joined, ok := joinTo(kept, 0, maxSubjects-1); ok {
+			kept = joined
+		} else {
+			kept = kept[:maxSubjects-1]
+		}
 	}
 	missing := missingFrom(kept)
 	if len(missing) == 0 {
