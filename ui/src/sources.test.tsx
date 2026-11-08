@@ -256,7 +256,7 @@ describe("SourcesPage", () => {
     expect(
       screen.getByText(/listet das Projekt über die API/),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    fireEvent.click(screen.getByText("Anlegen und syncen"));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toEqual({
       method: "POST",
@@ -347,7 +347,7 @@ describe("SourcesPage", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(
         S.sources.form.projectURLInvalid,
       );
-      const create = screen.getByText("Anlegen und synchronisieren");
+      const create = screen.getByText("Anlegen und syncen");
       expect(create).toBeDisabled();
       fireEvent.click(create);
     }
@@ -367,11 +367,11 @@ describe("SourcesPage", () => {
     expect(
       screen.queryByText(S.sources.form.projectURLInvalid),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Anlegen und synchronisieren")).toBeDisabled();
+    expect(screen.getByText("Anlegen und syncen")).toBeDisabled();
     fireEvent.change(project, {
       target: { value: "https://forge.example.invalid/projects/neu" },
     });
-    fireEvent.click(screen.getByText("Anlegen und synchronisieren"));
+    fireEvent.click(screen.getByText("Anlegen und syncen"));
     await waitFor(() => expect(writes).toHaveLength(1));
     const body = writes[0]?.body as { host: string; project_key: string };
     expect(body.host).toBe("https://forge.example.invalid");
@@ -386,7 +386,7 @@ describe("SourcesPage", () => {
     fireEvent.click(await screen.findByText("Neue Quelle"));
     // No system switch: one repository alone is a project of one.
     expect(screen.queryByRole("switch")).toBeNull();
-    const create = screen.getByText("Anlegen und synchronisieren");
+    const create = screen.getByText("Anlegen und syncen");
     expect(create).toBeDisabled();
     fireEvent.change(
       screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
@@ -919,7 +919,7 @@ describe("SourcePage", () => {
 
     // The primary button and the ready row's action share the word; the
     // primary one comes first in the document.
-    fireEvent.click(screen.getAllByText("Synchronisieren")[0]);
+    fireEvent.click(screen.getAllByText("Sync")[0]);
     await waitFor(() =>
       expect(writes.some((w) => w.path === "sources/werkzeuge/sync")).toBe(
         true,
@@ -939,7 +939,7 @@ describe("SourcePage", () => {
       render(<SourcePage projectKey="werkzeuge" />);
       await screen.findByText("acme-cli");
       const top = screen
-        .getAllByRole("button", { name: "Synchronisieren" })
+        .getAllByRole("button", { name: "Sync" })
         .filter((b) => b.closest("table") === null);
       expect(top).toHaveLength(1);
       return top[0];

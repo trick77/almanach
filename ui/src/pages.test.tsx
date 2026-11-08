@@ -1978,11 +1978,11 @@ describe("session gate", () => {
     armSignIn(false);
   });
 
-  it("renders the wiki without a name or Abmelden in none mode", async () => {
+  it("renders the wiki without a name or Logout in none mode", async () => {
     answer({ status: 200, body: anonymous });
     render(<App />);
     expect(await screen.findByText("PAY")).toBeInTheDocument();
-    expect(screen.queryByText("Abmelden")).not.toBeInTheDocument();
+    expect(screen.queryByText("Logout")).not.toBeInTheDocument();
     expect(
       document.querySelector('[data-slot="reader"]'),
     ).toBeEmptyDOMElement();
@@ -1996,7 +1996,7 @@ describe("session gate", () => {
     render(<App />);
     expect(await screen.findByText("jan@example.com")).toBeInTheDocument();
     const loc = stubLocation();
-    fireEvent.click(screen.getByText("Abmelden"));
+    fireEvent.click(screen.getByText("Logout"));
     await waitFor(() => expect(loc.href).toBe("/?signed_out=1"));
     expect(calls).toContainEqual({ url: "/api/auth/logout", method: "POST" });
   });
@@ -2011,8 +2011,8 @@ describe("session gate", () => {
   });
 
   it.each([
-    ["?auth_error=oidc_callback_failed", "Die Anmeldung konnte nicht"],
-    ["?signed_out=1", "Abgemeldet."],
+    ["?auth_error=oidc_callback_failed", "Der Login konnte nicht"],
+    ["?signed_out=1", "Ausgeloggt."],
   ])(
     "halts on %s with a button instead of redirecting",
     async (search, text) => {
@@ -2020,7 +2020,7 @@ describe("session gate", () => {
       const calls = answer({ status: 401 });
       render(<App />);
       expect(await screen.findByText(new RegExp(text))).toBeInTheDocument();
-      expect(screen.getByText("Anmelden").closest("a")).toHaveAttribute(
+      expect(screen.getByText("Login").closest("a")).toHaveAttribute(
         "href",
         "/api/auth/login",
       );
@@ -2148,11 +2148,9 @@ describe("session gate", () => {
         };
       }),
     );
-    fireEvent.click(screen.getByText("Abmelden"));
+    fireEvent.click(screen.getByText("Logout"));
     expect(
-      await screen.findByText(
-        "Abmelden fehlgeschlagen, bitte erneut versuchen.",
-      ),
+      await screen.findByText("Logout fehlgeschlagen, bitte erneut versuchen."),
     ).toBeInTheDocument();
     expect(loc.href).toBe("/");
     expect(loc.reload).not.toHaveBeenCalled();
@@ -2163,7 +2161,7 @@ describe("session gate", () => {
     stubLocation("?x=1&auth_error=oidc_callback_failed", "/sources/werkzeuge");
     answer({ status: 401 });
     render(<App />);
-    const link = await screen.findByText("Anmelden");
+    const link = await screen.findByText("Login");
     expect(link.closest("a")).toHaveAttribute(
       "href",
       "/api/auth/login?next=" + encodeURIComponent("/sources/werkzeuge?x=1"),

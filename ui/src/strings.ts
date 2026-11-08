@@ -539,7 +539,7 @@ export const S = {
       user: "Benutzername",
       userHint:
         "GitHub ignoriert ihn; Bitbucket prüft ihn (Projekt- und Repo-Token: x-token-auth, persönliche Token: der eigene Name).",
-      create: "Anlegen und synchronisieren",
+      create: "Anlegen und syncen",
       // Every repository of a new source gets a full run: said before
       // the click, with what one may cost.
       costHint: (calls: number) =>
@@ -562,11 +562,11 @@ export const S = {
       ready: "Bereit",
       lastSync: "Letzter Sync",
       running: "läuft gerade",
-      disk: "Auf Disk",
+      disk: "Auf der Disk",
     },
     actions: {
-      sync: "Synchronisieren",
-      syncRunning: "Synchronisieren läuft gerade.",
+      sync: "Sync",
+      syncRunning: "Sync läuft gerade.",
       queued: "Angestossen …",
       addRepo: "Repository hinzufügen",
       access: { bitbucket: "Host und Token", static: "Token" } as Record<
@@ -632,7 +632,7 @@ export const S = {
     } as Record<string, string>,
     deactivated: "Deaktiviert",
     repoActions: {
-      sync: "Synchronisieren",
+      sync: "Sync",
       retry: "Erneut",
       remove: "Entfernen",
       removeClone: "Clone entfernen",
@@ -655,7 +655,7 @@ export const S = {
     },
     listingError: "Letztes Listing fehlgeschlagen:",
     listingErrorHint:
-      "Die Repository-Liste ist die des letzten erfolgreichen Listings; bekannte Repositories werden weiter synchronisiert.",
+      "Die Repository-Liste ist die des letzten erfolgreichen Listings; bekannte Repositories werden weiter gesynct.",
   },
   baseline: {
     chip: (sha: string, repo?: string) =>
@@ -941,9 +941,9 @@ export const S = {
     checking: "Session wird geprüft …",
     redirecting: "Weiterleitung zum Login …",
     signedOut:
-      "Abgemeldet. Die Session beim Identity Provider läuft weiter; wer sie beenden will, meldet sich auch dort ab.",
+      "Ausgeloggt. Die Session beim Identity Provider läuft weiter; wer sie beenden will, loggt sich auch dort aus.",
     failed:
-      "Die Anmeldung konnte nicht abgeschlossen werden. Bitte erneut versuchen; schlägt sie wieder fehl, steht der Grund im Server-Log.",
+      "Der Login konnte nicht abgeschlossen werden. Bitte erneut versuchen; schlägt er wieder fehl, steht der Grund im Server-Log.",
     unchecked: (status: number) =>
       `Die Session konnte nicht geprüft werden (HTTP ${status}).`,
     unreadable:
@@ -952,12 +952,12 @@ export const S = {
       "Die Session konnte nicht geprüft werden: der Server ist nicht erreichbar.",
     misconfigured:
       "Der Login ist falsch eingerichtet: der Identity Provider passt nicht zur Konfiguration. Der Grund steht im Server-Log; nach der Korrektur und einem Neustart erneut versuchen.",
-    signOutFailed: "Abmelden fehlgeschlagen, bitte erneut versuchen.",
+    signOutFailed: "Logout fehlgeschlagen, bitte erneut versuchen.",
     unavailable:
       "Der Login ist im Moment nicht möglich: der Identity Provider antwortet nicht. Almanach versucht es laufend weiter; bitte später erneut versuchen.",
-    loop: "Der Login hat gerade eben keine Session ergeben. Bitte erneut anmelden; geschieht das wieder, steht der Grund im Server-Log.",
-    signIn: "Anmelden",
-    signOut: "Abmelden",
+    loop: "Der Login hat gerade eben keine Session ergeben. Bitte erneut einloggen; geschieht das wieder, steht der Grund im Server-Log.",
+    signIn: "Login",
+    signOut: "Logout",
     retry: "Erneut versuchen",
   },
 } as const;

@@ -5,8 +5,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 ## Commands
 
 - Prompts compiled in, never configurable; a rule meant for stored pages bumps its scope's epoch.
-  UI: German, copy only in `strings.ts`, `/api/...` only; software words as German devs say them,
-  English (Repository, Queue, Dependency, Run, Timeout; user, 2026-11-08: "No one ever says Repositorium");
+  UI: German, IT words English (user: "No one ever says Repositorium"), copy only in `strings.ts`, `/api/...` only;
   `routing.ts` mirrored in `backend/web/embed.go`. Wiki read-only; Quellen (`/api/sources*`) only
   browser write, and pausing the queue (operations, not wiki; user, 2026-11-07). Text, summary: schema blocks, never newlines in a JSON string (models drop
   them), `lang.Laid` subset, UI `blocks` mirrors; notes plain. Diagrams only validated JSON, by
