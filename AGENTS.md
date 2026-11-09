@@ -29,7 +29,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Credentials never leave, by regex, not prompt (`redact`): a shape needs a value's mark, so prose stays.
   New shape → test.
 - Description = documentation: a statement as long as its subject needs, no quota (user, 2026-10-28).
-  Nothing dropped for size, no page/name/file cap (user, 2026-11-01); bad path: off file list.
+  No learned fact dropped for size, no page/name cap (user, 2026-11-01); unread file still named by
+  skeleton (router narrowed "no file cap", user, 2026-11-08); bad path: off file list.
 - Provenance is code's: `sources` by id, current PR/run appended on text change; departure run neither
   credits nor adds (removal teaches nothing; user, 2026-11-02); restyle never credits. Bad item: left out,
   logged, stored kept (user, 2026-11-01).

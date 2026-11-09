@@ -1020,11 +1020,19 @@ resumes after a restart. The run pins the clone's head when it starts.
    ESM `./x.js` naming x.ts; of a Go package, by the longest module of the
    tree's `go.mod` files; `gitrepo.Churn`: commits of the last year, merges,
    bots and dependency bumps left out, a human's "Update ... to 5 seconds"
-   counted). Line-based, no parser (a cgo dependency per grammar). Nothing
-   reads it yet: the run logs its size against the tree's, and a read that
-   fails is logged, never the run's failure. Stage 1, the router
-   (`almanach_router.txt`, the catalogue model), is built but no run uses
-   it yet: it reads every file by path, size and hints and the skeletons,
+   counted). Line-based, no parser (a cgo dependency per grammar). Without
+   the router the run only logs its size against the tree's, and a read
+   that fails is logged, never the run's failure. Stage 1, the router
+   (`almanach_router.txt`, the catalogue model), plans a full run in the
+   catalogue's place with `BACKEND_BASELINE_ROUTER` on (off until a pilot
+   judges it; `evaluate -router`): stage 0 is then built before its call,
+   a busy clone deferring the step, and its call is the catalogue's
+   (purpose `catalogue`), its prompt counted against the run's input
+   tokens; no doc is read for it, and a step a hold repeats reuses the
+   stage 0 it built. A tree too wide for its context, a stage 0 read that
+   fails otherwise, a router call that fails or picks no readable file, or
+   a catalogue model that cannot route, is catalogued as without it,
+   logged. The router reads every file by path, size and hints and the skeletons,
    highest-scored first, within `baseline.RouterMaxBytes` (250 kB, what a
    128k context leaves beside the router's answer; a tree whose names pass
    two thirds of it folds its lowest-scored directories into one line
@@ -1035,8 +1043,22 @@ resumes after a restart. The run pins the clone's head when it starts.
    docs and the anchors, so the subject `EnsureAnchors` opens for the
    anchors it left out pushes none of its own out (a plan of one subject
    spares no slot); the plan's rules hold its answer as a catalogue's
-   (`BuildPlan`, `EnsureAnchors`); `Worker.Route` runs stages 0 and 1
-   alone, nothing written. A full run asks the catalogue model
+   (`BuildPlan`, `EnsureAnchors`), and each subject's questions are kept on
+   the plan (`routed`, `questions`) and shown to its step as what readers
+   will ask, one line each among the untrusted input (a comment may steer
+   the router), answered where its code answers them, never guessed. While
+   the router is on, a reconcile of a routed plan reads only the changes a
+   subject holds and the files not readable at the documented commit (new,
+   or become readable), `baseline.Changes.Picked`: a change to a file the
+   router passed over is neither placed (placed, it would slip back in what
+   the router left out, a little more each reconcile) nor counted toward a
+   fresh read (counted, ordinary churn outside the picks would read the
+   repository afresh at every reconcile), nor named to a step as changed;
+   it stays unread until the next full run; a changed doc is the
+   overview's. With the router off again, a routed plan reconciles like
+   any other, its questions dropped, until a full run replans it.
+   `Worker.Route` runs stages 0 and 1 alone, nothing written.
+   Without the router, a full run asks the catalogue model
    (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
    from the listing and the docs. Over 4000 files the listing is the tree

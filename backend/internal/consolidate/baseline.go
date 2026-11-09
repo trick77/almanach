@@ -142,6 +142,13 @@ type runPlan struct {
 	// its retry is. The project and map steps come after the last reading
 	// step and are not counted.
 	Tokens int `json:"tokens,omitempty"`
+	// Routed: the plan is the router's (config.Baseline.Router), its
+	// subjects the files it picked, not every readable file; a reconcile
+	// carries it, and reads only the changes it holds or that are new
+	// (baseline.Changes.Picked). Questions is each subject's reader
+	// questions, by name, shown to its step; carried likewise.
+	Routed    bool                `json:"routed,omitempty"`
+	Questions map[string][]string `json:"questions,omitempty"`
 	// Docs is what the overview step read, once folded: the run's coverage
 	// (ReadBytes) counts it with the subjects, a doc a subject holds too
 	// once.
@@ -636,15 +643,48 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	if r.Calls >= w.base.Limits.MaxCalls {
 		return errors.New("no call left for the catalogue")
 	}
+	// The router in the catalogue's place, stage 0 built before its paid
+	// call; a busy clone defers the step. A tree too wide for its context,
+	// a stage 0 read that fails otherwise, or a model that cannot route is
+	// catalogued as without it rather than left undocumented.
+	// A router call that fails, or picks no file, is catalogued too.
+	var zero *baseline.StageZero
+	zeroFailed := false
+	if w.base.Limits.Router {
+		router, ok := w.base.Catalogue.(Router)
+		if !ok {
+			w.log.WarnContext(ctx, "baseline: router: "+errNoRouter.Error()+", catalogued instead")
+		} else {
+			ask, err := w.routerAskOnce(ctx, r, files, contracts, at)
+			switch {
+			case err == nil:
+				done, err := w.routedCatalogue(ctx, r, router, ask, files, contracts, at)
+				if done || err != nil {
+					return err
+				}
+				zero = &ask.z
+				if r.Calls >= w.base.Limits.MaxCalls {
+					return errors.New("no call left for the catalogue after the router's")
+				}
+			case errors.Is(err, ErrCloneBusy):
+				return err
+			case errors.Is(err, errTreeTooWide):
+				zero = &ask.z
+			default:
+				zeroFailed = true
+			}
+			if err != nil {
+				w.log.WarnContext(ctx, "baseline: router: "+err.Error()+", catalogued instead")
+			}
+		}
+	}
 	docs, size, err := w.readDocs(ctx, r, files, baseline.CatalogueDocsBytes)
 	if err != nil {
 		return err
 	}
 	prompt := renderCatalogue(*r, baseline.Listing(files), docs, "", w.askedSubjects())
-	// Before the paid call: a catalogue that takes the whole budget leaves
-	// every part skipped, a run that pays and reads nothing.
-	if n := inference.PromptTokens(prompt); n >= w.base.Limits.MaxInputTokens {
-		return fmt.Errorf("the catalogue's prompt (about %d tokens) leaves nothing of the run's input token budget (%d)", n, w.base.Limits.MaxInputTokens)
+	if err := w.planFits("the catalogue", prompt); err != nil {
+		return err
 	}
 	res := w.base.Catalogue.Catalogue(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
@@ -656,17 +696,91 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 		return callFailed("the catalogue", res.Call)
 	}
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
-	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
-	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true, Tokens: taken(res.Call, prompt)}
-	for _, s := range p.Subjects {
-		plan.Read = append(plan.Read, s.Name)
-	}
+	plan := fullPlan(baseline.EnsureAnchors(p, files, contracts, w.maxSubjects()), at)
+	plan.Tokens = taken(res.Call, prompt)
 	if err := w.planned(ctx, r, plan); err != nil {
 		return err
 	}
 	// Once the paid call's plan is stored: a hold or a busy clone before it
-	// repeats the step, and nothing between call and write may cost it.
-	w.stageZero(ctx, r, files, at)
+	// repeats the step, and nothing between call and write may cost it. A
+	// router that came before built it already, or failed to.
+	w.askRun, w.ask = 0, routerQuestion{}
+	switch {
+	case zero != nil:
+		w.logStageZero(ctx, *zero)
+	case !zeroFailed:
+		w.stageZero(ctx, r, files, at)
+	}
+	return nil
+}
+
+// routedCatalogue is a full run's catalogue step by the router: its
+// subjects the files it picked, held to the plan's rules as the
+// catalogue's are, each with the reader questions it asked. Its prompt
+// counts against the run's input tokens; no doc is read for it. done
+// false: its call failed or picked no file, logged, for the catalogue to
+// plan the run instead (the router's call spent, its tokens on no plan).
+func (w *Worker) routedCatalogue(ctx context.Context, r *store.BaselineRun, router Router, ask routerQuestion, files []baseline.File,
+	contracts map[string]bool, at time.Time) (bool, error) {
+	if err := w.planFits("the router", ask.prompt); err != nil {
+		return false, err
+	}
+	res := router.Route(ctx, ask.prompt)
+	ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		w.log.WarnContext(ctx, "baseline: router: its call failed ("+res.Outcome.String()+"), catalogued instead")
+		return false, nil
+	}
+	p, a := w.routedPlan(res.Subjects, files, contracts)
+	if len(a.unresolved) > 0 {
+		w.log.InfoContext(ctx, "baseline: router: paths naming no readable file, left out: "+strings.Join(a.unresolved, "; "))
+	}
+	if !slices.ContainsFunc(a.named, func(n map[string]bool) bool { return len(n) > 0 }) {
+		w.log.WarnContext(ctx, "baseline: router: no path it named is a readable file, catalogued instead")
+		return false, nil
+	}
+	w.logStageZero(ctx, ask.z)
+	plan := fullPlan(p, at)
+	plan.Routed, plan.Questions, plan.Tokens = true, routeQuestions(p, res.Subjects, a.named), taken(res.Call, ask.prompt)
+	if err := w.planned(ctx, r, plan); err != nil {
+		return false, err
+	}
+	w.askRun, w.ask = 0, routerQuestion{}
+	return true, nil
+}
+
+// routerAskOnce is routerAsk, built once a run: a catalogue step repeated
+// after a hold or a busy clone reuses it. One that failed is built again.
+func (w *Worker) routerAskOnce(ctx context.Context, r *store.BaselineRun, files []baseline.File, contracts map[string]bool, at time.Time) (routerQuestion, error) {
+	if w.askRun == r.ID && w.ask.prompt != "" {
+		return w.ask, routeFits(w.ask.prompt)
+	}
+	ask, err := w.routerAsk(ctx, r, files, contracts, at)
+	if err == nil || errors.Is(err, errTreeTooWide) {
+		w.askRun, w.ask = r.ID, ask
+	}
+	return ask, err
+}
+
+// fullPlan is a full run's plan: the overview first, then every subject.
+func fullPlan(p baseline.Plan, at time.Time) runPlan {
+	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true}
+	for _, s := range p.Subjects {
+		plan.Read = append(plan.Read, s.Name)
+	}
+	return plan
+}
+
+// planFits refuses, before its paid call, a full run's planning prompt
+// that takes the whole input token budget: every part would be skipped, a
+// run that pays and reads nothing.
+func (w *Worker) planFits(what, prompt string) error {
+	if n := inference.PromptTokens(prompt); n >= w.base.Limits.MaxInputTokens {
+		return fmt.Errorf("%s's prompt (about %d tokens) leaves nothing of the run's input token budget (%d)", what, n, w.base.Limits.MaxInputTokens)
+	}
 	return nil
 }
 
@@ -684,6 +798,12 @@ func (w *Worker) stageZero(ctx context.Context, r *store.BaselineRun, files []ba
 		w.log.WarnContext(ctx, "baseline: stage 0 skipped, the tree could not be read", logging.Err(err))
 		return
 	}
+	w.logStageZero(ctx, z)
+}
+
+// logStageZero logs what stage 0 came to: what a router reads against what
+// the run could read.
+func (w *Worker) logStageZero(ctx context.Context, z baseline.StageZero) {
 	most, imported := 0, 0
 	for _, n := range z.FanIn {
 		imported++
@@ -735,6 +855,26 @@ func taken(c inference.Call, prompt string) int {
 	return inference.PromptTokens(prompt)
 }
 
+// readableAt is the paths a run would have read at commit, the readable
+// set (readable) of its tree there.
+func (w *Worker) readableAt(ctx context.Context, r *store.BaselineRun, commit string) (map[string]bool, error) {
+	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, commit)
+	if err != nil {
+		return nil, readErr(err)
+	}
+	at := *r
+	at.Commit = commit
+	files, _, err := w.readable(ctx, &at, tree)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(files))
+	for _, f := range files {
+		seen[f.Path] = true
+	}
+	return seen, nil
+}
+
 // kib is a byte count as the log shows it.
 func kib(n int64) string { return fmt.Sprintf("%d kB", (n+512)/1024) }
 
@@ -759,7 +899,22 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	if errors.Is(derr, ErrCloneBusy) {
 		return runPlan{}, false, derr
 	}
-	changes := baseline.Sift(diff, files)
+	sifted := baseline.Sift(diff, files)
+	changes := sifted
+	// A routed plan is read as one while the router is on; off, it is a
+	// plan like any other, and the changes it passed over are placed and
+	// counted until a full run plans afresh by the catalogue.
+	routed := ok && err == nil && derr == nil && old.Routed && w.base.Limits.Router
+	if routed {
+		seen, serr := w.readableAt(ctx, r, r.BaseCommit)
+		if errors.Is(serr, ErrCloneBusy) {
+			return runPlan{}, false, serr
+		}
+		if serr != nil {
+			derr = serr
+		}
+		changes = sifted.Picked(old.Plan, seen)
+	}
 	if !ok || err != nil || derr != nil || baseline.FullInstead(old.Plan, changes) {
 		w.log.InfoContext(ctx, "baseline: reconcile reads the repository afresh")
 		r.Mode = store.RunFull
@@ -776,7 +931,11 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	if !old.Cuts {
 		unplaced = append(unplaced, newlyReadable(old, merged, files, unplaced)...)
 	}
-	plan := runPlan{Cuts: true}
+	// The router's questions go with its plan: off, the plan is any other.
+	plan := runPlan{Cuts: true, Routed: routed}
+	if routed {
+		plan.Questions = old.Questions
+	}
 	if len(unplaced) > 0 && r.Calls < w.base.Limits.MaxCalls {
 		placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
 			"Place each: name an existing subject to add it there, or a new subject. Existing subjects:\n\n" + subjectList(old.Plan)
@@ -803,12 +962,7 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	// failed, the model left a file out, a subject had no room) stays on
 	// the plan for the next reconcile; what it placed is read now, like a
 	// change, whether or not the diff named it.
-	held := map[string]bool{}
-	for _, s := range merged.Subjects {
-		for _, f := range s.Files {
-			held[f.Path] = true
-		}
-	}
+	held := merged.Held()
 	reading := changes
 	for _, f := range unplaced {
 		if held[f.Path] {
@@ -824,21 +978,27 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	touched, _ := baseline.Touched(baseline.Plan{Subjects: merged.Subjects, Skipped: again}, reading)
 	merged.Skipped, merged.Why, merged.Steps, merged.Again, merged.AgainOverview = nil, nil, nil, nil, false
 	plan.Plan, plan.Read = merged, touched
-	changed := changes.Paths()
-	for p := range changed {
-		plan.Changed = append(plan.Changed, p)
-	}
-	slices.Sort(plan.Changed)
+	// The changes the steps read: a routed plan's passed-over files are no
+	// step's, and a statement resting on one is not to be checked without
+	// its code; a changed doc is the overview's, held or not, since it reads
+	// the docs whole.
+	stepChanged := changes.Paths()
+	all := sifted.Paths()
 	// The overview reads the docs again when one changed or the last run's
 	// failed or left a held statement alone; the project step folds again
 	// when the last run's did not.
 	plan.Overview = old.StepSkipped(baseline.PartOverview) || old.AgainOverview
 	plan.SummaryChanged = old.StepSkipped(baseline.PartProject)
 	for _, d := range baseline.Docs(files, baseline.DocsMaxBytes) {
-		if changed[d.Path] {
+		if all[d.Path] {
 			plan.Overview = true
+			stepChanged[d.Path] = true
 		}
 	}
+	for p := range stepChanged {
+		plan.Changed = append(plan.Changed, p)
+	}
+	slices.Sort(plan.Changed)
 	return plan, true, nil
 }
 
@@ -953,6 +1113,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	name, overview := partAt(plan, i)
 	var part, purpose string
 	var read []baseline.File
+	var questions []string
 	subject := !overview
 	if !subject {
 		part, purpose, read = overviewPart, store.PurposeOverview, baseline.Docs(files, baseline.DocsMaxBytes)
@@ -962,6 +1123,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 			return w.skipPart(ctx, r, &plan, baseline.SkipGone, "no longer in the plan")
 		}
 		part, purpose, read = fmt.Sprintf("the subject %q: %s", s.Name, s.Purpose), store.PurposeSubject, s.Files
+		questions = questionsFor(plan.Questions, s.Name)
 	}
 	kept := 1
 	if plan.Kept != nil {
@@ -1050,7 +1212,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	focus := w.focus(plan, page, newer)
 	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, w.siblings,
-		w.topics, w.interfaces, newer)
+		w.topics, w.interfaces, newer, questions)
 	// The whole prompt, not its files alone: the page, the rules and the
 	// project around them grow as the run goes, and the byte budget never
 	// sees them.
@@ -2873,14 +3035,47 @@ func renderProblems(problems []store.RepoProblem) string {
 }
 
 func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs, siblings,
-	topics, interfaces string, newer map[string]string) string {
+	topics, interfaces string, newer map[string]string, questions []string) string {
 	return strings.NewReplacer(
 		"{problem_areas}", problems, "{shared}", libs, "{sibling_interfaces}", siblings, "{topics}", topics, "{interfaces}", interfaces,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps),
-		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
+		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus, "{questions}", questionsAsked(questions), "{question_list}", questionList(questions),
 		"{repo_description}", describeSourced(page, newer), "{files}", files, "{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 	).Replace(prompts.Describe)
+}
+
+// questionsAsked is what a step is told of its subject's reader questions,
+// "" for none (the overview, a catalogue's plan); questionList the
+// questions themselves, among the untrusted input: the router asked them
+// from the files' outlines, which a comment may steer.
+func questionsAsked(qs []string) string {
+	if len(qs) == 0 {
+		return ""
+	}
+	return "\n\nThe questions under \"Reader questions for this step\" below are what readers will ask of this part, as the planner guessed from the files' outlines: " +
+		"where its code answers one, the description answers it, in the statement the answer belongs to; one its code does not answer is left unanswered, never guessed."
+}
+
+// questionMaxRunes caps one reader question as a step shows it.
+const questionMaxRunes = 300
+
+func questionList(qs []string) string {
+	if len(qs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n## Reader questions for this step\n\n")
+	for _, q := range qs {
+		// One line each: a question is never a heading or a section of its
+		// own, whatever it carries.
+		line := []rune(strings.Join(strings.Fields(q), " "))
+		if len(line) > questionMaxRunes {
+			line = append(line[:questionMaxRunes], '…')
+		}
+		b.WriteString("- " + string(line) + "\n")
+	}
+	return b.String()
 }
 
 // renderProject is the project step's prompt; retry is the refused map,

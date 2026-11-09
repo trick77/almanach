@@ -149,6 +149,11 @@ type Worker struct {
 	libsRun  int64
 	libs     string
 	siblings string
+	// ask is run askRun's router prompt with its stage 0, built once for
+	// the catalogue step: a step a hold or a busy clone repeats does not
+	// read the whole tree again. Cleared once the plan is stored.
+	askRun int64
+	ask    routerQuestion
 	// topics is, read with them, what the repository's code sends and
 	// receives (topicsShown); interfaces what it offers and declares
 	// (interfacesShown).

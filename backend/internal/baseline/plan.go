@@ -238,6 +238,17 @@ func (p Plan) Bytes() int64 {
 	return n
 }
 
+// Held is every path a subject holds.
+func (p Plan) Held() map[string]bool {
+	held := map[string]bool{}
+	for _, s := range p.Subjects {
+		for _, f := range s.Files {
+			held[f.Path] = true
+		}
+	}
+	return held
+}
+
 // find is the index of the subject with this name, or one joined into it
 // (Joined: a proposal naming a part adds to the subject that stands for
 // it), ignoring case, umlauts written out ("Datenueberpruefung" is
