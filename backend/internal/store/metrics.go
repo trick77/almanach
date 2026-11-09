@@ -5,20 +5,6 @@ import (
 	"time"
 )
 
-// Metrics is what /metrics reads of the store besides the ledger: the
-// queue, the last successful sync, the projects' current keys. From the
-// rows, so a restart keeps it.
-type Metrics struct {
-	// Notes is the notes not yet folded, Runs the open baseline runs: the
-	// nav's count (QueueCount), split.
-	Notes, Runs int
-	// LastSync is the newest successful sync of any source repository.
-	LastSync *time.Time
-	// Projects is every project's current key by its id: the counters are
-	// labelled by id, which a rename never changes.
-	Projects map[int64]string
-}
-
 // Metrics reads the store's side of /metrics but the ledger.
 func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 	var m Metrics
@@ -49,15 +35,6 @@ func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 		m.Projects[id] = key
 	}
 	return m, rows.Err()
-}
-
-// LedgerRow is one purpose's calls for one project, and what the priced
-// ones cost.
-type LedgerRow struct {
-	Purpose   string
-	ProjectID int64
-	Calls     int64
-	NanoUSD   int64
 }
 
 // LedgerPart is the ledger's rows past one id: summed by purpose and

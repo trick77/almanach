@@ -4,13 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 )
-
-// Pause is the queue's pause: since when. Who paused is the log's.
-type Pause struct {
-	At time.Time
-}
 
 // PauseWorker pauses the queue; a pause on already stays as it was, its
 // time the first's.

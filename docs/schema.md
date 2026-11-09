@@ -624,6 +624,10 @@ Checks:
 
 ## worker_pause
 
+Go types:
+
+- `store.Pause` (internal/store): Pause is the queue's pause: since when. Who paused is the log's.
+
 | Column | Type | Null | Default | PK |
 | --- | --- | --- | --- | --- |
 | `id` | INTEGER | no |  | 1 |
@@ -645,6 +649,28 @@ In `internal/store`. CostSum is calls and their cost; NanoUSD nil when none was 
 | `Calls` | `int` |  |
 | `Unpriced` | `int` |  |
 | `NanoUSD` | `*int64` |  |
+
+### store.LedgerRow
+
+In `internal/store`. LedgerRow is one purpose's calls for one project, and what the priced ones cost.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Purpose` | `string` |  |
+| `ProjectID` | `int64` |  |
+| `Calls` | `int64` |  |
+| `NanoUSD` | `int64` | NanoUSD sums the priced calls; 0 when none was, unlike Spend's nil. |
+
+### store.Metrics
+
+In `internal/store`. Metrics is what /metrics reads of the store besides the ledger: the queue, the last successful sync, the projects' current keys. From the rows, so a restart keeps it.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Notes` | `int` | Notes is the notes not yet folded; with Runs, the nav's count (QueueCount). |
+| `Runs` | `int` | Runs is the open baseline runs. |
+| `LastSync` | `*time.Time` | LastSync is the newest successful sync of any source repository. |
+| `Projects` | `map[int64]string` | Projects is every project's current key by its id: the counters are labelled by id, which a rename never changes. |
 
 ### store.ProblemArea
 
