@@ -1097,9 +1097,21 @@ resumes after a restart. The run pins the clone's head when it starts.
    while they fit 240 kB, and only then drops the model's last: cutting
    the last had dropped whatever only they named, a whole data model once.
    An old subject never joins and stays past a lowered cap; a later
-   proposal naming a part adds to it. The anchors' subject at the cap
-   frees its slot the same way, the last subject giving way only where no
-   two fit a step. A
+   proposal naming a part adds to it. The router's
+   `Entwicklung und Deployment` (`baseline.LastArea`, by name, a subject
+   it was joined into too) joins only where no two others fit a step: few
+   files by its rule, it was the smallest and went into a feature; but
+   joined it loses no file, dropped a subject loses all. A drop takes the
+   model's last subject but the build subject, which the router puts last
+   by rule, not by worth; it goes only once no other is left. At the cap
+   each anchor the plan left out joins the subject it fits best with room:
+   a build file (build, container, deploy, pipeline, test runner, dev
+   server) the build subject first, any other the subject sharing most of
+   its folders, else the smallest (they all once joined the last, the
+   build subject since the router names one). For the anchors no subject
+   has room for, the anchors' subject frees a slot short of losing a file:
+   two subjects but the build one join, else the build subject takes them,
+   else joins one; only then does a subject give way, as above. A
    reconcile starts from the documented run's plan instead: the
    diff since its commit (`diff-tree`, files that left the readable set
    counted as gone) maps onto the subjects, and only files no subject

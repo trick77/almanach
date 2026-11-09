@@ -167,10 +167,14 @@ func TestEnsureAnchors(t *testing.T) {
 	if !reflect.DeepEqual(paths, []string{"ev.avsc", "x.wsdl", "src/main/resources/application.yml"}) {
 		t.Errorf("anchor files = %v", paths)
 	}
-	// At the cap the missing anchors join the last subject where they fit.
+	// At the cap the missing anchors join the subjects they fit best: the
+	// one sharing a folder, else the smallest.
 	joined := EnsureAnchors(p, files, nil, 2)
-	if got := names(joined); !reflect.DeepEqual(got, []string{"Core:src/A.java", "Last:pom.xml,src/main/resources/application.yml,ev.avsc"}) {
-		t.Errorf("at the cap, room in the last subject: %v", got)
+	if got := names(joined); !reflect.DeepEqual(got, []string{"Core:src/A.java,src/main/resources/application.yml", "Last:pom.xml,ev.avsc"}) {
+		t.Errorf("at the cap, room in the subjects: %v", got)
+	}
+	if len(p.Subjects[0].Files) != 1 {
+		t.Error("the plan passed in was changed")
 	}
 	if len(p.Subjects[1].Files) != 1 {
 		t.Error("the plan passed in was changed")
@@ -182,23 +186,103 @@ func TestEnsureAnchors(t *testing.T) {
 	}
 	// Where they do not, the last subject gives way; an anchor only it held
 	// is taken in, unless the overview reads it (pom.xml, a manifest).
-	big := Plan{Subjects: []Subject{p.Subjects[0], {Name: "Last", Files: []File{fl("src/main/resources/orders.yml", StepMaxBytes)}}}}
+	big := Plan{Subjects: []Subject{{Name: "Core", Files: []File{fl("src/A.java", StepMaxBytes)}},
+		{Name: "Last", Files: []File{fl("src/main/resources/orders.yml", StepMaxBytes)}}}}
 	full := EnsureAnchors(big, append(files, fl("src/main/resources/orders.yml", StepMaxBytes)), nil, 2)
 	if got := names(full); !reflect.DeepEqual(got, []string{AnchorSubject + ":ev.avsc,src/main/resources/application.yml", "Core:src/A.java"}) {
 		t.Errorf("at the cap, no room: %v", got)
 	}
-	// No room in the last, but two small subjects fit one step: they join,
-	// and every subject's files stay read.
+	// The anchors that fit are placed; one that fits no subject has two
+	// small subjects join for its slot, every subject's files still read.
 	three := Plan{Subjects: []Subject{p.Subjects[0], {Name: "Small", Files: []File{fl("src/B.java", 50)}},
 		{Name: "Last", Files: []File{fl("src/main/resources/orders.yml", StepMaxBytes)}}}}
-	roomy := EnsureAnchors(three, append(files, fl("src/B.java", 50), fl("src/main/resources/orders.yml", StepMaxBytes)), nil, 3)
-	if got := names(roomy); !reflect.DeepEqual(got, []string{AnchorSubject + ":ev.avsc,src/main/resources/application.yml",
-		"Core und Small:src/A.java,src/B.java", "Last:src/main/resources/orders.yml"}) {
+	roomy := EnsureAnchors(three, append(files, fl("src/B.java", 50), fl("src/main/resources/orders.yml", StepMaxBytes),
+		fl("api/openapi.yaml", StepMaxBytes-40), fl("api/huge.proto", StepMaxBytes+1)), nil, 3)
+	if got := names(roomy); !reflect.DeepEqual(got, []string{AnchorSubject + ":api/openapi.yaml",
+		"Core und Small:src/A.java,src/B.java,ev.avsc,src/main/resources/application.yml", "Last:src/main/resources/orders.yml"}) {
 		t.Errorf("at the cap, two small subjects: %v", got)
 	}
 	// Nothing missing: the plan as it was.
 	if same := EnsureAnchors(p, []File{fl("src/A.java", 100)}, nil, 5); len(same.Subjects) != 2 {
 		t.Errorf("nothing to add: %v", names(same))
+	}
+}
+
+// At the cap the build subject, last by the router's rule, takes the build
+// files: a pipeline, a deploy manifest, a test runner's config. An entry
+// point or a contract goes to its feature, by folder, else to the smallest
+// feature, never to the build subject while a feature has room.
+func TestEnsureAnchorsSparesTheBuildSubject(t *testing.T) {
+	files := []File{
+		fl("orders/src/OrderService.java", 300), fl("orders/src/openapi.yaml", 20), fl("billing/Invoice.java", 100),
+		fl("ev.avsc", 5), fl("deploy/live/kustomization.yaml", 10), fl("Jenkinsfile", 8), fl("orders/playwright.config.ts", 4),
+		fl(".gitlab-ci.yml", 30),
+	}
+	p := Plan{Subjects: []Subject{
+		{Name: "Bestellungen", Files: []File{fl("orders/src/OrderService.java", 300)}},
+		{Name: "Rechnungen", Files: []File{fl("billing/Invoice.java", 100)}},
+		{Name: LastArea, Files: []File{fl(".gitlab-ci.yml", 30)}},
+	}}
+	got := EnsureAnchors(p, files, nil, 3)
+	if want := []string{"Bestellungen:orders/src/OrderService.java,orders/src/openapi.yaml", "Rechnungen:billing/Invoice.java,ev.avsc",
+		LastArea + ":.gitlab-ci.yml,Jenkinsfile,orders/playwright.config.ts,deploy/live/kustomization.yaml"}; !reflect.DeepEqual(names(got), want) {
+		t.Errorf("subjects = %v, want %v", names(got), want)
+	}
+	// A build file with no room in the build subject goes to a feature, by
+	// folder too.
+	full := p
+	full.Subjects = append([]Subject{}, p.Subjects...)
+	full.Subjects[2] = Subject{Name: LastArea, Files: []File{fl(".gitlab-ci.yml", StepMaxBytes)}}
+	got = EnsureAnchors(full, files, nil, 3)
+	if want := []string{"Bestellungen:orders/src/OrderService.java,orders/src/openapi.yaml,orders/playwright.config.ts",
+		"Rechnungen:billing/Invoice.java,ev.avsc,Jenkinsfile,deploy/live/kustomization.yaml",
+		LastArea + ":.gitlab-ci.yml"}; !reflect.DeepEqual(names(got), want) {
+		t.Errorf("no room in the build subject: %v, want %v", names(got), want)
+	}
+	// The build subject alone takes them all: no feature to take any.
+	alone := EnsureAnchors(Plan{Subjects: p.Subjects[2:]}, []File{fl(".gitlab-ci.yml", 30), fl("ev.avsc", 5)}, nil, 1)
+	if want := []string{LastArea + ":.gitlab-ci.yml,ev.avsc"}; !reflect.DeepEqual(names(alone), want) {
+		t.Errorf("build subject alone: %v, want %v", names(alone), want)
+	}
+}
+
+// Where the features have no room and no two join, the build subject takes
+// an entry point rather than lose a subject; where it has no room either,
+// it joins one; only where nothing joins does a subject give way, a
+// feature before the build subject, wherever it stands.
+func TestEnsureAnchorsLosesNoSubjectForTheBuildOne(t *testing.T) {
+	a := Subject{Name: "A", Files: []File{fl("a/A.java", StepMaxBytes)}}
+	b := Subject{Name: "B", Files: []File{fl("b/B.java", StepMaxBytes)}}
+	build := Subject{Name: LastArea, Files: []File{fl("ci.yaml", 40), fl("helm/templates/deployment.yaml", 60)}}
+	files := []File{a.Files[0], b.Files[0], build.Files[0], build.Files[1], fl("src/main/resources/application.yml", 10)}
+	got := EnsureAnchors(Plan{Subjects: []Subject{a, b, build}}, files, nil, 3)
+	if want := []string{"A:a/A.java", "B:b/B.java", LastArea + ":ci.yaml,helm/templates/deployment.yaml,src/main/resources/application.yml"}; !reflect.DeepEqual(names(got), want) {
+		t.Errorf("features full: %v, want %v", names(got), want)
+	}
+	// No room in the build subject either: it joins the feature it fits.
+	small := Subject{Name: "C", Files: []File{fl("c/C.java", 100)}}
+	big := Subject{Name: LastArea, Files: []File{fl("ci.yaml", StepMaxBytes-200)}}
+	got = EnsureAnchors(Plan{Subjects: []Subject{small, big}}, []File{small.Files[0], big.Files[0], fl("api/orders.proto", StepMaxBytes-50)}, nil, 2)
+	if want := []string{AnchorSubject + ":api/orders.proto", LastArea + " und C:ci.yaml,c/C.java"}; !reflect.DeepEqual(names(got), want) {
+		t.Errorf("build subject full: %v, want %v", names(got), want)
+	}
+	// Nothing joins: the feature gives way, though the build subject is last.
+	fullBuild := Subject{Name: LastArea, Files: []File{fl("ci.yaml", StepMaxBytes)}}
+	got = EnsureAnchors(Plan{Subjects: []Subject{a, fullBuild}}, []File{a.Files[0], fullBuild.Files[0], fl("api/orders.proto", 50)}, nil, 2)
+	if want := []string{AnchorSubject + ":api/orders.proto", LastArea + ":ci.yaml"}; !reflect.DeepEqual(names(got), want) {
+		t.Errorf("nothing joins: %v, want %v", names(got), want)
+	}
+}
+
+func TestBuildAnchor(t *testing.T) {
+	for p, want := range map[string]bool{
+		"pom.xml": true, "Containerfile": true, "deploy/live/kustomization.yaml": true, "release.sh": true,
+		"Jenkinsfile": true, "Jenkinsfile.release": true, "e2e/playwright.config.ts": true, "vite.config.ts": true,
+		"main.go": false, "src/main/resources/application.yml": false, "api/openapi.yaml": false, "src/A.java": false,
+	} {
+		if got := buildAnchor(p); got != want {
+			t.Errorf("buildAnchor(%q) = %v, want %v", p, got, want)
+		}
 	}
 }
 

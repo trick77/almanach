@@ -3,6 +3,7 @@ package baseline
 import (
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -131,9 +132,17 @@ var buildNames = map[string]bool{
 	"Chart.yaml": true, "values.yaml": true, "ship.yaml": true, "project.json": true, ".env.example": true,
 }
 
+// devConfig is a pipeline, test runner or dev server configuration by its
+// name: how the code is built, tested and run locally. An entry point's
+// rank, read first, but the build subject's to hold (buildAnchor).
+var devConfig = `proxy.*\.conf\.(js|json)|vite\.config\.ts|` + runnerConfig + `|Jenkinsfile.*`
+
 // entryName is an entry point, routing, security or runtime configuration
-// by its name.
-var entryName = regexp.MustCompile(`(?i)^(main\.(go|ts|py|rs)|.*Application\.(java|kt)|app\.module\.ts|app\.config\.ts|app\.routes\.ts|.*[-.]routing\.module\.ts|.*Security(Config|Configuration)?\.(java|kt)|application(-[a-z0-9]+)?\.(properties|ya?ml)|bootstrap\.(properties|ya?ml)|proxy.*\.conf\.(js|json)|vite\.config\.ts|` + runnerConfig + `|Jenkinsfile.*)$`)
+// by its name, or a devConfig; devName a devConfig alone.
+var (
+	entryName = regexp.MustCompile(`(?i)^(main\.(go|ts|py|rs)|.*Application\.(java|kt)|app\.module\.ts|app\.config\.ts|app\.routes\.ts|.*[-.]routing\.module\.ts|.*Security(Config|Configuration)?\.(java|kt)|application(-[a-z0-9]+)?\.(properties|ya?ml)|bootstrap\.(properties|ya?ml)|` + devConfig + `)$`)
+	devName   = regexp.MustCompile(`(?i)^(` + devConfig + `)$`)
+)
 
 // contractExt are schema files: what a repository sends, receives or
 // stores, by definition.
@@ -180,13 +189,31 @@ func resourceContract(p string) bool {
 	return true
 }
 
-// byAnchor orders files anchors first, by rank, the rest in their order.
-// Each rank once: a comparator calling AnchorRank ran its patterns
-// n log n times over a large folder.
-func byAnchor(files []File) {
+// buildAnchor reports whether an anchor is the build subject's
+// (devSubject): a build, container, pipeline or deploy file (buildNames, a
+// root script) or a devConfig. A CI workflow folder (.github/workflows) or
+// a Helm template is no anchor at all: the router picks it or it goes
+// unread.
+func buildAnchor(p string) bool {
+	switch AnchorRank(p) {
+	case anchorBuild:
+		return true
+	case anchorEntry:
+		return devName.MatchString(path.Base(p))
+	}
+	return false
+}
+
+// byAnchor orders files anchors first, by rank, a file named in contracts
+// a contract, the rest in their order. Each rank once: a comparator
+// calling AnchorRank ran its patterns n log n times over a large folder.
+func byAnchor(files []File, contracts map[string]bool) {
 	rank := make(map[string]int, len(files))
 	for _, f := range files {
 		rank[f.Path] = AnchorRank(f.Path)
+		if contracts[f.Path] {
+			rank[f.Path] = anchorContract
+		}
 	}
 	sort.SliceStable(files, func(i, j int) bool { return rank[files[i].Path] > rank[files[j].Path] })
 }
@@ -201,9 +228,12 @@ const (
 // EnsureAnchors puts every anchor file (AnchorRank, or named in contracts)
 // the plan holds in no subject, and the overview does not read (Docs), into
 // a subject of its own, first, within StepMaxBytes by rank. With the plan at
-// maxSubjects, the missing anchors join its last subject where they fit;
-// where not, its two smallest subjects join to free a slot, and only where
-// no two fit one step does the last subject give way.
+// maxSubjects, each missing anchor joins the subject it fits best where one
+// has room (placeAnchors). A slot for the rest, short of losing a file: two
+// subjects other than the build subject join (as past the cap, compact),
+// else the build subject takes the rest, else joins one. Only then does a
+// subject give way (dropTo), going first, so an anchor only it held is
+// missing and taken in, never lost with it.
 func EnsureAnchors(p Plan, files []File, contracts map[string]bool, maxSubjects int) Plan {
 	if maxSubjects <= 0 {
 		return p
@@ -221,7 +251,9 @@ func EnsureAnchors(p Plan, files []File, contracts map[string]bool, maxSubjects 
 		}
 		var out []File
 		for _, f := range files {
-			if !held[f.Path] && !docs[f.Path] && (AnchorRank(f.Path) > 0 || contracts[f.Path]) {
+			// Past a step no subject reads a file (index.add): one would
+			// only cost a join for nothing.
+			if !held[f.Path] && !docs[f.Path] && f.Size <= StepMaxBytes && (AnchorRank(f.Path) > 0 || contracts[f.Path]) {
 				out = append(out, f)
 			}
 		}
@@ -233,41 +265,29 @@ func EnsureAnchors(p Plan, files []File, contracts map[string]bool, maxSubjects 
 		if len(missing) == 0 {
 			return p
 		}
-		last := kept[len(kept)-1]
-		used, add := int64(0), int64(0)
-		for _, f := range last.Files {
-			used += f.Size
-		}
-		for _, f := range missing {
-			add += f.Size
-		}
-		if used+add <= StepMaxBytes {
-			last.Files = append(append([]File{}, last.Files...), missing...)
-			p.Subjects = append(append([]Subject{}, kept[:len(kept)-1]...), last)
+		byAnchor(missing, contracts)
+		var rest []File
+		if kept, rest = placeAnchors(kept, missing, false); len(rest) == 0 {
+			p.Subjects = kept
 			return p
 		}
-		// A slot for the anchors: the two smallest subjects join where
-		// their files fit one step, as past the cap (compact). Else the
-		// last gives way, going first, so an anchor only it held is
-		// missing and taken in, never lost with it.
-		if joined, ok := joinTo(kept, 0, maxSubjects-1); ok {
+		if joined, ok := joinTo(kept, 0, maxSubjects-1, false); ok {
+			kept = joined
+		} else if kept, rest = placeAnchors(kept, rest, true); len(rest) == 0 {
+			p.Subjects = kept
+			return p
+		} else if joined, ok := joinTo(kept, 0, maxSubjects-1, true); ok {
 			kept = joined
 		} else {
-			kept = kept[:maxSubjects-1]
+			kept = dropTo(kept, 0, maxSubjects-1)
 		}
 	}
 	missing := missingFrom(kept)
 	if len(missing) == 0 {
+		p.Subjects = kept
 		return p
 	}
-	rank := make(map[string]int, len(missing))
-	for _, f := range missing {
-		rank[f.Path] = AnchorRank(f.Path)
-		if contracts[f.Path] {
-			rank[f.Path] = anchorContract
-		}
-	}
-	sort.SliceStable(missing, func(i, j int) bool { return rank[missing[i].Path] > rank[missing[j].Path] })
+	byAnchor(missing, contracts)
 	s := Subject{Name: AnchorSubject, Purpose: anchorPurpose}
 	var used int64
 	for _, f := range missing {
@@ -282,6 +302,80 @@ func EnsureAnchors(p Plan, files []File, contracts map[string]bool, maxSubjects 
 	}
 	p.Subjects = append([]Subject{s}, kept...)
 	return p
+}
+
+// placeAnchors puts each anchor, in their order, into the subject it fits
+// best that has room: a build file (buildAnchor) the build subject
+// (devSubject) first, any other the subject sharing most of its folders,
+// the smallest on a tie, the build subject only with anywhere. The plan's
+// last subject took them all once, and with the router's build subject
+// last an entry point or a contract was read as build, apart from its
+// feature. rest is the anchors no subject had room for; the subjects
+// passed in are never changed.
+func placeAnchors(subjects []Subject, anchors []File, anywhere bool) (out []Subject, rest []File) {
+	out = append([]Subject{}, subjects...)
+	size := make([]int64, len(out))
+	dev := make([]bool, len(out))
+	dirs := make([]map[string]bool, len(out))
+	for i, s := range out {
+		size[i], dev[i], dirs[i] = s.Bytes(), devSubject(s), map[string]bool{}
+		for _, f := range s.Files {
+			addFolders(dirs[i], f.Path)
+		}
+	}
+	copied := make([]bool, len(out))
+	for _, f := range anchors {
+		build := buildAnchor(f.Path)
+		share := make([]int, len(out))
+		var order []int
+		for i := range out {
+			if !dev[i] || build || anywhere {
+				share[i] = sharedFolders(dirs[i], f.Path)
+				order = append(order, i)
+			}
+		}
+		sort.SliceStable(order, func(x, y int) bool {
+			a, b := order[x], order[y]
+			switch {
+			case dev[a] != dev[b]:
+				return dev[a] == build
+			case share[a] != share[b]:
+				return share[a] > share[b]
+			}
+			return size[a] < size[b]
+		})
+		at := slices.IndexFunc(order, func(i int) bool { return size[i]+f.Size <= StepMaxBytes })
+		if at < 0 {
+			rest = append(rest, f)
+			continue
+		}
+		i := order[at]
+		if !copied[i] {
+			out[i].Files, copied[i] = append([]File{}, out[i].Files...), true
+		}
+		out[i].Files = append(out[i].Files, f)
+		size[i] += f.Size
+		addFolders(dirs[i], f.Path)
+	}
+	return out, rest
+}
+
+// addFolders adds p's leading folders to set, "a" and "a/b" for a/b/c.go;
+// a folder in set has its parents there too.
+func addFolders(set map[string]bool, p string) {
+	for d := path.Dir(p); d != "." && d != "/" && !set[d]; d = path.Dir(d) {
+		set[d] = true
+	}
+}
+
+// sharedFolders is how many of p's leading folders set holds.
+func sharedFolders(set map[string]bool, p string) int {
+	for d := path.Dir(p); d != "." && d != "/"; d = path.Dir(d) {
+		if set[d] {
+			return strings.Count(d, "/") + 1
+		}
+	}
+	return 0
 }
 
 // wsdlLike are the schema files a build turns into code: read only when a
