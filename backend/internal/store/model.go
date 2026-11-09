@@ -251,6 +251,43 @@ func (s Spend) Budgeted() *int64 {
 	return &sum
 }
 
+// Metrics is what /metrics reads of the store besides the ledger: the
+// queue, the last successful sync, the projects' current keys. From the
+// rows, so a restart keeps it.
+//
+// Table: -
+type Metrics struct {
+	// Notes is the notes not yet folded; with Runs, the nav's count
+	// (QueueCount).
+	Notes int
+	// Runs is the open baseline runs.
+	Runs int
+	// LastSync is the newest successful sync of any source repository.
+	LastSync *time.Time
+	// Projects is every project's current key by its id: the counters are
+	// labelled by id, which a rename never changes.
+	Projects map[int64]string
+}
+
+// LedgerRow is one purpose's calls for one project, and what the priced
+// ones cost.
+//
+// Table: -
+type LedgerRow struct {
+	Purpose   string
+	ProjectID int64
+	Calls     int64
+	// NanoUSD sums the priced calls; 0 when none was, unlike Spend's nil.
+	NanoUSD int64
+}
+
+// Pause is the queue's pause: since when. Who paused is the log's.
+//
+// Table: worker_pause
+type Pause struct {
+	At time.Time
+}
+
 // ProjectRow is one project in the list.
 //
 // Table: projects
