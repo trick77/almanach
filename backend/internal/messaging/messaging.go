@@ -3,10 +3,10 @@
 // and templates, Kafka Streams, plain clients, Spring Cloud Stream
 // bindings, kafkajs, topic resources and AsyncAPI files, Avro and Protobuf
 // schemas. Pure: bytes in, facts out, every rule a table test. A topic
-// name comes from a literal, a constant or a property code can resolve;
-// one it cannot (a method parameter, a property set per stage) is left
-// out, never guessed. Which repository talks to which is joined from these
-// at read time (store), never by a model.
+// name comes from a literal, a constant or a property code can resolve
+// (coderead); one it cannot (a method parameter, a property set per stage)
+// is left out, never guessed. Which repository talks to which is joined
+// from these at read time (store), never by a model.
 package messaging
 
 import (
@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/trick77/almanach/internal/coderead"
 )
 
 // Version is this package's reading: raise it with any change to what
@@ -76,7 +78,7 @@ func Source(p string) bool {
 // Config reports whether a path is application properties without a
 // profile: read whatever it holds, since a listener's ${key} is resolved
 // against it and the key need not say topic.
-func Config(p string) bool { return baseConfig.MatchString(path.Base(p)) }
+func Config(p string) bool { return coderead.Config(p) }
 
 // SchemaFile reports whether a path is a schema Parse reads by its name.
 func SchemaFile(p string) bool {
@@ -92,20 +94,8 @@ var validName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,249}$`)
 
 // Parse reads the facts out of files, path to body.
 func Parse(files map[string][]byte) Read {
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	r := resolver{config: map[string]map[string]string{}, consts: map[string]string{}}
-	// YAML first, .properties over it: Spring's order for one location.
-	learnOrder := append([]string{}, paths...)
-	sort.SliceStable(learnOrder, func(i, j int) bool {
-		return !strings.HasSuffix(learnOrder[i], ".properties") && strings.HasSuffix(learnOrder[j], ".properties")
-	})
-	for _, p := range learnOrder {
-		r.learn(p, files[p])
-	}
+	paths := coderead.SortedKeys(files)
+	r := coderead.NewResolver(files)
 	found := map[[2]string]map[string]bool{}
 	add := func(name, dir, file string) {
 		if !validName.MatchString(name) {
@@ -138,21 +128,21 @@ func Parse(files map[string][]byte) Read {
 	}
 	// Spring Cloud Stream bindings, then the topic properties no code was
 	// seen to use: named, direction unknown.
-	for _, mod := range sortedKeys(r.config) {
-		cfg := r.config[mod]
-		for _, k := range sortedKeys(cfg) {
+	for _, mod := range r.Modules() {
+		cfg := r.Settings(mod)
+		for _, k := range coderead.SortedKeys(cfg) {
 			v := cfg[k]
 			if b, ok := strings.CutPrefix(k, "spring.cloud.stream.bindings."); ok && strings.HasSuffix(b, ".destination") {
 				dir := bindingDirection(strings.TrimSuffix(b, ".destination"))
 				for _, t := range strings.Split(v, ",") {
-					add(strings.TrimSpace(t), dir, r.keyFile[mod+"\x00"+k])
+					add(strings.TrimSpace(t), dir, r.KeyFile(mod, k))
 				}
 				continue
 			}
 			if topicKey(k) && !used[k] && !strings.Contains(v, "${") {
 				for _, t := range strings.Split(v, ",") {
 					if t = strings.TrimSpace(t); !setting.MatchString(t) {
-						add(t, Declares, r.keyFile[mod+"\x00"+k])
+						add(t, Declares, r.KeyFile(mod, k))
 					}
 				}
 			}
@@ -169,7 +159,7 @@ func Parse(files map[string][]byte) Read {
 		if k[1] == Declares && directed[k[0]] {
 			continue
 		}
-		out.Topics = append(out.Topics, Topic{Name: k[0], Direction: k[1], Files: sortedKeys(fs)})
+		out.Topics = append(out.Topics, Topic{Name: k[0], Direction: k[1], Files: coderead.SortedKeys(fs)})
 	}
 	sort.Slice(out.Topics, func(i, j int) bool {
 		a, b := out.Topics[i], out.Topics[j]
@@ -211,336 +201,6 @@ func bindingDirection(b string) string {
 	return Declares
 }
 
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// resolver turns an expression in code into a topic name: a literal, a
-// constant, a property, or their concatenation.
-type resolver struct {
-	// config is each module's application properties, flattened; a module
-	// is the path before src/main/ ("" at the root). keyFile is the file
-	// each module's key came from, by module NUL key.
-	config  map[string]map[string]string
-	keyFile map[string]string
-	// consts are the String constants by simple name; one named twice with
-	// two values is none. fileConsts are each file's own, read first: a
-	// per-class TOPIC is the commonest constant and would collide.
-	consts     map[string]string
-	fileConsts map[string]map[string]string
-	// getters are what a method without parameters returns, by its name:
-	// every override's (a base class sends to getTopic(), each subclass
-	// names its own), all of them the repository's, each read in its file.
-	getters map[string][]fileExpr
-	// file is the file an expression is read in.
-	file string
-}
-
-// fileExpr is an expression and the file it stands in.
-type fileExpr struct{ file, expr string }
-
-var (
-	javaGetter   = regexp.MustCompile(`String\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*\{\s*return\s+([^;{}]+);\s*\}`)
-	kotlinGetter = regexp.MustCompile(`fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*(?::\s*String\s*)?=\s*([^\n;]+)`)
-	getterCall   = regexp.MustCompile(`^(?:this\.)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)$`)
-)
-
-// moduleOf is the module a path sits in: what comes before src/main/.
-func moduleOf(p string) string {
-	if i := strings.Index(p, "src/main/"); i >= 0 {
-		return p[:i]
-	}
-	return ""
-}
-
-// baseConfig is the application properties without a profile: the topic
-// a stage overrides is no one name.
-var baseConfig = regexp.MustCompile(`^(application|bootstrap)\.(ya?ml|properties)$`)
-
-var (
-	javaConst   = regexp.MustCompile(`(?:static\s+final|final\s+static)\s+String\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"\\]*)"\s*;`)
-	kotlinConst = regexp.MustCompile(`const\s+val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String\s*)?=\s*"([^"\\$]*)"`)
-	scriptConst = regexp.MustCompile(`(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*string\s*)?=\s*['"]([^'"\\$]*)['"]`)
-)
-
-func (r *resolver) learn(p string, body []byte) {
-	if baseConfig.MatchString(path.Base(p)) {
-		mod := moduleOf(p)
-		if r.config[mod] == nil {
-			r.config[mod] = map[string]string{}
-		}
-		if r.keyFile == nil {
-			r.keyFile = map[string]string{}
-		}
-		one := map[string]string{}
-		if strings.HasSuffix(p, ".properties") {
-			properties(body, one)
-		} else {
-			flatYAML(body, one)
-		}
-		for k, v := range one {
-			r.config[mod][k] = v
-			r.keyFile[mod+"\x00"+k] = p
-		}
-		return
-	}
-	var re, getter *regexp.Regexp
-	switch strings.ToLower(path.Ext(p)) {
-	case ".java", ".groovy", ".scala":
-		re, getter = javaConst, javaGetter
-	case ".kt":
-		re, getter = kotlinConst, kotlinGetter
-	case ".ts", ".js", ".mjs":
-		re = scriptConst
-	default:
-		return
-	}
-	src := stripComments(string(body))
-	own := map[string]string{}
-	for _, m := range re.FindAllStringSubmatch(src, -1) {
-		own[m[1]] = m[2]
-		if old, ok := r.consts[m[1]]; ok && old != m[2] {
-			r.consts[m[1]] = ""
-			continue
-		}
-		r.consts[m[1]] = m[2]
-	}
-	if r.fileConsts == nil {
-		r.fileConsts = map[string]map[string]string{}
-	}
-	r.fileConsts[p] = own
-	if getter == nil {
-		return
-	}
-	if r.getters == nil {
-		r.getters = map[string][]fileExpr{}
-	}
-	for _, m := range getter.FindAllStringSubmatch(src, -1) {
-		r.getters[m[1]] = append(r.getters[m[1]], fileExpr{file: p, expr: strings.TrimSpace(m[2])})
-	}
-}
-
-// in is the resolver reading expressions in file p.
-func (r resolver) in(p string) resolver {
-	r.file = p
-	return r
-}
-
-// property is a key's value for the module: its own, else the one value
-// every module that sets the key agrees on.
-func (r *resolver) property(mod, key string) (string, bool) {
-	if v, ok := r.config[mod][key]; ok {
-		return v, true
-	}
-	var found string
-	seen := false
-	for _, cfg := range r.config {
-		v, ok := cfg[key]
-		if !ok {
-			continue
-		}
-		if seen && v != found {
-			return "", false
-		}
-		found, seen = v, true
-	}
-	return found, found != ""
-}
-
-var placeholder = regexp.MustCompile(`\$\{([^}:]+)(?::([^}]*))?\}`)
-
-// fill replaces every ${key} or ${key:default} in s; false when one has
-// no value.
-func (r *resolver) fill(mod, s string, used map[string]bool) (string, bool) {
-	ok := true
-	out := placeholder.ReplaceAllStringFunc(s, func(m string) string {
-		sub := placeholder.FindStringSubmatch(m)
-		if v, found := r.property(mod, sub[1]); found {
-			if used != nil {
-				used[sub[1]] = true
-			}
-			return v
-		}
-		if strings.Contains(m, ":") {
-			return sub[2]
-		}
-		ok = false
-		return ""
-	})
-	return out, ok && !strings.Contains(out, "${")
-}
-
-// value is an expression's name: string literals, constants (by their
-// simple name) and properties in them, joined by +; false for anything
-// else (a call, a parameter, a SpEL expression).
-func (r *resolver) value(mod, expr string, used map[string]bool) (string, bool) {
-	var b strings.Builder
-	for _, part := range splitTop(expr, '+') {
-		part = strings.TrimSpace(part)
-		switch {
-		case len(part) >= 2 && (part[0] == '"' || part[0] == '\'' || part[0] == '`') && part[len(part)-1] == part[0]:
-			// Kotlin writes a Spring placeholder "\${key}".
-			s, ok := r.fill(mod, strings.ReplaceAll(part[1:len(part)-1], `\$`, "$"), used)
-			if !ok || strings.Contains(s, "#{") {
-				return "", false
-			}
-			b.WriteString(s)
-		case identifier.MatchString(part):
-			name := part[strings.LastIndex(part, ".")+1:]
-			v, ok := r.fileConsts[r.file][name]
-			if !ok || strings.Contains(part, ".") {
-				v, ok = r.consts[name]
-			}
-			if !ok || v == "" {
-				return "", false
-			}
-			s, ok := r.fill(mod, v, used)
-			if !ok {
-				return "", false
-			}
-			b.WriteString(s)
-		default:
-			return "", false
-		}
-	}
-	return b.String(), b.Len() > 0
-}
-
-var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
-
-// values is a list expression's names: a single expression, an array
-// literal ({a, b}, [a, b], arrayOf(a, b)) or a collection factory
-// (List.of, Arrays.asList, listOf, ...). Each name resolved on its own;
-// one that does not resolve is left out.
-func (r *resolver) values(mod, expr string, used map[string]bool) []string {
-	expr = strings.TrimSpace(expr)
-	for _, f := range []string{"List.of", "Set.of", "Arrays.asList", "Collections.singletonList", "Collections.singleton",
-		"listOf", "setOf", "arrayOf", "Pattern.compile"} {
-		if strings.HasPrefix(expr, f+"(") && strings.HasSuffix(expr, ")") {
-			if f == "Pattern.compile" {
-				return nil
-			}
-			expr = expr[len(f)+1 : len(expr)-1]
-			break
-		}
-	}
-	if n := len(expr); n >= 2 && (expr[0] == '{' && expr[n-1] == '}' || expr[0] == '[' && expr[n-1] == ']') {
-		expr = expr[1 : n-1]
-	}
-	var out []string
-	for _, e := range splitTop(expr, ',') {
-		if m := getterCall.FindStringSubmatch(strings.TrimSpace(e)); m != nil {
-			for _, ret := range r.getters[m[1]] {
-				in := r.in(ret.file)
-				if v, ok := in.value(mod, ret.expr, used); ok {
-					out = append(out, v)
-				}
-			}
-			continue
-		}
-		if v, ok := r.value(mod, e, used); ok {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-// inString steps a scan through string literals: true while s[*i] is in
-// one (or opens or closes it), the index moved past an escape.
-func inString(s string, i *int, quote *byte) bool {
-	c := s[*i]
-	if *quote != 0 {
-		switch {
-		case c == '\\':
-			*i++
-		case c == *quote:
-			*quote = 0
-		case c == '\n' && *quote != '`':
-			// A quote left open (a Scala symbol, a stray apostrophe)
-			// ends with its line, never swallows the file.
-			*quote = 0
-			return false
-		}
-		return true
-	}
-	if c == '"' || c == '\'' || c == '`' {
-		*quote = c
-		return true
-	}
-	return false
-}
-
-// splitTop splits s at sep outside brackets and string literals.
-func splitTop(s string, sep byte) []string {
-	var out []string
-	depth, start := 0, 0
-	var quote byte
-	for i := 0; i < len(s); i++ {
-		if inString(s, &i, &quote) {
-			continue
-		}
-		switch c := s[i]; c {
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		default:
-			if c == sep && depth == 0 {
-				out = append(out, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	return append(out, s[start:])
-}
-
-// args is the text between the parenthesis at open and its match.
-func args(s string, open int) (string, bool) {
-	depth := 0
-	var quote byte
-	for i := open; i < len(s); i++ {
-		if inString(s, &i, &quote) {
-			continue
-		}
-		switch s[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return s[open+1 : i], true
-			}
-		}
-	}
-	return "", false
-}
-
-// call finds every call matching re (its match ends at the opening
-// parenthesis) and hands its argument list on.
-func call(src string, re *regexp.Regexp, each func(args string)) {
-	for _, m := range re.FindAllStringIndex(src, -1) {
-		if a, ok := args(src, m[1]-1); ok {
-			each(a)
-		}
-	}
-}
-
-// named is the value of the argument name= in an annotation's arguments.
-func named(a, name string) (string, bool) {
-	for _, part := range splitTop(a, ',') {
-		k, v, ok := strings.Cut(part, "=")
-		if ok && strings.TrimSpace(k) == name {
-			return strings.TrimSpace(v), true
-		}
-	}
-	return "", false
-}
-
 var (
 	kafkaListener  = regexp.MustCompile(`@KafkaListener\s*\(`)
 	producerRecord = regexp.MustCompile(`\bProducerRecord\s*(?:<[^()]*>)?\s*\(`)
@@ -560,36 +220,36 @@ var notStreams = map[string]bool{"Arrays": true, "Stream": true, "StreamSupport"
 	"Optional": true, "Collections": true, "Flux": true, "Mono": true}
 
 // jvm reads a Java, Kotlin, Scala or Groovy file.
-func jvm(p, src string, r resolver, add func(name, dir, file string), used map[string]bool) {
-	src = stripComments(src)
-	r = r.in(p)
-	mod := moduleOf(p)
+func jvm(p, src string, r coderead.Resolver, add func(name, dir, file string), used map[string]bool) {
+	src = coderead.StripComments(src)
+	r = r.In(p)
+	mod := coderead.ModuleOf(p)
 	put := func(dir string) func(string) {
 		return func(expr string) {
-			for _, v := range r.values(mod, expr, used) {
+			for _, v := range r.Values(mod, expr, used) {
 				add(v, dir, p)
 			}
 		}
 	}
 	first := func(dir string) func(string) {
-		return func(a string) { put(dir)(splitTop(a, ',')[0]) }
+		return func(a string) { put(dir)(coderead.SplitTop(a, ',')[0]) }
 	}
-	call(src, kafkaListener, func(a string) {
-		if v, ok := named(a, "topics"); ok {
+	coderead.Call(src, kafkaListener, func(a string) {
+		if v, ok := coderead.Named(a, "topics"); ok {
 			put(Consumes)(v)
 		}
 	})
-	call(src, producerRecord, first(Produces))
+	coderead.Call(src, producerRecord, first(Produces))
 	// A JmsTemplate's or RabbitTemplate's send is no Kafka topic.
 	if strings.Contains(strings.ToLower(src), "kafkatemplate") {
-		call(src, templateSend, func(a string) {
+		coderead.Call(src, templateSend, func(a string) {
 			// send(topic, ...) names one; send(message) carries it in a header.
-			if parts := splitTop(a, ','); len(parts) > 1 {
+			if parts := coderead.SplitTop(a, ','); len(parts) > 1 {
 				put(Produces)(parts[0])
 			}
 		})
 	}
-	call(src, defaultTopic, first(Produces))
+	coderead.Call(src, defaultTopic, first(Produces))
 	for _, m := range headerTopic.FindAllStringIndex(src, -1) {
 		rest := src[m[1]:]
 		if end := strings.IndexAny(rest, ")\n"); end > 0 {
@@ -601,14 +261,14 @@ func jvm(p, src string, r resolver, add func(name, dir, file string), used map[s
 			if notStreams[src[m[2]:m[3]]] {
 				continue
 			}
-			if a, ok := args(src, m[1]-1); ok {
+			if a, ok := coderead.Args(src, m[1]-1); ok {
 				first(Consumes)(a)
 			}
 		}
-		call(src, streamsOut, first(Produces))
+		coderead.Call(src, streamsOut, first(Produces))
 	}
 	if strings.Contains(src, "org.apache.kafka.clients.consumer") {
-		call(src, clientSub, first(Consumes))
+		coderead.Call(src, clientSub, first(Consumes))
 	}
 }
 
@@ -619,12 +279,12 @@ var (
 )
 
 // script reads a kafkajs producer's send and consumer's subscribe.
-func script(p, src string, r resolver, add func(name, dir, file string)) {
+func script(p, src string, r coderead.Resolver, add func(name, dir, file string)) {
 	if !strings.Contains(src, "kafkajs") {
 		return
 	}
-	src = stripComments(src)
-	r = r.in(p)
+	src = coderead.StripComments(src)
+	r = r.In(p)
 	each := func(dir string) func(string) {
 		return func(a string) {
 			m := jsTopic.FindStringIndex(a)
@@ -632,16 +292,16 @@ func script(p, src string, r resolver, add func(name, dir, file string)) {
 				return
 			}
 			rest := a[m[1]:]
-			if v := splitTop(rest, ','); len(v) > 0 {
+			if v := coderead.SplitTop(rest, ','); len(v) > 0 {
 				expr := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(v[0]), "}"))
-				for _, name := range r.values("", expr, nil) {
+				for _, name := range r.Values("", expr, nil) {
 					add(name, dir, p)
 				}
 			}
 		}
 	}
-	call(src, jsSend, each(Produces))
-	call(src, jsSubscribe, each(Consumes))
+	coderead.Call(src, jsSend, each(Produces))
+	coderead.Call(src, jsSubscribe, each(Consumes))
 }
 
 // yamlTopics reads Kubernetes KafkaTopic resources and AsyncAPI channels:
@@ -675,108 +335,6 @@ func yamlTopics(p string, body []byte, add func(name, dir, file string)) {
 					add(name, Declares, p)
 				}
 			}
-		}
-	}
-}
-
-// flatYAML flattens a YAML file's scalars into dotted keys: its documents
-// without a profile, as baseConfig its files; one for a profile
-// (spring.config.activate.on-profile, spring.profiles) is a stage's.
-func flatYAML(body []byte, out map[string]string) {
-	dec := yaml.NewDecoder(bytes.NewReader(body))
-	for {
-		var doc any
-		if err := dec.Decode(&doc); err != nil {
-			return
-		}
-		one := map[string]string{}
-		flatten("", doc, one)
-		if _, ok := one["spring.config.activate.on-profile"]; ok {
-			continue
-		}
-		if _, ok := one["spring.profiles"]; ok {
-			continue
-		}
-		for k, v := range one {
-			out[k] = v
-		}
-	}
-}
-
-// stripComments blanks // and /* */ comments outside string literals,
-// keeping every offset: an apostrophe in a comment would otherwise open a
-// literal for the scan of a call's arguments.
-func stripComments(src string) string {
-	b := []byte(src)
-	var quote byte
-	for i := 0; i < len(b); i++ {
-		c := b[i]
-		switch {
-		case quote != 0:
-			if c == '\\' {
-				i++
-			} else if c == quote || c == '\n' && quote != '`' {
-				quote = 0
-			}
-		case c == '"' || c == '\'' || c == '`':
-			quote = c
-		case c == '/' && i+1 < len(b) && b[i+1] == '/':
-			for ; i < len(b) && b[i] != '\n'; i++ {
-				b[i] = ' '
-			}
-		case c == '/' && i+1 < len(b) && b[i+1] == '*':
-			for ; i < len(b) && (b[i] != '*' || i+1 >= len(b) || b[i+1] != '/'); i++ {
-				if b[i] != '\n' {
-					b[i] = ' '
-				}
-			}
-			if i+1 < len(b) {
-				b[i], b[i+1] = ' ', ' '
-				i++
-			}
-		}
-	}
-	return string(b)
-}
-
-func flatten(prefix string, v any, out map[string]string) {
-	switch t := v.(type) {
-	case map[string]any:
-		for k, x := range t {
-			key := k
-			if prefix != "" {
-				key = prefix + "." + k
-			}
-			flatten(key, x, out)
-		}
-	case string:
-		out[prefix] = t
-	case []any:
-		var parts []string
-		for _, x := range t {
-			if s, ok := x.(string); ok {
-				parts = append(parts, s)
-			}
-		}
-		if len(parts) > 0 {
-			out[prefix] = strings.Join(parts, ",")
-		}
-	}
-}
-
-// properties reads key=value lines of a .properties file.
-func properties(body []byte, out map[string]string) {
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line[0] == '#' || line[0] == '!' {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			k, v, ok = strings.Cut(line, ":")
-		}
-		if ok {
-			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 	}
 }

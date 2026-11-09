@@ -18,6 +18,7 @@ import (
 
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/httpapi"
 	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/messaging"
@@ -72,10 +73,20 @@ type fakeStore struct {
 	costs []store.CostRow
 	// messages is what Messaging answers, by repository; graphErr fails it.
 	messages map[store.RepoRef]messaging.Read
+	// interfaces is what Interfaces answers, by repository; graphErr fails it.
+	interfaces map[store.RepoRef]endpoints.Read
 }
 
 func (f *fakeStore) Messaging(context.Context) (store.Messages, error) {
 	return store.NewMessages(f.messages), f.graphErr
+}
+
+func (f *fakeStore) Interfaces(context.Context) (store.Interfaces, error) {
+	ids, commits := map[store.RepoRef]int64{}, map[store.RepoRef]string{}
+	for ref := range f.interfaces {
+		ids[ref], commits[ref] = int64(len(ref.Slug)), "c0ffee"
+	}
+	return store.NewInterfaces(f.interfaces, ids, commits), f.graphErr
 }
 
 // Dependencies answers graph; all false keeps its main edges only, as the

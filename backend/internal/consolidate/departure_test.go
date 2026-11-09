@@ -266,11 +266,11 @@ func TestProjectStep_TakesADueDepartureOut(t *testing.T) {
 // there are none.
 func TestRenderProject_NamesTheDeparted(t *testing.T) {
 	r := store.BaselineRun{ProjectKey: "tools", Slug: "svc", Commit: head}
-	with := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", nil, []string{"svc", "web"}, []string{"old"}, nil, limits, nil)
+	with := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", "_None._", nil, []string{"svc", "web"}, []string{"old"}, nil, limits, nil)
 	if !strings.Contains(with, "taken out of the project and are no part of it: `old`") {
 		t.Error("the project prompt does not name the departed repository")
 	}
-	without := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", nil, []string{"svc", "web"}, nil, nil, limits, nil)
+	without := renderProject(r, store.Page{}, store.Page{}, "_None._", "_None._", "_None._", nil, []string{"svc", "web"}, nil, nil, limits, nil)
 	if strings.Contains(without, "taken out of the project and are no part of it") {
 		t.Error("the project prompt names departed repositories when there are none")
 	}

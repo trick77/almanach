@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/trick77/almanach/internal/baseline"
+	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/heartbeat"
 	"github.com/trick77/almanach/internal/manifest"
@@ -448,6 +449,8 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		var readOK bool
 		var topics messaging.Read
 		var topicsOK bool
+		var eps endpoints.Read
+		var epsOK bool
 		// A panic in the sync is this repository's failure, on its row
 		// like any other; one reading the manifests after a good sync is
 		// a log line, the manifests left unread like any failed read.
@@ -459,6 +462,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		if err == nil {
 			_ = p.guarded(j, func() { read, readOK = p.syncedManifests(jobCtx, j, head) })
 			_ = p.guarded(j, func() { topics, topicsOK = p.syncedTopics(jobCtx, j, head) })
+			_ = p.guarded(j, func() { eps, epsOK = p.syncedEndpoints(jobCtx, j, head) })
 		}
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()
@@ -495,6 +499,9 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			}
 			if topicsOK {
 				p.saveTopics(ctx, j, head, topics)
+			}
+			if epsOK {
+				p.saveEndpoints(ctx, j, head, eps)
 			}
 			p.describe(ctx, j, head)
 		})

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/trick77/almanach/internal/baseline"
+	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/messaging"
@@ -27,6 +29,8 @@ type ManifestStore interface {
 	SaveManifests(ctx context.Context, repoID int64, commit string, read manifest.Read) error
 	TopicsCommit(ctx context.Context, repoID int64) (string, bool, error)
 	SaveTopics(ctx context.Context, repoID int64, commit string, read messaging.Read) error
+	EndpointsCommit(ctx context.Context, repoID int64) (string, bool, error)
+	SaveEndpoints(ctx context.Context, repoID int64, commit string, read endpoints.Read) error
 }
 
 // ManifestReads is what reading the manifests and messages needs of
@@ -197,6 +201,9 @@ func (p *Poller) ReadManifestsNow(ctx context.Context, key, slug, head string) e
 	if topics, ok := p.syncedTopics(ctx, j, head); ok {
 		p.saveTopics(ctx, j, head, topics)
 	}
+	if eps, ok := p.syncedEndpoints(ctx, j, head); ok {
+		p.saveEndpoints(ctx, j, head, eps)
+	}
 	read, ok := p.syncedManifests(ctx, j, head)
 	if !ok {
 		return fmt.Errorf("repository %s/%s: manifests not read", key, slug)
@@ -274,20 +281,32 @@ func (p *Poller) readTopics(ctx context.Context, dir, head string) (messaging.Re
 			return messaging.Read{}, err
 		}
 		defer func() { _ = r.Close() }()
-		for _, e := range want {
-			body, err := r.ReadFile(head, e.Path, baseline.FileMaxBytes)
-			if ctx.Err() != nil {
-				return messaging.Read{}, ctx.Err()
-			}
-			if errors.Is(err, gitrepo.ErrReaderBroken) || errors.Is(err, gitrepo.ErrBadSHA) {
-				return messaging.Read{}, err
-			}
-			if err == nil && !baseline.Binary(body) && !baseline.Generated(body) {
-				files[e.Path] = []byte(redact.Text(string(body)))
-			}
+		if err := readBodies(ctx, r, head, want, baseline.FileMaxBytes, false, files); err != nil {
+			return messaging.Read{}, err
 		}
 	}
 	return messaging.Parse(files), nil
+}
+
+// readBodies reads entries at head into files, each redacted: up to limit
+// bytes, none binary, a generator's output only with generated. A file
+// that cannot be read is left out; a broken reader or an ended context
+// ends the read.
+func readBodies(ctx context.Context, r *gitrepo.Reader, head string, es []gitrepo.Entry, limit int64, generated bool,
+	files map[string][]byte) error {
+	for _, e := range es {
+		body, err := r.ReadFile(head, e.Path, limit)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, gitrepo.ErrReaderBroken) || errors.Is(err, gitrepo.ErrBadSHA) {
+			return err
+		}
+		if err == nil && !baseline.Binary(body) && (generated || !baseline.Generated(body)) {
+			files[e.Path] = []byte(redact.Text(string(body)))
+		}
+	}
+	return nil
 }
 
 // saveTopics stores what was read; a failure is logged, never the
@@ -301,6 +320,167 @@ func (p *Poller) saveTopics(ctx context.Context, j store.SyncJob, head string, r
 	default:
 		p.Log.Info("topics_read", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head),
 			"topics", len(read.Topics), "schemas", len(read.Schemas))
+	}
+}
+
+// endpointsDue reports whether the clone's interfaces are to be read at
+// head: never read, read at another commit, or by an older
+// endpoints.Version.
+func (p *Poller) endpointsDue(ctx context.Context, j store.SyncJob, head string) bool {
+	m := p.Manifests
+	if m.Store == nil || m.Reads == nil || head == "" {
+		return false
+	}
+	at, ok, err := m.Store.EndpointsCommit(ctx, j.Repo.RepoID)
+	if err != nil {
+		p.Log.Warn("endpoints_check_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "err", err.Error())
+		return false
+	}
+	return !ok || at != head
+}
+
+// syncedEndpoints is what the clone's code says of its interfaces at head,
+// read when due; false when not due or not read (logged: the next cycle
+// tries again). The clone's lock is the caller's.
+func (p *Poller) syncedEndpoints(ctx context.Context, j store.SyncJob, head string) (endpoints.Read, bool) {
+	if !p.endpointsDue(ctx, j, head) {
+		return endpoints.Read{}, false
+	}
+	dir, err := p.Dir(j.Repo.ProjectID, j.Repo.RepoID)
+	var read endpoints.Read
+	if err == nil {
+		read, err = p.readEndpoints(ctx, dir, head)
+	}
+	if err != nil {
+		if ctx.Err() == nil {
+			p.Log.Warn("endpoints_read_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "err", err.Error())
+		}
+		return endpoints.Read{}, false
+	}
+	return read, true
+}
+
+// readEndpoints reads what endpoints.Parse needs at head, none a test:
+//   - sources git finds a route or service in, builds and application
+//     properties: readable whole (FileMaxBytes), none a generator's output;
+//   - contracts (specs git finds, protos, the WSDLs a build or source
+//     names, the files a spec's path items point to): up to CutMaxBytes, a
+//     generator's output too. A committed spec export is large and marked
+//     generated, and is the one that says what the service offers; only
+//     names leave Parse, no model reads the bytes.
+//
+// Bodies pass redact.Text, as the manifests' do.
+func (p *Poller) readEndpoints(ctx context.Context, dir, head string) (endpoints.Read, error) {
+	entries, err := p.Manifests.Reads.ListEntries(ctx, dir, head)
+	if err != nil {
+		return endpoints.Read{}, err
+	}
+	hits, err := p.Manifests.Reads.GrepFiles(ctx, dir, head, endpoints.GrepPattern)
+	if err != nil {
+		return endpoints.Read{}, err
+	}
+	hit := make(map[string]bool, len(hits))
+	for _, h := range hits {
+		hit[h] = true
+	}
+	specHits, err := p.Manifests.Reads.GrepFiles(ctx, dir, head, endpoints.SpecPattern)
+	if err != nil {
+		return endpoints.Read{}, err
+	}
+	specHit := make(map[string]bool, len(specHits))
+	for _, h := range specHits {
+		specHit[h] = true
+	}
+	byPath := map[string]gitrepo.Entry{}
+	var code, whole, wsdls []gitrepo.Entry
+	for _, e := range entries {
+		if !baseline.Readable(e) || baseline.TestFile(e.Path) {
+			continue
+		}
+		byPath[e.Path] = e
+		ext := strings.ToLower(path.Ext(e.Path))
+		switch {
+		case ext == ".wsdl":
+			wsdls = append(wsdls, e)
+		case ext == ".proto":
+			whole = append(whole, e)
+		case endpoints.Build(e.Path) || endpoints.Config(e.Path):
+			code = append(code, e)
+		case endpoints.SpecCandidate(e.Path) && specHit[e.Path]:
+			whole = append(whole, e)
+		case endpoints.Source(e.Path) && hit[e.Path]:
+			code = append(code, e)
+		}
+	}
+	if len(code)+len(whole)+len(wsdls) == 0 {
+		return endpoints.Parse(nil), nil
+	}
+	r, err := p.Manifests.Reads.NewReader(ctx, dir)
+	if err != nil {
+		return endpoints.Read{}, err
+	}
+	defer func() { _ = r.Close() }()
+	files := map[string][]byte{}
+	read := func(es []gitrepo.Entry, contract bool) error {
+		if contract {
+			return readBodies(ctx, r, head, es, baseline.CutMaxBytes, true, files)
+		}
+		var fit []gitrepo.Entry
+		for _, e := range es {
+			if e.Size <= baseline.FileMaxBytes {
+				fit = append(fit, e)
+			}
+		}
+		return readBodies(ctx, r, head, fit, baseline.FileMaxBytes, false, files)
+	}
+	if err := read(code, false); err != nil {
+		return endpoints.Read{}, err
+	}
+	if err := read(whole, true); err != nil {
+		return endpoints.Read{}, err
+	}
+	if len(wsdls) > 0 {
+		names := make([]string, len(wsdls))
+		for i, e := range wsdls {
+			names[i] = e.Path
+		}
+		var named []gitrepo.Entry
+		for _, p := range endpoints.WSDLNamed(names, files) {
+			named = append(named, byPath[p])
+		}
+		if err := read(named, true); err != nil {
+			return endpoints.Read{}, err
+		}
+	}
+	// A path item's $ref chain, file by file: what one read names next.
+	for range 4 {
+		var refs []gitrepo.Entry
+		for _, p := range endpoints.Refs(files) {
+			if e, ok := byPath[p]; ok {
+				refs = append(refs, e)
+			}
+		}
+		if len(refs) == 0 {
+			break
+		}
+		if err := read(refs, true); err != nil {
+			return endpoints.Read{}, err
+		}
+	}
+	return endpoints.Parse(files), nil
+}
+
+// saveEndpoints stores what was read; a failure is logged, never the
+// repository's.
+func (p *Poller) saveEndpoints(ctx context.Context, j store.SyncJob, head string, read endpoints.Read) {
+	err := p.Manifests.Store.SaveEndpoints(ctx, j.Repo.RepoID, head, read)
+	switch {
+	case errors.Is(err, store.ErrNoRepo):
+	case err != nil:
+		p.Log.Warn("endpoints_save_failed", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "err", err.Error())
+	default:
+		p.Log.Info("endpoints_read", "project", j.Source.ProjectKey, "repo", j.Repo.Slug, "head", gitrepo.ShortSHA(head),
+			"apis", len(read.APIs), "endpoints", len(read.Endpoints))
 	}
 }
 

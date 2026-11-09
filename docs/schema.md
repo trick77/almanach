@@ -2,7 +2,7 @@
 
 # Database schema
 
-19 tables; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
+20 tables; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
 
 ## baseline_runs
 
@@ -385,6 +385,27 @@ Checks:
 - `CHECK (push_state IS NULL OR markdown IS NOT NULL)`
 - `CHECK ((failed_at IS NULL) = (failed IS NULL))`
 - `CHECK ((push_state = 'failed') = (push_error IS NOT NULL))`
+
+## repo_endpoints
+
+| Column | Type | Null | Default | PK |
+| --- | --- | --- | --- | --- |
+| `repo_id` | INTEGER | no |  | 1 |
+| `commit` | TEXT | no |  |  |
+| `apis` | TEXT | no |  |  |
+| `endpoints` | TEXT | no |  |  |
+| `reader` | INTEGER | no |  |  |
+| `read_at` | TEXT | no |  |  |
+
+Foreign keys:
+
+- `repo_id` → `source_repos` (`repo_id`), on delete CASCADE
+
+Checks:
+
+- `CHECK (json_valid(apis) AND json_type(apis) = 'array')`
+- `CHECK (json_valid(endpoints) AND json_type(endpoints) = 'array')`
+- `CHECK (read_at GLOB '????-??-??T??:??:??.?????????Z')`
 
 ## repo_manifests
 
@@ -872,6 +893,14 @@ erDiagram
         TEXT pushed_commit
         TEXT push_at
     }
+    repo_endpoints {
+        INTEGER repo_id PK, FK
+        TEXT commit
+        TEXT apis
+        TEXT endpoints
+        INTEGER reader
+        TEXT read_at
+    }
     repo_manifests {
         INTEGER repo_id PK, FK
         TEXT commit
@@ -973,6 +1002,7 @@ erDiagram
     project_names }o--|| projects : "project_id"
     projects }o--o| teams : "team"
     repo_briefs }o--|| source_repos : "repo_id"
+    repo_endpoints }o--|| source_repos : "repo_id"
     repo_manifests }o--|| source_repos : "repo_id"
     repo_names }o--|| repos : "repo_id"
     repo_names }o--|| projects : "project_id"

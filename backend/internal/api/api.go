@@ -61,6 +61,7 @@ type Store interface {
 	Dependencies(ctx context.Context, all bool) (store.Graph, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 	Messaging(ctx context.Context) (store.Messages, error)
+	Interfaces(ctx context.Context) (store.Interfaces, error)
 	// Costs is Almanach's own ledger by month and project, the costs page;
 	// Spent the calls since a time, the page's "today".
 	Costs(ctx context.Context, now time.Time) ([]store.CostRow, error)
@@ -543,6 +544,9 @@ type projectDetailBody struct {
 	// Topics are the topics the project's repositories touch, each with
 	// every repository on its sides.
 	Topics []topicFlowBody `json:"topics"`
+	// Interfaces are the interfaces the project's repositories offer, read
+	// from their code, each with its operations.
+	Interfaces []interfaceBody `json:"interfaces"`
 }
 
 func (d Deps) project(w http.ResponseWriter, r *http.Request) {
@@ -632,6 +636,12 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out.Topics = projectFlows(msgs, key)
+	in, err := d.interfaces(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "interfaces")
+		return
+	}
+	out.Interfaces = projectInterfaces(in, key)
 	// The shared repositories are the map's zone: no map, none asked for.
 	out.Shared = []sharedBody{}
 	if drawn != nil {
@@ -710,6 +720,9 @@ type repoDetailBody struct {
 	// Messaging is the topics and schemas its code names, and who is on
 	// the far side of each topic.
 	Messaging repoMessagingBody `json:"messaging"`
+	// Interfaces are the interfaces its code offers or only declares,
+	// each with its operations.
+	Interfaces []interfaceBody `json:"interfaces"`
 }
 
 func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
@@ -781,6 +794,12 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out.Messaging = repoMessaging(msgs, store.RepoRef{ProjectKey: key, Slug: slug})
+	in, err := d.interfaces(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "interfaces")
+		return
+	}
+	out.Interfaces = repoInterfaces(in, store.RepoRef{ProjectKey: key, Slug: slug})
 	for _, rp := range repos {
 		if rp.Slug == slug {
 			out.NotesTotal, out.LastMerge = rp.Notes, rp.LastMerge
