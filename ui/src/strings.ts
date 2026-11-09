@@ -96,7 +96,7 @@ export const S = {
       indirect: "Indirekt",
     } as Record<string, string>,
     shared: "Geteilte Repositories",
-    headers: ["Repository", "Verwendet von", "Version"],
+    headers: ["Repository", "Verwendet von"],
     ambiguous: "Mehrdeutig",
     ambiguousHint:
       "Diese Koordinaten liefern mehrere Repositories (ein Fork, eine Kopie). Almanach kann nicht wissen, welches gemeint ist, und zieht zu keinem eine Kante.",
@@ -107,9 +107,6 @@ export const S = {
     also: (names: string) => `auch ${names}`,
     // The repository page's rail: what it uses · what uses it.
     count: (uses: number, usedBy: number) => `${uses} · ${usedBy}`,
-    version: "Version",
-    otherVersion: "Andere Version als bei den übrigen Nutzern",
-    noVersion: "–",
   },
   // Topics and schemas, read from the code by the poller, joined at read.
   msg: {

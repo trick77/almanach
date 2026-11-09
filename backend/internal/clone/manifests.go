@@ -66,13 +66,13 @@ func (p *Poller) manifestsDue(ctx context.Context, j store.SyncJob, head string)
 // readManifests reads the manifests at head, the clone's lock held by the
 // caller. Those over FileMaxBytes or binary are left out; a manifest that
 // does not parse counts for nothing (manifest.Parse). Every body passes
-// redact.Text first, each credential shape replaced: a version is shown on
-// the pages, and a dependency URL may carry a token. Not redact.File: its
-// key rules for .properties and .toml read a catalog alias or a property
-// as a secret (`jjwt-api` holds `jsonwebtoken:`, `tokenLibVersion`) and
-// would blank the coordinate itself. Only coordinates and versions leave
-// Parse, never a body, and Parse resolves no `$x` from a key those rules
-// call secret (redact.SecretKey).
+// redact.Text first, each credential shape replaced: a coordinate is shown
+// on the pages. Not redact.File: its key rules for .properties and .toml
+// read a catalog alias or a property as a secret (`jjwt-api` holds
+// `jsonwebtoken:`, `tokenLibVersion`) and would blank the coordinate
+// itself. Only coordinates leave Parse, never a body or a version, and
+// Parse resolves no `$x` from a key those rules call secret
+// (redact.SecretKey).
 func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.Read, error) {
 	entries, err := p.Manifests.Reads.ListEntries(ctx, dir, head)
 	if err != nil {

@@ -328,14 +328,12 @@ describe("ProjectsPage", () => {
           {
             from: { project: "loom", slug: "loom" },
             to: { project: "llmwire", slug: "llmwire" },
-            version: "v0.1.8",
             coords: [],
             scope: "main",
           },
           {
             from: { project: "loom", slug: "loom" },
             to: { project: "testkit", slug: "testkit" },
-            version: "v1",
             coords: [],
             scope: "test",
           },

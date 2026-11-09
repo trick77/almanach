@@ -375,12 +375,11 @@ func leadingSpace(line string) string {
 }
 
 // SecretKey reports a key whose value is a credential by the key rules: a
-// secret word or segment in it, unless its last segment names an
-// identifier (`tokenLibVersion`, `jwt.version` name versions). For a value
-// read out of a file whole, not line by line (a build property a
-// coordinate names).
+// secret word or segment in it. For a value read out of a file whole, not
+// line by line (a build property a coordinate names). No exception for a
+// version-named key: only coordinates are read now, never a version.
 func SecretKey(key string) bool {
-	return isSecretKey(key) && !isVersionKey(key)
+	return isSecretKey(key)
 }
 
 // keySeparators is built once: isSecretKey runs for every key line of every

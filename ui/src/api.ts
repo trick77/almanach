@@ -332,12 +332,10 @@ export interface TopicFlow {
   declared: RepoRef[];
 }
 
-/** One end of a dependency: version is what the user's manifest names, as
- *  written, "" when none. */
+/** One end of a dependency. */
 export interface DependencyEnd {
   project: string;
   slug: string;
-  version: string;
 }
 
 /** A repository another one depends on, with its other users. */
@@ -400,7 +398,6 @@ export interface Dependencies {
   edges: {
     from: RepoRef;
     to: RepoRef;
-    version: string;
     coords: string[];
     scope: DepScope;
   }[];

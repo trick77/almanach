@@ -21,8 +21,9 @@ import (
 
 // Version is this package's reading of the manifests: raise it with any
 // change to what Parse makes of one, and every repository's manifests are
-// read again at the next sync, not only those whose head moved.
-const Version = 5
+// read again at the next sync, not only those whose head moved. 6: no
+// version read, so no row keeps one.
+const Version = 6
 
 // Ecosystems: the prefix of a coordinate.
 const (
@@ -69,12 +70,11 @@ func Norm(s string) string {
 	return s
 }
 
-// Dep is one coordinate a manifest requires, the version it names, as
-// written ("" when none is), and what for.
+// Dep is one coordinate a manifest requires, and what for. No version:
+// none is shown, the relation is what counts (user, 2026-11-09).
 type Dep struct {
-	Coord   string `json:"coord"`
-	Version string `json:"version"`
-	Scope   string `json:"scope"`
+	Coord string `json:"coord"`
+	Scope string `json:"scope"`
 }
 
 // Read is what one repository's manifests say: the coordinates it provides
@@ -204,40 +204,22 @@ func Parse(in map[string][]byte) Read {
 	}
 	provides := map[string]bool{}
 	requires := map[string]Dep{}
-	// A coordinate named twice: the first version written, the strongest
-	// scope.
+	// A coordinate named twice: the strongest scope, whatever the order.
 	add := func(d Dep) {
 		d.Scope = Norm(d.Scope)
 		cur, ok := requires[d.Coord]
-		if !ok {
+		if !ok || Stronger(d.Scope, cur.Scope) {
 			requires[d.Coord] = d
-			return
 		}
-		if cur.Version == "" {
-			cur.Version = d.Version
-		}
-		if Stronger(d.Scope, cur.Scope) {
-			cur.Scope = d.Scope
-		}
-		requires[d.Coord] = cur
 	}
-	// By path, so the version two manifests name differently is always
-	// the first one's.
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	// A Gradle build's files are read together: its requires come per
-	// build file, in path order like the rest.
+	// A Gradle build's files are read together.
 	gradleProv, gradleReqs := gradle(files)
 	for _, c := range gradleProv {
 		provides[c] = true
 	}
 	cargoWS := cargoWorkspaces(files)
 	pins := pomPins(files)
-	for _, p := range paths {
-		body := files[p]
+	for p, body := range files {
 		var prov []string
 		var reqs []Dep
 		switch b := path.Base(p); b {
@@ -308,14 +290,14 @@ func goMod(body []byte) ([]string, []Dep) {
 			inBlock = false
 		case inBlock:
 			if len(f) >= 2 {
-				reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[0]), Version: f[1], Scope: scope})
+				reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[0]), Scope: scope})
 			}
 		case f[0] == "module" && len(f) >= 2:
 			prov = append(prov, Go+":"+unquote(f[1]))
 		case f[0] == "require" && len(f) >= 2 && f[1] == "(":
 			inBlock = true
 		case f[0] == "require" && len(f) >= 3:
-			reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[1]), Version: f[2], Scope: scope})
+			reqs = append(reqs, Dep{Coord: Go + ":" + unquote(f[1]), Scope: scope})
 		}
 	}
 	return prov, reqs
@@ -345,29 +327,16 @@ func decodePom(body []byte) (pomXML, bool) {
 type pomDep struct {
 	GroupID    string `xml:"groupId"`
 	ArtifactID string `xml:"artifactId"`
-	Version    string `xml:"version"`
 	Scope      string `xml:"scope"`
 	Type       string `xml:"type"`
 }
 
-// version is the dependency's version as written, "" for a property.
-func (d pomDep) version() string {
-	v := strings.TrimSpace(d.Version)
-	if strings.Contains(v, "${") {
-		return ""
-	}
-	return v
-}
-
-// pomPin is what a dependencyManagement entry gives a dependency naming
-// none of its own: a version and a scope (as written, "" for none).
-type pomPin struct{ version, scope string }
-
 // pomPinned is one pom.xml's own coordinate, its parent's, and its managed
-// entries (BOM imports aside).
+// entries (BOM imports aside): the scope each gives a dependency naming
+// none of its own (as written, "" for none).
 type pomPinned struct {
 	self, parent string
-	pins         map[string]pomPin
+	pins         map[string]string
 }
 
 // pomPinsByDir is each pom.xml's pomPinned by its folder.
@@ -389,26 +358,26 @@ func pomPins(files map[string][]byte) pomPinsByDir {
 		}
 		self, _ := mavenCoord(group, x.ArtifactID)
 		parent, _ := mavenCoord(x.Parent.GroupID, x.Parent.ArtifactID)
-		pins := map[string]pomPin{}
+		pins := map[string]string{}
 		for _, d := range x.Managed {
 			c, ok := mavenCoord(d.GroupID, d.ArtifactID)
 			if _, seen := pins[c]; !ok || seen || d.bomImport() {
 				continue
 			}
-			pins[c] = pomPin{version: d.version(), scope: strings.TrimSpace(d.Scope)}
+			pins[c] = strings.TrimSpace(d.Scope)
 		}
 		out[dirOf(p)] = pomPinned{self: self, parent: parent, pins: pins}
 	}
 	return out
 }
 
-// of is the pin of a coordinate for the pom.xml in folder d: its own
-// first, then its parent's up the chain, as Maven inherits them, each
+// of is the pinned scope of a coordinate for the pom.xml in folder d: its
+// own first, then its parent's up the chain, as Maven inherits them, each
 // parent the pom.xml of this repository with that coordinate (the nearest
 // folder above first); a parent from elsewhere ends the chain. False for
 // none.
-func (b pomPinsByDir) of(d string) func(coord string) (pomPin, bool) {
-	return func(coord string) (pomPin, bool) {
+func (b pomPinsByDir) of(d string) func(coord string) (string, bool) {
+	return func(coord string) (string, bool) {
 		seen := map[string]bool{}
 		for at, ok := d, true; ok && !seen[at]; {
 			seen[at] = true
@@ -418,7 +387,7 @@ func (b pomPinsByDir) of(d string) func(coord string) (pomPin, bool) {
 			}
 			at, ok = b.parentOf(at, cur.parent)
 		}
-		return pomPin{}, false
+		return "", false
 	}
 }
 
@@ -469,12 +438,12 @@ func pomScope(s string) string {
 // build inheritance, what most services of one platform share, no use at
 // runtime. So is a BOM its dependencyManagement imports
 // (`<type>pom</type>`, `<scope>import</scope>`); any other managed entry
-// is required by nothing and gives its version and scope to a dependency
+// is required by nothing and gives its scope to a dependency
 // naming none, its own or its parent chain's within the repository
 // (pinned), as Maven inherits them. A coordinate built of a property
 // (`${...}`) is left out: unresolved, it would match nothing or the wrong
 // thing.
-func pom(body []byte, pinned func(coord string) (pomPin, bool)) ([]string, []Dep) {
+func pom(body []byte, pinned func(coord string) (string, bool)) ([]string, []Dep) {
 	p, ok := decodePom(body)
 	if !ok {
 		return nil, nil
@@ -489,11 +458,11 @@ func pom(body []byte, pinned func(coord string) (pomPin, bool)) ([]string, []Dep
 	}
 	var reqs []Dep
 	if c, ok := mavenCoord(p.Parent.GroupID, p.Parent.ArtifactID); ok {
-		reqs = append(reqs, Dep{Coord: c, Version: p.Parent.version(), Scope: ScopeManaged})
+		reqs = append(reqs, Dep{Coord: c, Scope: ScopeManaged})
 	}
 	for _, d := range p.Managed {
 		if c, ok := mavenCoord(d.GroupID, d.ArtifactID); ok && d.bomImport() {
-			reqs = append(reqs, Dep{Coord: c, Version: d.version(), Scope: ScopeManaged})
+			reqs = append(reqs, Dep{Coord: c, Scope: ScopeManaged})
 		}
 	}
 	for _, d := range p.Dependencies {
@@ -501,16 +470,11 @@ func pom(body []byte, pinned func(coord string) (pomPin, bool)) ([]string, []Dep
 		if !ok {
 			continue
 		}
-		v, scope := d.version(), strings.TrimSpace(d.Scope)
-		if pin, ok := pinned(c); ok {
-			if v == "" && strings.TrimSpace(d.Version) == "" {
-				v = pin.version
-			}
-			if scope == "" {
-				scope = pin.scope
-			}
+		scope := strings.TrimSpace(d.Scope)
+		if scope == "" {
+			scope, _ = pinned(c)
 		}
-		reqs = append(reqs, Dep{Coord: c, Version: v, Scope: pomScope(scope)})
+		reqs = append(reqs, Dep{Coord: c, Scope: pomScope(scope)})
 	}
 	return prov, reqs
 }
@@ -547,12 +511,14 @@ func mavenCoord(group, artifact string) (string, bool) {
 // dependencies and peer ones Main; devDependencies Dev, and
 // optionalDependencies, as an extra elsewhere: none every install has.
 func packageJSON(body []byte) ([]string, []Dep) {
+	// Raw values: only the names count, so a value of another shape costs
+	// the file nothing.
 	var p struct {
-		Name     string            `json:"name"`
-		Deps     map[string]string `json:"dependencies"`
-		Dev      map[string]string `json:"devDependencies"`
-		Peer     map[string]string `json:"peerDependencies"`
-		Optional map[string]string `json:"optionalDependencies"`
+		Name     string                     `json:"name"`
+		Deps     map[string]json.RawMessage `json:"dependencies"`
+		Dev      map[string]json.RawMessage `json:"devDependencies"`
+		Peer     map[string]json.RawMessage `json:"peerDependencies"`
+		Optional map[string]json.RawMessage `json:"optionalDependencies"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, nil
@@ -563,12 +529,12 @@ func packageJSON(body []byte) ([]string, []Dep) {
 	}
 	var reqs []Dep
 	for _, s := range []struct {
-		m     map[string]string
+		m     map[string]json.RawMessage
 		scope string
 	}{{p.Deps, ScopeMain}, {p.Peer, ScopeMain}, {p.Optional, ScopeDev}, {p.Dev, ScopeDev}} {
-		for name, v := range s.m {
+		for name := range s.m {
 			if name = strings.TrimSpace(name); name != "" {
-				reqs = append(reqs, Dep{Coord: NPM + ":" + name, Version: v, Scope: s.scope})
+				reqs = append(reqs, Dep{Coord: NPM + ":" + name, Scope: s.scope})
 			}
 		}
 	}

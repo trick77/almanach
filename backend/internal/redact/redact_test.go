@@ -107,8 +107,7 @@ func TestSecretKey(t *testing.T) {
 		"repoToken":         true,
 		"signing.password":  true,
 		"nexusApiKey":       true,
-		"tokenLibVersion":   false,
-		"jjwt.version":      false,
+		"tokenLibVersion":   true,
 		"group":             false,
 		"springBootVersion": false,
 	} {

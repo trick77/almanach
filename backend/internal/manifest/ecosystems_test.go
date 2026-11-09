@@ -56,30 +56,30 @@ func TestParse_GradleScopes(t *testing.T) {
 `),
 	})
 	want := []Dep{
-		{Coord: "maven:a:android-test", Version: "1", Scope: ScopeTest},
-		{Coord: "maven:a:bom", Version: "1", Scope: ScopeManaged},
-		{Coord: "maven:a:devtools", Version: "1", Scope: ScopeDev},
-		{Coord: "maven:a:fixtures", Version: "1", Scope: ScopeTest},
-		{Coord: "maven:a:it", Version: "1", Scope: ScopeTest},
-		{Coord: "maven:a:kapt", Version: "1", Scope: ScopeDev},
-		{Coord: "maven:a:kapt-test", Version: "1", Scope: ScopeTest},
+		{Coord: "maven:a:android-test", Scope: ScopeTest},
+		{Coord: "maven:a:bom", Scope: ScopeManaged},
+		{Coord: "maven:a:devtools", Scope: ScopeDev},
+		{Coord: "maven:a:fixtures", Scope: ScopeTest},
+		{Coord: "maven:a:it", Scope: ScopeTest},
+		{Coord: "maven:a:kapt", Scope: ScopeDev},
+		{Coord: "maven:a:kapt-test", Scope: ScopeTest},
 		// A source set called latest is no test one.
-		{Coord: "maven:a:latest", Version: "1", Scope: ScopeMain},
-		{Coord: "maven:a:main", Version: "1", Scope: ScopeMain},
-		{Coord: "maven:a:processor", Version: "1", Scope: ScopeDev},
+		{Coord: "maven:a:latest", Scope: ScopeMain},
+		{Coord: "maven:a:main", Scope: ScopeMain},
+		{Coord: "maven:a:processor", Scope: ScopeDev},
 		// Never on the runtime classpath.
-		{Coord: "maven:a:provided", Version: "1", Scope: ScopeDev},
-		{Coord: "maven:a:test", Version: "1", Scope: ScopeTest},
-		{Coord: "maven:a:variant", Version: "1", Scope: ScopeMain},
-		{Coord: "maven:a:wrapped-fixtures", Version: "1", Scope: ScopeTest},
+		{Coord: "maven:a:provided", Scope: ScopeDev},
+		{Coord: "maven:a:test", Scope: ScopeTest},
+		{Coord: "maven:a:variant", Scope: ScopeMain},
+		{Coord: "maven:a:wrapped-fixtures", Scope: ScopeTest},
 	}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v\nwant %+v", got.Requires, want)
 	}
 }
 
-// A multi-module build pins versions and scopes in the root POM; a module
-// naming neither takes them, its own pin first, as Maven inherits them.
+// A multi-module build pins scopes in the root POM; a module naming none
+// takes them, its own pin first, as Maven inherits them.
 func TestParse_PomInheritedPins(t *testing.T) {
 	got := Parse(map[string][]byte{
 		"pom.xml": []byte(`<project><groupId>com.acme</groupId><artifactId>parent</artifactId>
@@ -101,9 +101,9 @@ func TestParse_PomInheritedPins(t *testing.T) {
 </project>`),
 	})
 	want := []Dep{
-		{Coord: "maven:com.acme:lib", Version: "1.0", Scope: ScopeMain},
-		{Coord: "maven:com.acme:testkit", Version: "2.0", Scope: ScopeTest},
-		{Coord: "maven:com.acme:wire", Version: "3.1", Scope: ScopeMain},
+		{Coord: "maven:com.acme:lib", Scope: ScopeMain},
+		{Coord: "maven:com.acme:testkit", Scope: ScopeTest},
+		{Coord: "maven:com.acme:wire", Scope: ScopeMain},
 	}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v\nwant %+v", got.Requires, want)
@@ -123,8 +123,8 @@ func TestParse_PomInheritedPins(t *testing.T) {
 </project>`),
 	})
 	want = []Dep{
-		{Coord: "maven:com.acme:testkit", Version: "", Scope: ScopeMain},
-		{Coord: "maven:org.other:base", Version: "1", Scope: ScopeManaged},
+		{Coord: "maven:com.acme:testkit", Scope: ScopeMain},
+		{Coord: "maven:org.other:base", Scope: ScopeManaged},
 	}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("external parent: Requires = %+v\nwant %+v", got.Requires, want)
@@ -169,16 +169,16 @@ pytest = "^8"
 		// itself.
 		Provides: []string{"py:acme-tool", "py:acme-wire-client"},
 		Requires: []Dep{
-			{Coord: "py:acme-core", Version: "==1.2", Scope: ScopeMain},
+			{Coord: "py:acme-core", Scope: ScopeMain},
 			// Optional: an extra's, as in PEP 621.
-			{Coord: "py:click", Version: "^8.1", Scope: ScopeDev},
-			{Coord: "py:coverage", Version: "", Scope: ScopeTest},
-			{Coord: "py:mypy", Version: "^1.0", Scope: ScopeDev},
-			{Coord: "py:psycopg", Version: ">=3", Scope: ScopeDev},
-			{Coord: "py:pytest", Version: ">=8", Scope: ScopeTest},
-			{Coord: "py:requests", Version: ">=2.31,<3", Scope: ScopeMain},
-			{Coord: "py:ruff", Version: "==0.6", Scope: ScopeDev},
-			{Coord: "py:vendored", Version: "", Scope: ScopeMain},
+			{Coord: "py:click", Scope: ScopeDev},
+			{Coord: "py:coverage", Scope: ScopeTest},
+			{Coord: "py:mypy", Scope: ScopeDev},
+			{Coord: "py:psycopg", Scope: ScopeDev},
+			{Coord: "py:pytest", Scope: ScopeTest},
+			{Coord: "py:requests", Scope: ScopeMain},
+			{Coord: "py:ruff", Scope: ScopeDev},
+			{Coord: "py:vendored", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -204,13 +204,13 @@ acme-wire[async] @ git+https://git.example.invalid/acme/wire.git@v1
 		"docs/requirements.txt": []byte("sphinx-acme-theme\n"),
 	})
 	want := []Dep{
-		{Coord: "py:acme-core", Version: ">=1.2", Scope: ScopeMain},
-		// A direct reference names its distribution, no version.
-		{Coord: "py:acme-wire", Version: "", Scope: ScopeMain},
-		// A per-requirement option (--hash) is no part of the version.
-		{Coord: "py:django", Version: "==5.0", Scope: ScopeMain},
-		{Coord: "py:pytest", Version: "", Scope: ScopeDev},
-		{Coord: "py:sphinx-acme-theme", Version: "", Scope: ScopeDev},
+		{Coord: "py:acme-core", Scope: ScopeMain},
+		// A direct reference names its distribution.
+		{Coord: "py:acme-wire", Scope: ScopeMain},
+		// A per-requirement option (--hash) is no part of the name.
+		{Coord: "py:django", Scope: ScopeMain},
+		{Coord: "py:pytest", Scope: ScopeDev},
+		{Coord: "py:sphinx-acme-theme", Scope: ScopeDev},
 	}
 	if !reflect.DeepEqual(got.Requires, want) {
 		t.Fatalf("Requires = %+v\nwant %+v", got.Requires, want)
@@ -252,15 +252,15 @@ libc = "0.2"
 	want := Read{
 		Provides: []string{"cargo:acme-app", "cargo:core-lib"},
 		Requires: []Dep{
-			{Coord: "cargo:acme-wire", Version: "0.3", Scope: ScopeMain},
-			{Coord: "cargo:cc", Version: "1.0", Scope: ScopeDev},
-			{Coord: "cargo:libc", Version: "0.2", Scope: ScopeMain},
+			{Coord: "cargo:acme-wire", Scope: ScopeMain},
+			{Coord: "cargo:cc", Scope: ScopeDev},
+			{Coord: "cargo:libc", Scope: ScopeMain},
 			// A feature's, so no part of every build.
-			{Coord: "cargo:metrics", Version: "0.23", Scope: ScopeDev},
-			{Coord: "cargo:proptest", Version: "1", Scope: ScopeTest},
-			{Coord: "cargo:rand", Version: "0.8", Scope: ScopeMain},
-			{Coord: "cargo:serde", Version: "1.0.200", Scope: ScopeMain},
-			{Coord: "cargo:tokio", Version: "1.38", Scope: ScopeMain},
+			{Coord: "cargo:metrics", Scope: ScopeDev},
+			{Coord: "cargo:proptest", Scope: ScopeTest},
+			{Coord: "cargo:rand", Scope: ScopeMain},
+			{Coord: "cargo:serde", Scope: ScopeMain},
+			{Coord: "cargo:tokio", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { DependencyEnd, ProjectDetail, RepoDetail } from "./api";
-import { oddVersions } from "./DepsPage";
 import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
@@ -47,7 +46,6 @@ import {
   table,
   tableBox,
   td,
-  tdMono,
   th,
 } from "./ui";
 
@@ -398,15 +396,13 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   );
 }
 
-/** Dependencies is what the repository uses, with the version it names
- *  and who else uses each, and what uses it. A section of the column, not
- *  rail lists: the rail is the page's sections. A version the other users
- *  do not name is marked. Another project's repository is named with its
+/** Dependencies is what the repository uses, with who else uses each, and
+ *  what uses it. A section of the column, not rail lists: the rail is the
+ *  page's sections. Another project's repository is named with its
  *  project. */
 function Dependencies({ data }: { data: RepoDetail }) {
   const name = (d: DependencyEnd) =>
     d.project === data.project_key ? d.slug : refName(d.project, d.slug);
-  const usedByOdd = oddVersions(data.used_by.map((u) => u.version));
   return (
     <div className="grid gap-y-4">
       <DepTable
@@ -414,9 +410,6 @@ function Dependencies({ data }: { data: RepoDetail }) {
         name={name}
         rows={data.uses.map((u) => ({
           end: u,
-          odd:
-            oddVersions([u.version, ...u.also.map((o) => o.version)])[0] ??
-            false,
           also:
             u.also.length > 0
               ? S.deps.also(u.also.map(name).join(", "))
@@ -426,10 +419,7 @@ function Dependencies({ data }: { data: RepoDetail }) {
       <DepTable
         title={S.deps.usedBy}
         name={name}
-        rows={data.used_by.map((u, i) => ({
-          end: u,
-          odd: usedByOdd[i] ?? false,
-        }))}
+        rows={data.used_by.map((u) => ({ end: u }))}
       />
     </div>
   );
@@ -443,7 +433,7 @@ function DepTable({
 }: {
   title: string;
   name: (d: DependencyEnd) => string;
-  rows: { end: DependencyEnd; odd: boolean; also?: string }[];
+  rows: { end: DependencyEnd; also?: string }[];
 }) {
   if (rows.length === 0) return null;
   return (
@@ -452,11 +442,10 @@ function DepTable({
         <thead>
           <tr>
             <th className={th}>{title}</th>
-            <th className={th + " w-[140px]"}>{S.deps.version}</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ end, odd, also }) => (
+          {rows.map(({ end, also }) => (
             <tr key={`${end.project}/${end.slug}`}>
               <td className={td}>
                 <Link
@@ -468,12 +457,6 @@ function DepTable({
                 {also !== undefined && (
                   <span className="ml-2 text-[12.5px] text-faint">{also}</span>
                 )}
-              </td>
-              <td
-                className={tdMono + (odd ? " text-ochre" : " text-muted")}
-                title={odd ? S.deps.otherVersion : undefined}
-              >
-                {end.version || S.deps.noVersion}
               </td>
             </tr>
           ))}
