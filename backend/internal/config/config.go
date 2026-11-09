@@ -184,6 +184,10 @@ type Baseline struct {
 	// and reading steps, estimated before each call: the files are only part
 	// of a step's prompt (the page, the rules, the listing are the rest).
 	MaxInputTokens int
+	// Router: a full run's plan is the router's (stage 1 of the filter
+	// stage: the files to read in full, from every file's skeleton) instead
+	// of the catalogue's; off until a pilot judges it.
+	Router bool
 	// Reconcile is how long after its last run a repository whose head
 	// moved is read again on its own; zero means the buttons only.
 	Reconcile time.Duration
@@ -282,6 +286,7 @@ func Load(lookup func(string) string) (*App, error) {
 			MaxCalls:       positive(r, "BACKEND_BASELINE_MAX_CALLS", 16),
 			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 4_000_000),
 			MaxInputTokens: positive(r, "BACKEND_BASELINE_MAX_INPUT_TOKENS", 1_500_000),
+			Router:         r.Bool("BACKEND_BASELINE_ROUTER", false),
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
 		LogLevel:     r.String("BACKEND_LOG_LEVEL", "INFO"),
@@ -548,9 +553,9 @@ func (a *App) Summary() string {
 		if catalogue == "" {
 			catalogue = a.Model
 		}
-		sources = fmt.Sprintf("{dir %s, interval %s, git_timeout %s, git_clone_timeout %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes / %d input tokens a run, reconcile %s}}",
+		sources = fmt.Sprintf("{dir %s, interval %s, git_timeout %s, git_clone_timeout %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, router %v, %d calls / %d bytes / %d input tokens a run, reconcile %s}}",
 			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.GitTimeout, a.Sources.GitCloneTimeout, a.Sources.SecretKey != "", a.Sources.BitbucketHost,
-			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.MaxInputTokens, a.Baseline.Reconcile)
+			catalogue, a.Baseline.Router, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.MaxInputTokens, a.Baseline.Reconcile)
 	}
 	mode := string(a.AuthMode)
 	if a.AuthMode == AuthOIDC {

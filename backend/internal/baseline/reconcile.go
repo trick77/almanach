@@ -43,6 +43,32 @@ func Sift(diff []gitrepo.Entry, files []File) Changes {
 	return c
 }
 
+// Picked is the changes a reconcile of a routed plan reads: a changed file
+// a subject holds, or one the router never saw, not readable at the
+// documented commit (seen: that commit's readable paths), added since or
+// become readable (shrunk under the cap, a link made a file). A routed
+// plan holds the files its router picked, not every readable one, so a
+// change to a file it passed over is no file to place (placed, it would
+// slip back in what the router left out, a little more each reconcile) and
+// no churn: counted, it would read the repository afresh at every
+// reconcile (FullInstead). It stays unread until the next full run. Of the
+// gone paths only the held count: one it passed over is no step's.
+func (c Changes) Picked(p Plan, seen map[string]bool) Changes {
+	held := p.Held()
+	var out Changes
+	for _, f := range c.Changed {
+		if held[f.Path] || !seen[f.Path] {
+			out.Changed = append(out.Changed, f)
+		}
+	}
+	for _, g := range c.Gone {
+		if held[g] {
+			out.Gone = append(out.Gone, g)
+		}
+	}
+	return out
+}
+
 // Paths is every path the changes name.
 func (c Changes) Paths() map[string]bool {
 	out := make(map[string]bool, len(c.Changed)+len(c.Gone))

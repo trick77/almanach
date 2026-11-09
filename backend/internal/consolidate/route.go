@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/inference"
@@ -88,26 +89,17 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	if err != nil {
 		return RouteDry{}, err
 	}
-	var readable int64
-	for _, f := range files {
-		readable += f.Size
-	}
 	at, err := w.base.Code.CommitTime(ctx, key, slug, commit)
 	if err != nil {
 		return RouteDry{}, err
 	}
-	z, err := w.stageZeroOf(ctx, r, files, at)
+	ask, err := w.routerAsk(ctx, r, files, contracts, at)
 	if err != nil {
 		return RouteDry{}, err
 	}
-	listing, folded := baseline.RouterListing(files, z, baseline.RouterMaxBytes)
-	prompt := renderRouter(*r, listing, len(files), readable, routerRunBytes(w.base.Limits.MaxBytes, files, contracts), w.askedSubjects())
-	if err := routeFits(prompt); err != nil {
-		return RouteDry{}, err
-	}
-	res := router.Route(ctx, prompt)
+	res := router.Route(ctx, ask.prompt)
 	out := RouteDry{Files: files, Docs: baseline.Docs(files, baseline.DocsMaxBytes), Call: res.Call, Questions: map[string][]string{},
-		ReadableBytes: readable, SkeletonBytes: z.SkeletonBytes, Listing: listing, Tree: map[string]bool{}, Folded: folded,
+		ReadableBytes: ask.readable, SkeletonBytes: ask.z.SkeletonBytes, Listing: ask.listing, Tree: map[string]bool{}, Folded: ask.folded,
 		Dropped: map[string]bool{}}
 	for _, e := range tree {
 		out.Tree[e.Path] = true
@@ -115,26 +107,8 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	if res.Outcome != inference.OutcomeOK {
 		return out, nil
 	}
-	// Each router subject's files as the plan resolves its paths.
-	resolver := baseline.NewResolver(files)
-	subjects := make([]inference.Subject, 0, len(res.Subjects))
-	named := make([]map[string]bool, len(res.Subjects))
-	for i, s := range res.Subjects {
-		subjects = append(subjects, s.Subject)
-		named[i] = map[string]bool{}
-		for _, p := range s.Paths {
-			got := resolver.Resolve(p)
-			if len(got) == 0 {
-				out.Unresolved = append(out.Unresolved, s.Name+": "+p)
-			}
-			for _, f := range got {
-				named[i][f.Path] = true
-			}
-		}
-	}
-	out.RouterSubjects = len(subjects)
-	p := baseline.BuildPlan(subjects, files, w.maxSubjects())
-	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
+	p, a := w.routedPlan(res.Subjects, files, contracts)
+	out.Unresolved, out.RouterSubjects = a.unresolved, len(a.subjects)
 	// A run skips a part that would pass the run's byte budget and reads
 	// on (the docs read first): the dry run reads what a run would, by the
 	// bytes. Not by the input tokens: those count each step's whole prompt
@@ -160,24 +134,115 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 			held[f.Path] = true
 		}
 	}
-	for _, n := range named {
+	for _, n := range a.named {
 		for p := range n {
 			if !held[p] {
 				out.Dropped[p] = true
 			}
 		}
 	}
-	// The plan names a subject as stored (lang.Prose) and merges two the
-	// same but for spelling: its questions are theirs, in their order, each
-	// stored prose, at most RouteMaxQuestions a subject it stands for;
-	// never those of a router subject the plan dropped, none of its paths a
-	// file of the subject. A subject the plan joined has the questions of
-	// each it stands for.
-	for _, ps := range out.Plan.Subjects {
+	if qs := routeQuestions(out.Plan, res.Subjects, a.named); qs != nil {
+		out.Questions = qs
+	}
+	return out, nil
+}
+
+// routerQuestion is a router call's prompt with what went into it: the
+// listing it shows, the files it names only by a folded line, stage 0, and
+// the tree's readable bytes.
+type routerQuestion struct {
+	prompt, listing string
+	folded          map[string]bool
+	z               baseline.StageZero
+	readable        int64
+}
+
+// routerAsk builds stages 0 and 1 over a repository's readable files at
+// its commit: every file's skeleton and hints, folded to the listing's
+// ceiling, in the router's prompt. errTreeTooWide when the prompt and its
+// answer would pass the context; a read that fails is the clone's.
+func (w *Worker) routerAsk(ctx context.Context, r *store.BaselineRun, files []baseline.File, contracts map[string]bool, at time.Time) (routerQuestion, error) {
+	var q routerQuestion
+	for _, f := range files {
+		q.readable += f.Size
+	}
+	z, err := w.stageZeroOf(ctx, r, files, at)
+	if err != nil {
+		return q, err
+	}
+	q.z = z
+	q.listing, q.folded = baseline.RouterListing(files, z, baseline.RouterMaxBytes)
+	q.prompt = renderRouter(*r, q.listing, len(files), q.readable, routerRunBytes(w.base.Limits.MaxBytes, files, contracts), w.askedSubjects())
+	return q, routeFits(q.prompt)
+}
+
+// routeAnswer is a router's answer resolved against the tree: its subjects
+// as the plan builds them, each one's files as the plan resolves its paths
+// (by the subject's index), and the paths that name no readable file, by
+// subject ("subject: path"), which the plan drops unseen.
+type routeAnswer struct {
+	subjects   []inference.Subject
+	named      []map[string]bool
+	unresolved []string
+}
+
+// routedPlan is the plan a router's answer makes over files, held to the
+// plan's rules as a catalogue's is (BuildPlan, EnsureAnchors): the run's
+// and the dry run's alike.
+func (w *Worker) routedPlan(answer []inference.RouteSubject, files []baseline.File, contracts map[string]bool) (baseline.Plan, routeAnswer) {
+	a := resolveRoute(answer, files)
+	p := baseline.BuildPlan(a.subjects, files, w.maxSubjects())
+	return baseline.EnsureAnchors(p, files, contracts, w.maxSubjects()), a
+}
+
+func resolveRoute(answer []inference.RouteSubject, files []baseline.File) routeAnswer {
+	resolver := baseline.NewResolver(files)
+	a := routeAnswer{subjects: make([]inference.Subject, 0, len(answer)), named: make([]map[string]bool, len(answer))}
+	for i, s := range answer {
+		a.subjects = append(a.subjects, s.Subject)
+		a.named[i] = map[string]bool{}
+		for _, p := range s.Paths {
+			got := resolver.Resolve(p)
+			if len(got) == 0 {
+				a.unresolved = append(a.unresolved, s.Name+": "+p)
+			}
+			for _, f := range got {
+				a.named[i][f.Path] = true
+			}
+		}
+	}
+	return a
+}
+
+// questionsFor is a subject's questions on the plan: by its name, or by a
+// name stored before the word rule (lang.Terms) that a reconcile's merge
+// has since respelled.
+func questionsFor(all map[string][]string, name string) []string {
+	if qs, ok := all[name]; ok {
+		return qs
+	}
+	for k, qs := range all {
+		if lang.SameName(lang.Terms(k), lang.Terms(name)) {
+			return qs
+		}
+	}
+	return nil
+}
+
+// routeQuestions is each plan subject's reader questions, by its name. The
+// plan names a subject as stored (lang.Prose) and merges two the same but
+// for spelling: its questions are theirs, in their order, each stored
+// prose, at most RouteMaxQuestions a subject it stands for; never those of
+// a router subject the plan dropped, none of its paths a file of the
+// subject. A subject the plan joined has the questions of each it stands
+// for. Nil when none.
+func routeQuestions(p baseline.Plan, answer []inference.RouteSubject, named []map[string]bool) map[string][]string {
+	var out map[string][]string
+	for _, ps := range p.Subjects {
 		names := ps.Names()
 		var qs []string
 		per := map[int]int{} // questions taken by part
-		for i, s := range res.Subjects {
+		for i, s := range answer {
 			part := slices.IndexFunc(names, func(n string) bool { return lang.SameName(lang.Prose(s.Name), n) })
 			if part < 0 || !slices.ContainsFunc(ps.Files, func(f baseline.File) bool { return named[i][f.Path] }) {
 				continue
@@ -191,10 +256,13 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 			}
 		}
 		if len(qs) > 0 {
-			out.Questions[ps.Name] = qs
+			if out == nil {
+				out = map[string][]string{}
+			}
+			out[ps.Name] = qs
 		}
 	}
-	return out, nil
+	return out
 }
 
 // askedSubjects is the subjects a full run's router or catalogue is asked

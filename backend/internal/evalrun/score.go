@@ -17,6 +17,12 @@ import (
 	"github.com/trick77/almanach/internal/store"
 )
 
+// The variants: what planned a run's full runs.
+const (
+	VariantCatalogue = "catalogue"
+	VariantRouter    = "router"
+)
+
 // Report is one eval run, every project scored.
 type Report struct {
 	Model        string    `json:"model"`
@@ -25,6 +31,9 @@ type Report struct {
 	PipelineTook string    `json:"pipeline_took"`
 	Took         string    `json:"took"`
 	Repeat       int       `json:"repeat"`
+	// Variant is what planned the full runs: "router" (-router) or
+	// "catalogue"; each repository says whether its run was routed.
+	Variant string `json:"variant"`
 	// Projects is the first run; Runs every run; Means each repository's
 	// figures averaged over the runs.
 	Projects []ProjectReport   `json:"projects"`
@@ -63,11 +72,16 @@ type RepoReport struct {
 	Took     string `json:"took,omitempty"`
 	Calls    int    `json:"calls"`
 	// Outcomes counts the calls by outcome (ok, timed_out, too_long, ...).
-	Outcomes   map[string]int `json:"outcomes"`
-	CostUSD    float64        `json:"cost_usd"`
-	Unpriced   int            `json:"unpriced"`
-	InputBytes int64          `json:"input_bytes"`
-	ReadBytes  int64          `json:"read_bytes"`
+	Outcomes map[string]int `json:"outcomes"`
+	CostUSD  float64        `json:"cost_usd"`
+	Unpriced int            `json:"unpriced"`
+	// Planned: the run got as far as its plan. Routed: that plan is the
+	// router's; a router variant's planned run that fell back to the
+	// catalogue (a tree too wide) says false.
+	Planned    bool  `json:"planned,omitempty"`
+	Routed     bool  `json:"routed,omitempty"`
+	InputBytes int64 `json:"input_bytes"`
+	ReadBytes  int64 `json:"read_bytes"`
 	// ReadableBytes is what the tree held that a run could read.
 	ReadableBytes int64      `json:"readable_bytes"`
 	Page          *PageStats `json:"page,omitempty"`
@@ -148,6 +162,12 @@ func score(ctx context.Context, p Project, res ProjectResult, j *judge, log *slo
 			InputBytes: rr.Run.Bytes, ReadBytes: rr.Run.ReadBytes, ReadableBytes: rr.Run.ReadableBytes}
 		if rr.Run.StartedAt != nil && rr.Run.FinishedAt != nil {
 			rep.Took = rr.Run.FinishedAt.Sub(*rr.Run.StartedAt).Round(time.Second).String()
+		}
+		var plan struct {
+			Routed bool `json:"routed"`
+		}
+		if len(rr.Run.Plan) > 0 && json.Unmarshal(rr.Run.Plan, &plan) == nil {
+			rep.Planned, rep.Routed = true, plan.Routed
 		}
 		for _, c := range rr.Calls {
 			rep.Calls++
@@ -500,7 +520,27 @@ func (r *Report) total() {
 // Markdown is the report for a reader.
 func (r *Report) Markdown() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Eval %s\n\nmodel %s, judge %s; pipeline %s, total %s\n\n", r.Started.Format("2006-01-02 15:04"), r.Model, r.Judge, r.PipelineTook, r.Took)
+	fmt.Fprintf(&b, "# Eval %s\n\nmodel %s, judge %s, planned by the %s; pipeline %s, total %s\n\n", r.Started.Format("2006-01-02 15:04"), r.Model, r.Judge,
+		r.Variant, r.PipelineTook, r.Took)
+	if r.Variant == VariantRouter {
+		runs := r.Runs
+		if len(runs) == 0 {
+			runs = [][]ProjectReport{r.Projects}
+		}
+		var fell []string
+		for k, run := range runs {
+			for _, p := range run {
+				for _, repo := range p.Repos {
+					if repo.Planned && !repo.Routed {
+						fell = append(fell, fmt.Sprintf("%s/%s (run %d)", p.Key, repo.Slug, k+1))
+					}
+				}
+			}
+		}
+		if len(fell) > 0 {
+			fmt.Fprintf(&b, "not routed, catalogued instead: %s\n\n", strings.Join(fell, ", "))
+		}
+	}
 	fmt.Fprintf(&b, "calls %d, cost $%.3f (+ judge $%.3f), unpriced %d, cut answers %d\n\n", r.Calls, r.CostUSD, r.JudgeCostUSD, r.Unpriced, r.CutAnswers)
 	if r.Repeat > 1 {
 		fmt.Fprintf(&b, "## Means over %d runs\n\n| project | repo | coverage (runs) | must-read read | must-read cited | noise kB | read kB | page chars | calls | cost |\n|---|---|---|---|---|---|---|---|---|---|\n", r.Repeat)

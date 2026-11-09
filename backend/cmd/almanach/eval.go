@@ -31,6 +31,7 @@ func runEval(log *slog.Logger) error {
 	repeat := fs.Int("repeat", 1, "run everything this many times side by side; the report gives the means")
 	split := fs.Bool("split", false, "run every repository in its own database, all side by side (no project step)")
 	reasoning := fs.String("reasoning", "", "the writer's reasoning level (BACKEND_MODEL_REASONING_EFFORT): a level, off, or empty for the model's balanced one")
+	router := fs.Bool("router", false, "plan the full runs by the router instead of the catalogue (BACKEND_BASELINE_ROUTER); the report names the variant")
 	routeOnly := fs.Bool("route-only", false, "the filter stage's dry run: one router call a repository, no page written, no judge (route.json, route.md); -repeat and -split do not apply")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
@@ -62,7 +63,7 @@ func runEval(log *slog.Logger) error {
 	}
 	ctx, stop := run.Context(context.Background())
 	defer stop()
-	opt := evalrun.Options{Dir: *dir, Out: *out, Model: *model, Judge: *judge, Lookup: lookup, Deadline: *deadline, Split: *split, Repeat: *repeat, Log: log}
+	opt := evalrun.Options{Dir: *dir, Out: *out, Model: *model, Judge: *judge, Lookup: lookup, Deadline: *deadline, Split: *split, Repeat: *repeat, Router: *router, Log: log}
 	if *routeOnly {
 		return writeRoute(ctx, opt)
 	}

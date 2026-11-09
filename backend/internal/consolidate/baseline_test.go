@@ -323,7 +323,9 @@ func (s *runStore) RepoSummaries(context.Context, string) ([]store.RepoSummary, 
 
 // fakeCode is a clone: one tree, the bodies of its files, one diff.
 type fakeCode struct {
-	tree     []gitrepo.Entry
+	tree []gitrepo.Entry
+	// treeAt answers Tree at the commits it names, tree at any other.
+	treeAt   map[string][]gitrepo.Entry
 	bodies   map[string]string
 	diff     []gitrepo.Entry
 	contains bool
@@ -333,7 +335,11 @@ type fakeCode struct {
 	containsErr map[string]error
 	asked       int
 	readErr     error
-	read        [][]string
+	// filesErr fails ReadFiles alone, a read of more than filesErrOver
+	// files (stage 0's whole tree, not the docs).
+	filesErr     error
+	filesErrOver int
+	read         [][]string
 	// treesAt is every commit a tree was asked at.
 	treesAt []string
 	// churn and churnErr answer Churn.
@@ -346,6 +352,9 @@ func (c *fakeCode) Tree(ctx context.Context, _, _, sha string) ([]gitrepo.Entry,
 	if ctx.Err() != nil {
 		// What a git child killed by the cancel answers: no context error.
 		return nil, errors.New("git ls-tree: signal: killed")
+	}
+	if t, ok := c.treeAt[sha]; ok {
+		return t, c.readErr
 	}
 	return c.tree, c.readErr
 }
@@ -373,6 +382,9 @@ func (c *fakeCode) Churn(context.Context, string, string, string, time.Time) (ma
 	return c.churn, c.churnErr
 }
 func (c *fakeCode) ReadFiles(_ context.Context, _, _, _ string, files []baseline.File) (map[string][]byte, error) {
+	if c.filesErr != nil && len(files) > c.filesErrOver {
+		return nil, c.filesErr
+	}
 	out := map[string][]byte{}
 	var paths []string
 	for _, f := range files {
@@ -390,6 +402,8 @@ func (c *fakeCode) ReadFiles(_ context.Context, _, _, _ string, files []baseline
 // when set, answers in order before it. projectMaps answers the system map
 // asked again, in order.
 type fakeModels struct {
+	// routes answers the router calls in order, route after them.
+	routes      []inference.RouteResult
 	route       inference.RouteResult
 	catalogue   []inference.CatalogueResult
 	patches     []inference.PatchResult
@@ -437,6 +451,11 @@ func (m *fakeModels) ProjectMap(_ context.Context, prompt string) inference.Repo
 
 func (m *fakeModels) Route(_ context.Context, prompt string) inference.RouteResult {
 	m.prompts = append(m.prompts, prompt)
+	if len(m.routes) > 0 {
+		res := m.routes[0]
+		m.routes = m.routes[1:]
+		return res
+	}
 	return m.route
 }
 
@@ -2927,13 +2946,13 @@ func TestRenderDescribe_CachedPrefix(t *testing.T) {
 	cli := store.BaselineRun{ID: 2, ProjectKey: "apps", Slug: "cli", Commit: "0123abc"}
 	fresh := "This is a fresh reading."
 	overview := renderDescribe(svc, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "### libs/wire", "- svc", "- sends to `jobs`",
-		"- HTTP API `Jobs`", nil)
+		"- HTTP API `Jobs`", nil, nil)
 	subject := renderDescribe(svc, existingRepoPage(), limits, 2, 3, `the subject "Login"`, fresh, "<<<FILE a.go>>>", "_None._",
-		"### libs/wire", "- svc", "- sends to `jobs`", "- HTTP API `Jobs`", nil)
+		"### libs/wire", "- svc", "- sends to `jobs`", "- HTTP API `Jobs`", nil, []string{"Wie lange gilt ein Login?"})
 	if n, step := common(overview, subject), strings.Index(subject, "## This step"); n < step {
 		t.Errorf("two steps of one run share %d bytes, want all %d before the step", n, step)
 	}
-	other := renderDescribe(cli, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "_None._", "_None._", "_None._", "_None._", nil)
+	other := renderDescribe(cli, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "_None._", "_None._", "_None._", "_None._", nil, nil)
 	if n, run := common(overview, other), strings.Index(other, "## This run"); n < run || run < strings.Index(other, "## Output format") {
 		t.Errorf("two repositories share %d bytes, want all %d before the run, every instruction", n, run)
 	}

@@ -43,6 +43,9 @@ type Options struct {
 	// Repeat runs everything this many times side by side, each in its own
 	// databases; the report gives every run and the means. 0 is once.
 	Repeat int
+	// Router plans the full runs by the router, not the catalogue
+	// (BACKEND_BASELINE_ROUTER, whatever the environment says).
+	Router bool
 	Log    *slog.Logger
 }
 
@@ -77,6 +80,9 @@ func setup(ctx context.Context, opt Options) (*env, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if opt.Router {
+		app.Baseline.Router = true
 	}
 	llm, err := inference.New(inference.Options{Model: opt.Model, ReasoningEffort: app.ReasoningEffort, Logger: opt.Log, Lookup: opt.Lookup,
 		NoDiagrams: app.Limits.MaxDiagrams == 0})
@@ -164,7 +170,11 @@ func Run(ctx context.Context, opt Options) (*Report, error) {
 		}()
 	}
 	wg.Wait()
-	rep := &Report{Model: opt.Model, Judge: opt.Judge, Started: start, PipelineTook: time.Since(start).Round(time.Second).String(), Repeat: repeat}
+	rep := &Report{Model: opt.Model, Judge: opt.Judge, Started: start, PipelineTook: time.Since(start).Round(time.Second).String(), Repeat: repeat,
+		Variant: VariantCatalogue}
+	if e.app.Baseline.Router {
+		rep.Variant = VariantRouter
+	}
 	for k := range repeat {
 		var run []ProjectReport
 		for i, p := range projects {
