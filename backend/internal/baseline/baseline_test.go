@@ -597,6 +597,37 @@ func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
 	}
 }
 
+// A routed plan's picked changes weigh against the plan, the passed-over
+// ones against the tree they touched, the two shares together; a gone
+// passed-over file counts at its size before.
+func TestRoutedFullInstead(t *testing.T) {
+	plan := Plan{Subjects: []Subject{{Name: "A", Files: []File{fl("a.go", 100)}}}}
+	files := []File{fl("a.go", 100), fl("b.go", 500), fl("c.go", 400)}
+	for name, tc := range map[string]struct {
+		all, picked Changes
+		before      map[string]int64
+		want        bool
+	}{
+		// 400 of the tree's 1000 outside the picks: churn, not a new shape,
+		// though four times the plan's bytes.
+		"churn outside":      {all: Changes{Changed: []File{fl("c.go", 400)}}, want: false},
+		"over half the tree": {all: Changes{Changed: []File{fl("b.go", 500), fl("c.go", 400)}}, want: true},
+		// 40 of the plan's 100 and 400 of 1000: each under half, together over.
+		"both together": {all: Changes{Changed: []File{fl("a.go", 40), fl("c.go", 400)}},
+			picked: Changes{Changed: []File{fl("a.go", 40)}}, want: true},
+		// 1500 gone of a tree that was 2500: a new shape, though nothing changed.
+		"gone": {all: Changes{Gone: []string{"d.go"}}, before: map[string]int64{"d.go": 1500}, want: true},
+		"held": {all: Changes{Changed: []File{fl("a.go", 60)}}, picked: Changes{Changed: []File{fl("a.go", 60)}}, want: true},
+	} {
+		if got := RoutedFullInstead(plan, tc.all, tc.picked, tc.before, files); got != tc.want {
+			t.Errorf("%s: %v, want %v", name, got, tc.want)
+		}
+	}
+	if !RoutedFullInstead(Plan{}, Changes{}, Changes{}, nil, files) {
+		t.Error("an empty plan did not ask for a full run")
+	}
+}
+
 func TestReconcile_SiftTouchedResting(t *testing.T) {
 	diff := []gitrepo.Entry{
 		{Path: "auth/login.go", Mode: "100644", Size: 120},

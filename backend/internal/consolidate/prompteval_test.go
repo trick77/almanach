@@ -134,6 +134,12 @@ func (m evalModels) Catalogue(ctx context.Context, prompt string) inference.Cata
 	return m.llm.Catalogue(ctx, prompt)
 }
 
+// Route plans a full run as production does by default (the router on).
+func (m evalModels) Route(ctx context.Context, prompt string) inference.RouteResult {
+	m.keep("route", prompt)
+	return m.llm.Route(ctx, prompt)
+}
+
 func (m evalModels) Patch(ctx context.Context, prompt string) inference.PatchResult {
 	m.keep("patch", prompt)
 	return m.llm.Patch(ctx, prompt)

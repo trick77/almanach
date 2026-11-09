@@ -120,9 +120,11 @@ func TestRun_RouterStageZeroReads(t *testing.T) {
 
 // A reconcile of a routed plan, the router on, reads the changes it holds
 // or that were not readable at the documented commit: a change to a file
-// the router passed over is neither placed, counted as churn nor named to
-// a step; a new file is placed. The plan stays routed, its questions
-// carried. With the router off, it reconciles like any other plan.
+// the router passed over is neither placed nor named to a step, and reads
+// the repository afresh only once such changes pass half the readable
+// tree; a new file is placed. The plan stays routed, its
+// questions carried. With the router off, it reconciles like any other
+// plan.
 func TestRun_ReconcileOfARoutedPlan(t *testing.T) {
 	old := runPlan{Routed: true, Questions: map[string][]string{"A": {"Wozu?"}}, Cuts: true, Plan: baseline.Plan{Subjects: []baseline.Subject{
 		{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 300}}},
@@ -137,10 +139,10 @@ func TestRun_ReconcileOfARoutedPlan(t *testing.T) {
 	}
 
 	// billing/run.go changed beside auth/login.go, the router never picked
-	// it: only A is read, though billing's bytes outweigh the plan's, and
-	// its change is named to no step.
+	// it: only A is read, and billing's change is named to no step. Small
+	// against the tree, it is no reason to read afresh.
 	x := routedReconcile(true)
-	x.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 4000}, {Path: "auth/login.go", Mode: "100644", Size: 31}}
+	x.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 10}, {Path: "auth/login.go", Mode: "100644", Size: 31}}
 	x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}}}
 	x.w.drain(context.Background())
 	r := x.run()
@@ -173,15 +175,37 @@ func TestRun_ReconcileOfARoutedPlan(t *testing.T) {
 		t.Errorf("subject prompt lacks the carried question:\n%s", y.models.prompts[1])
 	}
 
-	// The router off: billing's change outweighs the plan, a fresh read.
-	z := routedReconcile(false)
-	z.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 4000}}
-	z.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
-	z.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Neu."), Statements: []inference.Statement{}}}}
-	z.models.project = inference.DescriptionResult{Call: called}
-	z.w.drain(context.Background())
-	if r := z.run(); r.Mode != store.RunFull || z.plan(t).Routed {
-		t.Fatalf("router off: run = %+v", r)
+	// Billing's change outweighs the plan and half the tree: a fresh read,
+	// the router on or off; a skipped file that grew important is not
+	// missed for good.
+	for _, router := range []bool{true, false} {
+		z := routedReconcile(router)
+		z.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 4000}}
+		z.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
+		z.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Neu."), Statements: []inference.Statement{}}}}
+		z.models.project = inference.DescriptionResult{Call: called}
+		z.w.drain(context.Background())
+		if r := z.run(); r.Mode != store.RunFull {
+			t.Fatalf("router %v: run = %+v", router, r)
+		}
+		if !router && z.plan(t).Routed {
+			t.Fatalf("router off: plan still routed")
+		}
+	}
+
+	// A small routed plan: billing's change is four times its bytes but
+	// under half the tree, churn outside the picks, no fresh read.
+	small, _ := json.Marshal(runPlan{Routed: true, Cuts: true, Plan: baseline.Plan{Subjects: []baseline.Subject{
+		{Name: "A", Purpose: "p", Files: []baseline.File{{Path: "auth/login.go", Size: 20}}},
+	}}})
+	s := newWorld(t, 16)
+	s.w.base.Limits.Router = true
+	s.st.documented = &store.BaselineRun{Commit: older40, Plan: small, State: store.RunDone}
+	s.queue(store.RunReconcile, older40)
+	s.code.diff = []gitrepo.Entry{{Path: "billing/run.go", Mode: "100644", Size: 40}}
+	s.w.drain(context.Background())
+	if r := s.run(); r.Mode != store.RunReconcile || r.State != store.RunDone {
+		t.Fatalf("churn outside a small plan: run = %+v", r)
 	}
 }
 
