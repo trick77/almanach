@@ -421,13 +421,13 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		if answer.looped {
 			out.Outcome = OutcomeTooLong
 			out.Err = fmt.Errorf("the answer repeated itself; cut after %d chars", len(res.Content))
-			c.logCut(res.Gateway.CallID, res.Content)
+			c.logCut(res.Gateway.CallID, answerPart(res.Content))
 			return "", out
 		}
 		if thought.looped {
 			out.Outcome = OutcomeTooLong
 			out.Err = fmt.Errorf("the reasoning repeated itself; cut after %d chars of it", len(res.Reasoning))
-			c.logCut(res.Gateway.CallID, res.Reasoning)
+			c.logCut(res.Gateway.CallID, reasoningPart(res.Reasoning))
 			return "", out
 		}
 		// The call cap firing while the answer streamed is the answer's
@@ -440,7 +440,8 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		if errors.Is(err, llmwire.ErrCallCap) && (res.Content != "" || res.Reasoning != "") {
 			out.Outcome = OutcomeTooLong
 			out.Err = fmt.Errorf("cut by the call cap after %d chars of answer, %d of reasoning: %w", len(res.Content), len(res.Reasoning), err)
-			c.logCut(res.Gateway.CallID, res.Content)
+			// Either may have run away: both tails, each named.
+			c.logCut(res.Gateway.CallID, answerPart(res.Content), reasoningPart(res.Reasoning))
 		}
 		return "", out
 	}
@@ -454,7 +455,7 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		// than reporting the cut as an answer off the schema.
 		out.Outcome = OutcomeTooLong
 		out.Err = errors.New("the answer was cut by the model's output limit")
-		c.logCut(res.Gateway.CallID, res.Content)
+		c.logCut(res.Gateway.CallID, answerPart(res.Content))
 		return "", out
 	}
 	return res.Content, out
@@ -520,19 +521,48 @@ func restyleCap(prompt string) int {
 	return min(max(len(prompt)/3*13/10+2000, capRestyleLo), capRestyleHi)
 }
 
-// logCut leaves the end of a cut answer in the log, credentials redacted:
-// what a runaway repeats (a list, whitespace, one statement again) is what
-// its prompt or schema needs fixed.
-// Redacted whole, then cut: a window starting past a key would leave its
-// value unrecognised.
-func (c *Client) logCut(callID, content string) {
-	text := redact.Text(content)
-	head, tail := window(text)
-	if tail == "" {
-		tail = head
+// logCut leaves the end of a cut stream in the log, credentials redacted,
+// one line per part that ran (what: "answer" or "reasoning"): what a
+// runaway repeats (a list, whitespace, one statement again, a thought
+// going round) is what its prompt or schema needs fixed. A blank part is
+// no line, so a think to the cap that just began its answer ("\n\n")
+// still shows the reasoning.
+func (c *Client) logCut(callID string, parts ...cutPart) {
+	for _, p := range parts {
+		if strings.TrimSpace(p.text) == "" {
+			continue
+		}
+		head, tail := redactedWindow(p.text)
+		if tail == "" {
+			tail = head
+		}
+		c.log.Warn("answer cut", "model", c.model, "call_id", callID, "what", p.what, "chars", len(p.text), "tail", tail)
 	}
-	c.log.Warn("answer cut", "model", c.model, "call_id", callID, "chars", len(content), "tail", tail)
 }
+
+// cutPart is one stream of a cut call: its answer or its reasoning.
+type cutPart struct{ what, text string }
+
+func answerPart(s string) cutPart    { return cutPart{"answer", s} }
+func reasoningPart(s string) cutPart { return cutPart{"reasoning", s} }
+
+// redactedWindow is a text's head and end for the log, redacted. A long
+// text is redacted only near its ends, redactMargin past each window, not
+// whole: a call-cap reasoning runs to 200k chars and only 800 bytes stay.
+// The margin keeps a key that stands before the window recognised with its
+// value inside it.
+func redactedWindow(text string) (head, tail string) {
+	if len(text) <= 2*(cutTail+redactMargin) {
+		return window(redact.Text(text))
+	}
+	h := redact.Text(text[:cutTail+redactMargin])
+	t := redact.Text(text[len(text)-cutTail-redactMargin:])
+	return strings.ToValidUTF8(h[:min(cutTail, len(h))], ""), strings.ToValidUTF8(t[max(0, len(t)-cutTail):], "")
+}
+
+// redactMargin is how far before a log window redaction starts: longer
+// than any key-to-value span a credential shape spans.
+const redactMargin = 4096
 
 // window is a redacted answer's head and end for the log, cutTail bytes
 // each on a rune; an answer within twice that is its head alone.
@@ -561,8 +591,7 @@ const cutTail = 400
 // JSON's own error, a field of the wrong type deep in a long answer among
 // them) or an error a later check of the answer returned.
 func (c *Client) unparseable(call *Call, content string, reasons ...any) {
-	text := redact.Text(content)
-	head, tail := window(text)
+	head, tail := redactedWindow(content)
 	why := redact.Text(whyUnparseable(content, reasons))
 	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "why", why, "head", head, "tail", tail)
 	begins := []rune(strings.Join(strings.Fields(head), " "))
