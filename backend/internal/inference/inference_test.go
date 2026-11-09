@@ -124,15 +124,8 @@ func TestUnpricedCallLogsReason(t *testing.T) {
 		}
 	}))
 	t.Cleanup(gw.Close)
-	env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
-	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
-	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
-	wire, err := llmwire.FromEnv("mimo-v2.6-pro", llmwire.Config{Logger: quiet, Lookup: lookup})
-	if err != nil {
-		t.Fatal(err)
-	}
 	var logs strings.Builder
-	c := &Client{wire: wire, model: "mimo-v2.6-pro", log: slog.New(slog.NewTextHandler(&logs, nil))}
+	c := gatewayClient(t, gw.URL, llmwire.Config{}, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
 	if res.Outcome != OutcomeOK || res.Cost.NanoUSD != nil {
@@ -166,14 +159,21 @@ func streamGateway(t *testing.T, frames []string, hang bool, idle time.Duration)
 	}))
 	t.Cleanup(gw.Close)
 	t.Cleanup(func() { close(release) })
-	env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
-	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
-	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
-	wire, err := llmwire.FromEnv("mimo-v2.6-pro", llmwire.Config{Logger: quiet, Lookup: lookup, IdleTimeout: idle})
+	return gatewayClient(t, gw.URL, llmwire.Config{IdleTimeout: idle}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// gatewayClient is a client on the mimo-v2.6-pro profile behind a LiteLLM
+// gateway at baseURL, its wire set by cfg, the wire's own log discarded.
+func gatewayClient(t *testing.T, baseURL string, cfg llmwire.Config, log *slog.Logger) *Client {
+	t.Helper()
+	env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": baseURL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
+	cfg.Lookup = func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	wire, err := llmwire.FromEnv("mimo-v2.6-pro", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Client{wire: wire, model: "mimo-v2.6-pro", log: quiet}
+	return &Client{wire: wire, model: "mimo-v2.6-pro", log: log}
 }
 
 const (

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -54,32 +55,19 @@ func TestCallCapWhileStreamingIsTooLong(t *testing.T) {
 }
 
 // capRun streams one delta, then hangs past the call cap: too long, never
-// the gateway's. It returns the log.
+// the gateway's. It returns the log. A fake transport, not a server: the cap
+// raced the first delta under load; llmwire's own tests cover the real
+// transport cancelled mid-body.
 func capRun(t *testing.T, delta string) string {
 	t.Helper()
-	release := make(chan struct{})
-	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+`{"model": "sol", "choices": [{"index": 0, "delta": `+delta+`, "finish_reason": null}]}`+"\n\n")
-		w.(http.Flusher).Flush()
-		select {
-		case <-r.Context().Done():
-		case <-release:
-		}
-	}))
-	t.Cleanup(gw.Close)
-	t.Cleanup(func() { close(release) })
-	env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
-	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	tr := &hangingStream{frame: "data: " + `{"model": "sol", "choices": [{"index": 0, "delta": ` + delta + `, "finish_reason": null}]}` + "\n\n"}
 	var logs strings.Builder
-	log := slog.New(slog.NewTextHandler(&logs, nil))
-	wire, err := llmwire.FromEnv("mimo-v2.6-pro", llmwire.Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Lookup: lookup,
-		CallTimeout: 100 * time.Millisecond, IdleTimeout: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := &Client{wire: wire, model: "mimo-v2.6-pro", log: log}
+	c := gatewayClient(t, "https://gateway.invalid", llmwire.Config{HTTPClient: &http.Client{Transport: tr},
+		CallTimeout: time.Millisecond, IdleTimeout: time.Minute}, slog.New(slog.NewTextHandler(&logs, nil)))
 	res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
+	if tr.calls.Load() == 0 {
+		t.Fatalf("the fake transport was bypassed: Outcome = %s, err %v", res.Outcome, res.Err)
+	}
 	if res.Outcome != OutcomeTooLong || !errors.Is(res.Err, llmwire.ErrCallCap) {
 		t.Fatalf("Outcome = %s, err %v, want too long on the call cap", res.Outcome, res.Err)
 	}
@@ -87,6 +75,58 @@ func capRun(t *testing.T, delta string) string {
 		t.Errorf("no cut logged: %q", got)
 	}
 	return logs.String()
+}
+
+// hangingStream answers every request with frame, then a body that hangs
+// until the request is cancelled. The frame is handed over even if the cap
+// has already fired, so the cap always lands mid-stream, never before the
+// first delta, whatever the cap.
+type hangingStream struct {
+	frame string
+	calls atomic.Int64
+}
+
+func (h *hangingStream) RoundTrip(r *http.Request) (*http.Response, error) {
+	h.calls.Add(1)
+	if r.Body != nil {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_ = r.Body.Close()
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}},
+		Body: &hangingBody{ctx: r.Context(), rest: h.frame, closed: make(chan struct{})}, Request: r}, nil
+}
+
+// hangingBody hangs after its frame until the request is cancelled or the
+// body closed, as a real one does.
+type hangingBody struct {
+	ctx    context.Context
+	rest   string
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *hangingBody) Read(p []byte) (int, error) {
+	select {
+	case <-b.closed:
+		return 0, http.ErrBodyReadAfterClose
+	default:
+	}
+	if b.rest != "" {
+		n := copy(p, b.rest)
+		b.rest = b.rest[n:]
+		return n, nil
+	}
+	select {
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	case <-b.closed:
+		return 0, http.ErrBodyReadAfterClose
+	}
+}
+
+func (b *hangingBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
 }
 
 // Cut by the output cap: too long, and the tail logged.
@@ -162,15 +202,8 @@ func TestLoopGuardCutsTheStream(t *testing.T) {
 				}
 			}))
 			t.Cleanup(gw.Close)
-			env := map[string]string{"LLMWIRE_LITELLM_BASE_URL": gw.URL, "LLMWIRE_LITELLM_API_KEY": "k", "LLMWIRE_LITELLM_MODELS": "mimo-v2.6-pro=sol"}
-			lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
 			var logs strings.Builder
-			wire, err := llmwire.FromEnv("mimo-v2.6-pro", llmwire.Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Lookup: lookup,
-				CallTimeout: time.Minute, IdleTimeout: time.Minute})
-			if err != nil {
-				t.Fatal(err)
-			}
-			c := &Client{wire: wire, model: "mimo-v2.6-pro", log: slog.New(slog.NewTextHandler(&logs, nil))}
+			c := gatewayClient(t, gw.URL, llmwire.Config{CallTimeout: time.Minute, IdleTimeout: time.Minute}, slog.New(slog.NewTextHandler(&logs, nil)))
 			res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
 			if res.Outcome != OutcomeTooLong || res.Err == nil || !strings.Contains(res.Err.Error(), want) {
 				t.Fatalf("Outcome = %s, err %v, want too long, %q", res.Outcome, res.Err, want)
