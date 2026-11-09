@@ -14,6 +14,7 @@ import (
 
 	"github.com/trick77/toolkit/llmwire/llmwiretest"
 
+	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
 )
@@ -206,6 +207,92 @@ func TestTopicScore(t *testing.T) {
 	if md := r.Markdown(); !strings.Contains(md, "topics found: 50%; missed: b consumes; beyond the labels: c produces") {
 		t.Errorf("markdown = %s", md)
 	}
+}
+
+// The code-read interfaces are held to the labels' by kind, name and way,
+// the offered operations by method and path, parameters by position: a
+// partner's spec read as offered is missed and extra both, a path set
+// together wrong is too.
+func TestInterfaceScore(t *testing.T) {
+	read := endpoints.Read{
+		APIs: []endpoints.API{
+			{Kind: "http", Name: "Orders", Direction: "offers"},
+			{Kind: "http", Name: "Partner", Direction: "offers"},
+			{Kind: "http", Name: "", Direction: "offers"},
+		},
+		Endpoints: []endpoints.Endpoint{
+			{Kind: "http", API: "Orders", Method: "GET", Path: "/v1/orders/{orderId}", Direction: "offers"},
+			{Kind: "http", API: "", Method: "*", Path: "/health", Direction: "offers"},
+			{Kind: "http", API: "", Method: "GET", Path: "/items", Direction: "offers"},
+			{Kind: "http", API: "Partner", Method: "GET", Path: "/p", Direction: "declares"},
+		},
+	}
+	var rep RepoReport
+	// The name any case; a label twice counts once.
+	interfaceScore(&rep,
+		&[]InterfaceLabel{{Kind: "http", Name: "orders", Direction: "offers"}, {Kind: "http", Name: "Partner", Direction: "declares"}},
+		&[]EndpointLabel{{Kind: "http", Method: "GET", Path: "/v1/orders/:id"}, {Kind: "http", Method: "GET", Path: "/v1/orders/{x}"},
+			{Kind: "http", Method: "*", Path: "/health"}, {Kind: "http", Method: "GET", Path: "/v1/items"}},
+		read, true)
+	if rep.InterfaceRecall == nil || *rep.InterfaceRecall != 0.5 ||
+		!reflect.DeepEqual(rep.InterfacesMissed, []string{`http "Partner" declares`}) ||
+		!reflect.DeepEqual(rep.InterfacesExtra, []string{`http "Partner" offers`, `http "" offers`}) {
+		t.Errorf("interfaces: %v %q %q", deref(rep.InterfaceRecall), rep.InterfacesMissed, rep.InterfacesExtra)
+	}
+	if rep.EndpointRecall == nil || *rep.EndpointRecall < 0.66 || *rep.EndpointRecall > 0.67 ||
+		!reflect.DeepEqual(rep.EndpointsMissed, []string{"http GET /v1/items"}) ||
+		!reflect.DeepEqual(rep.EndpointsExtra, []string{"http GET /items"}) {
+		t.Errorf("endpoints: %v %q %q", deref(rep.EndpointRecall), rep.EndpointsMissed, rep.EndpointsExtra)
+	}
+	var none RepoReport
+	interfaceScore(&none, nil, nil, read, true)
+	if none.InterfaceRecall != nil || none.EndpointRecall != nil {
+		t.Error("no labels: want no score")
+	}
+	// Labelled as offering none: what was read is all beyond the labels.
+	var lib RepoReport
+	interfaceScore(&lib, nil, &[]EndpointLabel{}, read, true)
+	if lib.EndpointRecall == nil || *lib.EndpointRecall != 1 || len(lib.EndpointsExtra) != 3 || lib.InterfaceRecall != nil {
+		t.Errorf("labelled none: %v %q", deref(lib.EndpointRecall), lib.EndpointsExtra)
+	}
+	// Never read: not scored, said so, no 0%.
+	var unread RepoReport
+	interfaceScore(&unread, &[]InterfaceLabel{{Kind: "http", Name: "Orders", Direction: "offers"}}, nil, endpoints.Read{}, false)
+	if !unread.InterfacesNotRead || unread.InterfaceRecall != nil {
+		t.Errorf("never read: %+v", unread)
+	}
+	// A label the reader can never match is the label file's fault, said
+	// at load; kind and method any case.
+	ok := Labels{Endpoints: &[]EndpointLabel{{Kind: "HTTP", Method: "get", Path: "/x"}}}
+	if err := ok.check(); err != nil || (*ok.Endpoints)[0].Kind != "http" || (*ok.Endpoints)[0].Method != "GET" {
+		t.Errorf("check: %v %+v", err, *ok.Endpoints)
+	}
+	for _, bad := range []Labels{
+		{Interfaces: &[]InterfaceLabel{{Kind: "http", Name: "X", Direction: "offer"}}},
+		{Endpoints: &[]EndpointLabel{{Method: "GET", Path: "/x"}}},
+		{Endpoints: &[]EndpointLabel{{Kind: "http", Path: "/x"}}},
+	} {
+		if bad.check() == nil {
+			t.Errorf("check passed %+v", bad)
+		}
+	}
+	half := 0.5
+	r := &Report{Projects: []ProjectReport{{Key: "p", Repos: []RepoReport{{Slug: "a", Labelled: true, InterfaceRecall: &half,
+		InterfacesMissed: []string{`http "Partner" declares`}, EndpointRecall: &half, EndpointsExtra: []string{"http GET /items"}}}}}}
+	md := r.Markdown()
+	if !strings.Contains(md, `interfaces found: 50%; missed: http "Partner" declares`+"\n") ||
+		!strings.Contains(md, "endpoints found: 50%; beyond the labels: http GET /items\n") ||
+		!strings.Contains((&Report{Projects: []ProjectReport{{Key: "p", Repos: []RepoReport{{Slug: "a", Labelled: true,
+			InterfacesNotRead: true}}}}}).Markdown(), "interfaces not read from the code: not scored") {
+		t.Errorf("markdown: %s", md)
+	}
+}
+
+func deref(f *float64) any {
+	if f == nil {
+		return nil
+	}
+	return *f
 }
 
 func TestScoreAndMarkdown(t *testing.T) {

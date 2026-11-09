@@ -51,12 +51,64 @@ type Labels struct {
 	// Topics are the topics the code sends to and receives from, with the
 	// way: what the code-read messaging is held to, no judge asked.
 	Topics []TopicLabel `yaml:"topics"`
+	// Interfaces are the interfaces the repository holds a contract of or
+	// serves, each with its way (offers, declares): what the code-read
+	// endpoints are held to, a partner's spec kept for a client among
+	// them. Endpoints are the operations it offers. Nil when the file says
+	// nothing of them; an empty list says the repository has none, and
+	// whatever the reader finds is held against it.
+	Interfaces *[]InterfaceLabel `yaml:"interfaces"`
+	Endpoints  *[]EndpointLabel  `yaml:"endpoints"`
+}
+
+// check reports a label the reader's facts can never match: a kind,
+// direction or method spelled otherwise, a path left out. Kind and method
+// any case, made the reader's.
+func (l *Labels) check() error {
+	kinds := map[string]bool{"http": true, "grpc": true, "soap": true}
+	if l.Interfaces != nil {
+		for i, a := range *l.Interfaces {
+			a.Kind = strings.ToLower(a.Kind)
+			if !kinds[a.Kind] || a.Direction != "offers" && a.Direction != "declares" {
+				return fmt.Errorf("interfaces[%d]: kind %q, direction %q: want http, grpc or soap, offers or declares", i, a.Kind, a.Direction)
+			}
+			(*l.Interfaces)[i] = a
+		}
+	}
+	if l.Endpoints != nil {
+		for i, e := range *l.Endpoints {
+			e.Kind, e.Method = strings.ToLower(e.Kind), strings.ToUpper(e.Method)
+			if !kinds[e.Kind] || e.Method == "" || strings.TrimSpace(e.Path) == "" {
+				return fmt.Errorf("endpoints[%d]: kind %q, method %q, path %q: want http, grpc or soap, a method, a path", i, e.Kind, e.Method, e.Path)
+			}
+			(*l.Endpoints)[i] = e
+		}
+	}
+	return nil
 }
 
 // TopicLabel is one topic and its way: produces, consumes or declares.
 type TopicLabel struct {
 	Name      string `yaml:"name"`
 	Direction string `yaml:"direction"`
+}
+
+// InterfaceLabel is one interface: its kind (http, grpc, soap), its name
+// as the reader names it ("" for the routes code declares without a spec),
+// its way.
+type InterfaceLabel struct {
+	Kind      string `yaml:"kind"`
+	Name      string `yaml:"name"`
+	Direction string `yaml:"direction"`
+}
+
+// EndpointLabel is one operation the repository offers: its kind, its
+// method ("*" for every one, RPC, SOAP) and its path, base path in front;
+// parameters match by position, any name.
+type EndpointLabel struct {
+	Kind   string `yaml:"kind"`
+	Method string `yaml:"method"`
+	Path   string `yaml:"path"`
 }
 
 // MustRead is a file a reader of the repository has to see.
@@ -138,6 +190,9 @@ func loadLabels(path string) (*Labels, error) {
 	}
 	var l Labels
 	if err := yaml.Unmarshal(b, &l); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := l.check(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &l, nil
