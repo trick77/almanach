@@ -70,5 +70,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   model judges, no switch (user, 2026-11-04).
 - Deps code's: edges joined at read, never stored; ambiguous = no edge. Shared repo derived, not "library".
   Maps, prompts, uses: main scope only (others dashed on Dependencies alone); parent POM a pin. Topics
-  likewise (user, 2026-11-07): code-read, a name code can't resolve left out, never guessed.
+  likewise (user, 2026-11-07): code-read, a name code can't resolve left out, never guessed. Interfaces too
+  (user, 2026-11-09): a spec/WSDL offers only on code's evidence, else declares (often a client's copy);
+  contracts read whole, generated mark ignored (spec exports are big and marked).
 - Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice).

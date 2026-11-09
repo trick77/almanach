@@ -49,6 +49,7 @@ type RunStore interface {
 	RepoSummaries(ctx context.Context, project string) ([]store.RepoSummary, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 	Messaging(ctx context.Context) (store.Messages, error)
+	Interfaces(ctx context.Context) (store.Interfaces, error)
 	InnerEdges(ctx context.Context, key string) ([]store.Edge, error)
 	RepoProblems(ctx context.Context, project, repo string, until time.Time) ([]store.RepoProblem, error)
 	DepartedRepos(ctx context.Context, key string) ([]string, error)
@@ -1013,8 +1014,14 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 			w.log.WarnContext(ctx, "baseline: topics read failed, drain paused", logging.Err(err))
 			return errStop
 		}
+		in, err := w.base.Store.Interfaces(ctx)
+		if err != nil {
+			w.log.WarnContext(ctx, "baseline: interfaces read failed, drain paused", logging.Err(err))
+			return errStop
+		}
 		w.libsRun, w.libs, w.siblings = r.ID, sharedRepos(libs, false), siblingInterfaces(repos, r.Slug)
-		w.topics = topicsShown(msgs, store.RepoRef{ProjectKey: r.ProjectKey, Slug: r.Slug}, r.Commit)
+		ref := store.RepoRef{ProjectKey: r.ProjectKey, Slug: r.Slug}
+		w.topics, w.interfaces = topicsShown(msgs, ref, r.Commit), interfacesShown(in, ref, r.Commit)
 	}
 	bodies, err := w.base.Code.ReadFiles(ctx, r.ProjectKey, r.Slug, r.Commit, read)
 	if err != nil {
@@ -1043,7 +1050,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	}
 	focus := w.focus(plan, page, newer)
 	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, w.siblings,
-		w.topics, newer)
+		w.topics, w.interfaces, newer)
 	// The whole prompt, not its files alone: the page, the rules and the
 	// project around them grow as the run goes, and the byte budget never
 	// sees them.
@@ -1634,8 +1641,12 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 	if err != nil {
 		return err
 	}
+	system, err := w.systemInterfaces(ctx, r.ProjectKey)
+	if err != nil {
+		return err
+	}
 	res := w.base.Describer.Describe(ctx, renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), otherContracts(repos, r.Slug),
-		libs, slugs(repos), departed, inner, w.limits, nil))
+		system, libs, slugs(repos), departed, inner, w.limits, nil))
 	okCall, err := w.call(ctx, r, store.PurposeProject, res.Call)
 	if err != nil {
 		return err
@@ -2251,8 +2262,12 @@ func (w *Worker) projectMapStep(ctx context.Context, r *store.BaselineRun, plan 
 	if err != nil {
 		return err
 	}
-	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), otherContracts(repos, r.Slug), libs, slugs(repos), departed,
-		inner, w.limits, retry)
+	system, err := w.systemInterfaces(ctx, r.ProjectKey)
+	if err != nil {
+		return err
+	}
+	prompt := renderProject(*r, repoPage, projectPage, otherRepos(repos, r.Slug), otherContracts(repos, r.Slug), system, libs, slugs(repos),
+		departed, inner, w.limits, retry)
 	res := w.base.Describer.ProjectMap(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeProjectMap, res.Call)
 	if errors.Is(err, errStop) {
@@ -2858,9 +2873,9 @@ func renderProblems(problems []store.RepoProblem) string {
 }
 
 func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step, steps int, part, focus, files, problems, libs, siblings,
-	topics string, newer map[string]string) string {
+	topics, interfaces string, newer map[string]string) string {
 	return strings.NewReplacer(
-		"{problem_areas}", problems, "{shared}", libs, "{sibling_interfaces}", siblings, "{topics}", topics,
+		"{problem_areas}", problems, "{shared}", libs, "{sibling_interfaces}", siblings, "{topics}", topics, "{interfaces}", interfaces,
 		"{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{step}", fmt.Sprint(step), "{steps}", fmt.Sprint(steps),
 		"{diagram_change}", diagramChange(l), "{part}", part, "{focus}", focus,
@@ -2870,15 +2885,15 @@ func renderDescribe(r store.BaselineRun, page store.Page, l config.Limits, step,
 
 // renderProject is the project step's prompt; retry is the refused map,
 // asking for the map alone again (nil the first time).
-func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others, contracts string, libs []store.SharedRepo, repoSlugs, departed []string,
-	inner []store.Edge, l config.Limits, retry *mapRetry) string {
+func renderProject(r store.BaselineRun, repoPage, projectPage store.Page, others, contracts, system string, libs []store.SharedRepo,
+	repoSlugs, departed []string, inner []store.Edge, l config.Limits, retry *mapRetry) string {
 	nodes, edges := mapRoom(libs, len(repoSlugs))
 	return strings.NewReplacer(
 		"{project_shape}", shapeShown(projectPage), "{inner_edges}", innerEdgesShown(inner),
 		"{departed}", departedRule(departed),
 		"{shared}", sharedRepos(libs, true), "{repo}", r.Slug, "{project}", r.ProjectKey, "{commit}", r.Commit,
 		"{project_description}", describeTaught(projectPage), "{repo_description}", describeRead(repoPage), "{other_repos}", others,
-		"{other_contracts}", contracts, "{project_map}", projectMap(projectPage)+refusedDraft(retry), "{repo_slugs}", strings.Join(repoSlugs, ", "),
+		"{other_contracts}", contracts, "{system_interfaces}", system, "{project_map}", projectMap(projectPage)+refusedDraft(retry), "{repo_slugs}", strings.Join(repoSlugs, ", "),
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		"{map_due}", mapDue(len(repoSlugs)), "{map_max_nodes}", fmt.Sprint(nodes), "{map_max_edges}", fmt.Sprint(edges),
 		"{map_refused}", refusedMap(retry, true),

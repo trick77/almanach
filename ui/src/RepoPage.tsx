@@ -4,6 +4,7 @@ import { oddVersions } from "./DepsPage";
 import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
+import { RepoInterfaces } from "./Interfaces";
 import { RepoMessages } from "./Messaging";
 import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
@@ -58,6 +59,7 @@ const TABS = [DESCRIPTION, HISTORY];
 const ids = {
   map: "structure",
   deps: "dependencies",
+  interfaces: "interfaces",
   messages: "messages",
   problems: "problems",
   notes: "notes",
@@ -168,6 +170,8 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const showDeps = data.uses.length + data.used_by.length > 0;
   const msgs = data.messaging;
   const showMsgs = msgs.topics.length + msgs.schemas.length > 0;
+  const apis = data.interfaces;
+  const offered = apis.filter((a) => a.direction === "offers").length;
   const lead: RailItem[] = showMap
     ? [{ id: ids.map, label: S.repo.map, tab: DESCRIPTION }]
     : [];
@@ -191,6 +195,16 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             label: S.deps.title,
             tab: DESCRIPTION,
             count: S.deps.count(data.uses.length, data.used_by.length),
+          },
+        ]
+      : []),
+    ...(apis.length > 0
+      ? [
+          {
+            id: ids.interfaces,
+            label: S.ifc.title,
+            tab: DESCRIPTION,
+            count: S.ifc.count(offered, apis.length - offered),
           },
         ]
       : []),
@@ -356,6 +370,12 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
                   <section id={ids.deps} className="scroll-mt-16">
                     <div className={eyebrow}>{S.deps.title}</div>
                     <Dependencies data={data} />
+                  </section>
+                )}
+                {apis.length > 0 && (
+                  <section id={ids.interfaces} className="scroll-mt-16">
+                    <div className={eyebrow}>{S.ifc.title}</div>
+                    <RepoInterfaces apis={apis} />
                   </section>
                 )}
                 {showMsgs && (

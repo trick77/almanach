@@ -50,6 +50,10 @@ const (
 	// interfaces and entities the project's other repositories offer:
 	// beside every step, names only.
 	SiblingsMaxBytes = 8_000
+	// InterfacesMaxBytes is what a describe step reads of its repository's
+	// interfaces' operations, every one within it, folded by path past it;
+	// no interface is left out for it.
+	InterfacesMaxBytes = 16_000
 	// CatalogueDocsBytes is what the catalogue step reads of the docs.
 	CatalogueDocsBytes = 60_000
 	// ListMaxEntries: over it the catalogue sees the tree folded to that

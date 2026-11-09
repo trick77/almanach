@@ -16,6 +16,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/messaging"
@@ -65,8 +66,12 @@ type runStore struct {
 	libs map[string][]store.SharedRepo
 	// messages is what Messaging answers; libsErr fails it too.
 	messages map[store.RepoRef]messaging.Read
-	libsErr  error
-	libReads map[string]int
+	// interfaces is what Interfaces answers, read at interfacesAt; libsErr
+	// fails it too.
+	interfaces   map[store.RepoRef]endpoints.Read
+	interfacesAt map[store.RepoRef]string
+	libsErr      error
+	libReads     map[string]int
 	// departed is the project's deactivated repositories; prRepos the
 	// repository each pull request was noted for.
 	departed []string
@@ -162,6 +167,10 @@ func (s *runStore) SettleDepartures(_ context.Context, _ string, slugs []string)
 
 func (s *runStore) Messaging(context.Context) (store.Messages, error) {
 	return store.NewMessages(s.messages), s.libsErr
+}
+
+func (s *runStore) Interfaces(context.Context) (store.Interfaces, error) {
+	return store.NewInterfaces(s.interfaces, nil, s.interfacesAt), s.libsErr
 }
 
 func (s *runStore) Shared(_ context.Context, _, slug string) ([]store.SharedRepo, error) {
@@ -2917,13 +2926,14 @@ func TestRenderDescribe_CachedPrefix(t *testing.T) {
 	svc := store.BaselineRun{ID: 1, ProjectKey: "tools", Slug: "svc", Commit: head}
 	cli := store.BaselineRun{ID: 2, ProjectKey: "apps", Slug: "cli", Commit: "0123abc"}
 	fresh := "This is a fresh reading."
-	overview := renderDescribe(svc, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "### libs/wire", "- svc", "- sends to `jobs`", nil)
+	overview := renderDescribe(svc, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "### libs/wire", "- svc", "- sends to `jobs`",
+		"- HTTP API `Jobs`", nil)
 	subject := renderDescribe(svc, existingRepoPage(), limits, 2, 3, `the subject "Login"`, fresh, "<<<FILE a.go>>>", "_None._",
-		"### libs/wire", "- svc", "- sends to `jobs`", nil)
+		"### libs/wire", "- svc", "- sends to `jobs`", "- HTTP API `Jobs`", nil)
 	if n, step := common(overview, subject), strings.Index(subject, "## This step"); n < step {
 		t.Errorf("two steps of one run share %d bytes, want all %d before the step", n, step)
 	}
-	other := renderDescribe(cli, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "_None._", "_None._", "_None._", nil)
+	other := renderDescribe(cli, store.Page{}, limits, 1, 3, "the overview", fresh, "_None._", "_None._", "_None._", "_None._", "_None._", "_None._", nil)
 	if n, run := common(overview, other), strings.Index(other, "## This run"); n < run || run < strings.Index(other, "## Output format") {
 		t.Errorf("two repositories share %d bytes, want all %d before the run, every instruction", n, run)
 	}

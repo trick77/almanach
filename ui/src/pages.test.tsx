@@ -170,6 +170,7 @@ const project: ProjectDetail = {
   problem_window_days: 90,
   revisions: [],
   topics: [],
+  interfaces: [],
   recent_notes: [
     {
       pr_id: 231,
@@ -215,6 +216,7 @@ const repo: RepoDetail = {
   used_by: [],
   // A repository's messages: messaging.test.tsx.
   messaging: { topics: [], schemas: [] },
+  interfaces: [],
 };
 
 /** openTab switches a page to one of its tabs, as a reader does. */

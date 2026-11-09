@@ -134,6 +134,27 @@ export const S = {
     tooLarge: (n: number) =>
       `${n} Knoten sind zu viele für ein Bild; die Tabelle zeigt alle.`,
   },
+  // Interfaces: HTTP APIs, gRPC and SOAP services, read from the code by
+  // the poller.
+  ifc: {
+    title: "Schnittstellen",
+    hint: "Aus dem Code gelesen, kein Modell: OpenAPI- und Swagger-Specs, die Routen im Code (Spring, JAX-RS, NestJS, Express, Go), gRPC-Services aus .proto und SOAP-Services aus WSDLs, die Build oder Code nennen. Ein Pfad, den der Code nur zur Laufzeit kennt, fehlt.",
+    projectHint:
+      "Was die Repositories des Projekts anbieten, aus dem Code gelesen. Verträge, die ein Repository nur für einen Client hält, stehen auf seiner Seite.",
+    codeRoutes: "Routen im Code",
+    declares: "Nur genannt",
+    declaresHint:
+      "Der Vertrag liegt hier, aber kein Code hier bedient ihn: meist die API eines anderen Service, für einen Client.",
+    method: "Methode",
+    path: "Pfad",
+    summary: "Beschreibung",
+    base: (path: string) => `Basis ${path}`,
+    operations: (n: number) => (n === 1 ? "1 Operation" : `${n} Operationen`),
+    kinds: { http: "HTTP", grpc: "gRPC", soap: "SOAP" },
+    // The rail: offered · declared.
+    count: (offers: number, declares: number) =>
+      declares > 0 ? `${offers} · ${declares}` : `${offers}`,
+  },
   common: {
     loading: "Lädt …",
     none: "keine",

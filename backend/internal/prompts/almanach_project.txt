@@ -112,6 +112,12 @@ Who offers an interface and who uses it is read from both sides: an interface or
 
 {other_contracts}
 
+## The interfaces the project's repositories offer, read by code
+
+Every interface a repository's code serves, read by code, not by a model: each one used by another repository or offered beyond the project is an `interface` statement on this page, named as here; none is left out because no description mentions it.
+
+{system_interfaces}
+
 ## The project's repositories that build on another's code, by their build manifests
 
 A use at build time only; a call at runtime shows in the descriptions alone.

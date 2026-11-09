@@ -198,6 +198,8 @@ export interface ProjectDetail {
   revisions: Revision[];
   /** The topics the project's repositories touch, read from the code. */
   topics: TopicFlow[];
+  /** The interfaces the project's repositories offer, read from the code. */
+  interfaces: Interface[];
 }
 
 export interface Revision {
@@ -266,6 +268,37 @@ export interface RepoDetail {
   used_by: DependencyEnd[];
   /** The topics and schemas its code names, read by the poller. */
   messaging: RepoMessaging;
+  /** The interfaces its code offers or only declares, read by the poller. */
+  interfaces: Interface[];
+}
+
+/** An interface a repository's code offers (serves) or only declares (a
+ *  contract kept for a client): an HTTP API, a gRPC or SOAP service, with
+ *  every operation; never a model's. name is "" for the routes code
+ *  declares without a spec. */
+export interface Interface {
+  key: string;
+  repo: RepoRef;
+  commit: string;
+  kind: "http" | "grpc" | "soap";
+  name: string;
+  version: string;
+  base_path: string;
+  direction: "offers" | "declares";
+  files: string[];
+  endpoints: Endpoint[];
+}
+
+/** One operation: an HTTP method ("*" for every one) and path, RPC and a
+ *  gRPC method's path, SOAP and an operation's name. */
+export interface Endpoint {
+  kind: "http" | "grpc" | "soap";
+  api: string;
+  method: string;
+  path: string;
+  summary: string;
+  direction: "offers" | "declares";
+  files: string[];
 }
 
 /** What a repository's code says of its messages: never a model's. */

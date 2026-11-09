@@ -116,6 +116,7 @@ const repo: RepoDetail = {
   map_declined: false,
   uses: [],
   used_by: [],
+  interfaces: [],
   messaging: {
     topics,
     schemas: [

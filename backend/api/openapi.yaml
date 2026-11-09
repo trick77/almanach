@@ -2745,7 +2745,7 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes, revisions, topics]
+      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes, revisions, topics, interfaces]
       properties:
         key:
           type: string
@@ -2830,6 +2830,15 @@ components:
             joined at read. Empty with the sources off.
           items:
             $ref: "#/components/schemas/TopicFlow"
+        interfaces:
+          type: array
+          description: >-
+            The interfaces the project's source repositories offer (HTTP
+            APIs, gRPC and SOAP services), each with every operation: read
+            by code from the repositories, never a model's. By repository,
+            then kind and name. Empty with the sources off.
+          items:
+            $ref: "#/components/schemas/Interface"
 
     RevisionDetail:
       type: object
@@ -2926,7 +2935,7 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by, messaging]
+      required: [project_key, slug, description, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by, messaging, interfaces]
       properties:
         project_key:
           type: string
@@ -2979,6 +2988,92 @@ components:
             $ref: "#/components/schemas/DependencyEnd"
         messaging:
           $ref: "#/components/schemas/RepoMessaging"
+        interfaces:
+          type: array
+          description: >-
+            The interfaces the repository's code offers or only declares (a
+            contract kept for a client), each with every operation, read by
+            the poller (never a model). Empty with the sources off or before
+            a first read.
+          items:
+            $ref: "#/components/schemas/Interface"
+
+    Interface:
+      type: object
+      required: [key, repo, commit, kind, name, version, base_path, direction, files, endpoints]
+      properties:
+        key:
+          type: string
+          description: >-
+            Stable while the repository and the interface are: built from
+            the repository's id, its kind and name, never a repository's
+            name.
+        repo:
+          $ref: "#/components/schemas/RepoRef"
+        commit:
+          type: string
+          description: The commit the interface was read at.
+        kind:
+          type: string
+          enum: [http, grpc, soap]
+        name:
+          type: string
+          description: >-
+            The spec's title, the gRPC service's full name, the SOAP
+            service's name; empty for the routes the code declares with no
+            spec.
+        version:
+          type: string
+        base_path:
+          type: string
+          description: The spec's base path or the SOAP address's path; empty for none.
+        direction:
+          type: string
+          enum: [offers, declares]
+          description: >-
+            offers: the code serves it. declares: the repository holds its
+            contract with no code that serves it, usually another service's
+            kept to generate a client.
+        files:
+          type: array
+          description: The contract file and the code that bears it out.
+          items:
+            type: string
+        endpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/Endpoint"
+
+    Endpoint:
+      type: object
+      required: [kind, api, method, path, summary, direction, files]
+      properties:
+        kind:
+          type: string
+          enum: [http, grpc, soap]
+        api:
+          type: string
+          description: Its interface's name.
+        method:
+          type: string
+          description: >-
+            An HTTP method, "*" for a route served for every method, RPC for
+            a gRPC method, SOAP for a SOAP operation.
+        path:
+          type: string
+          description: >-
+            An HTTP path with its base path, parameters written {name}; a
+            gRPC method as /package.Service/Method; a SOAP operation's name.
+        summary:
+          type: string
+          description: The spec's summary or operation id, or the handler's name in code; empty for none.
+        direction:
+          type: string
+          enum: [offers, declares]
+        files:
+          type: array
+          items:
+            type: string
 
     DependencyEnd:
       type: object
