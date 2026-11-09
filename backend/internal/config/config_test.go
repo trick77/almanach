@@ -402,7 +402,7 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Baseline{MaxCalls: 16, MaxBytes: 4_000_000, MaxInputTokens: 1_500_000, Reconcile: 720 * time.Hour}
+	want := Baseline{MaxCalls: 16, MaxBytes: 4_000_000, MaxInputTokens: 1_500_000, Reconcile: 720 * time.Hour, Router: true}
 	if app.Baseline != want {
 		t.Fatalf("Baseline = %+v, want %+v", app.Baseline, want)
 	}
@@ -410,9 +410,9 @@ func TestBaselineDefaultsAndChecks(t *testing.T) {
 	env["BACKEND_BASELINE_CATALOGUE_MODEL"] = "cheap"
 	env["BACKEND_BASELINE_MAX_CALLS"] = "3"
 	env["BACKEND_BASELINE_RECONCILE"] = "0"
-	env["BACKEND_BASELINE_ROUTER"] = "true"
+	env["BACKEND_BASELINE_ROUTER"] = "false"
 	app, err = Load(lookup(env))
-	if err != nil || app.Baseline.CatalogueModel != "cheap" || app.Baseline.MaxCalls != 3 || app.Baseline.Reconcile != 0 || !app.Baseline.Router {
+	if err != nil || app.Baseline.CatalogueModel != "cheap" || app.Baseline.MaxCalls != 3 || app.Baseline.Reconcile != 0 || app.Baseline.Router {
 		t.Fatalf("overrides = %+v %v", app.Baseline, err)
 	}
 	// The budget: read with the sources on, a fault without them (no run
@@ -456,7 +456,7 @@ func TestSummaryNamesTheCatalogueModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := app.Summary(); !strings.Contains(s, "baseline {catalogue gpt-x, router false, 16 calls / 4000000 bytes / 1500000 input tokens a run, reconcile 720h0m0s}") {
+	if s := app.Summary(); !strings.Contains(s, "baseline {catalogue gpt-x, router true, 16 calls / 4000000 bytes / 1500000 input tokens a run, reconcile 720h0m0s}") {
 		t.Errorf("Summary = %s", s)
 	}
 	env["BACKEND_BASELINE_CATALOGUE_MODEL"] = "cheap"

@@ -856,8 +856,8 @@ func taken(c inference.Call, prompt string) int {
 }
 
 // readableAt is the paths a run would have read at commit, the readable
-// set (readable) of its tree there.
-func (w *Worker) readableAt(ctx context.Context, r *store.BaselineRun, commit string) (map[string]bool, error) {
+// set (readable) of its tree there, with their sizes.
+func (w *Worker) readableAt(ctx context.Context, r *store.BaselineRun, commit string) (map[string]int64, error) {
 	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, commit)
 	if err != nil {
 		return nil, readErr(err)
@@ -868,11 +868,11 @@ func (w *Worker) readableAt(ctx context.Context, r *store.BaselineRun, commit st
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]bool, len(files))
+	sizes := make(map[string]int64, len(files))
 	for _, f := range files {
-		seen[f.Path] = true
+		sizes[f.Path] = f.Size
 	}
-	return seen, nil
+	return sizes, nil
 }
 
 // kib is a byte count as the log shows it.
@@ -905,18 +905,39 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	// plan like any other, and the changes it passed over are placed and
 	// counted until a full run plans afresh by the catalogue.
 	routed := ok && err == nil && derr == nil && old.Routed && w.base.Limits.Router
+	var before map[string]int64
 	if routed {
-		seen, serr := w.readableAt(ctx, r, r.BaseCommit)
+		var serr error
+		before, serr = w.readableAt(ctx, r, r.BaseCommit)
 		if errors.Is(serr, ErrCloneBusy) {
 			return runPlan{}, false, serr
 		}
 		if serr != nil {
 			derr = serr
 		}
+		seen := make(map[string]bool, len(before))
+		for p := range before {
+			seen[p] = true
+		}
 		changes = sifted.Picked(old.Plan, seen)
 	}
-	if !ok || err != nil || derr != nil || baseline.FullInstead(old.Plan, changes) {
-		w.log.InfoContext(ctx, "baseline: reconcile reads the repository afresh")
+	// Why a reconcile reads afresh, logged: a paid full run in place of a
+	// reconcile is the operator's to explain.
+	why := ""
+	switch {
+	case !ok:
+		why = "no documented run"
+	case err != nil:
+		why = "documented plan unreadable"
+	case derr != nil:
+		why = "diff unreadable"
+	case routed && baseline.RoutedFullInstead(old.Plan, sifted, changes, before, files):
+		why = "changes outweigh the routed plan and the tree"
+	case !routed && baseline.FullInstead(old.Plan, changes):
+		why = "changes outweigh the plan"
+	}
+	if why != "" {
+		w.log.InfoContext(ctx, "baseline: reconcile reads the repository afresh", "why", why)
 		r.Mode = store.RunFull
 		readsAfresh(r)
 		return runPlan{}, false, w.save(ctx, *r)

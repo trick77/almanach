@@ -32,8 +32,9 @@ type Report struct {
 	PipelineTook string    `json:"pipeline_took"`
 	Took         string    `json:"took"`
 	Repeat       int       `json:"repeat"`
-	// Variant is what planned the full runs: "router" (-router) or
-	// "catalogue"; each repository says whether its run was routed.
+	// Variant is what planned the full runs: "router" (the default, or
+	// -router) or "catalogue" (-router=false, or BACKEND_BASELINE_ROUTER
+	// false); each repository says whether its run was routed.
 	Variant string `json:"variant"`
 	// Projects is the first run; Runs every run; Means each repository's
 	// figures averaged over the runs.

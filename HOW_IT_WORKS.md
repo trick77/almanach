@@ -1026,8 +1026,9 @@ resumes after a restart. The run pins the clone's head when it starts.
    the router the run only logs its size against the tree's, and a read
    that fails is logged, never the run's failure. Stage 1, the router
    (`almanach_router.txt`, the catalogue model), plans a full run in the
-   catalogue's place with `BACKEND_BASELINE_ROUTER` on (off until a pilot
-   judges it; `evaluate -router`): stage 0 is then built before its call,
+   catalogue's place with `BACKEND_BASELINE_ROUTER` on (the default after
+   two pilots, user, 2026-11-09; `evaluate -router=false` for the
+   catalogue): stage 0 is then built before its call,
    a busy clone deferring the step, and its call is the catalogue's
    (purpose `catalogue`), its prompt counted against the run's input
    tokens; no doc is read for it, and a step a hold repeats reuses the
@@ -1053,11 +1054,20 @@ resumes after a restart. The run pins the clone's head when it starts.
    subject holds and the files not readable at the documented commit (new,
    or become readable), `baseline.Changes.Picked`: a change to a file the
    router passed over is neither placed (placed, it would slip back in what
-   the router left out, a little more each reconcile) nor counted toward a
-   fresh read (counted, ordinary churn outside the picks would read the
-   repository afresh at every reconcile), nor named to a step as changed;
-   it stays unread until the next full run; a changed doc is the
-   overview's. With the router off again, a routed plan reconciles like
+   the router left out, a little more each reconcile) nor named to a step
+   as changed, nor counted against the plan toward a fresh read (counted
+   so, ordinary churn outside the picks would read the repository afresh
+   at nearly every reconcile: a routed plan holds a minority of the tree).
+   It counts against the readable tree it touched instead (a gone file at
+   its size before), the picked changes against the plan, and the two
+   shares together past a half read the repository afresh
+   (`baseline.RoutedFullInstead`; not counted at all, a skipped file that
+   grew important would wait for a button or an epoch, the router being
+   the default; user, 2026-11-09). A file touched counts whole, the diff
+   telling which files changed, not how much: a header added everywhere
+   reads afresh, once. The log names why a reconcile read afresh. Below
+   that a passed-over change stays unread until the next full run; a
+   changed doc is the overview's. With the router off again, a routed plan reconciles like
    any other, its questions dropped, until a full run replans it.
    `Worker.Route` runs stages 0 and 1 alone, nothing written.
    Without the router, a full run asks the catalogue model

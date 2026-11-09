@@ -186,7 +186,8 @@ type Baseline struct {
 	MaxInputTokens int
 	// Router: a full run's plan is the router's (stage 1 of the filter
 	// stage: the files to read in full, from every file's skeleton) instead
-	// of the catalogue's; off until a pilot judges it.
+	// of the catalogue's; on by default, after two pilots (user,
+	// 2026-11-09).
 	Router bool
 	// Reconcile is how long after its last run a repository whose head
 	// moved is read again on its own; zero means the buttons only.
@@ -286,7 +287,7 @@ func Load(lookup func(string) string) (*App, error) {
 			MaxCalls:       positive(r, "BACKEND_BASELINE_MAX_CALLS", 16),
 			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 4_000_000),
 			MaxInputTokens: positive(r, "BACKEND_BASELINE_MAX_INPUT_TOKENS", 1_500_000),
-			Router:         r.Bool("BACKEND_BASELINE_ROUTER", false),
+			Router:         r.Bool("BACKEND_BASELINE_ROUTER", true),
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
 		LogLevel:     r.String("BACKEND_LOG_LEVEL", "INFO"),

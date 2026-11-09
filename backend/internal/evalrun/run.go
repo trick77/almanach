@@ -44,9 +44,10 @@ type Options struct {
 	// Repeat runs everything this many times side by side, each in its own
 	// databases; the report gives every run and the means. 0 is once.
 	Repeat int
-	// Router plans the full runs by the router, not the catalogue
-	// (BACKEND_BASELINE_ROUTER, whatever the environment says).
-	Router bool
+	// Router, given, plans the full runs by the router (true) or the
+	// catalogue (false), whatever BACKEND_BASELINE_ROUTER says; nil keeps
+	// the environment's, as production reads it.
+	Router *bool
 	Log    *slog.Logger
 }
 
@@ -82,8 +83,11 @@ func setup(ctx context.Context, opt Options) (*env, error) {
 	if err != nil {
 		return nil, err
 	}
-	if opt.Router {
-		app.Baseline.Router = true
+	if opt.Router != nil {
+		if app.Baseline.Router != *opt.Router {
+			opt.Log.Warn("evaluate: -router overrides BACKEND_BASELINE_ROUTER", "router", *opt.Router)
+		}
+		app.Baseline.Router = *opt.Router
 	}
 	llm, err := inference.New(inference.Options{Model: opt.Model, ReasoningEffort: app.ReasoningEffort, Logger: opt.Log, Lookup: opt.Lookup,
 		NoDiagrams: app.Limits.MaxDiagrams == 0})

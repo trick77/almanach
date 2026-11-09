@@ -50,9 +50,9 @@ func Sift(diff []gitrepo.Entry, files []File) Changes {
 // plan holds the files its router picked, not every readable one, so a
 // change to a file it passed over is no file to place (placed, it would
 // slip back in what the router left out, a little more each reconcile) and
-// no churn: counted, it would read the repository afresh at every
-// reconcile (FullInstead). It stays unread until the next full run. Of the
-// gone paths only the held count: one it passed over is no step's.
+// no step's to read. It weighs toward a fresh read only against the tree
+// (RoutedFullInstead), never against the plan. Of the gone paths only the
+// held count: one it passed over is no step's.
 func (c Changes) Picked(p Plan, seen map[string]bool) Changes {
 	held := p.Held()
 	var out Changes
@@ -90,6 +90,11 @@ func FullInstead(p Plan, c Changes) bool {
 	if catalogued == 0 {
 		return true
 	}
+	return movedOf(p, c)*2 > catalogued
+}
+
+// movedOf is the changed bytes plus the catalogued bytes that left.
+func movedOf(p Plan, c Changes) int64 {
 	var moved int64
 	for _, f := range c.Changed {
 		moved += f.Size
@@ -105,7 +110,48 @@ func FullInstead(p Plan, c Changes) bool {
 			}
 		}
 	}
-	return moved*2 > catalogued
+	return moved
+}
+
+// RoutedFullInstead is FullInstead for a routed plan: the picked changes
+// weigh against the plan, the ones the router passed over (all but picked:
+// changed at their new size, gone at their size before, from before)
+// against the readable tree they touched (files, plus what left it), and a
+// fresh read when the two shares together pass a half. A file touched
+// counts whole, as in FullInstead: the diff tells which files changed, not
+// how much (a header added everywhere reads the repository afresh, once).
+// The passed-over changes weigh against the tree, never the plan: a routed
+// plan holds a minority of the tree, so against it a month's ordinary
+// churn outside the picks would read the repository afresh at nearly every
+// reconcile and the router would save nothing. Not weighed at all, a
+// skipped file that grew important would wait for a button or an epoch.
+func RoutedFullInstead(p Plan, all, picked Changes, before map[string]int64, files []File) bool {
+	catalogued := p.Bytes()
+	if catalogued == 0 {
+		return true
+	}
+	held := picked.Paths()
+	var skipped, tree int64
+	for _, f := range all.Changed {
+		if !held[f.Path] {
+			skipped += f.Size
+		}
+	}
+	for _, g := range all.Gone {
+		if !held[g] {
+			skipped += before[g]
+			tree += before[g]
+		}
+	}
+	for _, f := range files {
+		tree += f.Size
+	}
+	moved := movedOf(p, picked)
+	if tree == 0 {
+		return moved*2 > catalogued
+	}
+	// moved/catalogued + skipped/tree > 1/2, in integers.
+	return 2*(moved*tree+skipped*catalogued) > catalogued*tree
 }
 
 // Touched is the subjects a reconcile reads again, by name in plan order:
