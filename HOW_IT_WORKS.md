@@ -1328,9 +1328,9 @@ the system, one order of areas for the whole page: the system as a whole,
 its parts as a reader meets them, and always last `Entwicklung und
 Deployment` (`baseline.LastArea`: build, tests and gate, CI/CD,
 dependency updates, local tools, working conventions), in one place
-whatever the kind; an IT word written English (user, 2026-11-09), the
-former `Entwicklung und Auslieferung` respelled on stored pages by
-`almanach migrate` and taken for it when a model still writes it.
+whatever the kind; Deployment an IT word written English by the word
+rule (`lang.Terms`, user, 2026-11-09), which respells the former
+`Entwicklung und Auslieferung` on stored pages at `almanach migrate`.
 Without areas each kind was the order the steps wrote in, the build in
 four kinds at four places (user, 2026-11-02: "a human would not structure a documentation like that"). Every write lays the
 page out by its areas (`baseline.Arrange`, an area where its first
@@ -1873,7 +1873,16 @@ so the choice is not undone as a cleanup.
   "in Abhängigkeit von" left alone. Only words whose English takes the
   German article and whose German means only the software thing: "eine
   Anfrage" would become "eine Request", and "Paket", "Ereignis", "Laufzeit"
-  are business terms too; those stay as the model writes them. A stored
+  are business terms too; those stay as the model writes them.
+  "Auslieferung" is a business word too and is taken all the same, its
+  English a neuter (user, 2026-11-09), so it is made English only where
+  the code is sure of the words that govern it: after a feminine article,
+  made neuter with an adjective between ("eine neue" → "ein neues",
+  "zur" → "zum"); after a dative one a dative preposition governs ("bei
+  der" → "beim"); after a preposition or a join that takes a bare noun
+  ("per", "Build und"); first in a line. Anywhere else it stays German:
+  never "die Deployment" (a shared article, a compound's last part,
+  markup or a capital word before it, a relative pronoun). A stored
   German word is the same statement as today's
   English one (`lang.SameButSpelling`): no credit for the swap; a subject
   or area name matches in any case (`lang.SameName`), so a plan stored

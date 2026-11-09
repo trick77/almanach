@@ -669,19 +669,8 @@ func slugLabel(n ir.Node) bool { return n.Zone == ir.ZoneRepositories && n.Label
 // again, an area respelled into one it already has joining it.
 type Respeller struct{}
 
-// Prose is a stored summary, statement name or text made English.
+// Prose is a stored summary, statement name, text or area made English.
 func (Respeller) Prose(s string) string { return lang.Terms(s) }
-
-// Area is a stored area made English, and the last area under its former
-// name renamed; nothing else of CleanArea (case, spaces), which would
-// rewrite and rearrange history the rule never touched.
-// TRANSITIONAL(deployment-area): Return to Prose with formerLastArea.
-func (Respeller) Area(s string) string {
-	if lang.SameName(strings.TrimSpace(s), formerLastArea) {
-		return LastArea
-	}
-	return lang.Terms(s)
-}
 
 // Arrange is the page laid out by its areas again (Arrange).
 func (Respeller) Arrange(st []store.Statement) []store.Statement { return Arrange(st) }

@@ -62,6 +62,57 @@ func TestTerms(t *testing.T) {
 	}
 }
 
+// A feminine form whose English is a neuter takes its article along where
+// the case is sure, an adjective between too, and stays German where it
+// is not: never "die Deployment".
+func TestTermsNeuter(t *testing.T) {
+	for in, want := range map[string]string{
+		"Die Auslieferung läuft nachts.":                  "Das Deployment läuft nachts.",
+		"Sie startet die automatische Auslieferung.":      "Sie startet das automatische Deployment.",
+		"Eine neue Auslieferung, keine Auslieferung.":     "Ein neues Deployment, kein Deployment.",
+		"Sie dient zur Auslieferung.":                     "Sie dient zum Deployment.",
+		"Bei der Auslieferung und mit einer Auslieferung": "Beim Deployment und mit einem Deployment",
+		"In der neuen Auslieferung":                       "Im neuen Deployment",
+		"Sie liest die Pipeline. Build und Auslieferung":  "Sie liest die Pipeline. Build und Deployment",
+		"Auslieferung über Jenkins":                       "Deployment über Jenkins",
+		"- Auslieferung über Jenkins":                     "- Deployment über Jenkins",
+		"## Auslieferung":                                 "## Deployment",
+		"Build, Test und Auslieferung laufen.":            "Build, Test und Deployment laufen.",
+		"Mit eurer Auslieferung, eure Auslieferung":       "Mit eurem Deployment, euer Deployment",
+		"Die eine Auslieferung":                           "Die eine Auslieferung",
+		"Die Entwicklung, Prüfung und Auslieferung":       "Die Entwicklung, Prüfung und Auslieferung",
+		// A shared article, a compound's last part, markup between, a
+		// capital before (an adjective or a name), a relative pronoun, a
+		// code span before: German, never "die Deployment".
+		"Die Entwicklung und Auslieferung laufen.":         "Die Entwicklung und Auslieferung laufen.",
+		"Die Go-Auslieferung startet.":                     "Die Go-Auslieferung startet.",
+		"Die **Auslieferung** läuft.":                      "Die **Auslieferung** läuft.",
+		"Die „Auslieferung“ läuft.":                        "Die „Auslieferung“ läuft.",
+		"Automatische Auslieferung über Jenkins.":          "Automatische Auslieferung über Jenkins.",
+		"Die Automatische Auslieferung":                    "Die Automatische Auslieferung",
+		"Die Pipeline, die Auslieferung und Build trennt.": "Die Pipeline, die Auslieferung und Build trennt.",
+		"Startet die `deploy` Auslieferung.":               "Startet die `deploy` Auslieferung.",
+		"Entwicklung und Auslieferung":                     "Entwicklung und Deployment",
+		"Auslieferung per Pipeline.":                       "Deployment per Pipeline.",
+		"Die Auslieferungen laufen.":                       "Die Deployments laufen.",
+		"Die Auslieferungs-Pipeline baut.":                 "Die Deployment-Pipeline baut.",
+		// A genitive or dative the code cannot tell apart, an adjective
+		// without an article (a strong ending): German.
+		"Während der Auslieferung wartet sie.": "Während der Auslieferung wartet sie.",
+		"Der Auslieferung fehlt ein Schritt.":  "Der Auslieferung fehlt ein Schritt.",
+		"Sie sorgt für schnelle Auslieferung.": "Sie sorgt für schnelle Auslieferung.",
+		"`Auslieferung` und Auslieferung.java": "`Auslieferung` und Auslieferung.java",
+	} {
+		got := Terms(in)
+		if got != want {
+			t.Errorf("Terms(%q) = %q, want %q", in, got, want)
+		}
+		if again := Terms(got); again != got {
+			t.Errorf("Terms not idempotent on %q: %q", in, again)
+		}
+	}
+}
+
 // Prose and Laid, the stored forms, take the words in English; a stored
 // German one is the same statement as today's English.
 func TestTermsInProse(t *testing.T) {

@@ -69,29 +69,21 @@ func TestLastAreaInThePrompts(t *testing.T) {
 	}
 }
 
-// A stored page's area under the last area's former name takes its
-// current one on migrate; any other area only the word rule.
-// TRANSITIONAL(deployment-area): Remove the former name's case with
-// formerLastArea.
-func TestRespellerArea(t *testing.T) {
-	for in, want := range map[string]string{
-		"Entwicklung und Auslieferung": LastArea,
-		LastArea:                       LastArea,
-		"Dienst-Verwaltung":            "Service-Verwaltung",
-		// No CleanArea beside the rename: history keeps its case and spaces.
-		"betrieb  und überwachung": "betrieb  und überwachung",
-	} {
-		if got := (Respeller{}).Area(in); got != want {
-			t.Errorf("Area(%q) = %q, want %q", in, got, want)
-		}
+// A stored page's last area under its former name takes the current one
+// on migrate, by the word rule alone.
+func TestRespellerRenamesTheLastArea(t *testing.T) {
+	if got := (Respeller{}).Prose("Entwicklung und Auslieferung"); got != LastArea {
+		t.Errorf("Prose = %q, want %q", got, LastArea)
 	}
 }
 
 func TestCleanArea(t *testing.T) {
 	for in, want := range map[string]string{
-		"  Abfrage   und  Suche ":    "Abfrage und Suche",
-		"entwicklung und deployment": LastArea,
-		// TRANSITIONAL(deployment-area): Remove with formerLastArea.
+		"  Abfrage   und  Suche ":      "Abfrage und Suche",
+		"entwicklung und deployment":   LastArea,
+		"Entwicklung und Auslieferung": LastArea,
+		"ENTWICKLUNG UND DEPLOYMENT":   LastArea,
+		// TRANSITIONAL(deployment-area): Remove when formerLastArea goes.
 		"entwicklung und auslieferung":   LastArea,
 		"ENTWICKLUNG UND AUSLIEFERUNG":   LastArea,
 		"betrieb und ueberwachung":       OpsArea,
@@ -100,7 +92,7 @@ func TestCleanArea(t *testing.T) {
 		"Grösse":                         "Grösse",
 		"Maße":                           "Masse",
 		"":                               "",
-		"Entwicklung und Auslieferung ✓": "Entwicklung und Auslieferung ✓",
+		"Entwicklung und Auslieferung ✓": "Entwicklung und Deployment ✓",
 	} {
 		if got := CleanArea(in); got != want {
 			t.Errorf("CleanArea(%q) = %q, want %q", in, got, want)
