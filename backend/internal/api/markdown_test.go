@@ -254,11 +254,11 @@ func TestMarkdownAreas(t *testing.T) {
 	md := renderMarkdown("T", store.ScopeRepository, store.Page{Revision: 1, UpdatedAt: mergedAt, Statements: []store.Statement{
 		{Kind: "component", Name: "Abfrage-Teil", Text: "A.\n#### Teil", Area: "Abfrage"},
 		{Kind: "component", Name: "Alt", Text: "C."},
-		{Kind: "component", Name: "Gradle", Text: "B.", Area: "Entwicklung und Auslieferung"},
+		{Kind: "component", Name: "Gradle", Text: "B.", Area: "Entwicklung und Deployment"},
 		{Kind: "rule", Name: "Regel", Text: "R.", Area: "Abfrage"},
 	}}, true)
 	for _, want := range []string{
-		"## Komponenten\n\n### Abfrage\n\n#### Abfrage-Teil\n\nA.\n##### Teil\n\n### Weiteres\n\n#### Alt\n\nC.\n\n### Entwicklung und Auslieferung\n\n#### Gradle\n",
+		"## Komponenten\n\n### Abfrage\n\n#### Abfrage-Teil\n\nA.\n##### Teil\n\n### Weiteres\n\n#### Alt\n\nC.\n\n### Entwicklung und Deployment\n\n#### Gradle\n",
 		"## Regeln\n\n### Regel\n",
 	} {
 		if !strings.Contains(md, want) {

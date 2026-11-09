@@ -949,7 +949,7 @@ func TestValidFor_StoredStatementsNeverHeld(t *testing.T) {
 func TestAttach_AreaIsNoText(t *testing.T) {
 	src := []store.Source{{PRKey: "PRJ/svc#1"}}
 	current := []store.Statement{
-		{ID: "s1", Kind: "rule", Name: "Build", Text: "Gradle.", Sources: src, Area: "Entwicklung und Auslieferung"},
+		{ID: "s1", Kind: "rule", Name: "Build", Text: "Gradle.", Sources: src, Area: "Entwicklung und Deployment"},
 		{ID: "s2", Kind: "rule", Name: "Liste", Text: "Paginiert.", Sources: src, Area: "Abfrage"},
 		{ID: "s3", Kind: "rule", Name: "Datei", Text: "XLSX.", Sources: src},
 	}
@@ -971,7 +971,7 @@ func TestAttach_AreaIsNoText(t *testing.T) {
 	}
 	// "abfrage" is an area of its own name: only the tail areas (OpsArea,
 	// LastArea) are matched by case.
-	want := []string{"s2:Abfrage", "s3:Export", "s4:abfrage", "s1:Entwicklung und Auslieferung"}
+	want := []string{"s2:Abfrage", "s3:Export", "s4:abfrage", "s1:Entwicklung und Deployment"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("layout = %v, want %v", got, want)
 	}

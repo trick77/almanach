@@ -1326,11 +1326,13 @@ not pages: none links.
 page's statements stand in areas (`Statement.Area`), the logical parts of
 the system, one order of areas for the whole page: the system as a whole,
 its parts as a reader meets them, and always last `Entwicklung und
-Auslieferung` (`baseline.LastArea`: build, tests and gate, CI/CD,
+Deployment` (`baseline.LastArea`: build, tests and gate, CI/CD,
 dependency updates, local tools, working conventions), in one place
-whatever the kind. Without areas each kind was the order the steps wrote
-in, the build in four kinds at four places (user, 2026-11-02: "a human
-would not structure a documentation like that"). Every write lays the
+whatever the kind; an IT word written English (user, 2026-11-09), the
+former `Entwicklung und Auslieferung` respelled on stored pages by
+`almanach migrate` and taken for it when a model still writes it.
+Without areas each kind was the order the steps wrote in, the build in
+four kinds at four places (user, 2026-11-02: "a human would not structure a documentation like that"). Every write lays the
 page out by its areas (`baseline.Arrange`, an area where its first
 statement stands); every call that writes a statement gives it one, none
 keeping the stored one. The order inside an area is the call's that reads

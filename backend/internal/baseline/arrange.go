@@ -23,8 +23,17 @@ import (
 // LastArea is the area that always ends the page: how the code is built,
 // tested, checked, delivered and kept up to date, the local tools and the
 // conventions of working on it, in one place (user: "build and ci/cd
-// probably last, and not in multiple places").
-const LastArea = "Entwicklung und Auslieferung"
+// probably last, and not in multiple places"). Deployment, an IT word
+// written English (user, 2026-11-09: "Das sollte doch Deployment heissen,
+// überall, immer").
+const LastArea = "Entwicklung und Deployment"
+
+// formerLastArea is LastArea as pages stored it before; CleanArea takes it
+// for LastArea, from a stored page and from a model that still writes it.
+// TRANSITIONAL(deployment-area): Remove when every deployment has run
+// `almanach migrate` of 0.1.41 or later (it respells stored pages; the
+// prompts name only the new one since), tests too.
+const formerLastArea = "Entwicklung und Auslieferung"
 
 // OpsArea is the area just before LastArea: what belongs to the running
 // system as a whole and to no one part, its settings read at startup,
@@ -44,6 +53,9 @@ var tailAreas = []string{OpsArea, LastArea}
 // used.
 func CleanArea(a string) string {
 	a = strings.Join(strings.Fields(lang.Prose(a)), " ")
+	if lang.SameName(a, formerLastArea) {
+		return LastArea
+	}
 	for _, fixed := range tailAreas {
 		if lang.SameName(a, fixed) {
 			return fixed

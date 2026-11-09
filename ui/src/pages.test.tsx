@@ -2201,7 +2201,7 @@ describe("DescriptionView areas", () => {
     statements: [
       st("s1", "component", "Abfrage-Teil", "Abfrage"),
       st("s2", "component", "Alt"),
-      st("s3", "component", "Gradle-Build", "Entwicklung und Auslieferung"),
+      st("s3", "component", "Gradle-Build", "Entwicklung und Deployment"),
       st("s4", "rule", "Regel", "Abfrage"),
     ],
     source_pr_key: "",
@@ -2220,7 +2220,7 @@ describe("DescriptionView areas", () => {
     expect(chapters()).toEqual([
       ["Abfrage", ["Abfrage-Teil", "Regel"]],
       [S.areas.otherArea, ["Alt"]],
-      ["Entwicklung und Auslieferung", ["Gradle-Build"]],
+      ["Entwicklung und Deployment", ["Gradle-Build"]],
     ]);
   });
 
@@ -2234,13 +2234,13 @@ describe("DescriptionView areas", () => {
       />,
     );
     expect(chapters()).toEqual([
-      ["Entwicklung und Auslieferung", ["Gradle-Build"]],
+      ["Entwicklung und Deployment", ["Gradle-Build"]],
     ]);
     expect(statementMatches(description.statements[0], "abfrage")).toBe(true);
     // The chapter keeps its anchor, the area's place among all of them.
     expect(
       document.getElementById("area-2")?.querySelector("h3")?.textContent,
-    ).toBe("Entwicklung und Auslieferung");
+    ).toBe("Entwicklung und Deployment");
   });
 
   it("heads an area once, where it first stands, on a page not laid out yet", () => {
@@ -2302,11 +2302,11 @@ describe("DescriptionView areas", () => {
       ["summary", S.rail.summary, undefined, undefined],
       ["area-0", "Abfrage", 2, false],
       ["area-1", S.areas.otherArea, 1, false],
-      ["area-2", "Entwicklung und Auslieferung", 1, false],
+      ["area-2", "Entwicklung und Deployment", 1, false],
     ]);
     expect(rail("Gradle")).toEqual([
       ["summary", S.rail.summary, undefined, undefined],
-      ["area-2", "Entwicklung und Auslieferung", 1, true],
+      ["area-2", "Entwicklung und Deployment", 1, true],
     ]);
   });
 });

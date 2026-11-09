@@ -20,7 +20,7 @@ func layout(statements []store.Statement) []string {
 
 // An area's statements stand together where its first one does, in their
 // order; those without one after the areas, then Betrieb und Überwachung,
-// Entwicklung und Auslieferung last wherever they stood.
+// LastArea last wherever they stood.
 // An arranged page comes back as it was.
 func TestArrange(t *testing.T) {
 	in := []store.Statement{
@@ -51,22 +51,47 @@ func TestFixedAreasKeepTheirWords(t *testing.T) {
 }
 
 // The prompts name the last two areas as the code stores them, in the
-// code's order, and every prompt that lays a page out places them.
+// code's order, and every prompt that lays a page out places them; the
+// router names its build subject so.
 func TestLastAreaInThePrompts(t *testing.T) {
 	ops, last := strings.Index(prompts.Areas, "then `"+OpsArea+"`"), strings.Index(prompts.Areas, "always last `"+LastArea+"`")
 	if ops < 0 || last < 0 || ops > last {
 		t.Errorf("prompts.Areas does not name %q, then %q last", OpsArea, LastArea)
 	}
-	for name, p := range map[string]string{"repo map": prompts.RepoMap, "project": prompts.Project} {
-		if !strings.Contains(p, "`"+OpsArea+"` second to last") {
-			t.Errorf("%s prompt's outline does not place %q", name, OpsArea)
+	for name, p := range map[string]string{"repo map": prompts.RepoMap, "project": prompts.Project, "restyle": prompts.Restyle,
+		"project restyle": prompts.ProjectRestyle} {
+		if !strings.Contains(p, "`"+OpsArea+"` second to last") || !strings.Contains(p, "`"+LastArea+"` last") {
+			t.Errorf("%s prompt's outline does not place %q and %q", name, OpsArea, LastArea)
+		}
+	}
+	if !strings.Contains(prompts.Router, `"`+LastArea+`"`) {
+		t.Errorf("router prompt does not name its build subject %q", LastArea)
+	}
+}
+
+// A stored page's area under the last area's former name takes its
+// current one on migrate; any other area only the word rule.
+// TRANSITIONAL(deployment-area): Remove the former name's case with
+// formerLastArea.
+func TestRespellerArea(t *testing.T) {
+	for in, want := range map[string]string{
+		"Entwicklung und Auslieferung": LastArea,
+		LastArea:                       LastArea,
+		"Dienst-Verwaltung":            "Service-Verwaltung",
+		// No CleanArea beside the rename: history keeps its case and spaces.
+		"betrieb  und überwachung": "betrieb  und überwachung",
+	} {
+		if got := (Respeller{}).Area(in); got != want {
+			t.Errorf("Area(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
 
 func TestCleanArea(t *testing.T) {
 	for in, want := range map[string]string{
-		"  Abfrage   und  Suche ":        "Abfrage und Suche",
+		"  Abfrage   und  Suche ":    "Abfrage und Suche",
+		"entwicklung und deployment": LastArea,
+		// TRANSITIONAL(deployment-area): Remove with formerLastArea.
 		"entwicklung und auslieferung":   LastArea,
 		"ENTWICKLUNG UND AUSLIEFERUNG":   LastArea,
 		"betrieb und ueberwachung":       OpsArea,
