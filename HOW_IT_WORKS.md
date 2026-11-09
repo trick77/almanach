@@ -158,14 +158,14 @@ error line with the 500.
 ## 3. The consolidation worker
 
 One worker, in process, serial, oldest note first. It wakes on a webhook
-and polls every thirty seconds, so a note queued before a restart is folded
-without a second delivery. Serial on purpose: two folds of the same project
+and polls every thirty seconds, so a note queued before a restart is consolidated
+without a second delivery. Serial on purpose: two calls for the same project
 would each rewrite the project description from a base the other is
 replacing.
 
 **Once a day per repository.** A repository's notes wait until its oldest
-has waited `BACKEND_FOLD_DELAY` (a day by default; `0` folds each note on
-its own as it comes), and then one fold takes all of them: one call, the
+has waited `BACKEND_FOLD_DELAY` (a day by default; `0` consolidates each note on
+its own as it comes), and then one call takes all of them: the
 page and the prompt read once, one revision per page. The documentation
 may lag the code by a day (user, 2026-11-06); a note per call paid the
 page, the prompt and the reasoning again for every pull request, and a
@@ -175,40 +175,40 @@ now less the delay (`NextQueued`): the oldest note of all is its
 repository's oldest too, so its repository is due, and `QueuedBatch` reads
 every queued note of it in merge order, as many as fit in 240 kB of note
 text (`FoldBatchBytes`, the most a baseline step shows of a repository's
-files); the rest fold in the calls right after, in the same drain, read
-anew before each so a note delivered again meanwhile folds as delivered.
-A due repository's notes are listed together on the queue page, as they
-are folded. A note over the
-bound folds alone, as before. Nothing is dropped for size. The queue page
-lists a waiting repository's notes last, each with when it is folded (a
-note its repository's started run holds stays with the run, no time
-promised), and a fold in flight with how many notes it takes.
+files); the rest go in the calls right after, in the same drain, read
+anew before each so a note delivered again meanwhile is consolidated as
+delivered. A due repository's notes are listed together on the queue page,
+as they are consolidated. A note over the
+bound goes alone, as before. Nothing is dropped for size. The queue page
+lists a waiting repository's notes last, each with when it is consolidated
+(a note its repository's started run holds stays with the run, no time
+promised), and a call in flight with how many notes it takes.
 
 Nothing is lost to the batch. Every note reaches the model whole, under a
 heading with its PR key, ticket, kind and merge day, in merge order; where
 two disagree the later holds. Each edit and new statement names the pull
 requests that taught it (`from_prs`), and the code credits exactly those,
 each with its own ticket, merge time and commit: provenance stays the
-code's to write, the model only picks among the notes the fold took (user,
-2026-11-06). An item naming none, or a PR the fold does not hold, is left
+code's to write, the model only picks among the notes the call took (user,
+2026-11-06). An item naming none, or a PR the call does not hold, is left
 out and logged like any item that breaks a rule. Crediting every PR of the
-fold to every changed statement was rejected: on a day of ten pull
+call to every changed statement was rejected: on a day of ten pull
 requests each statement would cite ten, and a pitfall every PR but its
-fix. The call's row and each revision keep every PR of the fold
+fix. The call's row and each revision keep every PR of the call
 (`batch_pr_keys`), the first in `source_pr_key` as every single-note
-reader expects; the queue page shows a folded note the call's whole cost
+reader expects; the queue page shows a consolidated note the call's whole cost
 and how many notes shared it. The notes' rows are untouched: the problem
 areas and the dashboard count them as before.
 
-A fold reads the current repository and project descriptions, renders the
+A merge call reads the current repository and project descriptions, renders the
 merge prompt (`backend/internal/prompts/almanach_merge.txt`, compiled in)
 and makes one `Chat` call with a strict JSON schema. Beside the notes the
-prompt shows the problem areas of the fold's bugfix notes: each area's
-bugfix notes in this fold and its history before them (`RepoProblems` up
-to the fold's first merge, so no fix is counted twice: the count, the
+prompt shows the problem areas of the call's bugfix notes: each area's
+bugfix notes in this call and its history before them (`RepoProblems` up
+to the call's first merge, so no fix is counted twice: the count, the
 cause seen most, the newest fixes), as a baseline subject step sees it.
 Two fixes of one area in one day become one pitfall citing both, where
-two folds each saw one fix alone; a new pitfall stands only on a bugfix
+two calls each saw one fix alone; a new pitfall stands only on a bugfix
 note among its `from_prs`. The model returns, for
 each description, either `null` (no change) or a patch, as a baseline step
 does: `summary`, written whole or `null` to keep it; `statements`, the
@@ -230,10 +230,10 @@ The answer is then held to rules the model cannot bend:
 
 - Spelling: the sharp s becomes `ss` on every prose field, never on file paths.
 - Provenance: a kept id takes its sources from the current page and gains
-  this pull request (in a fold of several, those its `from_prs` named) only
+  this pull request (in a call of several, those its `from_prs` named) only
   when its text or name changed; a new statement starts with them,
   numbered past every id the page's history
-  ever used, so an id dropped in one fold never names another fact later.
+  ever used, so an id dropped in one call never names another fact later.
   An item that breaks a rule costs only itself (`baseline.ApplyMerge`): an
   edit of an id the page does not have, or of one an earlier edit took, a
   statement of a kind the page cannot hold or an empty one, is left out
@@ -245,7 +245,7 @@ The answer is then held to rules the model cannot bend:
   only when the tree no longer has any of its files. The prompt marks the
   statements a pull request taught, and says so. The tree is the clone's
   at its head. Never the tree at the merge commit itself, which lacks
-  every file added since: a note folded late (failed and queued again, or
+  every file added since: a note consolidated late (failed and queued again, or
   waiting out a run) would drop a later run's statement on such a file. A
   head not fetched to the merge yet, the usual state right after the
   webhook, still has the files the pull request took away: a drop of a
@@ -274,7 +274,7 @@ refuses the write (below). Such a note leaves
 the queue as failed (`fold_failed_at`, with its reason, redacted, then cut
 to 300 runes), its attempt counted, never
 consolidated: the next run of its repository that ends done puts it back
-on the queue (`RequeueFailed`), so its pull request's knowledge is folded
+on the queue (`RequeueFailed`), so its pull request's knowledge is consolidated
 late, not lost; the repository's page has been written anew by then, and a
 note of a running repository waits for the run anyway. A note no run
 requeues (the sources off, a repository without runs) goes back a day
@@ -282,38 +282,38 @@ after it failed, asked at the start of every drain (`RequeueFailedBefore`).
 The repository's patch is applied first, and refused it fails the note
 before anything is written; the project's patch refused, busy or
 panicking after the repository's revision was written costs only itself,
-the note folded, or the retry would fold it into the repository page
+the note consolidated, or the retry would write it into the repository page
 twice (a busy database or a refused write holds the worker all the same). With no
 repository revision written, the project's patch refused fails the note. Past eight attempts in all
 it is given up and stays failed, so one note that always fails costs eight
 calls, not one a run. The queue page lists the failed notes with their
 reasons; a note delivered again starts afresh. Before, such a note was
 marked consolidated with a log line, and what its pull request taught was
-gone. A fold of several notes the answer fails is not failed whole: each
-half is folded on its own, the first half first, down to a single note,
+gone. A call of several notes the answer fails is not failed whole: each
+half is consolidated on its own, the first half first, down to a single note,
 which fails as above. One note that breaks the answer is found in about
 two calls a halving and costs that note alone. A failure every call meets
 (a page past the context) would cost a batch of n up to 2n-1 calls
 halving down to single notes, so a split makes at most the n-1 calls after
 the first that its notes would have cost one by one; past them a half
-fails unfolded, its reason kept, and comes back like any failed note. A
-gateway failure keeps every note of the fold queued and counts the
+fails not consolidated, its reason kept, and comes back like any failed
+note. A gateway failure keeps every note of the call queued and counts the
 attempt of its oldest received note alone, as before batching: an outage
 of hours must not give a whole day of notes up together, and a late note
-merged earlier must not take the count's place lap after lap. A fold of
+merged earlier must not take the count's place lap after lap. A call of
 several that timed out or met a proxy's page or a 5xx may be one too
 large for the call cap or the request bound, so the repository's next
-folds take half as many notes, halved again at each such failure, for as
+calls take half as many notes, halved again at each such failure, for as
 long as the process runs: an answer at the half says the half fits, not
-the whole. Once a fold is written, what is left is marks: one the store
-refuses is retried before the next fold, the notes never folded again
-(a restart before it folds them again, as a refused mark of one note
-always did).
+the whole. Once a call's revision is written, what is left is marks: one
+the store refuses is retried before the next call, the notes never
+consolidated again (a restart before it consolidates them again, as a
+refused mark of one note always did).
 
 A failure of the gateway as a whole is different: a timeout, a 5xx or
 transport failure, a refused key, a rate limit, a proxy page where the
-answer should be. The next fold would meet the same gateway, so the worker
-holds: no fold for thirty seconds, doubling on each further failure up to
+answer should be. The next call would meet the same gateway, so the worker
+holds: no call for thirty seconds, doubling on each further failure up to
 ten minutes, or for as long as a rate limit asked. The note stays queued
 with its attempt counted and is tried again after the hold; a call that
 gets through clears the hold. After eight such failures of one note it is
@@ -326,10 +326,10 @@ itself fails for a reason that is not the database's lock (a full disk, a
 read-only file), the worker holds like after a gateway failure, thirty
 seconds doubling to ten minutes, with a backoff of its own that a write
 getting through resets: the drain once paused until the next poll, thirty
-seconds on, and paid the same fold again, without end. A revision whose
+seconds on, and paid the same call again, without end. A revision whose
 file refuses it (full, read-only, gone) so keeps its note queued, neither
 failed nor consolidated: its rewrite was once thrown away and the note
-marked folded. Its retry first counts the attempt, a write of its own:
+marked consolidated. Its retry first counts the attempt, a write of its own:
 refused, the worker holds again and pays nothing; a failure of the call
 after it counts no second attempt; past eight the note is given up as
 failed. Only the note whose own write was refused is counted so; another
@@ -342,7 +342,7 @@ the run. The worker asks the room on the database's disk before every item
 it found (64 MB free at least), so a full disk is found by a syscall and
 not by a paid call; `/readyz` asks the same, since SQLite answers a ping
 from a full disk. A shutdown
-lets the fold in flight finish, up to a grace of the call timeout plus
+lets the call in flight finish, up to a grace of the call timeout plus
 fifteen seconds for its writes, before it is cut off.
 
 Every merge call leaves an `llm_calls` row: Almanach's own ledger, never
@@ -351,10 +351,10 @@ mixed with the figures noergler reports in `note_calls`.
 With the sources on, the same worker drains the baseline runs (4b): notes
 first, and when no note is due one step of the oldest open run, then the
 notes again. A note of a repository whose run is running waits for it
-(the store skips it) and is folded after it; a run still queued holds
+(the store skips it) and is consolidated after it; a run still queued holds
 nothing, so a long queue of runs never holds the notes for hours. The run
 pins the clone's last synced head, so a note merged after that fetch may
-have been folded before the run started: a statement such a pull request
+have been consolidated before the run started: a statement such a pull request
 taught is marked read-only in the run's prompts and a patch touching it is
 refused, since the code the run reads cannot show it. Git decides first: a
 merge commit the run's commit holds is in it, whatever the clocks say (a
@@ -424,7 +424,7 @@ themselves go oldest first, one to its end before the next begins.
   call.
 - `/api/queue`: the worker's queue, the page Queue. The note or
   run step in flight, then the rest in the order the worker takes it (the
-  notes it may fold, the started run's next step, the notes waiting for
+  notes it may consolidate, the started run's next step, the notes waiting for
   that run, the queued runs). Why the next item waits sits on that item:
   a hold with its cause (the model not answering, rate limited, the key
   refused, the database busy) and its end, or a run step waiting for its
@@ -613,12 +613,12 @@ project, or a static folder created with its first repository (the slug,
 if left empty, is the repository's name from its clone URL, the project
 key the slug). A project of **one** repository, as most repositories on a
 GitHub account are, has no project page of its own: the run makes no
-project call, a note's fold shows the model no project page and asks for
+project call, a note's call shows the model no project page and asks for
 null (whatever comes is not written), and the wiki serves the project as
 its repository's page, at the project's path, its `.md` export the
 repository's. Nothing is stored to say so: the count of source rows
 decides (`SourceRepoCount`). When a second repository comes, the project
-has no page yet, and the next run of either folds it whatever a reconcile
+has no page yet, and the next run of either consolidates it whatever a reconcile
 would skip. With the sources off there are no sources, and every project
 keeps its page.
 
@@ -732,7 +732,7 @@ nothing in a project of one. The project page is the queue's, as every
 write of it: the deactivation queues a departure run (4b) when the project
 has a page. Activating it again makes it a source once more: the next
 cycle clones it, and its first run reconciles from the commit last
-documented, its kept page back in the wiki and folded into the project's
+documented, its kept page back in the wiki and consolidated into the project's
 again. A run already reading the clone refuses a deactivation (409), and
 a departure run already working refuses an activation. As every removal,
 the folder goes before the row: a clone that would not go leaves the row
@@ -764,7 +764,7 @@ under way and otherwise not at all.
 
 A repository's row offers "PROJECT.md erzeugen": a short brief for the
 repository's `.agents/PROJECT.md`, the root section a tool such as
-agents-md-sync folds into the repository's `AGENTS.md`. It holds only what
+agents-md-sync writes into the repository's `AGENTS.md`. It holds only what
 an agent working in the repository cannot read from its code: what the
 repository is for and how it fits its project, who relies on it and on
 what, shared entities and their system of record, invariants and rules with
@@ -922,7 +922,7 @@ the model draws it from the descriptions, as an external system.
 
 ## 4b. The baseline
 
-A **run** reads one repository's clone at one commit and folds what the
+A **run** reads one repository's clone at one commit and consolidates what the
 code teaches into its page: the description the repository should have had
 before the first note. From then on the notes are the deltas, and a
 monthly reconcile reads what changed in the code since, PRs or not.
@@ -935,7 +935,7 @@ notes, which land on the source's project as another name of it. A note
 for any other repository is answered 202 `ignored`, logged with its key
 and slug, and never stored: noergler marks it sent and does not resend. A
 note still queued for one (from before the sources, or for a repository
-removed since) is taken off the queue unfolded. The wiki lists the sources
+removed since) is taken off the queue not consolidated. The wiki lists the sources
 then, with noergler's team where it has delivered for the key; a new
 source whose key noergler already delivers in another case takes that
 spelling (Bitbucket) or is refused (a static folder), so the wiki shows
@@ -952,7 +952,8 @@ be overshot by one run's calls. A departure run starts all the same,
 ahead of the older runs: one call, no code read, and held it would keep a
 deactivated repository on its project page for the day; each deactivation
 past the budget costs that one call more. The notes never wait: a
-fold is one small call, and holding it would hold what a pull request
+note's consolidation is one small call, and holding it would hold what a
+pull request
 taught. A call billed without a price (a stream cut before its usage
 came, a loop the guard cut) counts as the dearest priced call of the last
 30 days, never as nothing: a night of unpriced runaways once never reached
@@ -1001,7 +1002,7 @@ resumes after a restart. The run pins the clone's head when it starts.
    files left out of every subject is not offered again: the model left
    it out on purpose, and a quiet reconcile must make no call. What the
    tree offers is kept on a full run (`readable_bytes`) beside the distinct
-   files its folded parts read (`read_bytes`: a file once however many
+   files its consolidated parts read (`read_bytes`: a file once however many
    subjects hold it, a doc the overview read too, a skipped part not at
    all; `bytes` stays the budget's
    count of every call's input), a reconcile carrying the documented run's
@@ -1050,7 +1051,7 @@ resumes after a restart. The run pins the clone's head when it starts.
    fewer a token below; above, 2 bytes more a token (494 kB at 256k), so
    a tokenizer denser on a longer listing than the estimate's 3 bytes a
    token (down to about 2.4) still fits. Startup logs the budget once. A
-   tree whose names pass two thirds of it folds its lowest-scored
+   tree whose names pass two thirds of it collapses its lowest-scored
    directories into one line each, down to a top-level directory alone,
    and a prompt still past the context or its share is refused before the
    call; one past the run's input tokens is catalogued, never the run's
@@ -1088,14 +1089,14 @@ resumes after a restart. The run pins the clone's head when it starts.
    (`BACKEND_BASELINE_CATALOGUE_MODEL`, else `BACKEND_MODEL`) for the
    repository's subjects (a flow, a feature, a part) with their paths,
    from the listing and the docs. Over 4000 files the listing is the tree
-   folded to fit: a directory is one line with its file count and bytes
+   collapsed to fit: a directory is one line with its file count and bytes
    until it is opened, and the tree is opened where the files are: of the
    moves on the listing (a directory opened, an open one's own files laid
    out) the one touching the most files first, so a pile of files at the
    root never crowds out the code beside it, and a part too wide to lay out
    is shown with its subdirectories and its own files as one `dir/*` line,
    which the model may name back for those files alone (`baseline.Listing`).
-   It was once folded to two levels whatever the shape, and a Maven
+   It was once collapsed to two levels whatever the shape, and a Maven
    repository, all of it under `src/main/java`, became one line the model
    could only name whole, filled in path order to the step's cap. Code holds
    the answer to the tree: invented paths dropped, a path leading folders
@@ -1159,12 +1160,12 @@ resumes after a restart. The run pins the clone's head when it starts.
    pitfall only where a problem area or a bugfix note backs it; without
    one, none. The answer is a patch (edits by id, new statements in
    `added` without one, drops, confirmations, a summary or null), applied
-   under the rules below and then folded like a note: `attach`, a summary
+   under the rules below and then consolidated like a note: `attach`, a summary
    required, identical means no revision. The revision and
    the run's progress land in one transaction. No prompt names a budget
    or a ceiling: the page has none, and every part writes what its code
-   teaches. The growth after the fold is logged.
-4. *Project.* The repository's new description folded into the project
+   teaches. The growth after the consolidation is logged.
+4. *Project.* The repository's new description consolidated into the project
    page, on a full run always, on a reconcile when the summary changed or
    the project has no page yet; never for a project of one (4a), which
    ends the step without a call and with nothing skipped.
@@ -1193,7 +1194,7 @@ resumes after a restart. The run pins the clone's head when it starts.
    inside, which its own page holds. The shape is stored per revision
    (`revisions.shape`, NULL before a step judged, read as a system), each
    project revision carrying the page's on unless its writer judged anew,
-   so a note's fold, a map or a departure never resets it. A changed shape
+   so a note's call, a map or a departure never resets it. A changed shape
    is a revision; a first judgment of a system on a page written as one is
    set in place (`JudgeShape`), no revision for a label. The page says the
    shape in its head ("System", "Sammlung"). The summary is rewritten
@@ -1203,7 +1204,7 @@ resumes after a restart. The run pins the clone's head when it starts.
    (an eval's second repository wiped the first one's eleven). No tree
    shows a project statement's files gone, so a project drop is the
    model's word, a PR-taught statement's too: how one repository works
-   inside is its page's, where the same note was folded and the tree
+   inside is its page's, where the same note was consolidated and the tree
    guards it (user, 2026-11-04); the prompt keeps a PR-taught statement
    about the wiring unless shown wrong. Drops are logged with the PR-taught
    ones named. Every new statement is kept: the page has no ceiling. Its
@@ -1295,7 +1296,7 @@ TRANSITIONAL) reads as none in a baseline run (`projectPage`), so every
 rule for a missing map holds: a quiet reconcile of any one repository
 runs the project step for it alone, the prompt shows no current map, the
 redraw is written even when it looks the same, and a null or refused
-answer leaves the sentinel. A note's fold carries it as stored.
+answer leaves the sentinel. A note's call carries it as stored.
 Only the two maps carry them; `checkFlow` drops them on any other flow. The map never costs the description: an edge pointing at its own
 node or repeating one before it is taken out (one "almanach → almanach"
 edge refused a whole map once), a repository that left the
@@ -1312,8 +1313,8 @@ drawn. A retry cut short (no call to spare, a failed call, null) keeps
 the map as stored, no sentinel; a hold leaves the step open, resumed
 after it. The description is never paid for twice.
 A map is due only while `revisions.map` is NULL, so a quiet reconcile
-folds such a project once, not forever; a run that folds it anyway asks
-again. A zone needs no title, the UI titles zones by id. A note's fold
+consolidates such a project once, not forever; a run that consolidates it
+anyway asks again. A zone needs no title, the UI titles zones by id. A note's call
 carries the map forward unchanged. The API serves the sentinel as no map
 with `map_declined`, and the project page shows its placeholder only
 where `map_expected` holds and no map was declined. The UI draws both
@@ -1355,7 +1356,7 @@ arrows; a box pointed at lights what it is connected to, with the arrow's
 way and label. The drawing is the full view and the SVG file. At the cap
 (22 boxes) the drawing stood 1458px tall and the repositories came after
 it (user, 2026-11-03).
-Every new repository revision (a describe step's, a note's fold) takes
+Every new repository revision (a describe step's, a note's call) takes
 the page's current map and basis in the store, so neither a merge nor the
 next run's first step drops it; nothing removes one. Its nodes are parts,
 not pages: none links.
@@ -1464,7 +1465,7 @@ take the clone's lock for the read only, never across a model call.
 
 **Prompt changes reach stored pages by a restyle.** A prompt shapes only
 the calls made after it ships; a stored page is touched again by a note's
-fold (what the note changes), a reconcile (the changed parts) or a full run
+call (what the note changes), a reconcile (the changed parts) or a full run
 (every part, up to `BACKEND_BASELINE_MAX_CALLS` calls and
 `BACKEND_BASELINE_MAX_BYTES` of code a repository). Rules of layout, kind
 and area need no code read again (user, 2026-11-04: "that's pretty
@@ -1588,7 +1589,7 @@ the epoch: stored pages change as before.
 - Startup runs every check (database, team keys, model profile, the
   gateway's model listing) before aborting, so the log names all the
   failures at once. A gateway that does not answer is a warning only: notes
-  are still taken and folds retry; a gateway that refuses the key or does
+  are still taken and their calls retry; a gateway that refuses the key or does
   not list the alias is a fault.
 - Logs are structured, one line per event. No secret, no token ever
   appears in them; the startup config line prints addresses, model and caps.
@@ -1644,7 +1645,7 @@ the epoch: stored pages change as before.
   older than the slowest clone you expect.
 - Shutdown order: the HTTP server drains first (new deliveries get a
   connection refused and noergler keeps them pending), then the worker is
-  asked to stop and finishes the fold in flight, up to a grace of the call
+  asked to stop and finishes the call in flight, up to a grace of the call
   timeout plus fifteen seconds; then `PRAGMA optimize` on each open
   connection, five seconds at most; only then does the pool close. Size
   the pod's termination grace above that sum plus the HTTP drain.
@@ -1675,9 +1676,9 @@ one.
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
 | `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | diagram, manifest, redact, urlorigin, ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |
-| `internal/consolidate` | The worker: loop, hold, fold, the baseline runs' steps, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | baseline, config, diagram, gitrepo, heartbeat, inference, lang, markup, prompts, store, llmwire (error classes) |
+| `internal/consolidate` | The worker: loop, hold, the notes' calls, the baseline runs' steps, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | baseline, config, diagram, gitrepo, heartbeat, inference, lang, markup, prompts, store, llmwire (error classes) |
 | `internal/baseline` | What a baseline run decides without I/O: the files worth reading, the docs, the catalogue's plan within budget, what a reconcile reads again, how a step's patch applies to a page without erasing what the PRs taught, the diagram validation. | diagram, gitrepo, inference, lang, store (types) |
-| `internal/inference` | The llmwire clients, one per profile: startup checks, one streamed call per fold or baseline step with its strict schema, answer parsing, cost extraction. | diagram, markup, llmwire |
+| `internal/inference` | The llmwire clients, one per profile: startup checks, one streamed call per merge or baseline step with its strict schema, answer parsing, cost extraction. | diagram, markup, llmwire |
 | `internal/prompts` | Every model prompt (`almanach_*.txt`: merge, catalogue, describe, project, repository map, restyle, departure, diagrams), compiled in with `go:embed`. Never configurable. | nothing |
 | `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | urlorigin |
 | `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only, trusting `BACKEND_GIT_CA_FILE` like git. | gitrepo (Access), store (types only) |
@@ -1802,9 +1803,9 @@ the worker's queue state: both times NULL means queued, the partial index
 `notes_queue_idx` makes the oldest queued note one cheap lookup;
 `fold_failed_at` set is a note the call failed on, with its reason, off
 the queue until a run of its repository clears it. The worker's marks
-(folded, failed) and attempt count name the `delivery_id` the fold read: a
-note delivered again while its first version is folded stays queued, its
-own attempts not counted against. `note_calls` holds, per delivery, every lane the
+(consolidated, failed) and attempt count name the `delivery_id` the call
+read: a note delivered again while its first version is consolidated stays
+queued, its own attempts not counted against. `note_calls` holds, per delivery, every lane the
 gateway reported for the round's note call plus the PR's round totals, as
 columns: the cache-hit rate and the cost per note are one query.
 
@@ -1815,7 +1816,7 @@ kind, name, text, files, the sources code attached and its diagram, if
 any), a project revision's system `map` as JSON, the serialized
 size, what produced it (`source_kind`: the PR whose note it was, or the
 baseline run's commit, exactly one of `source_pr_key` and `source_commit`
-set; a fold of several notes the first PR, and every PR in
+set; a call of several notes the first PR, and every PR in
 `batch_pr_keys`, as its call's row) and the call behind it. A statement's source carries the same kind;
 a source stored before baselines has none and is a PR. The
 check `(scope = 'project') = (repo_slug IS NULL)` keeps the two scopes
@@ -1852,14 +1853,14 @@ so the choice is not undone as a cleanup.
   marks a note sent only after a 2xx and resends a pending one on the
   team's next merge, so a duplicate is the normal case after any blip. The
   dedup makes a resend harmless; a lost note would be the real cost.
-- **One worker, serial.** Two folds of the same project would rewrite the
+- **One worker, serial.** Two calls for the same project would rewrite the
   project description from two different bases and one would overwrite
   the other's facts. The volume is one note per merged PR; a queue of
   minutes is fine, a wrong description is not. The serial worker is what
-  keeps a fold's base current; `InsertRevision`'s transaction, which
+  keeps a call's base current; `InsertRevision`'s transaction, which
   holds SQLite's one write lock from its `BEGIN`, only keeps revision
   numbers and the page pointer consistent, it does not make concurrent
-  folds safe. Parallelising the worker would need the
+  calls safe. Parallelising the worker would need the
   base revision checked at write time.
 - **Provenance is code's, never the model's.** The sources on a statement
   (which PRs it was learned from) are what make a wiki trustworthy, and a
@@ -1888,7 +1889,7 @@ so the choice is not undone as a cleanup.
   minutes. The hold doubles up to ten minutes and the note keeps its
   attempt count; after eight failures of one note it is given up, as
   failed, so one bad note cannot hold the queue forever and none is
-  consolidated unfolded. A 4xx or an off-schema answer is
+  marked consolidated without its call. A 4xx or an off-schema answer is
   about this note and would fail the same way at once: the note waits,
   failed, for the next run of its repository, which rewrites the page it
   failed on, and is tried then; marking it consolidated, as once, threw
@@ -2013,7 +2014,7 @@ so the choice is not undone as a cleanup.
 - **A run checks what the PRs taught, it does not erase it.** A PR fact
   carries knowledge the code does not show, such as why a rule exists; a
   run may correct it but drop it only when its files left the tree. Every
-  note is folded, a note whose PR the run already read included.
+  note is consolidated, a note whose PR the run already read included.
 - **A cheaper model picks, the strong one writes.** The catalogue is a
   listing and the docs, a selection task; the steps that write are the
   expensive ones. `BACKEND_BASELINE_CATALOGUE_MODEL` is optional.
@@ -2052,7 +2053,7 @@ things a change must not undo by accident.
   A second delivery with that id answers `deduped`, writes nothing and
   does not wake the worker. A delivery with the same PR but another
   source commit (a reopen and re-merge) is a new delivery: it replaces
-  the note row, re-queues it and resets its fold attempts; the revisions
+  the note row, re-queues it and resets its attempts; the revisions
   the old note produced stay.
 - **The envelope is strict, the note is verbatim.** An unknown key at the
   top level or inside `note_call`, `rounds` or a claim, a missing required
@@ -2101,25 +2102,25 @@ things a change must not undo by accident.
 ### The queue and the worker
 
 - The queue is `consolidated_at IS NULL AND fold_failed_at IS NULL`, oldest
-  `received_at` first, then the lowest PR id. One fold at a time, a
+  `received_at` first, then the lowest PR id. One call at a time, a
   repository's notes together once its oldest has waited
   `BACKEND_FOLD_DELAY`, in merge order, at most 240 kB of notes a call;
   there is never a second worker.
-- A fold of several notes credits each edit and new statement with the
-  pull requests it names, of the fold's; one naming none or another is
+- A call of several notes credits each edit and new statement with the
+  pull requests it names, of the call's; one naming none or another is
   left out. A new pitfall needs a bugfix note among them. The call's row
-  and the revisions keep every PR of the fold (`batch_pr_keys`).
+  and the revisions keep every PR of the call (`batch_pr_keys`).
 - The worker wakes on an accepted delivery and polls every thirty seconds;
   a wake that arrives while one is pending is the same wake.
 - Both current pages are read *before* the model call, and the repository
   rewrite is applied before the project one. The project description is
-  folded from the note, not from the repository description.
+  consolidated from the note, not from the repository description.
 - A failure is classed, and the class decides everything:
   - the model's answer off the schema, an answer cut by the model's output
     limit (`too_long`: the description asked for does not fit one call), a
     4xx from the gateway (context overflow, rejected format), a 2xx of the
     wrong shape, a patch that leaves a first page without a summary, a
-    panic in the fold: specific to this call, the note leaves the queue as
+    panic in the call: specific to this call, the note leaves the queue as
     failed with its reason and its attempt counted, and comes back when a
     run of its repository ends done, until eight attempts in all (a
     baseline step's panic fails its run, a sync's its repository, on the
@@ -2138,7 +2139,7 @@ things a change must not undo by accident.
 - A mark, a defer or a run's save the store refuses pauses the drain and
   holds the worker (`busy` for its lock, else `write`: thirty seconds
   doubling to ten minutes, reset by a write that gets through) rather than
-  paying for the same fold or step again at the next poll. A page or step
+  paying for the same call or step again at the next poll. A page or step
   write is held so only when the file refuses it (`store.IsRefused`): the
   note stays queued, neither failed nor consolidated, and its retry counts
   the attempt before its call, once; one that fails for its content fails
@@ -2148,9 +2149,9 @@ things a change must not undo by accident.
   on the direct route llmwire's list rate for the model (a comparable
   figure, not an invoice). Cost NULL when neither priced it; llmwire's
   reason is logged (`call unpriced`).
-- Shutdown lets the fold in flight finish for up to the call timeout plus
-  fifteen seconds, then cancels it. A fold cancelled this way leaves its
-  note queued (nothing was marked) and is folded again after the restart.
+- Shutdown lets the call in flight finish for up to the call timeout plus
+  fifteen seconds, then cancels it. A call cancelled this way leaves its
+  note queued (nothing was marked) and is consolidated again after the restart.
 
 ### Rules of a rewrite
 
@@ -2163,7 +2164,7 @@ baseline step's patch never is: its bad items are left out one by one (see
   `invariant`, `entity`, `decision`, `extension`, `pitfall`; on the
   project page neither `extension` nor `component`. Any other kind
   rejects the rewrite. A collection's project page takes no statement: a
-  fold's are left out, logged, its summary taken.
+  merge call's statements for it are left out, logged, its summary taken.
 - `name` and `text` are trimmed and Swiss-spelled before anything is
   checked; an empty one rejects the rewrite. A statement returned exactly
   as stored is never held to the kind or emptiness rule: one written
@@ -2318,7 +2319,7 @@ baseline step's patch never is: its bad items are left out one by one (see
   is a 409. A run's commit is pinned when it starts; every read is at that
   commit, never a working tree.
 - A repository's notes wait while its run is past `queued`; afterwards
-  every waiting note is folded.
+  every waiting note is consolidated.
 - Each step makes at most one model call; the caps are checked before it.
   A step's revision and the run's progress land in one transaction, the
   project step's with the run's end.

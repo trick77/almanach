@@ -24,7 +24,7 @@ Two sources feed it:
   claims: where its code disagrees, the code wins.
 - **The reviews.** noergler already paid to read every pull request's diff
   and ticket. At merge it sends what the pull request taught, and Almanach
-  folds it in: the knowledge code cannot show, such as why a rule exists.
+  consolidates it: the knowledge code cannot show, such as why a rule exists.
   With the sources on, the code is the starting point: a note for a
   repository Almanach does not clone is ignored.
 
@@ -71,7 +71,7 @@ One Go process and one SQLite database file on its own volume. The
 process holds the HTTP surface (noergler's bearer-authenticated webhook,
 the read API, the UI), the store (SQLite in WAL, embedded migrations),
 the poller that clones and fetches
-with the git binary, and one serial worker that folds notes and runs the
+with the git binary, and one serial worker that consolidates notes and runs the
 baseline's steps, so a page never has two writers. Descriptions are
 revisions behind a current pointer: history is never rewritten.
 

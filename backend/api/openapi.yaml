@@ -209,7 +209,7 @@ paths:
       description: |
         Every model call goes through one worker, one at a time. `current` is
         the note or run step in flight, null while the worker waits. `next`
-        is the rest in the order the worker takes it: the notes it may fold,
+        is the rest in the order the worker takes it: the notes it may consolidate,
         oldest first; the started run's next step; the notes waiting for that
         run; the queued runs, oldest first. Why the worker does not take an
         item yet is on that item: a hold on the first one, a run step waiting
@@ -230,7 +230,7 @@ paths:
     get:
       tags: [wiki]
       summary: How many notes and runs are queued
-      description: The unfolded notes and the open runs, counted; the nav polls it from every page, so none of the queue page's reads.
+      description: The notes not yet consolidated and the open runs, counted; the nav polls it from every page, so none of the queue page's reads.
       operationId: getQueueCount
       responses:
         "200":
@@ -282,7 +282,7 @@ paths:
     get:
       tags: [wiki]
       summary: A project's description, repositories, problem areas and recent notes
-      description: The project page. `description` is null until the first fold wrote a revision.
+      description: The project page. `description` is null until the first consolidation wrote a revision.
       operationId: getProject
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -540,7 +540,7 @@ paths:
       summary: What Almanach's own model calls cost, by month and project
       description: >-
         Almanach's ledger (`llm_calls`) alone, never noergler's figures: the
-        merges (a note's fold) apart from the runs (every baseline call), by
+        merges (a note's consolidation) apart from the runs (every baseline call), by
         UTC month and project, newest month first, with the calls no one
         priced counted apart. Beside it what the UTC day's calls cost so far
         and the daily budget (`BACKEND_DAILY_BUDGET_USD`), when one is set.
@@ -886,7 +886,7 @@ paths:
       tags: [sources]
       summary: Queue a baseline run of one repository
       description: >-
-        Reads the clone at its head and folds what the code teaches into the
+        Reads the clone at its head and consolidates what the code teaches into the
         repository's page. reconcile (the default) reads what changed since
         the commit last documented, or everything before the first run; full
         reads the repository afresh with a new catalogue. Wakes the worker.
@@ -1653,10 +1653,10 @@ components:
         due_at:
           type: string
           format: date-time
-          description: When the note's repository is folded, its oldest note's arrival plus BACKEND_FOLD_DELAY; set while it waits for that, omitted otherwise.
+          description: When the note's repository is consolidated, its oldest note's arrival plus BACKEND_FOLD_DELAY; set while it waits for that, omitted otherwise.
         batch:
           type: integer
-          description: How many notes the fold in flight takes in one call; on the current item, when more than one.
+          description: How many notes the call in flight takes; on the current item, when more than one.
         run:
           $ref: "#/components/schemas/QueueRun"
         attempts:
@@ -1832,7 +1832,7 @@ components:
           description: A note's merge call outcome (ok, timed_out, unparseable, too_long, error); omitted when no call was made.
         batch:
           type: integer
-          description: How many notes the note's merge call folded, when more than one; cost_usd is then the whole call's, shared with them.
+          description: How many notes the note's merge call consolidated, when more than one; cost_usd is then the whole call's, shared with them.
         run_id:
           type: integer
         mode:
@@ -1908,10 +1908,10 @@ components:
           type: integer
         skipped:
           type: integer
-          description: Subjects the run could not fold; the next reconcile reads them again.
+          description: Subjects the run could not consolidate; the next reconcile reads them again.
         read_bytes:
           type: integer
-          description: The distinct file content the run's folded parts read (the docs and the subjects, a file once however many subjects hold it, a skipped part not at all), set when the run ends; a reconcile carries the documented run's.
+          description: The distinct file content the run's consolidated parts read (the docs and the subjects, a file once however many subjects hold it, a skipped part not at all), set when the run ends; a reconcile carries the documented run's.
         readable_bytes:
           type: integer
           description: What the tree offered at the full run's commit, the readable files' bytes (a file over 100 kB counts its head), a reconcile carrying the documented run's; 0 on a restyle, a departure, a run from before. The share of the two is how much of the code the page rests on.
@@ -2647,12 +2647,12 @@ components:
           enum: [pr, baseline]
         source_pr_key:
           type: string
-          description: The PR whose note produced this revision, the first of a fold of several; empty for a baseline.
+          description: The PR whose note produced this revision, the first of a call of several; empty for a baseline.
         source_pr_keys:
           type: array
           items:
             type: string
-          description: Every PR a fold of several notes took, in merge order, source_pr_key the first; omitted for one.
+          description: Every PR a call of several notes took, in merge order, source_pr_key the first; omitted for one.
         source_commit:
           type: string
           description: The commit a baseline run read; empty for a PR.
@@ -2923,7 +2923,7 @@ components:
           type: array
           items:
             type: string
-          description: Every PR a fold of several notes took, in merge order, source_pr_key the first; omitted for one.
+          description: Every PR a call of several notes took, in merge order, source_pr_key the first; omitted for one.
         statements:
           type: integer
         chars:
@@ -3419,7 +3419,7 @@ components:
                 route. A statement is found under every name the
                 project and repository had, so a rename keeps older
                 credits listed; a note queued again (a re-delivery) keeps
-                what its earlier fold taught. Empty when nothing on the
+                what its earlier consolidation taught. Empty when nothing on the
                 pages names the pull request. Links as
                 `/projects/{project_key}[/repos/{repo_slug}]#description/{id}`.
               items:
