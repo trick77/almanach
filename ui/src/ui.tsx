@@ -149,21 +149,24 @@ const dotClass: Record<Tone, string> = {
 };
 
 /** Pill always carries its word; the dot is a second cue, never the only
- *  one. */
+ *  one. Sans whatever the cell around it; className places it (a margin). */
 export function Pill({
   tone,
   dot = false,
+  className = "",
   children,
 }: {
   tone: Tone;
   dot?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   return (
     <span
       className={
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap " +
-        toneClass[tone]
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-sans text-xs font-medium whitespace-nowrap " +
+        toneClass[tone] +
+        (className ? " " + className : "")
       }
     >
       {dot && (
