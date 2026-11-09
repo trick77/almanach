@@ -26,13 +26,14 @@ import (
 // probably last, and not in multiple places"). Deployment, an IT word
 // written English (user, 2026-11-09: "Das sollte doch Deployment heissen,
 // überall, immer").
+// The former "Entwicklung und Auslieferung" is the word rule's
+// (lang.Terms): a stored page's respelled by migrate, a model's on write.
 const LastArea = "Entwicklung und Deployment"
 
-// formerLastArea is LastArea as pages stored it before; CleanArea takes it
-// for LastArea, from a stored page and from a model that still writes it.
+// formerLastArea is LastArea as it was named: the word rule takes it as
+// written, CleanArea in any case ("entwicklung und auslieferung").
 // TRANSITIONAL(deployment-area): Remove when every deployment has run
-// `almanach migrate` of 0.1.41 or later (it respells stored pages; the
-// prompts name only the new one since), tests too.
+// `almanach migrate` of 0.1.41 or later, tests too.
 const formerLastArea = "Entwicklung und Auslieferung"
 
 // OpsArea is the area just before LastArea: what belongs to the running

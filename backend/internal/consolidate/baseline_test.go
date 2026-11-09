@@ -2075,6 +2075,9 @@ func TestRun_RepoMapStepLaysThePageOut(t *testing.T) {
 	// s3 left under no area: the outline named it only under a nameless
 	// area and twice; it is not asked for again.
 	x.models.repoMap = inference.RepoMapResult{Call: called, Outline: []inference.OutlineArea{
+		// The former name, any case, is still the last area.
+		// TRANSITIONAL(deployment-area): Remove when formerLastArea goes,
+		// writing "entwicklung und deployment" here.
 		{Area: "entwicklung und auslieferung", IDs: []string{"s1", "s4"}},
 		{Area: "Gesamtsystem", IDs: []string{"s2", "s9"}},
 		{Area: " ", IDs: []string{"s3"}},

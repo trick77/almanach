@@ -12,13 +12,11 @@ import (
 
 // Respeller is a spelling rule the write path applies too (lang.Terms, by
 // baseline.Respeller), as Respell applies it to a stored page: Prose to the
-// summary and each statement's name and text, Area to its area (an area's
-// own rules beside the words: a tail area renamed), Diagram to a diagram's
+// summary and each statement's name, text and area, Diagram to a diagram's
 // labels in place (reporting a change), Arrange to lay the page out again
 // when an area moved. Each must be idempotent.
 type Respeller interface {
 	Prose(string) string
-	Area(string) string
 	Diagram(*diagram.Diagram) bool
 	Arrange([]Statement) []Statement
 }
@@ -103,18 +101,18 @@ func respelled(ctx context.Context, q rowQuerier, id int64, f Respeller) (*respe
 	mapCurrent := basis != "" && basis == (Page{Summary: summary, Statements: st}).MapBasis()
 	before := ProseChars(summary, st)
 	changed, areaMoved := false, false
-	set := func(p *string, rule func(string) string) bool {
-		if v := rule(*p); v != *p {
+	set := func(p *string) bool {
+		if v := f.Prose(*p); v != *p {
 			*p, changed = v, true
 			return true
 		}
 		return false
 	}
-	set(&summary, f.Prose)
+	set(&summary)
 	for i := range st {
-		set(&st[i].Name, f.Prose)
-		set(&st[i].Text, f.Prose)
-		if set(&st[i].Area, f.Area) {
+		set(&st[i].Name)
+		set(&st[i].Text)
+		if set(&st[i].Area) {
 			areaMoved = true
 		}
 		if f.Diagram(st[i].Diagram) {
