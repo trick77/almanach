@@ -143,9 +143,9 @@ Checks:
 - `CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z')`
 - `CHECK (batch_pr_keys IS NULL OR (json_valid(batch_pr_keys) AND json_type(batch_pr_keys) = 'array'))`
 - `CHECK (streamed IN (0, 1))`
-- `CHECK ((source_kind = 'pr') = (source_pr_key IS NOT NULL))`
-- `CHECK ((source_kind = 'baseline') = (source_commit IS NOT NULL))`
-- `CHECK ((source_kind = 'page') = (purpose = 'brief'))`
+- `CONSTRAINT llm_calls_source_pr CHECK ((source_kind = 'pr') = (source_pr_key IS NOT NULL))`
+- `CONSTRAINT llm_calls_source_commit CHECK ((source_kind = 'baseline') = (source_commit IS NOT NULL))`
+- `CONSTRAINT llm_calls_source_page CHECK ((source_kind = 'page') = (purpose = 'brief'))`
 
 ## note_calls
 
@@ -550,11 +550,11 @@ Checks:
 - `CHECK (shape IS NULL OR (scope = 'project' AND shape IN ('system', 'collection')))`
 - `CHECK (batch_pr_keys IS NULL OR (json_valid(batch_pr_keys) AND json_type(batch_pr_keys) = 'array'))`
 - `CHECK ((scope = 'project') = (repo_id IS NULL))`
-- `CHECK ((source_kind = 'pr') = (source_pr_key IS NOT NULL))`
-- `CHECK ((source_kind = 'baseline') = (source_commit IS NOT NULL))`
-- `CHECK (map IS NULL OR scope = 'project')`
-- `CHECK (repo_map IS NULL OR scope = 'repository')`
-- `CHECK (repo_map_basis IS NULL OR scope = 'repository')`
+- `CONSTRAINT revisions_source_pr CHECK ((source_kind = 'pr') = (source_pr_key IS NOT NULL))`
+- `CONSTRAINT revisions_source_commit CHECK ((source_kind = 'baseline') = (source_commit IS NOT NULL))`
+- `CONSTRAINT revisions_map_scope CHECK (map IS NULL OR scope = 'project')`
+- `CONSTRAINT revisions_repo_map_scope CHECK (repo_map IS NULL OR scope = 'repository')`
+- `CONSTRAINT revisions_repo_map_basis_scope CHECK (repo_map_basis IS NULL OR scope = 'repository')`
 
 ## source_repos
 
@@ -1023,17 +1023,17 @@ erDiagram
     pages }o--|| projects : "project_id"
     project_names }o--|| projects : "project_id"
     projects }o--o| teams : "team"
-    repo_briefs }o--|| source_repos : "repo_id"
-    repo_endpoints }o--|| source_repos : "repo_id"
-    repo_manifests }o--|| source_repos : "repo_id"
+    repo_briefs |o--|| source_repos : "repo_id"
+    repo_endpoints |o--|| source_repos : "repo_id"
+    repo_manifests |o--|| source_repos : "repo_id"
     repo_names }o--|| repos : "repo_id"
     repo_names }o--|| projects : "project_id"
-    repo_topics }o--|| source_repos : "repo_id"
+    repo_topics |o--|| source_repos : "repo_id"
     repos }o--o| teams : "team"
     repos }o--|| projects : "project_id"
     revisions }o--o| repos : "repo_id"
     revisions }o--|| projects : "project_id"
     source_repos }o--|| sources : "project_id"
-    source_repos }o--|| repos : "repo_id"
-    sources }o--|| projects : "project_id"
+    source_repos |o--|| repos : "repo_id"
+    sources |o--|| projects : "project_id"
 ```
