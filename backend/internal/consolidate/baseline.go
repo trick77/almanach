@@ -718,12 +718,16 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 // subjects the files it picked, held to the plan's rules as the
 // catalogue's are, each with the reader questions it asked. Its prompt
 // counts against the run's input tokens; no doc is read for it. done
-// false: its call failed or picked no file, logged, for the catalogue to
-// plan the run instead (the router's call spent, its tokens on no plan).
+// false: its prompt passes the run's input tokens (unpaid), or its call
+// failed or picked no file (the router's call spent, its tokens on no
+// plan), logged, for the catalogue to plan the run instead.
 func (w *Worker) routedCatalogue(ctx context.Context, r *store.BaselineRun, router Router, ask routerQuestion, files []baseline.File,
 	contracts map[string]bool, at time.Time) (bool, error) {
+	// routeFits holds the prompt to a share of the budget; this one only
+	// guards that, and is the catalogue's turn, never the run's failure.
 	if err := w.planFits("the router", ask.prompt); err != nil {
-		return false, err
+		w.log.WarnContext(ctx, "baseline: router: "+err.Error()+", catalogued instead")
+		return false, nil //nolint:nilerr // logged; the catalogue plans the run
 	}
 	res := router.Route(ctx, ask.prompt)
 	ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
@@ -756,7 +760,7 @@ func (w *Worker) routedCatalogue(ctx context.Context, r *store.BaselineRun, rout
 // after a hold or a busy clone reuses it. One that failed is built again.
 func (w *Worker) routerAskOnce(ctx context.Context, r *store.BaselineRun, files []baseline.File, contracts map[string]bool, at time.Time) (routerQuestion, error) {
 	if w.askRun == r.ID && w.ask.prompt != "" {
-		return w.ask, routeFits(w.ask.prompt)
+		return w.ask, routeFits(w.ask.prompt, w.route)
 	}
 	ask, err := w.routerAsk(ctx, r, files, contracts, at)
 	if err == nil || errors.Is(err, errTreeTooWide) {

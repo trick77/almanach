@@ -93,6 +93,9 @@ type Client struct {
 	effort   string
 	log      *slog.Logger
 	diagrams bool
+	// contextTokens is the gateway's max_input_tokens for the alias, read
+	// off the listing at Startup; 0 unknown.
+	contextTokens int
 }
 
 // New builds the client from llmwire's environment (LLMWIRE_LITELLM_*).
@@ -144,6 +147,7 @@ func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	var ids []string
 	for _, e := range entries {
 		if e.ID == p.WireModelID {
+			c.contextTokens = int(llmwire.Tokens(e.MaxInputTokens))
 			return "", nil
 		}
 		ids = append(ids, e.ID)
@@ -185,6 +189,12 @@ const startupTimeout = 10 * time.Second
 
 // Model is the profile id.
 func (c *Client) Model() string { return c.model }
+
+// ContextTokens is the context the gateway's listing gives the alias
+// (LiteLLM's max_input_tokens, which a gateway may cap below the vendor's),
+// read at Startup; 0 when it lists none or did not answer. An input cap,
+// held as the whole window, the answer's reserve within it: never too much.
+func (c *Client) ContextTokens() int { return c.contextTokens }
 
 // EffortOff switches a model's reasoning off where its profile allows it.
 // Measured on a baseline subject step (2026-10-31): of 22k output tokens,
@@ -484,10 +494,14 @@ const (
 // think, as the wire's max_tokens asks it (llmwire adds its reasoning
 // overhead on top): what its listing's ceiling must leave free
 // (baseline.RouterMaxBytes). RouteContext is the context the router's
-// model is held to, the smallest the deployment's profiles give.
+// model is held to when the gateway lists none for its alias
+// (ContextTokens), the smallest the deployment's profiles give.
+// RouteContextMax caps a listed one: a 1M context would make one router
+// call near a million tokens, most of a run's input budget.
 const (
-	RouteReserve = capRoute + reasoningRoom + llmwire.DefaultReasoningOverhead
-	RouteContext = 128_000
+	RouteReserve    = capRoute + reasoningRoom + llmwire.DefaultReasoningOverhead
+	RouteContext    = 128_000
+	RouteContextMax = 256_000
 )
 
 // PromptTokens is a prompt's size in tokens beside the system message, at
