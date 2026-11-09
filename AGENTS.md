@@ -37,7 +37,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   logged, stored kept (user, 2026-11-01).
 - Problem areas: `bugfix_area`, never model's component. Pitfall: bugfix evidence only.
 - One worker, serial. Repo's notes = one call a day (docs a day behind ok; user, 2026-11-06); credit =
-  model's `from_prs`, held to the fold's PRs. Code drop = files gone at head, never merge tree. Call
+  model's `from_prs`, held to the call's PRs. Code drop = files gone at head, never merge tree. Call
   failure: note failed, never consolidated. Gateway hold, refused write: note kept, retry counted once
   before its call (a pause repaid the call each poll).
 - One `ChatStream` per call (gateway cuts non-streamed at 300 s; user, 2026-11-02), strict schema, no in-call
@@ -61,8 +61,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - A run is due by the rows, read each cycle, never by an event.
 - What a run reads is code's where code can tell, never the catalogue's alone (it read tests, not routing;
   user, 2026-11-07): tests out unless most of the tree; migrations out, model from code (user, 2026-11-08);
-  anchors always; WSDL/XSD only build-named; generated and own `.agents/PROJECT.md` never. Listing folds where
-  files are (Maven = one line).
+  anchors always; WSDL/XSD only build-named; generated and own `.agents/PROJECT.md` never. Listing opens where
+  files are (Maven was one line).
 - Sources on: a non-source repo's note = 202 `ignored`, never stored (user, 2026-10-30); gate key/slug any
   case (user, 2026-11-03). No `git checkout`, no parallel writer. Project = system (wiring, no `component`)
   or collection (summary alone, PR-taught too); model judges, no switch (user, 2026-11-04).

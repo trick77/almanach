@@ -329,7 +329,7 @@ export function SourceChip({
 }
 
 /** RevisionSources is what wrote a revision: its run's commit, its note's
- *  PR, or every PR a fold of several notes took, a chip each. */
+ *  PR, or every PR a call of several notes took, a chip each. */
 export function RevisionSources({
   kind,
   prKey,

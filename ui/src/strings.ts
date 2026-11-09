@@ -450,7 +450,8 @@ export const S = {
     mergeCommit: "Merge-Commit",
     model: "Modell",
     received: "Empfangen",
-    consolidated: "Konsolidiert",
+    // consolidated_at: also set on a note refused or ignored without a call.
+    consolidated: "Abgeschlossen",
     notYet: "noch nicht",
     call: "Notiz-Aufruf",
     callHint: "was noergler für diese Notiz gemeldet hat",
@@ -907,11 +908,11 @@ export const S = {
     hours: (h: number, m: number) => `${h} h ${m} min`,
     attempt: (n: number, max: number) => `Versuch ${n + 1} von ${max}`,
     heldBy: (id: number) => `Wartet auf Run #${id}.`,
-    // A repository's notes are folded together once a day: when this one's
-    // turn comes, and how many one fold takes in one call.
-    dueAt: (at: string) => `Gefaltet ab ${at}`,
+    // A repository's notes are consolidated together once a day: when this
+    // one's turn comes, and how many notes one call takes.
+    dueAt: (at: string) => `Vorgemerkt, frühestens ${at}`,
     batch: (n: number) => `${n} Notizen in einem Aufruf`,
-    // A folded note's cost is its fold's, shared with the others.
+    // A consolidated note's cost is its call's, shared with the others.
     shared: (n: number) => `Für ${n} Notizen`,
     commit: (from: string, to: string) =>
       from === "" ? `Commit ${to}` : `von ${from} auf ${to}`,
@@ -940,11 +941,11 @@ export const S = {
     runFailed: "Fehlgeschlagen:",
     retryAt: (at: string) => `Erneut automatisch frühestens ${at}`,
     noteOutcome: {
-      ok: "Gefaltet",
-      timed_out: "Nicht gefaltet: Timeout",
-      unparseable: "Nicht gefaltet: Antwort unlesbar",
-      too_long: "Nicht gefaltet: Antwort zu lang",
-      error: "Nicht gefaltet: Aufruf fehlgeschlagen",
+      ok: "Eingearbeitet",
+      timed_out: "Nicht eingearbeitet: Timeout",
+      unparseable: "Nicht eingearbeitet: Antwort unlesbar",
+      too_long: "Nicht eingearbeitet: Antwort zu lang",
+      error: "Nicht eingearbeitet: Aufruf fehlgeschlagen",
       "": "Ohne Modellaufruf abgeschlossen",
     } as Record<string, string>,
     failedNotes: "Nicht eingearbeitet",

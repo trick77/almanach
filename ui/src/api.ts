@@ -121,7 +121,7 @@ export interface Description {
   statements: Statement[];
   source_kind?: "pr" | "baseline";
   source_pr_key: string;
-  /** Every PR a fold of several notes took, source_pr_key the first. */
+  /** Every PR a call of several notes took, source_pr_key the first. */
   source_pr_keys?: string[];
   source_commit?: string;
   updated_at: string;
@@ -206,7 +206,7 @@ export interface Revision {
   revision: number;
   source_kind?: "pr" | "baseline";
   source_pr_key: string;
-  /** Every PR a fold of several notes took, source_pr_key the first. */
+  /** Every PR a call of several notes took, source_pr_key the first. */
   source_pr_keys?: string[];
   source_commit?: string;
   statements: number;
@@ -735,10 +735,10 @@ export interface QueueItem {
   received_at?: string;
   /** The run of the note's repository it waits for. */
   held_by?: number;
-  /** When the note's repository is folded, while it waits for the fold
+  /** When the note's repository is consolidated, while it waits for the
    *  delay. */
   due_at?: string;
-  /** How many notes the fold in flight takes; the current item, when more
+  /** How many notes the call in flight takes; the current item, when more
    *  than one. */
   batch?: number;
   run?: QueueRun;
@@ -757,7 +757,7 @@ export interface QueueRecent {
   title?: string;
   /** A note's merge call outcome; absent when no call was made. */
   outcome?: string;
-  /** How many notes the note's call folded, when more than one: the cost
+  /** How many notes the note's call consolidated, when more than one: the cost
    *  is the whole call's. */
   batch?: number;
   run_id?: number;
