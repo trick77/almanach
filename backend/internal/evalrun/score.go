@@ -12,6 +12,7 @@ import (
 
 	"github.com/trick77/toolkit/llmwire"
 
+	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
@@ -110,37 +111,122 @@ type RepoReport struct {
 	TopicRecall  *float64 `json:"topic_recall,omitempty"`
 	TopicsMissed []string `json:"topics_missed,omitempty"`
 	TopicsExtra  []string `json:"topics_extra,omitempty"`
+	// InterfaceRecall is the share of the labels' interfaces the code-read
+	// endpoints name of the same kind, name and way, nil without interface
+	// labels; EndpointRecall the share of the labels' offered operations
+	// read, parameters by position, nil without endpoint labels. Missed and
+	// Extra as for the topics: a path set together wrong is one of each.
+	InterfaceRecall  *float64 `json:"interface_recall,omitempty"`
+	InterfacesMissed []string `json:"interfaces_missed,omitempty"`
+	InterfacesExtra  []string `json:"interfaces_extra,omitempty"`
+	EndpointRecall   *float64 `json:"endpoint_recall,omitempty"`
+	EndpointsMissed  []string `json:"endpoints_missed,omitempty"`
+	EndpointsExtra   []string `json:"endpoints_extra,omitempty"`
+	// InterfacesNotRead says the poller never read the repository's
+	// interfaces (a failed read is logged only): labelled, not scored.
+	InterfacesNotRead bool `json:"interfaces_not_read,omitempty"`
+}
+
+// labelled is one fact a reader read or a label names: the key it is
+// matched by, the words it is reported in.
+type labelled struct{ key, shown string }
+
+// held holds what was read to the labels: the share of the labels found,
+// each key once, those missed and those read beyond them, in the order
+// given; nil recall without labels (labelled false). Labels that name
+// none find all there is to find: what was read is all beyond them.
+func held(labelledAt bool, want, got []labelled) (recall *float64, missed, extra []string) {
+	if !labelledAt {
+		return nil, nil, nil
+	}
+	read := map[string]bool{}
+	for _, g := range got {
+		read[g.key] = true
+	}
+	named := map[string]bool{}
+	hit := 0
+	for _, w := range want {
+		if named[w.key] {
+			continue
+		}
+		named[w.key] = true
+		if read[w.key] {
+			hit++
+		} else {
+			missed = append(missed, w.shown)
+		}
+	}
+	shown := map[string]bool{}
+	for _, g := range got {
+		if !named[g.key] && !shown[g.key] {
+			shown[g.key] = true
+			extra = append(extra, g.shown)
+		}
+	}
+	r := 1.0
+	if len(named) > 0 {
+		r = float64(hit) / float64(len(named))
+	}
+	return &r, missed, extra
 }
 
 // topicScore holds what the poller read of a repository's topics to its
 // labels: a topic found the way the labels say, missed, or found beyond
 // them.
 func topicScore(rep *RepoReport, want []TopicLabel, got []messaging.Topic) {
-	if len(want) == 0 {
+	var w, g []labelled
+	for _, t := range want {
+		k := t.Name + " " + t.Direction
+		w = append(w, labelled{k, k})
+	}
+	for _, t := range got {
+		k := t.Name + " " + t.Direction
+		g = append(g, labelled{k, k})
+	}
+	rep.TopicRecall, rep.TopicsMissed, rep.TopicsExtra = held(len(w) > 0, w, g)
+}
+
+// interfaceScore holds what the poller read of a repository's interfaces
+// to its labels: each interface by kind, name (any case) and way (a
+// partner's spec read as offered is missed and extra both), each offered
+// operation by endpoints.Key. Labels nil: no score. Never read (read
+// false): no score either, said so, never a 0% that reads as the reader's.
+func interfaceScore(rep *RepoReport, wantAPIs *[]InterfaceLabel, wantOps *[]EndpointLabel, got endpoints.Read, read bool) {
+	if wantAPIs == nil && wantOps == nil {
 		return
 	}
-	read := map[string]bool{}
-	for _, t := range got {
-		read[t.Name+" "+t.Direction] = true
+	if !read {
+		rep.InterfacesNotRead = true
+		return
 	}
-	labelled := map[string]bool{}
-	hit := 0
-	for _, w := range want {
-		k := w.Name + " " + w.Direction
-		labelled[k] = true
-		if read[k] {
-			hit++
-		} else {
-			rep.TopicsMissed = append(rep.TopicsMissed, k)
+	ifc := func(kind, name, dir string) labelled {
+		return labelled{kind + " " + strings.ToLower(name) + " " + dir, fmt.Sprintf("%s %q %s", kind, name, dir)}
+	}
+	var w, g []labelled
+	if wantAPIs != nil {
+		for _, a := range *wantAPIs {
+			w = append(w, ifc(a.Kind, a.Name, a.Direction))
 		}
 	}
-	for _, t := range got {
-		if k := t.Name + " " + t.Direction; !labelled[k] {
-			rep.TopicsExtra = append(rep.TopicsExtra, k)
+	for _, a := range got.APIs {
+		g = append(g, ifc(a.Kind, a.Name, a.Direction))
+	}
+	rep.InterfaceRecall, rep.InterfacesMissed, rep.InterfacesExtra = held(wantAPIs != nil, w, g)
+	op := func(kind, method, path string) labelled {
+		return labelled{endpoints.Key(kind, method, path), kind + " " + method + " " + endpoints.Normalize(path)}
+	}
+	w, g = nil, nil
+	if wantOps != nil {
+		for _, e := range *wantOps {
+			w = append(w, op(e.Kind, e.Method, e.Path))
 		}
 	}
-	recall := float64(hit) / float64(len(want))
-	rep.TopicRecall = &recall
+	for _, e := range got.Endpoints {
+		if e.Direction == endpoints.Offers {
+			g = append(g, op(e.Kind, e.Method, e.Path))
+		}
+	}
+	rep.EndpointRecall, rep.EndpointsMissed, rep.EndpointsExtra = held(wantOps != nil, w, g)
 }
 
 // Answer is the judge's verdict on one question.
@@ -186,6 +272,7 @@ func score(ctx context.Context, p Project, res ProjectResult, j *judge, log *slo
 			rep.Labelled = true
 			files(&rep, l, rr)
 			topicScore(&rep, l.Topics, rr.Topics)
+			interfaceScore(&rep, l.Interfaces, l.Endpoints, rr.Interfaces, rr.InterfacesRead)
 			if rr.Page != nil && len(l.Questions) > 0 {
 				ans, cost, err := j.ask(ctx, pageText(rr.Page), l.Questions)
 				rep.JudgeCostUSD = cost.USD
@@ -517,6 +604,22 @@ func (r *Report) total() {
 	}
 }
 
+// heldLine is a labelled fact's line of the report, none without labels:
+// the share found, what was missed, what was read beyond the labels.
+func heldLine(b *strings.Builder, what string, recall *float64, missed, extra []string) {
+	if recall == nil {
+		return
+	}
+	fmt.Fprintf(b, "\n%s found: %.0f%%", what, 100**recall)
+	if len(missed) > 0 {
+		fmt.Fprintf(b, "; missed: %s", strings.Join(missed, ", "))
+	}
+	if len(extra) > 0 {
+		fmt.Fprintf(b, "; beyond the labels: %s", strings.Join(extra, ", "))
+	}
+	b.WriteString("\n")
+}
+
 // Markdown is the report for a reader.
 func (r *Report) Markdown() string {
 	var b strings.Builder
@@ -615,15 +718,11 @@ func markdownRun(b *strings.Builder, run []ProjectReport) {
 				}
 				fmt.Fprintf(b, "\nnoise read (%d files): %s\n", len(x.NoiseFiles), strings.Join(shown, ", "))
 			}
-			if x.TopicRecall != nil {
-				fmt.Fprintf(b, "\ntopics found: %.0f%%", 100**x.TopicRecall)
-				if len(x.TopicsMissed) > 0 {
-					fmt.Fprintf(b, "; missed: %s", strings.Join(x.TopicsMissed, ", "))
-				}
-				if len(x.TopicsExtra) > 0 {
-					fmt.Fprintf(b, "; beyond the labels: %s", strings.Join(x.TopicsExtra, ", "))
-				}
-				b.WriteString("\n")
+			heldLine(b, "topics", x.TopicRecall, x.TopicsMissed, x.TopicsExtra)
+			heldLine(b, "interfaces", x.InterfaceRecall, x.InterfacesMissed, x.InterfacesExtra)
+			heldLine(b, "endpoints", x.EndpointRecall, x.EndpointsMissed, x.EndpointsExtra)
+			if x.InterfacesNotRead {
+				b.WriteString("\ninterfaces not read from the code: not scored\n")
 			}
 			b.WriteString("\n")
 		}

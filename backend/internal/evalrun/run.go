@@ -16,6 +16,7 @@ import (
 	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/consolidate"
+	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/messaging"
@@ -207,8 +208,12 @@ type RepoResult struct {
 	// Picked is every file the run's read parts held, docs included, by
 	// path; Sizes their bytes.
 	Picked map[string]int64
-	// Topics is what the poller read of the repository's messages.
-	Topics []messaging.Topic
+	// Topics is what the poller read of the repository's messages;
+	// Interfaces of what its code offers and declares, InterfacesRead
+	// false when that read never happened (a failed read is logged only).
+	Topics         []messaging.Topic
+	Interfaces     endpoints.Read
+	InterfacesRead bool
 }
 
 // cloneURL is the address a repository is registered under: never
@@ -301,8 +306,17 @@ func runProject(ctx context.Context, p Project, out, gitBin string, app *config.
 	res.TimedOut = waitRuns(ctx, db)
 	// Past the deadline the step in flight is cut off: it is not scored.
 	worker.Stop(5 * time.Second)
+	// What the poller read of every repository, once for the project.
+	msgs, err := db.Messaging(context.WithoutCancel(ctx))
+	if err != nil {
+		return res, err
+	}
+	in, err := db.Interfaces(context.WithoutCancel(ctx))
+	if err != nil {
+		return res, err
+	}
 	for _, r := range p.Repos {
-		rr, err := collect(context.WithoutCancel(ctx), db, p.Key, r.Slug)
+		rr, err := collect(context.WithoutCancel(ctx), db, msgs, in, p.Key, r.Slug)
 		if err != nil {
 			return res, err
 		}
@@ -387,7 +401,7 @@ type planFiles struct {
 	} `json:"docs"`
 }
 
-func collect(ctx context.Context, db *store.Store, key, slug string) (RepoResult, error) {
+func collect(ctx context.Context, db *store.Store, msgs store.Messages, in store.Interfaces, key, slug string) (RepoResult, error) {
 	var rr RepoResult
 	run, _, ok, err := db.LastRun(ctx, key, slug)
 	if err != nil {
@@ -407,11 +421,9 @@ func collect(ctx context.Context, db *store.Store, key, slug string) (RepoResult
 	if ok {
 		rr.Page = &page
 	}
-	msgs, err := db.Messaging(ctx)
-	if err != nil {
-		return rr, err
-	}
-	rr.Topics = msgs.Of(store.RepoRef{ProjectKey: key, Slug: slug}).Topics
+	ref := store.RepoRef{ProjectKey: key, Slug: slug}
+	rr.Topics = msgs.Of(ref).Topics
+	rr.Interfaces, rr.InterfacesRead = in.Of(ref), in.Read(ref)
 	return rr, nil
 }
 
