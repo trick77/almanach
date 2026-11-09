@@ -416,7 +416,11 @@ type fakeModels struct {
 	restyles        []inference.RestyleResult
 	restyledProject []bool
 	prompts         []string
+	// contextTokens is the context the gateway lists, 0 none.
+	contextTokens int
 }
+
+func (m *fakeModels) ContextTokens() int { return m.contextTokens }
 
 func (m *fakeModels) Restyle(_ context.Context, prompt string, project bool) inference.RestyleResult {
 	m.prompts = append(m.prompts, prompt)

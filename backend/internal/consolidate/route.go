@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trick77/almanach/internal/baseline"
@@ -63,13 +64,101 @@ var (
 	errTreeTooWide = errors.New("the tree is too wide for the router")
 )
 
-// routeFits refuses a router prompt that would pass the context with the
-// answer it reserves, before it is paid: a gateway refuses it, or cuts it.
-func routeFits(prompt string) error {
-	if n := inference.PromptTokens(prompt) + inference.RouteReserve; n > inference.RouteContext {
-		return fmt.Errorf("%w: about %d tokens of a %d context", errTreeTooWide, n, inference.RouteContext)
+// routeFits refuses, before it is paid, a router prompt past what its
+// budget gives it: past the context with the answer's reserve beside it a
+// gateway refuses or cuts it; past its share of the run's input tokens it
+// would leave the reading steps too little.
+func routeFits(prompt string, b routeBudget) error {
+	if n := inference.PromptTokens(prompt); n > b.prompt {
+		return fmt.Errorf("%w: about %d prompt tokens, %d allowed (a %d context less the answer's reserve, at most 1/%d of the run's input tokens)",
+			errTreeTooWide, n, b.prompt, b.window, routerShare)
 	}
 	return nil
+}
+
+// contextSizer is a catalogue model that knows its context in tokens, 0
+// for unknown (inference.Client.ContextTokens: the gateway's listing).
+type contextSizer interface {
+	ContextTokens() int
+}
+
+// routerShare: the router's prompt takes at most 1/routerShare of a run's
+// input tokens (BACKEND_BASELINE_MAX_INPUT_TOKENS). The router plans the
+// run once; the reading steps that follow need the rest, a full one about
+// 100k tokens: a router taking most of a small budget leaves a run that
+// pays its plan and reads nothing. A quarter never binds at the default
+// budget (1.5M) and leaves three quarters at any budget.
+const routerShare = 4
+
+// routeBudget is what the router is held to: the context in tokens
+// (window), the gateway's figure (listed, 0 for none), the most its prompt
+// may take in tokens and its listing's ceiling in bytes.
+type routeBudget struct {
+	window, listed, prompt, ceiling int
+}
+
+// routerBudget is the router's budget from the context the catalogue
+// model's gateway lists and the run's input tokens (runTokens, 0 for no
+// bound). None listed: inference.RouteContext. Listed: capped at
+// inference.RouteContextMax and held as the whole context, input and
+// answer (some gateways list it so), the answer's reserve taken from it.
+// The prompt is what the window leaves beside the reserve, at most its
+// share of the run's input tokens; the ceiling is the listing that prompt
+// holds (routerListingBytes).
+func routerBudget(catalogue Cataloguer, runTokens int) routeBudget {
+	b := routeBudget{window: inference.RouteContext}
+	if s, ok := catalogue.(contextSizer); ok {
+		b.listed = max(s.ContextTokens(), 0)
+	}
+	if b.listed > 0 {
+		b.window = min(b.listed, inference.RouteContextMax)
+	}
+	b.prompt = b.window - inference.RouteReserve
+	if runTokens > 0 {
+		b.prompt = min(b.prompt, runTokens/routerShare)
+	}
+	b.ceiling = routerListingBytes(b.prompt + inference.RouteReserve)
+	return b
+}
+
+// routerListingBytes is the listing a window holds beside the prompt's
+// frame and the answer's reserve: baseline.RouterMaxBytes at
+// inference.RouteContext, the rate it was measured at. Below it 3 bytes
+// fewer a token (PromptTokens' rate, the default's room kept). Above it
+// only 2 bytes more a token: 3 bytes a token holds for a listing near the
+// default, and a tokenizer denser on a listing twice as long must not
+// overflow the context. At RouteContextMax the prompt is then estimated
+// near 171k tokens of the 215k it may take, room for one at 2.4 bytes a
+// token.
+func routerListingBytes(window int) int {
+	if d := window - inference.RouteContext; d > 0 {
+		return baseline.RouterMaxBytes + d*2
+	}
+	return max(baseline.RouterMaxBytes+(window-inference.RouteContext)*3, 0)
+}
+
+// routerBudgetLog logs the router's budget once a process: eval builds a
+// worker per project or repository, each the same.
+var routerBudgetLog sync.Once
+
+// logRouterBudget says what the router is held to, once a process, when
+// it is on and the catalogue model can route.
+func (w *Worker) logRouterBudget() {
+	if _, ok := w.base.Catalogue.(Router); !ok || !w.base.Limits.Router {
+		return
+	}
+	b := w.route
+	source := "listed by the gateway"
+	switch {
+	case b.listed == 0:
+		source = "the default, the gateway listing none"
+	case b.listed > b.window:
+		source = fmt.Sprintf("the gateway's %d capped", b.listed)
+	}
+	routerBudgetLog.Do(func() {
+		w.log.Info(fmt.Sprintf("baseline: router: a %d-token context (%s), a prompt of at most %d tokens, listing ceiling %s",
+			b.window, source, b.prompt, kib(int64(b.ceiling))))
+	})
 }
 
 // Route runs stages 0 and 1 of the filter stage over a repository at commit
@@ -171,9 +260,9 @@ func (w *Worker) routerAsk(ctx context.Context, r *store.BaselineRun, files []ba
 		return q, err
 	}
 	q.z = z
-	q.listing, q.folded = baseline.RouterListing(files, z, baseline.RouterMaxBytes)
+	q.listing, q.folded = baseline.RouterListing(files, z, w.route.ceiling)
 	q.prompt = renderRouter(*r, q.listing, len(files), q.readable, routerRunBytes(w.base.Limits.MaxBytes, files, contracts), w.askedSubjects())
-	return q, routeFits(q.prompt)
+	return q, routeFits(q.prompt, w.route)
 }
 
 // routeAnswer is a router's answer resolved against the tree: its subjects

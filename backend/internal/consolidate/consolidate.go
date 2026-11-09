@@ -127,6 +127,9 @@ type Worker struct {
 	// rather than pay for the same step again.
 	base       *Baseline
 	saveFailed error
+	// route is the router's budget, from the catalogue model's context and
+	// the run's input tokens: set with the baseline, the same for every run.
+	route routeBudget
 	// ancestry is what git said of PR merge commits against the commit of
 	// run ancestryRun: the commit is pinned, so the answers hold for the
 	// whole run.
@@ -185,6 +188,8 @@ type Worker struct {
 // ignored. Before Start.
 func (w *Worker) WithBaseline(b Baseline) *Worker {
 	w.base = &b
+	w.route = routerBudget(b.Catalogue, b.Limits.MaxInputTokens)
+	w.logRouterBudget()
 	return w
 }
 

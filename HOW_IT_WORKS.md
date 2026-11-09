@@ -1036,11 +1036,25 @@ resumes after a restart. The run pins the clone's head when it starts.
    fails otherwise, a router call that fails or picks no readable file, or
    a catalogue model that cannot route, is catalogued as without it,
    logged. The router reads every file by path, size and hints and the skeletons,
-   highest-scored first, within `baseline.RouterMaxBytes` (250 kB, what a
-   128k context leaves beside the router's answer; a tree whose names pass
-   two thirds of it folds its lowest-scored directories into one line
-   each, down to a top-level directory alone, and a prompt still past the
-   context is refused before the call), and answers subjects with the
+   highest-scored first, within a ceiling the catalogue model's context
+   sets: the `max_input_tokens` the gateway lists for its alias, read at
+   startup and capped at 256k (`inference.RouteContextMax`; a 1M context
+   would make one router call most of a run's input budget), else 128k
+   (none listed, or the gateway down at startup, until a restart). The
+   listed figure is held as the whole context, the answer's reserve taken
+   from it. Its prompt takes at most a quarter of the run's input tokens
+   (`routerShare`: the reading keeps three quarters, a router taking most
+   of a small budget would plan a run that reads nothing). At 128k the
+   ceiling is `baseline.RouterMaxBytes` (244 kB of 1024 bytes, what that
+   context leaves beside the router's answer at 3 bytes a token), 3 bytes
+   fewer a token below; above, 2 bytes more a token (494 kB at 256k), so
+   a tokenizer denser on a longer listing than the estimate's 3 bytes a
+   token (down to about 2.4) still fits. Startup logs the budget once. A
+   tree whose names pass two thirds of it folds its lowest-scored
+   directories into one line each, down to a top-level directory alone,
+   and a prompt still past the context or its share is refused before the
+   call; one past the run's input tokens is catalogued, never the run's
+   failure. It answers subjects with the
    files to read in full and the reader questions they answer. It is asked
    one subject short of the plan's cap, and told the run's bytes less the
    docs and the anchors, so the subject `EnsureAnchors` opens for the

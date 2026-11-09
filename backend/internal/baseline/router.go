@@ -7,13 +7,15 @@ import (
 	"strings"
 )
 
-// RouterMaxBytes is the router's listing ceiling, from the context: with
-// the prompt's instructions and the system message, at 3 bytes a token (a
-// listing's paths and skeletons run denser than prose, never below), it
-// leaves inference.RouteReserve inside inference.RouteContext
+// RouterMaxBytes is the router's listing ceiling at the default context:
+// with the prompt's instructions and the system message, at 3 bytes a
+// token (a listing's paths and skeletons run denser than prose, never
+// below), it leaves inference.RouteReserve inside inference.RouteContext
 // (TestRouterListingFitsTheContext); a prompt past it anyway is refused
 // before the call (consolidate's routeFits). About 70k tokens a call, a
-// full run's one router call, near twice what it cost at first.
+// full run's one router call, near twice what it cost at first. A context
+// the gateway lists for the catalogue model, or the run's input tokens,
+// move it (consolidate's routerBudget).
 //
 // 150 kB at first, the names half of it: a JVM service of a thousand files
 // has as many bytes of names alone, so its directories folded and the

@@ -426,6 +426,33 @@ func TestStartup(t *testing.T) {
 	}
 }
 
+// The alias's context is the listing's max_input_tokens; none listed, or
+// one llmwire cannot read, is unknown.
+func TestStartupContextTokens(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	listing := func(row string) *Client {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"data":[{"id":"other","max_input_tokens":1000000},`+row+`]}`)
+		}))
+		t.Cleanup(s.Close)
+		c := testClient(llmwire.New(llmwire.Config{BaseURL: s.URL, APIKey: "k", Registry: llmwiretest.Registry(), CallTimeout: time.Second, Logger: quiet}))
+		if _, err := c.Startup(context.Background()); err != nil {
+			t.Fatalf("Startup: %v", err)
+		}
+		return c
+	}
+	for row, want := range map[string]int{
+		`{"id":"` + llmwiretest.ChatModel + `","max_input_tokens":200000}`:   200_000,
+		`{"id":"` + llmwiretest.ChatModel + `"}`:                             0,
+		`{"id":"` + llmwiretest.ChatModel + `","max_input_tokens":"200000"}`: 0,
+	} {
+		if got := listing(row).ContextTokens(); got != want {
+			t.Errorf("%s: ContextTokens = %d, want %d", row, got, want)
+		}
+	}
+}
+
 // "off" switches reasoning off where the profile allows it; any other value
 // must be a level the profile lists.
 func TestEffortOff(t *testing.T) {
