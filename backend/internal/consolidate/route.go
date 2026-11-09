@@ -65,7 +65,7 @@ var (
 // routeFits refuses a router prompt that would pass the context with the
 // answer it reserves, before it is paid: a gateway refuses it, or cuts it.
 func routeFits(prompt string) error {
-	if n := inference.RoutePromptTokens(prompt) + inference.RouteReserve; n > inference.RouteContext {
+	if n := inference.PromptTokens(prompt) + inference.RouteReserve; n > inference.RouteContext {
 		return fmt.Errorf("%w: about %d tokens of a %d context", errTreeTooWide, n, inference.RouteContext)
 	}
 	return nil
@@ -136,7 +136,9 @@ func (w *Worker) Route(ctx context.Context, key, slug, commit string) (RouteDry,
 	p := baseline.BuildPlan(subjects, files, w.maxSubjects())
 	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
 	// A run skips a part that would pass the run's byte budget and reads
-	// on (the docs read first): the dry run reads what a run would.
+	// on (the docs read first): the dry run reads what a run would, by the
+	// bytes. Not by the input tokens: those count each step's whole prompt
+	// (the page as the run grows it), which a dry run never builds.
 	var bytes int64
 	for _, d := range out.Docs {
 		bytes += d.Size

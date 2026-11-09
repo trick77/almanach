@@ -1364,7 +1364,19 @@ repository map, and one for the project's step when it will call (judged
 when the plan is made; under four calls, best effort). The bytes
 (`BACKEND_BASELINE_MAX_BYTES`, the catalogue's docs and every part's
 files) are checked per part: a part over what is left is skipped, a
-smaller one after it may still be read. A
+smaller one after it may still be read. The input tokens
+(`BACKEND_BASELINE_MAX_INPUT_TOKENS`) are checked the same way, against
+the whole prompt rather than its files: the page, rules and project a
+step carries grow as the run goes, and the bytes never see them. Each
+catalogue and reading prompt is estimated before its call
+(`inference.PromptTokens`, 3 bytes a token, held high) and counted on the
+run's plan as the gateway reports it (the estimate where it reports
+none: the estimate alone would end a run well short of the budget); a
+part whose prompt would pass the budget is skipped (`tokens`), checked
+first by its files alone so a part far past it costs no read. A
+catalogue that would leave nothing fails the run before its call; a
+reconcile's placing call that would is not asked. The project and map
+steps come after the last reading step and are not counted. A
 run that ends with skipped parts is shown as partial and still records
 its commit; the next reconcile reads the skipped parts again, the docs and
 the project included, a reconcile at the documented commit too. That next

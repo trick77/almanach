@@ -140,7 +140,7 @@ func TestRouterListingFoldsAWideTree(t *testing.T) {
 // whose max_tokens passes it.
 func TestRouterListingFitsTheContext(t *testing.T) {
 	prompt := prompts.Router + strings.Repeat("x", RouterMaxBytes)
-	if tokens := inference.RoutePromptTokens(prompt) + inference.RouteReserve; tokens > inference.RouteContext {
+	if tokens := inference.PromptTokens(prompt) + inference.RouteReserve; tokens > inference.RouteContext {
 		t.Errorf("a full router call needs %d tokens of a %d context", tokens, inference.RouteContext)
 	}
 }

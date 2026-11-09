@@ -490,10 +490,12 @@ const (
 	RouteContext = 128_000
 )
 
-// RoutePromptTokens is a router prompt's size in tokens beside the system
-// message, at 3 bytes a token (a listing's paths and skeletons run denser
-// than prose), framing rounded up: an estimate held to fail early.
-func RoutePromptTokens(prompt string) int {
+// PromptTokens is a prompt's size in tokens beside the system message, at
+// 3 bytes a token (code, paths and skeletons run denser than prose),
+// framing rounded up: an estimate before the call, held high to stop early
+// rather than late. The router's ceiling and a run's input budget count by
+// it.
+func PromptTokens(prompt string) int {
 	return (len(prompt)+len(SystemMessage))/3 + 500
 }
 

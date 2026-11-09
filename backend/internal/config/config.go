@@ -180,6 +180,10 @@ type Baseline struct {
 	MaxCalls int
 	// MaxBytes is the file content one run may read.
 	MaxBytes int
+	// MaxInputTokens is the prompt input one run may send its catalogue
+	// and reading steps, estimated before each call: the files are only part
+	// of a step's prompt (the page, the rules, the listing are the rest).
+	MaxInputTokens int
 	// Reconcile is how long after its last run a repository whose head
 	// moved is read again on its own; zero means the buttons only.
 	Reconcile time.Duration
@@ -207,6 +211,12 @@ const DefaultFoldDelay = 24 * time.Hour
 // minBaselineCalls is a run with no subject: catalogue, overview, project.
 // The repository map's call is kept only from four (best effort below).
 const minBaselineCalls = 3
+
+// minInputTokens is one full reading step's prompt, held high: a step's
+// files (baseline.StepMaxBytes) at 3 bytes a token, the rules and a page
+// beside them. Below it a full subject never fits, every run reads nothing
+// and still pays its catalogue, project and map.
+const minInputTokens = 100_000
 
 // App is the whole configuration.
 type App struct {
@@ -271,6 +281,7 @@ func Load(lookup func(string) string) (*App, error) {
 			CatalogueModel: r.String("BACKEND_BASELINE_CATALOGUE_MODEL", ""),
 			MaxCalls:       positive(r, "BACKEND_BASELINE_MAX_CALLS", 16),
 			MaxBytes:       positive(r, "BACKEND_BASELINE_MAX_BYTES", 4_000_000),
+			MaxInputTokens: positive(r, "BACKEND_BASELINE_MAX_INPUT_TOKENS", 1_500_000),
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
 		LogLevel:     r.String("BACKEND_LOG_LEVEL", "INFO"),
@@ -346,6 +357,9 @@ func Load(lookup func(string) string) (*App, error) {
 	}
 	if app.Baseline.MaxCalls > 0 && app.Baseline.MaxCalls < minBaselineCalls {
 		r.Fail("BACKEND_BASELINE_MAX_CALLS: a run needs at least %d calls (catalogue, overview, project), got %d", minBaselineCalls, app.Baseline.MaxCalls)
+	}
+	if app.Baseline.MaxInputTokens > 0 && app.Baseline.MaxInputTokens < minInputTokens {
+		r.Fail("BACKEND_BASELINE_MAX_INPUT_TOKENS: at least %d, one full reading step, got %d", minInputTokens, app.Baseline.MaxInputTokens)
 	}
 	// A diagram past the drawing's ceilings is not drawn, so the caps may
 	// not go past them either.
@@ -534,9 +548,9 @@ func (a *App) Summary() string {
 		if catalogue == "" {
 			catalogue = a.Model
 		}
-		sources = fmt.Sprintf("{dir %s, interval %s, git_timeout %s, git_clone_timeout %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes a run, reconcile %s}}",
+		sources = fmt.Sprintf("{dir %s, interval %s, git_timeout %s, git_clone_timeout %s, token_key %v, bitbucket_host %q, baseline {catalogue %s, %d calls / %d bytes / %d input tokens a run, reconcile %s}}",
 			a.Sources.ReposDir, a.Sources.SyncInterval, a.Sources.GitTimeout, a.Sources.GitCloneTimeout, a.Sources.SecretKey != "", a.Sources.BitbucketHost,
-			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.Reconcile)
+			catalogue, a.Baseline.MaxCalls, a.Baseline.MaxBytes, a.Baseline.MaxInputTokens, a.Baseline.Reconcile)
 	}
 	mode := string(a.AuthMode)
 	if a.AuthMode == AuthOIDC {
