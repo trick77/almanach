@@ -25,6 +25,7 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
 - Bearer token IS the team, no payload names one. Project = first team whose note named it, set once.
   `claims` never trusted.
 - Persist failure = 500, never swallowed; each 500 its own line, 401 access log only.
+- Money: integer nano-USD, never a float.
 - IT words English by code (`lang.Terms`), never a prompt list (user).
 - Credentials never leave, by regex, not prompt (`redact`): a shape needs a value's mark, so prose stays.
   New shape → test.
