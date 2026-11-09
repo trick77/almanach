@@ -587,7 +587,7 @@ func (ix index) exact(p string) []File {
 	}
 	// A folder's anchors first: in path order a step's budget went to
 	// whatever sorted early, the files every page rests on to none.
-	byAnchor(out)
+	byAnchor(out, nil)
 	return out
 }
 
@@ -676,14 +676,36 @@ func MergePlan(old Plan, proposed []inference.Subject, files []File, maxSubjects
 // for at most so many answers more at times, and cutting the last dropped
 // whatever only they named, a whole data model once. So the two smallest
 // new subjects join while their files fit one step (joinTo); only what no
-// join brings under the cap is dropped, the last first: the model's order
-// is the one sign of what matters it gives. An old subject never joins:
-// its name is a step's, a page's section.
+// join brings under the cap is dropped (dropTo). An old subject never
+// joins: its name is a step's, a page's section. The build subject
+// (devSubject) joins only where no two others fit one step: few files by
+// the router's rule, it was the smallest and went into whatever feature
+// stood next to it; but joined it loses no file, dropped a subject loses
+// all.
 func compact(subjects []Subject, olds, maxSubjects int) []Subject {
 	limit := max(maxSubjects, olds, 0)
-	subjects, _ = joinTo(subjects, olds, limit)
-	if len(subjects) > limit {
-		subjects = subjects[:limit]
+	subjects, ok := joinTo(subjects, olds, limit, false)
+	if !ok {
+		subjects, _ = joinTo(subjects, olds, limit, true)
+	}
+	return dropTo(subjects, olds, limit)
+}
+
+// dropTo drops subjects from olds on until at most n stand: the last of
+// the model's order first, the one sign of what matters it gives, the
+// build subject only once no other is left to go (the router puts it last
+// by rule, not by worth).
+func dropTo(subjects []Subject, olds, n int) []Subject {
+	subjects = append([]Subject{}, subjects...)
+	for len(subjects) > max(n, 0) && len(subjects) > olds {
+		victim := len(subjects) - 1
+		for i := len(subjects) - 1; i >= olds; i-- {
+			if !devSubject(subjects[i]) {
+				victim = i
+				break
+			}
+		}
+		subjects = append(subjects[:victim:victim], subjects[victim+1:]...)
 	}
 	return subjects
 }
@@ -691,17 +713,25 @@ func compact(subjects []Subject, olds, maxSubjects int) []Subject {
 // joinTo joins the two smallest subjects from olds on, while their files
 // (each once: subjects may share some) fit one step, until at most n
 // stand; ok is whether it got there. The larger keeps its place; a joined
-// name another subject has already is numbered.
-func joinTo(subjects []Subject, olds, n int) ([]Subject, bool) {
+// name another subject has already is numbered. The build subject joins
+// only with withBuild, a join taking it is one too.
+func joinTo(subjects []Subject, olds, n int, withBuild bool) ([]Subject, bool) {
 	subjects = append([]Subject{}, subjects...)
 	size := make([]int64, len(subjects))
+	dev := make([]bool, len(subjects))
 	for i, s := range subjects {
-		size[i] = s.Bytes()
+		size[i], dev[i] = s.Bytes(), devSubject(s)
 	}
 	for len(subjects) > max(n, 0) {
 		a, b, best := -1, -1, int64(0)
 		for i := olds; i < len(subjects); i++ {
+			if dev[i] && !withBuild {
+				continue
+			}
 			for j := i + 1; j < len(subjects); j++ {
+				if dev[j] && !withBuild {
+					continue
+				}
 				sum := size[i] + size[j]
 				if a >= 0 && sum >= best {
 					continue
@@ -725,11 +755,21 @@ func joinTo(subjects []Subject, olds, n int) ([]Subject, bool) {
 		for base, k := joined.Name, 2; nameTaken(subjects, joined.Name, a, b); k++ {
 			joined.Name = fmt.Sprintf("%s (%d)", base, k)
 		}
-		subjects[a], size[a] = joined, joined.Bytes()
+		subjects[a], size[a], dev[a] = joined, joined.Bytes(), dev[a] || dev[b]
 		subjects = append(subjects[:b:b], subjects[b+1:]...)
 		size = append(size[:b:b], size[b+1:]...)
+		dev = append(dev[:b:b], dev[b+1:]...)
 	}
 	return subjects, true
+}
+
+// devSubject reports whether s is the router's build and deploy subject
+// (LastArea), by name: the router's answer marks it by nothing else, and a
+// flag on the stored plan would only copy the name. A subject it was joined
+// into ("Export und Entwicklung und Deployment") is one too, by a part's
+// name (Joined): it holds the build files still.
+func devSubject(s Subject) bool {
+	return slices.ContainsFunc(s.Names(), func(n string) bool { return CleanArea(n) == LastArea })
 }
 
 // nameTaken reports whether a subject other than a and b has name, or a

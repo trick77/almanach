@@ -562,6 +562,39 @@ func TestCompact(t *testing.T) {
 	if len(three) != 1 || !reflect.DeepEqual(three[0].Joined, []string{"b", "a", "c"}) || len(three[0].Files) != 3 {
 		t.Errorf("compact = %+v, want all three joined, their names kept", three)
 	}
+	// The build subject never joins, however small: the next smallest do.
+	dev := compact([]Subject{s("a", 10), s("b", 20), s("c", 30), s(LastArea, 1)}, 0, 3)
+	if got := []string{dev[0].Name, dev[1].Name, dev[2].Name}; len(dev) != 3 || !reflect.DeepEqual(got, []string{"b und a", "c", LastArea}) {
+		t.Errorf("compact = %+v, want a joined into b, the build subject apart", dev)
+	}
+	// Where only it could join, it joins rather than a subject be dropped.
+	alone := compact([]Subject{s("x", StepMaxBytes-5), s("y", StepMaxBytes-6), s("entwicklung und deployment", 1)}, 0, 2)
+	if len(alone) != 2 || alone[0].Name != "x" || !devSubject(alone[1]) || len(alone[1].Files) != 2 {
+		t.Errorf("compact = %+v, want the build subject joined into y, nothing dropped", alone)
+	}
+	// Wherever the router put it: a feature after it is not dropped.
+	mid := compact([]Subject{s("x", StepMaxBytes-1000), s(LastArea, 1), s("y", StepMaxBytes-500)}, 0, 2)
+	if len(mid) != 2 || mid[0].Name != "x und "+LastArea || mid[1].Name != "y" {
+		t.Errorf("compact = %+v, want the build subject joined into x, y kept", mid)
+	}
+	// A reconcile's new build subject joins its new feature before either goes.
+	rec := compact([]Subject{s("old", 1), s(LastArea, 1), s("feature", StepMaxBytes-5)}, 1, 2)
+	if len(rec) != 2 || rec[1].Name != "feature und "+LastArea {
+		t.Errorf("compact = %+v, want the new subjects joined, nothing dropped", rec)
+	}
+	// Nothing joins: a feature goes, the build subject stays, last or not.
+	drop := compact([]Subject{s("x", StepMaxBytes-5), s(LastArea, StepMaxBytes-6), s("y", StepMaxBytes-5)}, 0, 2)
+	if len(drop) != 2 || drop[0].Name != "x" || drop[1].Name != LastArea {
+		t.Errorf("compact = %+v, want y dropped, the build subject kept", drop)
+	}
+	drop = compact([]Subject{s("x", StepMaxBytes-5), s("y", StepMaxBytes-5), s(LastArea, StepMaxBytes-6)}, 0, 2)
+	if len(drop) != 2 || drop[0].Name != "x" || drop[1].Name != LastArea {
+		t.Errorf("compact = %+v, want y dropped though the build subject is last", drop)
+	}
+	// A subject a build subject was joined into is one too.
+	if !devSubject(Subject{Name: "a und " + LastArea, Joined: []string{"a", LastArea}}) || devSubject(s("a", 1)) {
+		t.Error("devSubject by a joined part")
+	}
 }
 
 func TestMergePlan_KeepsResizesAndPlaces(t *testing.T) {
