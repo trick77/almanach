@@ -50,8 +50,11 @@ func TestCallCapWhileStreamingIsTooLong(t *testing.T) {
 	if got := capRun(t, answer); !strings.Contains(got, "added") {
 		t.Errorf("no tail of the cut answer in the log: %q", got)
 	}
-	// Thinking to the cap without a word of answer: a runaway all the same.
-	capRun(t, `{"reasoning_content": "hmm, again"}`)
+	// Thinking to the cap without a word of answer: a runaway all the same,
+	// the reasoning's tail in the log.
+	if got := capRun(t, `{"reasoning_content": "hmm, again"}`); !strings.Contains(got, "hmm, again") {
+		t.Errorf("no tail of the cut reasoning in the log: %q", got)
+	}
 }
 
 // capRun streams one delta, then hangs past the call cap: too long, never
@@ -147,16 +150,35 @@ func TestLengthFinishLogsTheTail(t *testing.T) {
 func TestLogCutKeepsTheTail(t *testing.T) {
 	var logs strings.Builder
 	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil))}
-	c.logCut("id", strings.Repeat("a", 5000)+"THE-END")
+	c.logCut("id", answerPart(strings.Repeat("a", 5000)+"THE-END"))
 	got := logs.String()
-	if !strings.Contains(got, "THE-END") || strings.Count(got, "a") > cutTail+20 {
+	if !strings.Contains(got, "THE-END") || strings.Count(got, "a") > cutTail+20 || !strings.Contains(got, "what=answer") {
 		t.Errorf("log = %q", got)
 	}
-	// The key before the window, the value in it: redacted all the same.
+	// The key before the window, the value in it: redacted all the same,
+	// a short text and a long one redacted near its end only.
+	secret := "Authorization: Bearer abcdefghijKLMNOPQRSTuvwxyz0123456789"
+	for _, text := range []string{
+		secret + strings.Repeat(" b", 190),
+		strings.Repeat("x", 3*redactMargin) + secret + strings.Repeat(" b", 190),
+	} {
+		logs.Reset()
+		c.logCut("id", answerPart(text))
+		if got := logs.String(); strings.Contains(got, "0123456789") {
+			t.Errorf("a value whose key fell before the tail was logged: %q", got)
+		}
+	}
+	// Both parts, each named; a blank answer (a think just ended) none.
 	logs.Reset()
-	c.logCut("id", "Authorization: Bearer abcdefghijKLMNOPQRSTuvwxyz0123456789"+strings.Repeat(" b", 190))
-	if got := logs.String(); strings.Contains(got, "0123456789") {
-		t.Errorf("a value whose key fell before the tail was logged: %q", got)
+	c.logCut("id", answerPart("\n\n"), reasoningPart("round and round"))
+	if got := logs.String(); strings.Count(got, "answer cut") != 1 || !strings.Contains(got, "what=reasoning") ||
+		!strings.Contains(got, "round and round") {
+		t.Errorf("blank answer, reasoning: %q", got)
+	}
+	logs.Reset()
+	c.logCut("id", answerPart("{\"x\""), reasoningPart("long thought"))
+	if got := logs.String(); strings.Count(got, "answer cut") != 2 {
+		t.Errorf("both parts: %q", got)
 	}
 }
 
