@@ -102,6 +102,51 @@ func TestTermsNeuter(t *testing.T) {
 		"Der Auslieferung fehlt ein Schritt.":  "Der Auslieferung fehlt ein Schritt.",
 		"Sie sorgt für schnelle Auslieferung.": "Sie sorgt für schnelle Auslieferung.",
 		"`Auslieferung` und Auslieferung.java": "`Auslieferung` und Auslieferung.java",
+		// A comma before "die": an article where no verb can follow before
+		// the block ends, nouns, joins and articles alone; a relative
+		// pronoun's clause has its verb last.
+		"Build, die Auslieferung und Tests.":                     "Build, das Deployment und Tests.",
+		"Sie plant Build, die Auslieferung und die Tests.\n":     "Sie plant Build, das Deployment und die Tests.\n",
+		"Drei Schritte: Build, Test, die Auslieferung!":          "Drei Schritte: Build, Test, das Deployment!",
+		"Sie fragt, welche Auslieferung?":                        "Sie fragt, welches Deployment?",
+		"Build, die Auslieferung und Tests":                      "Build, das Deployment und Tests",
+		"Build, die Auslieferung und Tests.\n\nDanach baut sie.": "Build, das Deployment und Tests.\n\nDanach baut sie.",
+		"- Build, die Auslieferung und Tests\n- Lint":            "- Build, das Deployment und Tests\n- Lint",
+		"Build, die Auslieferung, Tests\n## Lint":                "Build, das Deployment, Tests\n## Lint",
+		"Build, die Auslieferung und die einzelnen Tests.":       "Build, die Auslieferung und die einzelnen Tests.",
+		"Build, die Auslieferung und Tests einen.":               "Build, die Auslieferung und Tests einen.",
+		// A sentence end inside a block may be an abbreviation's, a name's,
+		// an image's; the verb may follow on the next line or in code.
+		"Build, die Auslieferung.\nTests laufen.":                         "Build, die Auslieferung.\nTests laufen.",
+		"Build, die Auslieferung. Tests laufen.":                          "Build, die Auslieferung. Tests laufen.",
+		"Sie fragt, welche Auslieferung; dann baut sie.":                  "Sie fragt, welche Auslieferung; dann baut sie.",
+		"Die Pipeline, die Auslieferung und Tests Nr. `42` baut.":         "Die Pipeline, die Auslieferung und Tests Nr. `42` baut.",
+		"Die Pipeline, die Auslieferung und Tests Nr.\n3 baut.":           "Die Pipeline, die Auslieferung und Tests Nr.\n3 baut.",
+		"Die Pipeline, die Auslieferung und Tests Nr.\n- baut.":           "Die Pipeline, die Auslieferung und Tests Nr.\n- baut.",
+		"1. Build, die Auslieferung und Tests\n2. Lint":                   "1. Build, das Deployment und Tests\n2. Lint",
+		"Die Firma, die Auslieferung und Lager St. Gallen betreibt.":      "Die Firma, die Auslieferung und Lager St. Gallen betreibt.",
+		"Die Pipeline, die Auslieferung ![Bild](x.png) zeigt.":            "Die Pipeline, die Auslieferung ![Bild](x.png) zeigt.",
+		"Die Pipeline, die Auslieferung und Yahoo! Mail nutzt.":           "Die Pipeline, die Auslieferung und Yahoo! Mail nutzt.",
+		"Die Pipeline,\ndie Auslieferung braucht.":                        "Die Pipeline,\ndie Auslieferung braucht.",
+		"Die Pipeline, \n  die Auslieferung und Build trennt.":            "Die Pipeline, \n  die Auslieferung und Build trennt.",
+		"Die Pipeline,\ndie Auslieferung.":                                "Die Pipeline,\ndas Deployment.",
+		"Die Pipeline, die Auslieferung braucht.":                         "Die Pipeline, die Auslieferung braucht.",
+		"Build, die Auslieferung und Tests laufen.":                       "Build, die Auslieferung und Tests laufen.",
+		"Build, die Auslieferung und neue Tests.":                         "Build, die Auslieferung und neue Tests.",
+		"Die Pipeline, die Auslieferung und Tests\n- wie geplant - baut.": "Die Pipeline, die Auslieferung und Tests\n- wie geplant - baut.",
+		"Build, die Auslieferung\nbraucht.":                               "Build, die Auslieferung\nbraucht.",
+		"Die Pipeline, die Auslieferung `startet`.":                       "Die Pipeline, die Auslieferung `startet`.",
+		"Die Pipeline, die Auslieferung **startet**.":                     "Die Pipeline, die Auslieferung **startet**.",
+		"Die Pipeline, die Auslieferung und Test-Läufe.":                  "Die Pipeline, die Auslieferung und Test-Läufe.",
+		"Die Pipeline, die Auslieferung und Tests (CI) baut.":             "Die Pipeline, die Auslieferung und Tests (CI) baut.",
+		"Die Pipeline, die Auslieferung und Tests Nr. 3 baut":             "Die Pipeline, die Auslieferung und Tests Nr. 3 baut",
+		"Die Pipeline, die Auslieferung und Tests: alle.":                 "Die Pipeline, die Auslieferung und Tests: alle.",
+		"Die Pipeline, die Auslieferung und B) Tests trennt.":             "Die Pipeline, die Auslieferung und B) Tests trennt.",
+		"Die Pipeline, die Auslieferung und Tests usw. baut.":             "Die Pipeline, die Auslieferung und Tests usw. baut.",
+		// An adjective between could be a verb ("die startete Auslieferung").
+		"Build, die neue Auslieferung.": "Build, die neue Auslieferung.",
+		// A code span before the comma: the pronoun still has a noun before it.
+		"Die Pipeline `ci`, die Auslieferung und Build trennt.": "Die Pipeline `ci`, die Auslieferung und Build trennt.",
 	} {
 		got := Terms(in)
 		if got != want {
@@ -111,6 +156,46 @@ func TestTermsNeuter(t *testing.T) {
 			t.Errorf("Terms not idempotent on %q: %q", in, again)
 		}
 	}
+}
+
+// Every word before a noun as its one entry says: a bare noun after it or
+// German, a feminine "der" or "einer" after it made a dative or German,
+// "der" merged where German merges it.
+func TestTermsPreps(t *testing.T) {
+	check := func(in, want string) {
+		t.Helper()
+		if got := Terms(in); got != want {
+			t.Errorf("Terms(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for w, p := range preps {
+		if p.into != "" && !p.dative {
+			t.Errorf("%q merges with the dative's \"dem\" but takes no dative", w)
+		}
+		in := "Sie liest " + w + " Auslieferung."
+		if p.bare {
+			check(in, "Sie liest "+w+" Deployment.")
+		} else {
+			check(in, in)
+		}
+		der, einer := "Sie liest "+w+" der Auslieferung.", "Sie liest "+w+" einer Auslieferung."
+		switch {
+		case p.into != "":
+			check(der, "Sie liest "+p.into+" Deployment.")
+			check(einer, "Sie liest "+w+" einem Deployment.")
+		case p.dative:
+			check(der, "Sie liest "+w+" dem Deployment.")
+			check(einer, "Sie liest "+w+" einem Deployment.")
+		default:
+			check(der, der)
+			check(einer, einer)
+		}
+	}
+	// A genitive's preposition is in no entry: German.
+	check("Wegen der Auslieferung", "Wegen der Auslieferung")
+	check("Während der Auslieferung", "Während der Auslieferung")
+	// Capitalised, the merge keeps the capital.
+	check("Bei der Auslieferung", "Beim Deployment")
 }
 
 // Prose and Laid, the stored forms, take the words in English; a stored

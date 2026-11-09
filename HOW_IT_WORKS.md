@@ -1894,7 +1894,13 @@ so the choice is not undone as a cleanup.
   der" → "beim"); after a preposition or a join that takes a bare noun
   ("per", "Build und"); first in a line. Anywhere else it stays German:
   never "die Deployment" (a shared article, a compound's last part,
-  markup or a capital word before it, a relative pronoun). A stored
+  markup or a capital word before it, a relative pronoun). A comma
+  before "die", a line break between them too, reads as a relative
+  pronoun unless "die" stands right before the word and nothing but
+  capitalised nouns, joins and articles follow up to the end of its block:
+  the text's end, a blank line, a heading or a list's next item ("Build,
+  die Auslieferung und Tests."). A sentence end inside a block is never
+  taken: a "." may be an abbreviation's ("St. Gallen"). A stored
   German word is the same statement as today's
   English one (`lang.SameButSpelling`): no credit for the swap; a subject
   or area name matches in any case (`lang.SameName`), so a plan stored
