@@ -10,6 +10,7 @@ import {
   Empty,
   Failed,
   Link,
+  Pill,
   Skeleton,
   column,
   eyebrow,
@@ -253,9 +254,12 @@ function DepsBody({ data }: { data: Dependencies }) {
                           {u.version || S.deps.noVersion}
                         </span>
                         {u.scope !== "main" && (
-                          <span className="ml-2 text-faint">
+                          // Neutral: ochre in this cell marks a version
+                          // apart from the others, and a test use is no
+                          // warning. -my keeps the row as tall as the rest.
+                          <Pill tone="none" className="ml-2 -my-1">
                             {S.deps.scopes[u.scope]}
-                          </span>
+                          </Pill>
                         )}
                       </td>
                     </tr>

@@ -240,7 +240,10 @@ describe("DepsPage", () => {
     const table = await screen.findByRole("table");
     expect(screen.getByText(/^Ocker gestrichelt:/)).toBeInTheDocument();
     const row = within(table).getByText("v0.2.0").closest("tr")!;
-    expect(within(row).getByText("Test")).toBeInTheDocument();
+    // A pill of its own beside the version, not part of its text.
+    expect(within(row).getByText("Test")).not.toBe(
+      within(row).getByText("v0.2.0"),
+    );
   });
 
   it("says so when the sources cannot be read, not loading for ever", async () => {
