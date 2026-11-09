@@ -2051,7 +2051,7 @@ func TestRun_RepoMapStep(t *testing.T) {
 
 // A page written before areas has a basis of the old shape, so its map
 // step is due: the outline sets each statement's area and place in place,
-// its leftovers kept and Entwicklung und Auslieferung last; no revision, no
+// its leftovers kept and Entwicklung und Deployment last; no revision, no
 // source, the basis then standing, so the next run asks nothing though a
 // statement still has no area.
 func TestRun_RepoMapStepLaysThePageOut(t *testing.T) {
@@ -2092,7 +2092,7 @@ func TestRun_RepoMapStepLaysThePageOut(t *testing.T) {
 			t.Errorf("%s: sources %+v, want them untouched", s.ID, s.Sources)
 		}
 	}
-	want := []string{"s2:Gesamtsystem", "s5:Abfrage", "s3:", "s1:Entwicklung und Auslieferung", "s4:Entwicklung und Auslieferung"}
+	want := []string{"s2:Gesamtsystem", "s5:Abfrage", "s3:", "s1:Entwicklung und Deployment", "s4:Entwicklung und Deployment"}
 	if !reflect.DeepEqual(order, want) {
 		t.Errorf("order = %v, want %v", order, want)
 	}
@@ -2588,7 +2588,7 @@ func TestRun_ProjectStepLaysThePageOut(t *testing.T) {
 		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{}}}}
 		x.models.patches = []inference.PatchResult{{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}}
 		x.models.project = inference.DescriptionResult{Call: called, Description: d, Outline: []inference.OutlineArea{
-			{Area: "Entwicklung und Auslieferung", IDs: []string{"s1"}}, {Area: "Gesamtsystem", IDs: []string{"s2"}},
+			{Area: "Entwicklung und Deployment", IDs: []string{"s1"}}, {Area: "Gesamtsystem", IDs: []string{"s2"}},
 		}}
 		x.w.drain(context.Background())
 		return x.st.pages[pageKey(store.ScopeProject, "tools", "")], x
@@ -2603,11 +2603,11 @@ func TestRun_ProjectStepLaysThePageOut(t *testing.T) {
 	added := stmt(nil, "rule", "Quer", "Gilt.", "x.go")
 	added.Area = "Abfrage"
 	p, _ := run(&inference.Description{Summary: "Das Projekt, neu.", Statements: []inference.Statement{}, Added: []inference.Statement{added}})
-	if want := []string{"s2:Gesamtsystem", "s3:Abfrage", "s1:Entwicklung und Auslieferung"}; !slices.Equal(layout(p), want) || p.Revision == 1 {
+	if want := []string{"s2:Gesamtsystem", "s3:Abfrage", "s1:Entwicklung und Deployment"}; !slices.Equal(layout(p), want) || p.Revision == 1 {
 		t.Errorf("rewritten: revision %d, layout %v, want a new revision laid out %v", p.Revision, layout(p), want)
 	}
 	p, x := run(nil)
-	if want := []string{"s2:Gesamtsystem", "s1:Entwicklung und Auslieferung"}; !slices.Equal(layout(p), want) || p.Revision != 1 || x.st.arranges != 1 {
+	if want := []string{"s2:Gesamtsystem", "s1:Entwicklung und Deployment"}; !slices.Equal(layout(p), want) || p.Revision != 1 || x.st.arranges != 1 {
 		t.Errorf("no change: revision %d, layout %v, layouts %d; want revision 1 laid out %v in place", p.Revision, layout(p), x.st.arranges, want)
 	}
 }

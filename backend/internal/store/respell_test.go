@@ -11,7 +11,8 @@ import (
 // testRespeller swaps one word, everywhere; Arrange records its calls.
 type testRespeller struct{ arranged *int }
 
-func (testRespeller) Prose(s string) string { return strings.ReplaceAll(s, "Dienst", "Service") }
+func (testRespeller) Prose(s string) string  { return strings.ReplaceAll(s, "Dienst", "Service") }
+func (r testRespeller) Area(s string) string { return r.Prose(s) }
 func (r testRespeller) Diagram(d *diagram.Diagram) bool {
 	return d.Relabel(r.Prose)
 }
