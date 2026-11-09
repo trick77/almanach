@@ -11,9 +11,9 @@ import (
 // are Main, `[dev-dependencies]` Test (tests, examples, benches),
 // `[build-dependencies]` Dev, an optional one (a feature's) Dev, as a
 // Python extra. A dependency renamed (`x = { package = "y" }`)
-// is crate y; one taking its version from the workspace (`workspace =
-// true`) gets the version the nearest workspace root's
-// `[workspace.dependencies]` names, a table that itself requires nothing.
+// is crate y; one taken from the workspace (`workspace = true`) is the
+// crate the nearest workspace root's `[workspace.dependencies]` names
+// under its key (renamed there too), a table that itself requires nothing.
 
 // cargoCoord is a crate's coordinate, its name normalised.
 func cargoCoord(name string) string {
@@ -21,28 +21,24 @@ func cargoCoord(name string) string {
 }
 
 // cargoDep is a dependency entry: the crate it names (key or `package`),
-// its version as written, whether it takes the workspace's, and whether
-// it is optional (a feature's).
-func cargoDep(key string, v any) (crate, version string, inherited, optional bool) {
+// whether it takes the workspace's, and whether it is optional (a
+// feature's).
+func cargoDep(key string, v any) (crate string, inherited, optional bool) {
 	crate = key
-	switch t := v.(type) {
-	case string:
-		version = t
-	case map[string]any:
+	if t, ok := v.(map[string]any); ok {
 		if p, ok := t["package"].(string); ok && strings.TrimSpace(p) != "" {
 			crate = p
 		}
-		version, _ = t["version"].(string)
 		w, _ := t["workspace"].(string)
 		o, _ := t["optional"].(string)
 		inherited, optional = w == "true", o == "true"
 	}
-	return crate, strings.TrimSpace(version), inherited, optional
+	return crate, inherited, optional
 }
 
 // cargoWS is each workspace root's `[workspace.dependencies]` by folder:
-// the key a member names, the crate and version it stands for.
-type cargoWS map[string]map[string]Dep
+// the key a member names, the coordinate it stands for.
+type cargoWS map[string]map[string]string
 
 func cargoWorkspaces(files map[string][]byte) cargoWS {
 	out := cargoWS{}
@@ -58,11 +54,11 @@ func cargoWorkspaces(files map[string][]byte) cargoWS {
 		if ws == nil {
 			continue
 		}
-		deps := map[string]Dep{}
+		deps := map[string]string{}
 		table, _ := ws["dependencies"].(map[string]any)
 		for k, v := range table {
-			crate, version, _, _ := cargoDep(k, v)
-			deps[k] = Dep{Coord: cargoCoord(crate), Version: version}
+			crate, _, _ := cargoDep(k, v)
+			deps[k] = cargoCoord(crate)
 		}
 		out[dirOf(p)] = deps
 	}
@@ -71,7 +67,7 @@ func cargoWorkspaces(files map[string][]byte) cargoWS {
 
 // of is the workspace dependencies of the nearest workspace root at or
 // above folder d; nil for none.
-func (w cargoWS) of(d string) map[string]Dep {
+func (w cargoWS) of(d string) map[string]string {
 	for {
 		if deps, ok := w[d]; ok {
 			return deps
@@ -84,7 +80,7 @@ func (w cargoWS) of(d string) map[string]Dep {
 }
 
 // cargo is a Cargo.toml's crate and its dependencies.
-func cargo(body []byte, ws map[string]Dep) ([]string, []Dep) {
+func cargo(body []byte, ws map[string]string) ([]string, []Dep) {
 	doc, err := parseTOML(body)
 	if err != nil {
 		return nil, nil
@@ -103,12 +99,12 @@ func cargo(body []byte, ws map[string]Dep) ([]string, []Dep) {
 			{"build-dependencies", ScopeDev}, {"build_dependencies", ScopeDev},
 		} {
 			table, _ := t[s.key].(map[string]any)
-			for _, k := range sortedKeys(table) {
-				crate, version, inherited, optional := cargoDep(k, table[k])
+			for k, v := range table {
+				crate, inherited, optional := cargoDep(k, v)
 				coord := cargoCoord(crate)
 				if inherited {
 					if w, ok := ws[k]; ok {
-						coord, version = w.Coord, w.Version
+						coord = w
 					}
 				}
 				if crate = strings.TrimSpace(crate); crate == "" {
@@ -118,14 +114,14 @@ func cargo(body []byte, ws map[string]Dep) ([]string, []Dep) {
 				if optional && scope == ScopeMain {
 					scope = ScopeDev
 				}
-				reqs = append(reqs, Dep{Coord: coord, Version: version, Scope: scope})
+				reqs = append(reqs, Dep{Coord: coord, Scope: scope})
 			}
 		}
 	}
 	read(doc)
 	targets, _ := doc["target"].(map[string]any)
-	for _, k := range sortedKeys(targets) {
-		if t, ok := targets[k].(map[string]any); ok {
+	for _, v := range targets {
+		if t, ok := v.(map[string]any); ok {
 			read(t)
 		}
 	}

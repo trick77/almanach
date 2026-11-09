@@ -40,10 +40,10 @@ replace github.com/trick77/webfetch => ../webfetch
 	want := Read{
 		Provides: []string{"go:github.com/trick77/rongo"},
 		Requires: []Dep{
-			{Coord: "go:github.com/ncruces/go-sqlite3", Version: "v0.36.0", Scope: ScopeMain},
-			{Coord: "go:github.com/trick77/llmwire", Version: "v0.1.9-0.20261026072811-61ed84c8533a", Scope: ScopeMain},
+			{Coord: "go:github.com/ncruces/go-sqlite3", Scope: ScopeMain},
+			{Coord: "go:github.com/trick77/llmwire", Scope: ScopeMain},
 			// A dependency's dependency.
-			{Coord: "go:golang.org/x/sys", Version: "v0.49.0", Scope: ScopeIndirect},
+			{Coord: "go:golang.org/x/sys", Scope: ScopeIndirect},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -73,12 +73,12 @@ func TestParse_Pom(t *testing.T) {
 		Requires: []Dep{
 			// The imported BOM and the parent only pin versions and share
 			// build settings; a managed entry nothing names is no requirement,
-			// one a dependency names gives it its version.
-			{Coord: "maven:com.acme:bom", Version: "2.0", Scope: ScopeManaged},
-			{Coord: "maven:com.acme:commons", Version: "", Scope: ScopeMain},
-			{Coord: "maven:com.acme:parent", Version: "3.1", Scope: ScopeManaged},
-			{Coord: "maven:org.junit:junit", Version: "5.10", Scope: ScopeTest},
-			{Coord: "maven:org.slf4j:slf4j-api", Version: "2.0.9", Scope: ScopeMain},
+			// one a dependency names gives it its scope.
+			{Coord: "maven:com.acme:bom", Scope: ScopeManaged},
+			{Coord: "maven:com.acme:commons", Scope: ScopeMain},
+			{Coord: "maven:com.acme:parent", Scope: ScopeManaged},
+			{Coord: "maven:org.junit:junit", Scope: ScopeTest},
+			{Coord: "maven:org.slf4j:slf4j-api", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -95,7 +95,7 @@ func TestParse_PomLatin1(t *testing.T) {
   <dependencies><dependency><groupId>com.acme</groupId><artifactId>commons</artifactId><version>1.0</version></dependency></dependencies>
 </project>`)...)
 	got := Parse(map[string][]byte{"pom.xml": body})
-	want := Read{Provides: []string{"maven:com.acme:legacy"}, Requires: []Dep{{Coord: "maven:com.acme:commons", Version: "1.0", Scope: ScopeMain}}}
+	want := Read{Provides: []string{"maven:com.acme:legacy"}, Requires: []Dep{{Coord: "maven:com.acme:commons", Scope: ScopeMain}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
 	}
@@ -115,20 +115,21 @@ func TestParse_PomOwnParent(t *testing.T) {
 
 func TestParse_PackageJSONAndMonorepo(t *testing.T) {
 	got := Parse(map[string][]byte{
+		// A value of another shape: only the names count, the file stays.
+		"odd/package.json": []byte(`{"name": "@acme/odd", "dependencies": {"zod": {"version": "3"}}}`),
 		"package.json":     []byte(`{"name": "@acme/web", "dependencies": {"react": "^19.0.0", "@acme/ui": "workspace:*"}, "devDependencies": {"vitest": "4.0.0", "zod": "3"}, "optionalDependencies": {"fsevents": "2"}}`),
 		"ui/package.json":  []byte(`{"name": "@acme/ui", "peerDependencies": {"react": ">=18"}, "dependencies": {"zod": "^3.2"}}`),
 		"bad/package.json": []byte(`{not json`),
 	})
 	want := Read{
-		Provides: []string{"npm:@acme/ui", "npm:@acme/web"},
+		Provides: []string{"npm:@acme/odd", "npm:@acme/ui", "npm:@acme/web"},
 		Requires: []Dep{
 			// Optional: an extra's, none every install has.
-			{Coord: "npm:fsevents", Version: "2", Scope: ScopeDev},
-			{Coord: "npm:react", Version: "^19.0.0", Scope: ScopeMain},
-			{Coord: "npm:vitest", Version: "4.0.0", Scope: ScopeDev},
-			// Dev at the root, used by ui: the strongest counts, the first
-			// version written.
-			{Coord: "npm:zod", Version: "3", Scope: ScopeMain},
+			{Coord: "npm:fsevents", Scope: ScopeDev},
+			{Coord: "npm:react", Scope: ScopeMain},
+			{Coord: "npm:vitest", Scope: ScopeDev},
+			// Dev at the root, used by ui: the strongest counts.
+			{Coord: "npm:zod", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -208,9 +209,9 @@ func TestParse_GradleProjectsTwoDown(t *testing.T) {
 	want := Read{
 		Provides: []string{"maven:example.svc:api", "maven:example.svc:core", "maven:example.svc:svc"},
 		Requires: []Dep{
-			{Coord: "maven:example.flow:flow-engine", Version: "1.2", Scope: ScopeMain},
-			{Coord: "maven:example.wire:wire-core", Version: "2.0", Scope: ScopeMain},
-			{Coord: "maven:org.example:store", Version: "3.1", Scope: ScopeMain},
+			{Coord: "maven:example.flow:flow-engine", Scope: ScopeMain},
+			{Coord: "maven:example.wire:wire-core", Scope: ScopeMain},
+			{Coord: "maven:org.example:store", Scope: ScopeMain},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -228,7 +229,7 @@ func TestParse_GradleIntermediateProject(t *testing.T) {
 	})
 	want := Read{
 		Provides: []string{"maven:example.svc:bom", "maven:example.svc:core", "maven:example.svc:platform", "maven:example.svc:svc"},
-		Requires: []Dep{{Coord: "maven:org.example:base-bom", Version: "2.0", Scope: ScopeManaged}},
+		Requires: []Dep{{Coord: "maven:org.example:base-bom", Scope: ScopeManaged}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)
@@ -248,7 +249,7 @@ func TestParse_GradleNestedBuildOwnsItsProjects(t *testing.T) {
 	})
 	want := Read{
 		Provides: []string{"maven:example.jvm:cli", "maven:example.jvm:jvm"},
-		Requires: []Dep{{Coord: "maven:example.wire:wire-core", Version: "2.1", Scope: ScopeMain}},
+		Requires: []Dep{{Coord: "maven:example.wire:wire-core", Scope: ScopeMain}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Parse = %+v\nwant  %+v", got, want)

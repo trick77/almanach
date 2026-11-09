@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"path"
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -33,30 +32,14 @@ func pyCoord(name string) string {
 }
 
 // pep508 reads one requirement string ("requests[socks]>=2.31; python_version>'3.8'"):
-// its coordinate and its version specifier as written, without extras and
-// markers; a direct reference (`name @ url`) names no version. False when
-// it names no distribution.
+// its coordinate, the name before any specifier, extras or markers. False
+// when it names no distribution.
 func pep508(s string) (Dep, bool) {
-	s = strings.TrimSpace(s)
-	name := pyName.FindString(s)
+	name := pyName.FindString(strings.TrimSpace(s))
 	if name == "" {
 		return Dep{}, false
 	}
-	rest := s[len(name):]
-	if i := strings.IndexByte(rest, ';'); i >= 0 {
-		rest = rest[:i]
-	}
-	rest = strings.TrimSpace(rest)
-	if strings.HasPrefix(rest, "[") {
-		if i := strings.IndexByte(rest, ']'); i >= 0 {
-			rest = strings.TrimSpace(rest[i+1:])
-		}
-	}
-	if strings.HasPrefix(rest, "@") {
-		rest = ""
-	}
-	rest = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(rest, "("), ")"))
-	return Dep{Coord: pyCoord(name), Version: rest}, true
+	return Dep{Coord: pyCoord(name)}, true
 }
 
 // groupScope is a dependency group's scope by its name: Test when it says
@@ -92,12 +75,12 @@ func pyproject(body []byte) ([]string, []Dep) {
 	}
 	strs(project["dependencies"], ScopeMain)
 	extras, _ := project["optional-dependencies"].(map[string]any)
-	for _, g := range sortedKeys(extras) {
-		strs(extras[g], groupScope(g))
+	for g, v := range extras {
+		strs(v, groupScope(g))
 	}
 	groups, _ := doc["dependency-groups"].(map[string]any)
-	for _, g := range sortedKeys(groups) {
-		strs(groups[g], groupScope(g))
+	for g, v := range groups {
+		strs(v, groupScope(g))
 	}
 	tool, _ := doc["tool"].(map[string]any)
 	poetry, _ := tool["poetry"].(map[string]any)
@@ -106,45 +89,29 @@ func pyproject(body []byte) ([]string, []Dep) {
 	}
 	table := func(v any, scope string) {
 		m, _ := v.(map[string]any)
-		for _, name := range sortedKeys(m) {
-			spec := m[name]
+		for name, spec := range m {
 			if strings.EqualFold(name, "python") || pyName.FindString(name) != name {
 				continue
 			}
-			version, s := "", scope
-			switch t := spec.(type) {
-			case string:
-				version = t
-			case map[string]any:
-				version, _ = t["version"].(string)
-				// An optional one is an extra's, as in PEP 621.
+			s := scope
+			// An optional one is an extra's, as in PEP 621.
+			if t, ok := spec.(map[string]any); ok {
 				if o, _ := t["optional"].(string); o == "true" && s == ScopeMain {
 					s = ScopeDev
 				}
 			}
-			reqs = append(reqs, Dep{Coord: pyCoord(name), Version: strings.TrimSpace(version), Scope: s})
+			reqs = append(reqs, Dep{Coord: pyCoord(name), Scope: s})
 		}
 	}
 	table(poetry["dependencies"], ScopeMain)
 	table(poetry["dev-dependencies"], ScopeDev)
 	pgroups, _ := poetry["group"].(map[string]any)
-	for _, g := range sortedKeys(pgroups) {
-		if t, ok := pgroups[g].(map[string]any); ok {
+	for g, v := range pgroups {
+		if t, ok := v.(map[string]any); ok {
 			table(t["dependencies"], groupScope(g))
 		}
 	}
 	return prov, reqs
-}
-
-// sortedKeys is a table's keys in order: a coordinate two groups name gets
-// the same version every read.
-func sortedKeys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // requirementsScope is the scope of a requirements file by its name:
@@ -194,7 +161,7 @@ func directReference(s string) bool {
 // requirements is a requirements file's requirements, one per line (a
 // trailing `\` joins the next). Comments, options (`-r`, `-e`,
 // `--index-url`) and a path or URL in place of a name are left out; a
-// `name @ url` is the name's, no version.
+// `name @ url` is the name's.
 func requirements(body []byte, scope string) []Dep {
 	var reqs []Dep
 	var line strings.Builder

@@ -34,35 +34,16 @@ export function repoNamer(d: Dependencies): (r: RepoRef) => string {
   return (r) => (one ? r.slug : refName(r.project, r.slug));
 }
 
-/** versionMax is the most of a version an edge label shows: a git URL or a
- *  commit hash as a version would stretch the drawing; the table shows it
- *  whole. */
-const versionMax = 16;
-
-/** shortVersion is a version as an edge label: one line, cut at
- *  versionMax with an ellipsis. */
-export function shortVersion(v: string): string {
-  const one = v.split(/\s+/).join(" ").trim();
-  return one.length <= versionMax ? one : one.slice(0, versionMax - 1) + "…";
-}
-
 type DepEdge = Dependencies["edges"][number];
 
 /** isMain reports whether an edge is a use at runtime. */
 export const isMain = (e: DepEdge) => e.scope === "main";
 
-/** edgeLabel is an edge's label: the version the user names, and for a use
- *  other than at runtime what it is for. */
-export function edgeLabel(e: DepEdge): string {
-  const v = shortVersion(e.version);
-  const what = S.deps.scopes[e.scope] ?? "";
-  return [what, v].filter((s) => s !== "").join(` ${S.common.sep} `);
-}
-
 /** depGraph is the graph as a flow, left to right: a repository something
  *  is used stands among the shared ones, the rest among the users; an edge per
- *  use, labelled with the version the user names, dashed when it is not a
- *  use at runtime (mainOnly: those left out). Only repositories with
+ *  use, dashed and labelled with what it is for when it is not a use at
+ *  runtime (mainOnly: those left out). No version: the relation is what
+ *  counts (user, 2026-11-09). Only repositories with
  *  an edge are drawn. Built by code from the graph the store joined, not
  *  a model's: no validation to pass, every label escaped by the drawing
  *  as any other. */
@@ -91,7 +72,7 @@ export function depGraph(d: Dependencies, mainOnly = false): FlowIR {
     edges: edges.map((e) => ({
       from: refId(e.from),
       to: refId(e.to),
-      label: edgeLabel(e),
+      label: S.deps.scopes[e.scope] ?? "",
       dashed: !isMain(e),
       head: "end",
     })),
@@ -99,16 +80,10 @@ export function depGraph(d: Dependencies, mainOnly = false): FlowIR {
 }
 
 /** SharedRow is one row of the table: a used repository and its users, each
- *  with the version it names and what for; odd marks a version the others
- *  do not name. */
+ *  with what it uses it for. */
 interface SharedRow {
   lib: RepoRef;
-  users: {
-    ref: RepoRef;
-    version: string;
-    scope: DepEdge["scope"];
-    odd: boolean;
-  }[];
+  users: { ref: RepoRef; scope: DepEdge["scope"] }[];
 }
 
 /** sharedRows is every used repository, in the graph's order. */
@@ -117,32 +92,9 @@ export function sharedRows(d: Dependencies): SharedRow[] {
   for (const e of d.edges) {
     const id = refId(e.to);
     if (!rows.has(id)) rows.set(id, { lib: e.to, users: [] });
-    rows.get(id)!.users.push({
-      ref: e.from,
-      version: e.version,
-      scope: e.scope,
-      odd: false,
-    });
-  }
-  for (const row of rows.values()) {
-    const odd = oddVersions(row.users.map((u) => u.version));
-    row.users.forEach((u, i) => (u.odd = odd[i]));
+    rows.get(id)!.users.push({ ref: e.from, scope: e.scope });
   }
   return [...rows.values()];
-}
-
-/** oddVersions marks, among the versions one repository's users name, those
- *  apart from the rest: all the same, none; otherwise every version fewer
- *  users name than the most common one, and on a tie for most common,
- *  every one, since none is the rule. A user naming no version ("", a
- *  property the manifest leaves open) neither counts nor is marked. */
-export function oddVersions(versions: string[]): boolean[] {
-  const count = new Map<string, number>();
-  for (const v of versions) if (v !== "") count.set(v, (count.get(v) ?? 0) + 1);
-  if (count.size <= 1) return versions.map(() => false);
-  const most = Math.max(...count.values());
-  const tie = [...count.values()].filter((n) => n === most).length > 1;
-  return versions.map((v) => v !== "" && (tie || count.get(v)! < most));
 }
 
 /** DepsPage is the dependency graph over the source repositories. */
@@ -196,7 +148,7 @@ function DepsBody({ data }: { data: Dependencies }) {
   const name = repoNamer(data);
   const { ir, draw, mainOnly } = drawnGraph(data);
   const rows = sharedRows(data);
-  const [hd0, hd1, hd2] = S.deps.headers;
+  const [hd0, hd1] = S.deps.headers;
   const note = "my-2 text-[13.5px] text-faint";
   return (
     <>
@@ -231,7 +183,6 @@ function DepsBody({ data }: { data: Dependencies }) {
                 <tr>
                   <th className={th}>{hd0}</th>
                   <th className={th}>{hd1}</th>
-                  <th className={th}>{hd2}</th>
                 </tr>
               </thead>
               <tbody>
@@ -245,18 +196,9 @@ function DepsBody({ data }: { data: Dependencies }) {
                       )}
                       <td className={tdMono}>
                         <RepoLink r={u.ref} name={name} />
-                      </td>
-                      <td className={tdMono}>
-                        <span
-                          className={u.odd ? "text-ochre" : undefined}
-                          title={u.odd ? S.deps.otherVersion : undefined}
-                        >
-                          {u.version || S.deps.noVersion}
-                        </span>
                         {u.scope !== "main" && (
-                          // Neutral: ochre in this cell marks a version
-                          // apart from the others, and a test use is no
-                          // warning. -my keeps the row as tall as the rest.
+                          // Neutral: a test use is no warning. -my keeps
+                          // the row as tall as the rest.
                           <Pill tone="none" className="ml-2 -my-1">
                             {S.deps.scopes[u.scope]}
                           </Pill>

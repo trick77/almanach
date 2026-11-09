@@ -28,7 +28,7 @@ import (
 // `libs.bundles.z`) resolved exactly in the build's gradle/libs.versions.toml.
 // `$x` and `${x}` are resolved from gradle.properties and the build file's
 // plain assignments (`ext`, `val`, `set(...)`, `extra[...]`), never from a
-// key the redact key rules call secret: a version is shown. Build logic is
+// key the redact key rules call secret: a coordinate is shown. Build logic is
 // a plugin's classpath, not what the repository uses, and left out:
 // buildSrc, a build pluginManagement includes, buildscript { }. So is a
 // constraints { } entry, which pins a version and adds nothing. Build
@@ -60,7 +60,7 @@ var (
 	reGradleCoord = regexp.MustCompile(gradleConf + `(` + gradleStr + `(?:[ \t]*,\s*` + gradleStr + `)*)`)
 	// The map notation's entries, any order.
 	reGradleMap      = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(?\s*((?:\b(?:group|name|version|classifier|ext|configuration)[ \t]*[:=][ \t]*` + gradleStr + `[ \t]*,?\s*)+)`)
-	reGradleMapEntry = regexp.MustCompile(`\b(group|name|version)[ \t]*[:=][ \t]*` + gradleStr)
+	reGradleMapEntry = regexp.MustCompile(`\b(group|name)[ \t]*[:=][ \t]*` + gradleStr)
 	reGradleCatalog  = regexp.MustCompile(gradleConf + `libs\.([A-Za-z0-9_.]+)`)
 	// A group assignment: a statement of its own (line start, `{` or `;`
 	// before it; `;`, `}` or line end after), so a named argument
@@ -70,7 +70,7 @@ var (
 	reInclude     = regexp.MustCompile(`\binclude\b[ \t]*\(?((?:\s*` + gradleStr + `[ \t]*,?)+)`)
 	reIncludeBld  = regexp.MustCompile(`\bincludeBuild\b[ \t]*\(?[ \t]*` + gradleStr)
 	reQuoted      = regexp.MustCompile(gradleStr)
-	// Plain assignments a version may be taken from.
+	// Plain assignments a coordinate's part may be taken from.
 	reAssign = regexp.MustCompile(`(?m)^[ \t]*(?:(?:val|var|def|ext\.|project\.ext\.)[ \t]*)?([A-Za-z_][A-Za-z0-9_]*)(?:[ \t]*:[ \t]*String)?[ \t]*=[ \t]*` + gradleStr + `[ \t]*;?[ \t]*$`)
 	reSet    = regexp.MustCompile(`\bset\([ \t]*` + gradleStr + `[ \t]*,[ \t]*` + gradleStr + `[ \t]*\)`)
 	reExtra  = regexp.MustCompile(`\bextra\[[ \t]*` + gradleStr + `[ \t]*\][ \t]*=[ \t]*` + gradleStr)
@@ -439,13 +439,10 @@ func buildLogic(files map[string][]byte) map[string]bool {
 	return out
 }
 
-// buildDeps is what one build file's dependency configurations name, in
-// the order written, but in an excluded block.
+// buildDeps is what one build file's dependency configurations name, but
+// in an excluded block; in no order, Parse sorts.
 func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalog) []Dep {
-	type hit struct {
-		at  int
-		dep Dep
-	}
+	var out []Dep
 	counts := func(m []int, name string) bool {
 		if !gradleConfName(name) {
 			return false
@@ -466,17 +463,16 @@ func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalo
 		}
 		return gradleScope(name, text[end:m[6]])
 	}
-	var hits []hit
 	for _, m := range reGradleCoord.FindAllStringSubmatchIndex(text, -1) {
 		s := subs(text, m)
 		if !counts(m, s[1]+s[2]) {
 			continue
 		}
 		scope := scopeOf(m, s[1]+s[2])
-		for n, q := range reQuoted.FindAllStringSubmatch(s[3], -1) {
+		for _, q := range reQuoted.FindAllStringSubmatch(s[3], -1) {
 			if d, ok := coordString(resolve(strMatch(q, 1), props)); ok {
 				d.Scope = scope
-				hits = append(hits, hit{m[0] + n, d})
+				out = append(out, d)
 			}
 		}
 	}
@@ -490,7 +486,7 @@ func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalo
 			e[q[1]] = resolve(strMatch(q, 2), props)
 		}
 		if c, ok := gradleCoord(e["group"], e["name"]); ok {
-			hits = append(hits, hit{m[0], Dep{Coord: c, Version: cleanVersion(e["version"]), Scope: gradleScope(s[1], "")}})
+			out = append(out, Dep{Coord: c, Scope: gradleScope(s[1], "")})
 		}
 	}
 	if cat != nil {
@@ -500,16 +496,10 @@ func buildDeps(text string, idx blockIndex, props map[string]string, cat *catalo
 				continue
 			}
 			scope := scopeOf(m, s[1]+s[2])
-			for _, d := range cat.lookup(s[3]) {
-				d.Scope = scope
-				hits = append(hits, hit{m[0], d})
+			for _, c := range cat.lookup(s[3]) {
+				out = append(out, Dep{Coord: c, Scope: scope})
 			}
 		}
-	}
-	sort.SliceStable(hits, func(i, j int) bool { return hits[i].at < hits[j].at })
-	out := make([]Dep, 0, len(hits))
-	for _, h := range hits {
-		out = append(out, h.dep)
 	}
 	return out
 }
@@ -524,15 +514,11 @@ func coordString(s string) (Dep, bool) {
 	if i := strings.IndexByte(parts[last], '@'); i >= 0 {
 		parts[last] = parts[last][:i]
 	}
-	version := ""
-	if len(parts) >= 3 {
-		version = parts[2]
-	}
 	c, ok := gradleCoord(parts[0], parts[1])
 	if !ok {
 		return Dep{}, false
 	}
-	return Dep{Coord: c, Version: cleanVersion(version)}, true
+	return Dep{Coord: c}, true
 }
 
 // subs is the submatches of one FindAllStringSubmatchIndex hit, "" for a
@@ -556,15 +542,6 @@ func gradleCoord(group, artifact string) (string, bool) {
 		return "", false
 	}
 	return mavenCoord(group, artifact)
-}
-
-// cleanVersion is a version as written, "" when part of it is unresolved.
-func cleanVersion(v string) string {
-	v = strings.TrimSpace(v)
-	if strings.Contains(v, "$") {
-		return ""
-	}
-	return v
 }
 
 // groups is a build file's group assignments by where they stand: top
@@ -669,8 +646,8 @@ func (b blockIndex) at(pos int) []string {
 }
 
 // plainValues is a property map without the values the redact key rules
-// call secret: a `$x` naming one stays unresolved, its version empty,
-// rather than show a credential.
+// call secret: a `$x` naming one stays unresolved, its coordinate left
+// out, rather than show a credential.
 func plainValues(m map[string]string) map[string]string {
 	for k := range m {
 		if redact.SecretKey(k) {
@@ -820,46 +797,26 @@ func stringEnd(s string, i int) int {
 	return len(s)
 }
 
-// catalog is a version catalog's libraries and bundles by accessor: the
-// alias with `-` and `_` as `.`, as a build file writes it after `libs.`.
+// catalog is a version catalog's libraries (their coordinates) and bundles
+// by accessor: the alias with `-` and `_` as `.`, as a build file writes
+// it after `libs.`.
 type catalog struct {
-	libs    map[string]Dep
+	libs    map[string]string
 	bundles map[string][]string
 }
 
 // readCatalog reads gradle/libs.versions.toml; nil when it does not parse.
 // A library is "group:artifact[:version]" or a table of module (or group
-// and name) and version: a string, a `ref` into [versions], or a rich
-// version (prefer, require, strictly).
+// and name); its version is no matter.
 func readCatalog(body []byte) *catalog {
 	doc, err := parseTOML(body)
 	if err != nil {
 		return nil
 	}
-	versions, _ := doc["versions"].(map[string]any)
-	var versionOf func(v any, depth int) string
-	versionOf = func(v any, depth int) string {
-		switch t := v.(type) {
-		case string:
-			return t
-		case map[string]any:
-			if ref, ok := t["ref"].(string); ok && depth == 0 {
-				return versionOf(versions[ref], depth+1)
-			}
-			// The version Gradle picks when nothing else asks: prefer,
-			// then require; strictly is often a range.
-			for _, k := range []string{"prefer", "require", "strictly"} {
-				if s, ok := t[k].(string); ok {
-					return s
-				}
-			}
-		}
-		return ""
-	}
-	c := &catalog{libs: map[string]Dep{}, bundles: map[string][]string{}}
+	c := &catalog{libs: map[string]string{}, bundles: map[string][]string{}}
 	libs, _ := doc["libraries"].(map[string]any)
 	for alias, v := range libs {
-		var group, artifact, version string
+		var group, artifact string
 		switch t := v.(type) {
 		case string:
 			parts := strings.Split(t, ":")
@@ -867,9 +824,6 @@ func readCatalog(body []byte) *catalog {
 				continue
 			}
 			group, artifact = parts[0], parts[1]
-			if len(parts) >= 3 {
-				version = parts[2]
-			}
 		case map[string]any:
 			if mod, ok := t["module"].(string); ok {
 				group, artifact, _ = strings.Cut(mod, ":")
@@ -877,10 +831,9 @@ func readCatalog(body []byte) *catalog {
 				group, _ = t["group"].(string)
 				artifact, _ = t["name"].(string)
 			}
-			version = versionOf(t["version"], 0)
 		}
 		if coord, ok := gradleCoord(group, artifact); ok {
-			c.libs[catalogSeparators.Replace(alias)] = Dep{Coord: coord, Version: cleanVersion(version)}
+			c.libs[catalogSeparators.Replace(alias)] = coord
 		}
 	}
 	bundles, _ := doc["bundles"].(map[string]any)
@@ -900,8 +853,8 @@ func readCatalog(body []byte) *catalog {
 // bundle's libraries; exactly, but for a trailing `.get()` or
 // `.asProvider()`. A library the catalog names but this package could not
 // read (an unresolved part) is nothing, never a shorter alias sharing its
-// prefix. Plugins and versions are no dependency.
-func (c *catalog) lookup(acc string) []Dep {
+// prefix. Plugins and versions are no dependency. Coordinates.
+func (c *catalog) lookup(acc string) []string {
 	segs := strings.Split(strings.Trim(acc, "."), ".")
 	if n := len(segs); n > 1 && (segs[n-1] == "get" || segs[n-1] == "asProvider") {
 		segs = segs[:n-1]
@@ -910,16 +863,16 @@ func (c *catalog) lookup(acc string) []Dep {
 	case "plugins", "versions":
 		return nil
 	case "bundles":
-		var out []Dep
+		var out []string
 		for _, l := range c.bundles[strings.Join(segs[1:], ".")] {
-			if d, ok := c.libs[l]; ok {
-				out = append(out, d)
+			if coord, ok := c.libs[l]; ok {
+				out = append(out, coord)
 			}
 		}
 		return out
 	}
-	if d, ok := c.libs[strings.Join(segs, ".")]; ok {
-		return []Dep{d}
+	if coord, ok := c.libs[strings.Join(segs, ".")]; ok {
+		return []string{coord}
 	}
 	return nil
 }

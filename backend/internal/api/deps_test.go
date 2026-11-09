@@ -21,9 +21,9 @@ func depsGraph() store.Graph {
 	return store.Graph{
 		Repos: []store.RepoRef{fetch, loom, rongo, wire},
 		Edges: []store.Edge{
-			{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Version: "v0.2.0", Scope: manifest.ScopeMain},
-			{From: loom, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.8", Scope: manifest.ScopeMain},
-			{From: rongo, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6", Scope: manifest.ScopeMain},
+			{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Scope: manifest.ScopeMain},
+			{From: loom, To: wire, Coords: []string{"go:example.invalid/wire"}, Scope: manifest.ScopeMain},
+			{From: rongo, To: wire, Coords: []string{"go:example.invalid/wire"}, Scope: manifest.ScopeMain},
 		},
 		Ambiguous: []store.Ambiguous{{Coord: "npm:shared", Providers: []store.RepoRef{fetch, wire}, Twice: true}},
 	}
@@ -51,8 +51,12 @@ func TestDependencies_Route(t *testing.T) {
 	if err := json.Unmarshal(body["edges"], &edges); err != nil || len(edges) != 3 {
 		t.Fatalf("edges: %v %s", err, body["edges"])
 	}
-	if edges[1].From.Slug != "loom" || edges[1].To.Project != "libs" || edges[1].Version != "v0.1.8" {
+	if edges[1].From.Slug != "loom" || edges[1].To.Project != "libs" {
 		t.Errorf("edge = %+v", edges[1])
+	}
+	// No version: the relation is what counts.
+	if strings.Contains(string(body["edges"]), "version") {
+		t.Errorf("edges name a version: %s", body["edges"])
 	}
 	if !strings.Contains(string(body["ambiguous"]), `"coord":"npm:shared"`) || !strings.Contains(string(body["ambiguous"]), `"cloned_twice":true`) ||
 		!strings.Contains(string(body["repos"]), "wire") {
@@ -74,7 +78,7 @@ func TestDependencies_Scopes(t *testing.T) {
 	st := depsStore()
 	loom, rongo := store.RepoRef{ProjectKey: "apps", Slug: "loom"}, store.RepoRef{ProjectKey: "apps", Slug: "rongo"}
 	st.graph.Edges = append(st.graph.Edges, store.Edge{From: rongo, To: loom, Coords: []string{"go:example.invalid/loom"},
-		Version: "v1", Scope: manifest.ScopeTest})
+		Scope: manifest.ScopeTest})
 	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
 	_, body := do(t, h, http.MethodGet, "/api/dependencies", "", "", nil)
 	var edges []edgeBody
@@ -111,7 +115,7 @@ func TestDependencies_SourcesOff(t *testing.T) {
 }
 
 // A repository's page says what it uses, who else uses each, and who uses
-// it, each with the version the user names.
+// it.
 func TestRepo_UsesAndUsedBy(t *testing.T) {
 	h, _, _ := sourcesHandlerWith(t, newFakeSources(), depsStore(), &fakeWaker{}, false)
 	code, body := do(t, h, http.MethodGet, "/api/projects/apps/repos/rongo", "", "", nil)
@@ -122,9 +126,8 @@ func TestRepo_UsesAndUsedBy(t *testing.T) {
 	if err := json.Unmarshal(body["uses"], &uses); err != nil || len(uses) != 1 {
 		t.Fatalf("uses: %v %s", err, body["uses"])
 	}
-	if uses[0].Slug != "wire" || uses[0].Version != "v0.1.6" || len(uses[0].Also) != 1 || uses[0].Also[0].Slug != "loom" ||
-		uses[0].Also[0].Version != "v0.1.8" {
-		t.Fatalf("rongo uses = %+v, want wire at v0.1.6, also loom at v0.1.8", uses)
+	if uses[0].Slug != "wire" || len(uses[0].Also) != 1 || uses[0].Also[0].Slug != "loom" {
+		t.Fatalf("rongo uses = %+v, want wire, also loom", uses)
 	}
 	code, body = do(t, h, http.MethodGet, "/api/projects/libs/repos/wire", "", "", nil)
 	var usedBy []depBody
@@ -137,15 +140,14 @@ func TestRepo_UsesAndUsedBy(t *testing.T) {
 // section.
 func TestRepoMarkdown_Dependencies(t *testing.T) {
 	st := depsStore()
-	st.graph.Edges[2].Version = "v0.1.6\n# not `a` [heading](x)"
 	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
 	rec := getMD(h, "/api/projects/libs/repos/wire.md", "")
-	want := "## Dependencies\n\nVerwendet von:\n\n- `apps/loom` (`v0.1.8`)\n- `apps/rongo` (`v0.1.6 # not 'a' [heading](x)`)\n"
+	want := "## Dependencies\n\nVerwendet von:\n\n- `apps/loom`\n- `apps/rongo`\n"
 	if rec.Code != 200 || !strings.HasSuffix(rec.Body.String(), want) {
 		t.Fatalf("export: %d %q, want it to end in %q", rec.Code, rec.Body.String(), want)
 	}
 	rec = getMD(h, "/api/projects/apps/repos/rongo.md", "")
-	if !strings.Contains(rec.Body.String(), "Verwendet:\n\n- `libs/wire` (`v0.1.6") {
+	if !strings.Contains(rec.Body.String(), "Verwendet:\n\n- `libs/wire`\n") {
 		t.Fatalf("rongo export: %q", rec.Body.String())
 	}
 	st.graph = store.Graph{}

@@ -85,14 +85,14 @@ func TestDependencies(t *testing.T) {
 	saveRead(t, s, "apps", "loom", "1", manifest.Read{
 		Provides: []string{"go:example.invalid/loom"},
 		Requires: []manifest.Dep{
-			{Coord: "go:example.invalid/fetch", Version: "v0.2.0"},
-			{Coord: "go:example.invalid/wire", Version: "v0.1.8"},
-			{Coord: "go:example.invalid/wire/extra", Version: "v0.1.7"},
-			{Coord: "go:golang.org/x/sync", Version: "v0.9.0"},
-			{Coord: "npm:shared", Version: "^1.0.0"},
+			{Coord: "go:example.invalid/fetch"},
+			{Coord: "go:example.invalid/wire"},
+			{Coord: "go:example.invalid/wire/extra"},
+			{Coord: "go:golang.org/x/sync"},
+			{Coord: "npm:shared"},
 		},
 	})
-	saveRead(t, s, "apps", "diag", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:example.invalid/wire", Version: "v0.1.6"}}})
+	saveRead(t, s, "apps", "diag", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:example.invalid/wire"}}})
 
 	g, err := s.Dependencies(ctx, true)
 	if err != nil {
@@ -104,11 +104,10 @@ func TestDependencies(t *testing.T) {
 	// TRANSITIONAL(unscoped-requires): Remove when no repo_manifests row has
 	// reader < 5; give these requires their scope then.
 	want := []Edge{
-		{From: diag, To: wire, Coords: []string{"go:example.invalid/wire"}, Version: "v0.1.6", Scope: "main"},
-		{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Version: "v0.2.0", Scope: "main"},
-		// Two coordinates of one repository are one edge, the first one's
-		// version on it.
-		{From: loom, To: wire, Coords: []string{"go:example.invalid/wire", "go:example.invalid/wire/extra"}, Version: "v0.1.8", Scope: "main"},
+		{From: diag, To: wire, Coords: []string{"go:example.invalid/wire"}, Scope: "main"},
+		{From: loom, To: fetch, Coords: []string{"go:example.invalid/fetch"}, Scope: "main"},
+		// Two coordinates of one repository are one edge.
+		{From: loom, To: wire, Coords: []string{"go:example.invalid/wire", "go:example.invalid/wire/extra"}, Scope: "main"},
 	}
 	if !reflect.DeepEqual(g.Edges, want) {
 		t.Fatalf("edges = %+v\nwant %+v", g.Edges, want)
@@ -160,16 +159,15 @@ func TestDependencies_ClonedTwice(t *testing.T) {
 		t.Fatalf("ambiguous = %+v %v, want none while nothing requires it", g.Ambiguous, err)
 	}
 	addRepos(t, s, SourceRepo{ProjectKey: "apps", Slug: "loom", CloneURL: "https://forge.example.invalid/x/loom"})
-	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:example.invalid/wire", Version: "v1"}}})
+	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "go:example.invalid/wire"}}})
 	g, err = s.Dependencies(ctx, true)
 	if err != nil || len(g.Ambiguous) != 1 || !g.Ambiguous[0].Twice {
 		t.Fatalf("ambiguous = %+v %v, want one cloned twice", g.Ambiguous, err)
 	}
 }
 
-// Manifests read by an older reader are due again; an edge takes the first
-// version one of its coordinates names.
-func TestManifests_ReaderAndVersion(t *testing.T) {
+// Manifests read by an older reader are due again.
+func TestManifests_Reader(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	if err := s.CreateSource(ctx, staticSource("libs")); err != nil {
@@ -180,10 +178,10 @@ func TestManifests_ReaderAndVersion(t *testing.T) {
 		SourceRepo{ProjectKey: "libs", Slug: "app", CloneURL: "https://forge.example.invalid/x/app"},
 	)
 	saveRead(t, s, "libs", "lib", "1", manifest.Read{Provides: []string{"maven:g:api", "maven:g:core"}})
-	saveRead(t, s, "libs", "app", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "maven:g:api"}, {Coord: "maven:g:core", Version: "1.2.0"}}})
+	saveRead(t, s, "libs", "app", "1", manifest.Read{Requires: []manifest.Dep{{Coord: "maven:g:api"}, {Coord: "maven:g:core"}}})
 	g, err := s.Dependencies(ctx, true)
-	if err != nil || len(g.Edges) != 1 || g.Edges[0].Version != "1.2.0" {
-		t.Fatalf("edges = %+v %v, want one at 1.2.0", g.Edges, err)
+	if err != nil || len(g.Edges) != 1 {
+		t.Fatalf("edges = %+v %v, want one", g.Edges, err)
 	}
 	rid := repoIDOf(t, s, "libs", "lib")
 	if _, err := s.db.ExecContext(ctx, `UPDATE repo_manifests SET reader = ? WHERE repo_id = ?`, manifest.Version-1, rid); err != nil {
@@ -229,13 +227,12 @@ func TestDependencies_Scopes(t *testing.T) {
 	saveRead(t, s, "libs", "wire", "1", manifest.Read{Provides: []string{"go:a/wiretest", "go:v", "go:w", "go:w/testing"}})
 	saveRead(t, s, "libs", "kit", "1", manifest.Read{Provides: []string{"go:k"}})
 	saveRead(t, s, "apps", "loom", "1", manifest.Read{Requires: []manifest.Dep{
-		// Sorts first, but a test kit's version is not the main edge's,
-		// even when the first main coordinate names none.
-		{Coord: "go:a/wiretest", Version: "v0.9", Scope: manifest.ScopeTest},
-		{Coord: "go:k", Version: "v1", Scope: manifest.ScopeTest},
-		{Coord: "go:v", Version: "", Scope: manifest.ScopeMain},
-		{Coord: "go:w", Version: "v2", Scope: manifest.ScopeMain},
-		{Coord: "go:w/testing", Version: "v3", Scope: manifest.ScopeTest},
+		// Sorts first, but a test kit's scope is not the edge's.
+		{Coord: "go:a/wiretest", Scope: manifest.ScopeTest},
+		{Coord: "go:k", Scope: manifest.ScopeTest},
+		{Coord: "go:v", Scope: manifest.ScopeMain},
+		{Coord: "go:w", Scope: manifest.ScopeMain},
+		{Coord: "go:w/testing", Scope: manifest.ScopeTest},
 	}})
 	loom, wire, kit := RepoRef{"apps", "loom"}, RepoRef{"libs", "wire"}, RepoRef{"libs", "kit"}
 	g, err := s.Dependencies(ctx, true)
@@ -243,8 +240,8 @@ func TestDependencies_Scopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Edge{
-		{From: loom, To: kit, Coords: []string{"go:k"}, Version: "v1", Scope: manifest.ScopeTest},
-		{From: loom, To: wire, Coords: []string{"go:a/wiretest", "go:v", "go:w", "go:w/testing"}, Version: "v2", Scope: manifest.ScopeMain},
+		{From: loom, To: kit, Coords: []string{"go:k"}, Scope: manifest.ScopeTest},
+		{From: loom, To: wire, Coords: []string{"go:a/wiretest", "go:v", "go:w", "go:w/testing"}, Scope: manifest.ScopeMain},
 	}
 	if !reflect.DeepEqual(g.Edges, want) {
 		t.Fatalf("all edges = %+v\nwant %+v", g.Edges, want)
@@ -253,7 +250,7 @@ func TestDependencies_Scopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = []Edge{{From: loom, To: wire, Coords: []string{"go:v", "go:w"}, Version: "v2", Scope: manifest.ScopeMain}}
+	want = []Edge{{From: loom, To: wire, Coords: []string{"go:v", "go:w"}, Scope: manifest.ScopeMain}}
 	if !reflect.DeepEqual(g.Edges, want) {
 		t.Fatalf("main edges = %+v\nwant %+v", g.Edges, want)
 	}

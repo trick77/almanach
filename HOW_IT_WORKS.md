@@ -824,9 +824,9 @@ deeper one is a copy, a checked-out corpus or a fixture. And
 `gradle/libs.versions.toml`. `internal/manifest` turns them into
 coordinates: what the repository provides (`go:<module>`,
 `maven:<group>:<artifact>`, `npm:<name>`, `py:<name>` as PEP 503
-normalises it, `cargo:<crate>` with `_` as `-`) and what it requires, with
-the version as written and what for. An ISO-8859-1 POM is read. A
-`${...}` coordinate is left out, a `${...}` version is empty.
+normalises it, `cargo:<crate>` with `_` as `-`) and what it requires, and
+what for; no version is read. An ISO-8859-1 POM is read. A `${...}`
+coordinate is left out.
 
 Each requirement has a scope, from the manifest's own words: `main` a use
 at runtime (Maven compile, runtime, provided, the container's at
@@ -845,11 +845,14 @@ folder);
 `dependencyManagement`, a Gradle `platform(...)` or `mavenBom`);
 `indirect` a go.mod's `// indirect`. A coordinate named twice counts as
 its strongest, in that order. A `dependencyManagement` entry that is no
-BOM import is no requirement: it only gives its version and scope to a
-dependency naming none, the POM's own or its parent chain's within the
+BOM import is no requirement: it only gives its scope to a dependency
+naming none, the POM's own or its parent chain's within the
 repository (a parent from elsewhere ends it), as a multi-module build pins
-them in its root POM. An edge shows the version
-of its strongest coordinates. Only main uses are the system: the maps, the
+them in its root POM. No version is read or shown, not on an edge, a
+table or the export: the relation is what counts (user, 2026-11-09).
+Reader 6 reads every repository again at its next sync, so no stored row
+keeps one.
+Only main uses are the system: the maps, the
 prompts (`store.Shared`, the project step's build dependencies), a
 repository's `uses`, `used_by` and its export count them alone; the page
 "Dependencies" draws the others dashed. A row read before scopes
@@ -874,12 +877,11 @@ settings file is its own build, with its own `gradle/libs.versions.toml`.
 Build logic is no use of the repository's and left out: `buildSrc`, a
 build `pluginManagement` includes, `buildscript { }`; so is
 `constraints { }`, which only pins a version. Every body passes
-`redact.Text` first, since a version is shown: the credential shapes, not
+`redact.Text` first, since a coordinate is shown: the credential shapes, not
 `redact.File`'s key rules, which read a catalog alias or a property name
 (`jjwt-api`, `tokenLibVersion`) as a secret and would blank the
-coordinate. Only coordinates and versions leave the parser, never a body,
-and no `$x` resolves from a key those rules call secret
-(`redact.SecretKey`; a version-named key is none). One row per source
+coordinate. Only coordinates leave the parser, never a body, and no `$x`
+resolves from a key those rules call secret (`redact.SecretKey`). One row per source
 repository in `repo_manifests`, replaced on a new head, gone with the row.
 
 The edges are never stored. `store.Dependencies` joins requires against

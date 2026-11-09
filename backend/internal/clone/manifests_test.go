@@ -183,16 +183,15 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 	want := manifest.Read{
 		Provides: []string{"go:example.invalid/loom", "maven:example.loom:cli", "maven:example.loom:loom-jvm", "npm:loom-kit", "npm:loom-ui"},
 		Requires: []manifest.Dep{
-			{Coord: "go:example.invalid/wire", Version: "v0.1.8", Scope: manifest.ScopeMain},
-			{Coord: "maven:example.wire:token-lib", Version: "1.2.3", Scope: manifest.ScopeMain},
-			{Coord: "maven:example.wire:wire-api", Version: "2.0", Scope: manifest.ScopeMain},
-			{Coord: "maven:example.wire:wire-cli", Version: "1.1", Scope: manifest.ScopeMain},
-			{Coord: "maven:example.wire:wire-core", Version: "1.0", Scope: manifest.ScopeMain},
-			{Coord: "maven:io.jsonwebtoken:jjwt-api", Version: "0.12.5", Scope: manifest.ScopeMain},
-			{Coord: "npm:left-pad", Version: "^1.3.0", Scope: manifest.ScopeMain},
-			// A credential in a dependency URL never leaves.
-			{Coord: "npm:vault", Version: "git+https://<redacted>@git.example.invalid/vault.git", Scope: manifest.ScopeMain},
-			{Coord: "npm:vitest", Version: "4.0.0", Scope: manifest.ScopeDev},
+			{Coord: "go:example.invalid/wire", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:token-lib", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:wire-api", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:wire-cli", Scope: manifest.ScopeMain},
+			{Coord: "maven:example.wire:wire-core", Scope: manifest.ScopeMain},
+			{Coord: "maven:io.jsonwebtoken:jjwt-api", Scope: manifest.ScopeMain},
+			{Coord: "npm:left-pad", Scope: manifest.ScopeMain},
+			{Coord: "npm:vault", Scope: manifest.ScopeMain},
+			{Coord: "npm:vitest", Scope: manifest.ScopeDev},
 		},
 	}
 	rid := idOf("tools/loom")

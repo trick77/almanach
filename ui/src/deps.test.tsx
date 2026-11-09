@@ -5,11 +5,8 @@ import {
   DepsPage,
   depGraph,
   drawnGraph,
-  edgeLabel,
   sharedRows,
-  oddVersions,
   repoNamer,
-  shortVersion,
 } from "./DepsPage";
 import { RepoPage } from "./RepoPage";
 
@@ -43,21 +40,18 @@ const graph: Dependencies = {
     {
       from: ref("tools", "loom"),
       to: ref("tools", "llmwire"),
-      version: "v0.1.8",
       coords: ["go:example.invalid/llmwire"],
       scope: "main",
     },
     {
       from: ref("tools", "loom"),
       to: ref("tools", "webfetch"),
-      version: "v0.3.0",
       coords: ["go:example.invalid/webfetch"],
       scope: "main",
     },
     {
       from: ref("tools", "rongo"),
       to: ref("tools", "llmwire"),
-      version: "v0.1.6",
       coords: ["go:example.invalid/llmwire"],
       scope: "main",
     },
@@ -85,11 +79,10 @@ const repo: RepoDetail = {
     {
       project: "tools",
       slug: "llmwire",
-      version: "v0.1.6",
-      also: [{ project: "tools", slug: "loom", version: "v0.1.8" }],
+      also: [{ project: "tools", slug: "loom" }],
     },
   ],
-  used_by: [{ project: "apps", slug: "chat", version: "" }],
+  used_by: [{ project: "apps", slug: "chat" }],
   messaging: { topics: [], schemas: [] },
   interfaces: [],
 };
@@ -105,11 +98,8 @@ describe("dependency graph", () => {
       webfetch: "shared",
       rongo: "users",
     });
-    expect(ir.edges.map((e) => e.label)).toEqual([
-      "v0.1.8",
-      "v0.3.0",
-      "v0.1.6",
-    ]);
+    // No version on an edge: the relation is what counts.
+    expect(ir.edges.map((e) => e.label)).toEqual(["", "", ""]);
   });
 
   it("dashes a use that is not at runtime and says what it is for", () => {
@@ -120,7 +110,6 @@ describe("dependency graph", () => {
         {
           from: ref("tools", "rongo"),
           to: ref("tools", "webfetch"),
-          version: "",
           coords: ["go:example.invalid/webfetch"],
           scope: "test",
         },
@@ -128,15 +117,12 @@ describe("dependency graph", () => {
     };
     const ir = depGraph(withTest);
     expect(ir.edges.map((e) => [e.label, e.dashed])).toEqual([
-      ["v0.1.8", false],
-      ["v0.3.0", false],
-      ["v0.1.6", false],
+      ["", false],
+      ["", false],
+      ["", false],
       ["Test", true],
     ]);
     expect(depGraph(withTest, true).edges).toHaveLength(3);
-    expect(
-      edgeLabel({ ...withTest.edges[0], scope: "managed", version: "2.0" }),
-    ).toBe("Versionen · 2.0");
     expect(drawnGraph(withTest)).toMatchObject({ draw: true, mainOnly: false });
   });
 
@@ -148,7 +134,6 @@ describe("dependency graph", () => {
         ...Array.from({ length: 20 }, (_, i) => ({
           from: ref("tools", `t${i}`),
           to: ref("tools", "llmwire"),
-          version: "",
           coords: ["go:example.invalid/llmwire"],
           scope: "test" as const,
         })),
@@ -165,32 +150,12 @@ describe("dependency graph", () => {
     expect(repoNamer(mixed)(ref("tools", "loom"))).toBe("tools/loom");
   });
 
-  it("marks the versions the other users do not name", () => {
+  it("groups the users under each shared repository", () => {
     const rows = sharedRows(graph);
     expect(rows.map((r) => r.lib.slug)).toEqual(["llmwire", "webfetch"]);
-    expect(rows[0].users.map((u) => [u.ref.slug, u.odd])).toEqual([
-      ["loom", true],
-      ["rongo", true],
-    ]);
-    expect(rows[1].users[0].odd).toBe(false);
-  });
-
-  it("marks only the versions apart from the most common one", () => {
-    expect(oddVersions(["v1", "v1", "v0"])).toEqual([false, false, true]);
-    expect(oddVersions(["v1", "v0"])).toEqual([true, true]);
-    expect(oddVersions(["v1", "v1"])).toEqual([false, false]);
-    expect(oddVersions([])).toEqual([]);
-    expect(shortVersion("v0.1.8")).toBe("v0.1.8");
-    expect(shortVersion("git+https://host.example/x.git#a1b2c3")).toBe(
-      "git+https://hos…",
-    );
-    // No version written is no disagreement.
-    expect(oddVersions(["1.4.0", ""])).toEqual([false, false]);
-    expect(oddVersions(["v1", "v1", "v0", ""])).toEqual([
-      false,
-      false,
-      true,
-      false,
+    expect(rows[0].users.map((u) => [u.ref.slug, u.scope])).toEqual([
+      ["loom", "main"],
+      ["rongo", "main"],
     ]);
   });
 });
@@ -205,9 +170,8 @@ describe("DepsPage", () => {
     const table = await screen.findByRole("table");
     const rows = within(table).getAllByRole("row");
     expect(rows).toHaveLength(4);
-    expect(within(table).getByText("v0.1.6").getAttribute("title")).toMatch(
-      /Andere Version/,
-    );
+    expect(within(rows[0]).getAllByRole("columnheader")).toHaveLength(2);
+    expect(within(table).queryByText(/v0\./)).toBeNull();
     expect(
       within(table)
         .getAllByText("llmwire")[0]
@@ -218,7 +182,7 @@ describe("DepsPage", () => {
     expect(screen.getByText(/von zwei Quellen geclont/)).toBeInTheDocument();
   });
 
-  it("says what a dashed edge is, and the scope beside its version", async () => {
+  it("says what a dashed edge is, and the scope beside its user", async () => {
     const withTest: Dependencies = {
       ...graph,
       edges: [
@@ -226,7 +190,6 @@ describe("DepsPage", () => {
         {
           from: ref("tools", "rongo"),
           to: ref("tools", "webfetch"),
-          version: "v0.2.0",
           coords: ["go:example.invalid/webfetch"],
           scope: "test",
         },
@@ -239,11 +202,10 @@ describe("DepsPage", () => {
     render(<DepsPage />);
     const table = await screen.findByRole("table");
     expect(screen.getByText(/^Ocker gestrichelt:/)).toBeInTheDocument();
-    const row = within(table).getByText("v0.2.0").closest("tr")!;
-    // A pill of its own beside the version, not part of its text.
-    expect(within(row).getByText("Test")).not.toBe(
-      within(row).getByText("v0.2.0"),
-    );
+    const pill = within(table).getByText("Test");
+    const cell = pill.closest("td")!;
+    // A pill of its own beside the user's link, not part of its text.
+    expect(within(cell).getByRole("link", { name: "rongo" })).not.toBe(pill);
   });
 
   it("says so when the sources cannot be read, not loading for ever", async () => {
@@ -282,12 +244,9 @@ describe("RepoPage dependencies", () => {
     expect(link.getAttribute("href")).toBe("/projects/tools/repos/llmwire");
     const row = link.closest("tr")!;
     expect(within(row).getByText("auch loom")).toBeInTheDocument();
-    const version = within(row).getByText("v0.1.6");
-    expect(version.className).toMatch(/text-ochre/);
-    expect(version.getAttribute("title")).toMatch(/Andere Version/);
+    expect(within(row).getAllByRole("cell")).toHaveLength(1);
     const chat = within(desc).getByRole("link", { name: "apps/chat" });
     expect(chat.getAttribute("href")).toBe("/projects/apps/repos/chat");
-    expect(within(chat.closest("tr")!).getByText("–")).toBeInTheDocument();
     // The rail points at the section, uses · used by; it lists none.
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
     const entry = within(rail).getByText("Dependencies").closest("a")!;

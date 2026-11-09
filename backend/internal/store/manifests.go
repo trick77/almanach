@@ -55,15 +55,12 @@ func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, 
 
 // Edge is one repository using another: From requires coordinates To
 // provides. Coords are those coordinates, sorted; Scope the strongest of
-// their scopes (manifest.Scope*); Version is what From names for the first
-// of that scope's coordinates that names one, as written ("" when none
-// does).
+// their scopes (manifest.Scope*).
 type Edge struct {
-	From    RepoRef
-	To      RepoRef
-	Coords  []string
-	Version string
-	Scope   string
+	From   RepoRef
+	To     RepoRef
+	Coords []string
+	Scope  string
 }
 
 // Ambiguous is a coordinate more than one source repository provides (a
@@ -150,8 +147,8 @@ func (s *Store) Dependencies(ctx context.Context, all bool) (Graph, error) {
 	g := Graph{Repos: []RepoRef{}, Edges: []Edge{}, Ambiguous: []Ambiguous{}}
 	for _, r := range repos {
 		g.Repos = append(g.Repos, r.ref)
-		// requires is sorted by coordinate (manifest.Parse), so the first
-		// coordinate of an edge, and its version, is the same every read.
+		// requires is sorted by coordinate (manifest.Parse), so an edge's
+		// coordinates are in the same order every read.
 		byTo := map[RepoRef]*Edge{}
 		var order []RepoRef
 		for _, d := range r.requires {
@@ -161,18 +158,13 @@ func (s *Store) Dependencies(ctx context.Context, all bool) (Graph, error) {
 			}
 			e, ok := byTo[p[0]]
 			if !ok {
-				e = &Edge{From: r.ref, To: p[0], Version: d.Version, Scope: d.Scope}
+				e = &Edge{From: r.ref, To: p[0], Scope: d.Scope}
 				byTo[p[0]] = e
 				order = append(order, p[0])
 			}
 			e.Coords = append(e.Coords, d.Coord)
-			// The version shown is the strongest scope's: a main edge names
-			// what runs, not its test kit's version.
-			switch {
-			case manifest.Stronger(d.Scope, e.Scope):
-				e.Scope, e.Version = d.Scope, d.Version
-			case d.Scope == e.Scope && e.Version == "":
-				e.Version = d.Version
+			if manifest.Stronger(d.Scope, e.Scope) {
+				e.Scope = d.Scope
 			}
 		}
 		sort.Slice(order, func(i, j int) bool { return less(order[i], order[j]) })
