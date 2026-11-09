@@ -110,6 +110,9 @@ const (
 	SkipCalls Skip = "calls"
 	// SkipBytes is when the part would take the run over its byte budget.
 	SkipBytes Skip = "bytes"
+	// SkipTokens is when the part's prompt would take the run over its
+	// input token budget.
+	SkipTokens Skip = "tokens"
 	// SkipFailed is when the model call failed.
 	SkipFailed Skip = "failed"
 	// SkipRefused is when the answer broke a fold rule and was thrown away.

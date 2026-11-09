@@ -134,6 +134,13 @@ type runPlan struct {
 	// once when the plan is made (keptCalls); nil on a plan from before,
 	// which keeps one.
 	Kept *int `json:"kept,omitempty"`
+	// Tokens is the input the run's catalogue and reading calls took (taken:
+	// as reported, else estimated), against the run's MaxInputTokens: a
+	// step whose prompt, estimated before its call (inference.PromptTokens),
+	// would pass it is skipped. A call held by the gateway is not counted,
+	// its retry is. The project and map steps come after the last reading
+	// step and are not counted.
+	Tokens int `json:"tokens,omitempty"`
 	// Docs is what the overview step read, once folded: the run's coverage
 	// (ReadBytes) counts it with the subjects, a doc a subject holds too
 	// once.
@@ -633,6 +640,11 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 		return err
 	}
 	prompt := renderCatalogue(*r, baseline.Listing(files), docs, "", w.askedSubjects())
+	// Before the paid call: a catalogue that takes the whole budget leaves
+	// every part skipped, a run that pays and reads nothing.
+	if n := inference.PromptTokens(prompt); n >= w.base.Limits.MaxInputTokens {
+		return fmt.Errorf("the catalogue's prompt (about %d tokens) leaves nothing of the run's input token budget (%d)", n, w.base.Limits.MaxInputTokens)
+	}
 	res := w.base.Catalogue.Catalogue(ctx, prompt)
 	ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
 	if err != nil {
@@ -644,7 +656,7 @@ func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
 	}
 	p := baseline.BuildPlan(res.Catalogue.Subjects, files, w.maxSubjects())
 	p = baseline.EnsureAnchors(p, files, contracts, w.maxSubjects())
-	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true}
+	plan := runPlan{Plan: p, Overview: true, CommittedAt: at, Cuts: true, Tokens: taken(res.Call, prompt)}
 	for _, s := range p.Subjects {
 		plan.Read = append(plan.Read, s.Name)
 	}
@@ -711,6 +723,17 @@ func (w *Worker) stageZeroOf(ctx context.Context, r *store.BaselineRun, files []
 	return baseline.BuildStageZero(bodies, churn), nil
 }
 
+// taken is the input a call took against the run's token budget: what the
+// gateway reported, or the prompt's estimate where it reported none. The
+// estimate runs high, so the reported count keeps the budget from ending
+// a run before it has spent what the operator set.
+func taken(c inference.Call, prompt string) int {
+	if c.Cost.InputTokens > 0 {
+		return int(c.Cost.InputTokens)
+	}
+	return inference.PromptTokens(prompt)
+}
+
 // kib is a byte count as the log shows it.
 func kib(n int64) string { return fmt.Sprintf("%d kB", (n+512)/1024) }
 
@@ -756,10 +779,20 @@ func (w *Worker) reconcilePlan(ctx context.Context, r *store.BaselineRun, files 
 	if len(unplaced) > 0 && r.Calls < w.base.Limits.MaxCalls {
 		placing := "The repository is already catalogued into the subjects below; the files in the listing are new or changed and in none of them. " +
 			"Place each: name an existing subject to add it there, or a new subject. Existing subjects:\n\n" + subjectList(old.Plan)
-		res := w.base.Catalogue.Catalogue(ctx, renderCatalogue(*r, baseline.Listing(unplaced), "_None._", placing, w.maxSubjects()))
-		ok, err := w.call(ctx, r, store.PurposeCatalogue, res.Call)
-		if err != nil {
-			return runPlan{}, false, err
+		prompt := renderCatalogue(*r, baseline.Listing(unplaced), "_None._", placing, w.maxSubjects())
+		// One that would take the whole budget is not asked: the files stay
+		// unplaced for the next reconcile, as with no call left.
+		var res inference.CatalogueResult
+		ok := false
+		if n := inference.PromptTokens(prompt); n >= w.base.Limits.MaxInputTokens {
+			w.log.WarnContext(ctx, fmt.Sprintf("baseline: placing not asked: its prompt (about %d tokens) leaves nothing of the run's input token budget (%d)",
+				n, w.base.Limits.MaxInputTokens))
+		} else {
+			res = w.base.Catalogue.Catalogue(ctx, prompt)
+			if ok, err = w.call(ctx, r, store.PurposeCatalogue, res.Call); err != nil {
+				return runPlan{}, false, err
+			}
+			plan.Tokens = taken(res.Call, prompt)
 		}
 		if ok {
 			merged = baseline.MergePlan(old.Plan, res.Catalogue.Subjects, files, len(old.Subjects)+w.maxSubjects())
@@ -943,6 +976,13 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	if r.Bytes+size > int64(w.base.Limits.MaxBytes) {
 		return w.skipPart(ctx, r, &plan, baseline.SkipBytes, "over the run's byte budget")
 	}
+	// The least the prompt can be, its files and the system message alone:
+	// a part past the budget by that is skipped before the clone and the
+	// store are read for it. The whole prompt is held to it below.
+	if least := inference.PromptTokens("") + int(size)/3; plan.Tokens+least > w.base.Limits.MaxInputTokens {
+		return w.skipPart(ctx, r, &plan, baseline.SkipTokens, fmt.Sprintf("over the run's input token budget (%d of %d taken, this step at least %d)",
+			plan.Tokens, w.base.Limits.MaxInputTokens, least))
+	}
 	page, _, err := w.store.CurrentPage(ctx, store.ScopeRepository, r.ProjectKey, r.Slug)
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: repository page read failed, drain paused", logging.Err(err))
@@ -1004,12 +1044,21 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	focus := w.focus(plan, page, newer)
 	prompt := renderDescribe(*r, page, w.limits, i+1, r.Steps, part, focus, renderFiles(read, bodies), renderProblems(problems), w.libs, w.siblings,
 		w.topics, newer)
+	// The whole prompt, not its files alone: the page, the rules and the
+	// project around them grow as the run goes, and the byte budget never
+	// sees them.
+	tokens := inference.PromptTokens(prompt)
+	if plan.Tokens+tokens > w.base.Limits.MaxInputTokens {
+		return w.skipPart(ctx, r, &plan, baseline.SkipTokens, fmt.Sprintf("over the run's input token budget (%d of %d taken, this step about %d)",
+			plan.Tokens, w.base.Limits.MaxInputTokens, tokens))
+	}
 	res := w.base.Describer.Patch(ctx, prompt)
 	ok, err := w.call(ctx, r, purpose, res.Call)
 	if err != nil {
 		return err
 	}
 	r.Bytes += size
+	plan.Tokens += taken(res.Call, prompt)
 	if !ok {
 		return w.skipPart(ctx, r, &plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
 	}

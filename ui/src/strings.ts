@@ -709,6 +709,7 @@ export const S = {
       gone: "Nicht mehr im Katalog",
       calls: "Aufrufe des Runs aufgebraucht",
       bytes: "Lesebudget des Runs überschritten",
+      tokens: "Token-Budget des Runs überschritten",
       failed: "Fehler: Modellaufruf fehlgeschlagen",
       refused: "Fehler: Antwort regelwidrig, verworfen",
       no_page: "Projekt ohne Seite",

@@ -547,7 +547,7 @@ func newWorld(t *testing.T, calls int) world {
 	st.others = []store.RepoSummary{{Slug: "svc"}, {Slug: "web"}}
 	w := New(st, &fakeMerger{}, config.Limits{DiagramMaxNodes: 12, DiagramMaxEdges: 20, MaxDiagrams: 6},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	w.WithBaseline(Baseline{Store: st, Code: code, Catalogue: models, Describer: models, Limits: config.Baseline{MaxCalls: calls, MaxBytes: 1 << 20}})
+	w.WithBaseline(Baseline{Store: st, Code: code, Catalogue: models, Describer: models, Limits: config.Baseline{MaxCalls: calls, MaxBytes: 1 << 20, MaxInputTokens: 1_000_000}})
 	w.now = func() time.Time { return mergedAt }
 	return world{w, st, code, models}
 }
@@ -1157,6 +1157,97 @@ func TestRun_SkipsAndNoCeiling(t *testing.T) {
 	}
 }
 
+// The run's input tokens: every catalogue and reading call's prompt
+// counted on the plan; a step whose prompt would pass the budget skipped
+// before its call, and a smaller one after it still read.
+func TestRun_InputTokenBudget(t *testing.T) {
+	setup := func(budget int, reported int64) world {
+		x := newWorld(t, 16)
+		x.w.base.Limits.MaxInputTokens = budget
+		x.code.bodies["billing/run.go"] = "package billing\n" + strings.Repeat("// lang\n", 8000)
+		x.queue(store.RunFull, "")
+		x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+			{Name: "A", Purpose: "p", Paths: []string{"auth/"}}, {Name: "B", Purpose: "p", Paths: []string{"billing/"}}, {Name: "C", Purpose: "p", Paths: []string{"README.md"}},
+		}}}}
+		call := called
+		call.Cost.InputTokens = reported
+		empty := inference.PatchResult{Call: call, Patch: inference.Patch{Statements: []inference.Statement{}}}
+		x.models.patches = []inference.PatchResult{{Call: call, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}}, empty, empty, empty}
+		x.models.project = inference.DescriptionResult{Call: called}
+		x.w.drain(context.Background())
+		return x
+	}
+	all := setup(1_000_000, 0)
+	// catalogue, overview, A, B, C, project, map
+	if r := all.run(); r.State != store.RunDone || r.Skipped != 0 || len(all.models.prompts) != 7 {
+		t.Fatalf("roomy run = %+v, %d prompts", r, len(all.models.prompts))
+	}
+	tokens := make([]int, 5)
+	sum := 0
+	for i := range tokens {
+		tokens[i] = inference.PromptTokens(all.models.prompts[i])
+		sum += tokens[i]
+	}
+	if got := all.plan(t).Tokens; got != sum {
+		t.Errorf("plan tokens = %d, want the catalogue's and the reading's %d", got, sum)
+	}
+	if tokens[3] < tokens[4]+1000 {
+		t.Fatalf("B's prompt (%d tokens) should far outweigh C's (%d)", tokens[3], tokens[4])
+	}
+
+	// Room for all but B: B is skipped before its call, C still read.
+	tight := setup(sum-tokens[3]+100, 0)
+	r := tight.run()
+	if r.State != store.RunDone || r.Skipped != 1 || r.Calls != 6 {
+		t.Fatalf("tight run = %+v", r)
+	}
+	p := tight.plan(t)
+	if !reflect.DeepEqual(p.Skipped, []string{"B"}) || p.Why["B"] != baseline.SkipTokens {
+		t.Errorf("skipped = %v, why = %v, want B alone, tokens", p.Skipped, p.Why)
+	}
+	for _, prompt := range tight.models.prompts {
+		if strings.Contains(prompt, "// lang") {
+			t.Fatal("B's files reached a prompt")
+		}
+	}
+	if p.Tokens != sum-tokens[3] {
+		t.Errorf("plan tokens = %d, want %d without B's", p.Tokens, sum-tokens[3])
+	}
+
+	// What the gateway reports counts, not the estimate: room for the
+	// catalogue and B by the estimate reads every part when each reading
+	// call reports a few tokens.
+	budget := tokens[0] + tokens[3] + 100
+	if r := setup(budget, 0).run(); r.Skipped == 0 {
+		t.Fatalf("estimated run = %+v, want parts skipped", r)
+	}
+	reported := setup(budget, 7)
+	if r := reported.run(); r.State != store.RunDone || r.Skipped != 0 || reported.plan(t).Tokens != tokens[0]+4*7 {
+		t.Errorf("reported run = %+v, tokens %d, want %d", r, reported.plan(t).Tokens, tokens[0]+4*7)
+	}
+
+	// Past the budget by the files and system message alone: skipped before
+	// any read, no reading call.
+	spent := setup(tokens[0]+10, 0)
+	if r := spent.run(); r.State != store.RunDone || r.Skipped != 4 || r.ReadBytes != 0 {
+		t.Fatalf("spent run = %+v", r)
+	}
+	for _, prompt := range spent.models.prompts[1:] {
+		if strings.Contains(prompt, "package auth") {
+			t.Fatal("A's files reached a prompt")
+		}
+	}
+	if p := spent.plan(t); p.Why["A"] != baseline.SkipTokens || p.Steps[baseline.PartOverview] != baseline.SkipTokens {
+		t.Errorf("why = %v, steps = %v, want tokens", p.Why, p.Steps)
+	}
+
+	// A catalogue that leaves nothing of the budget is never asked.
+	none := setup(tokens[0], 0)
+	if r := none.run(); r.State != store.RunFailed || r.Calls != 0 || !strings.Contains(r.Error, "input token budget") {
+		t.Fatalf("catalogue over budget = %+v", r)
+	}
+}
+
 // A subject the catalogue names like a step is read as a subject and
 // skipped as one: the steps are held by Part, never by name.
 func TestRun_SubjectNamedLikeAStep(t *testing.T) {
@@ -1426,6 +1517,17 @@ func TestRun_UnplacedFilesAreKeptForTheNextReconcile(t *testing.T) {
 	p := y.plan(t)
 	if len(p.Unplaced) != 0 || len(p.Subjects) != 2 || p.Subjects[1].Name != "B" || !reflect.DeepEqual(p.Read, []string{"B"}) || !strings.Contains(y.models.prompts[0], "billing/run.go") {
 		t.Fatalf("second reconcile plan = %+v", p)
+	}
+
+	// A placing prompt past the run's input token budget is not asked:
+	// kept unplaced as with no call left.
+	z := newWorld(t, 16)
+	z.w.base.Limits.MaxInputTokens = 10
+	z.st.documented = &store.BaselineRun{Commit: older40, Plan: raw, State: store.RunDone}
+	z.queue(store.RunReconcile, older40)
+	z.w.drain(context.Background())
+	if p := z.plan(t); !reflect.DeepEqual(p.Unplaced, []string{"billing/run.go"}) || len(z.models.prompts) != 0 || z.run().State != store.RunDone {
+		t.Fatalf("over budget: plan = %+v, %d prompts, run %+v", p, len(z.models.prompts), z.run())
 	}
 }
 
