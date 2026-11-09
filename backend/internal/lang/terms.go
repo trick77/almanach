@@ -109,38 +109,25 @@ var pluralCues = map[string]bool{
 func Terms(s string) string {
 	for _, st := range stems {
 		if strings.Contains(s, st) {
-			return outsideCode(s, termsIn)
+			return proseIn(s, termsIn)
 		}
 	}
 	return s
 }
 
-// termsIn is Terms on one piece of prose with no code in it.
-func termsIn(s string) string {
+// termsIn is Terms on one piece of prose with no code in it, before and
+// after it the text around it.
+func termsIn(before, s, after string) string {
 	var out []string // the text as it is written: words, and the runs between
 	var ws []word    // the words so far, as read
 	for i := 0; i < len(s); {
 		if r, _ := utf8.DecodeRuneInString(s[i:]); !unicode.IsLetter(r) {
-			j := i
-			for j < len(s) {
-				r, n := utf8.DecodeRuneInString(s[j:])
-				if unicode.IsLetter(r) {
-					break
-				}
-				j += n
-			}
+			j := runEnd(s, i, false)
 			out = append(out, s[i:j])
 			i = j
 			continue
 		}
-		j := i
-		for j < len(s) {
-			r, n := utf8.DecodeRuneInString(s[j:])
-			if !unicode.IsLetter(r) {
-				break
-			}
-			j += n
-		}
+		j := runEnd(s, i, true)
 		w := s[i:j]
 		var prev, prev2 string
 		if k := len(ws); k > 0 {
@@ -150,7 +137,7 @@ func termsIn(s string) string {
 			}
 		}
 		en := termFor(w, s[:i], s[j:], prev, prev2)
-		if en != w && terms[w].neuter && !regender(s, i, j, out, ws) {
+		if en != w && terms[w].neuter && !regender(before, s, after, i, j, out, ws) {
 			en = w
 		}
 		ws = append(ws, word{low: strings.ToLower(w), at: len(out), start: i, end: j})
@@ -158,6 +145,19 @@ func termsIn(s string) string {
 		i = j
 	}
 	return strings.Join(out, "")
+}
+
+// runEnd is where the run of letters (or of anything but letters) that
+// starts at s[i] ends.
+func runEnd(s string, i int, letters bool) int {
+	for i < len(s) {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if unicode.IsLetter(r) != letters {
+			break
+		}
+		i += n
+	}
+	return i
 }
 
 // word is one word of a text: lower case, its index in the text as
@@ -189,20 +189,26 @@ var dativeOf = map[string]string{
 	"seiner": "seinem", "ihrer": "ihrem", "unserer": "unserem", "eurer": "eurem",
 }
 
-var dativePreps = map[string]bool{
-	"bei": true, "mit": true, "nach": true, "von": true, "zu": true, "aus": true, "seit": true, "in": true, "an": true,
-	"auf": true, "unter": true, "über": true, "vor": true, "hinter": true, "neben": true, "zwischen": true,
+// prep is a word before a noun, each in one place: bare, a noun follows it
+// with no article of its own, where a feminine and a neuter read the same
+// ("für Auslieferung"; "als", "wie" too, though no prepositions); dative,
+// a feminine "der" after it is a dative, never a genitive ("bei der", "in
+// der"); into, the neuter's "dem" merges with it, as German writes it
+// ("bei der Auslieferung" → "beim Deployment"), a dative's alone.
+type prep struct {
+	bare, dative bool
+	into         string
 }
 
-// contracted is a preposition the neuter's "dem" merges with, as German
-// writes it: "bei der Auslieferung" → "beim Deployment".
-var contracted = map[string]string{"bei": "beim", "von": "vom", "zu": "zum", "in": "im", "an": "am"}
-
-// bare are the words a noun follows with no article of its own, where a
-// feminine and a neuter read the same: prepositions that take a bare noun.
-var bare = map[string]bool{
-	"für": true, "durch": true, "ohne": true, "gegen": true, "um": true, "als": true, "wie": true, "bis": true,
-	"bei": true, "mit": true, "nach": true, "von": true, "vor": true, "per": true, "über": true,
+var preps = map[string]prep{
+	"für": {bare: true}, "durch": {bare: true}, "ohne": {bare: true}, "gegen": {bare: true}, "um": {bare: true},
+	"als": {bare: true}, "wie": {bare: true}, "bis": {bare: true}, "per": {bare: true},
+	"mit": {bare: true, dative: true}, "nach": {bare: true, dative: true}, "vor": {bare: true, dative: true},
+	"über": {bare: true, dative: true},
+	"bei":  {bare: true, dative: true, into: "beim"}, "von": {bare: true, dative: true, into: "vom"},
+	"zu": {dative: true, into: "zum"}, "in": {dative: true, into: "im"}, "an": {dative: true, into: "am"},
+	"aus": {dative: true}, "seit": {dative: true}, "auf": {dative: true}, "unter": {dative: true},
+	"hinter": {dative: true}, "neben": {dative: true}, "zwischen": {dative: true},
 }
 
 // relative are the articles that open a relative clause as its pronoun.
@@ -227,9 +233,12 @@ var joins = map[string]bool{"und": true, "oder": true, "sowie": true}
 //
 // A compound's last part ("Go-Auslieferung"), a word set off by anything
 // but spaces ("die **Auslieferung**"), a capitalised word before it (an
-// adjective or a name), a relative pronoun (a comma before "die") all
-// leave it German.
-func regender(s string, i, j int, out []string, ws []word) bool {
+// adjective or a name), a relative pronoun (a comma before "die", a line
+// break between them too, unless "die" stands right before it and no verb
+// can follow before the block ends: "Build, die Auslieferung und Tests.")
+// all leave it German.
+// before and after are the text around s, the piece.
+func regender(before, s, after string, i, j int, out []string, ws []word) bool {
 	if strings.HasSuffix(s[:i], "-") || strings.HasPrefix(s[j:], "-") {
 		return false
 	}
@@ -247,7 +256,7 @@ func regender(s string, i, j int, out []string, ws []word) bool {
 	}
 	prev := ws[k].low
 	switch {
-	case bare[prev]:
+	case preps[prev].bare:
 		return true
 	case joins[prev]:
 		// The nouns joined, walked back over a list's commas: each
@@ -266,7 +275,7 @@ func regender(s string, i, j int, out []string, ws []word) bool {
 			}
 			switch g := strings.TrimSpace(gap(n-1, ws[n].start)); g {
 			case "":
-				return bare[ws[n-1].low]
+				return preps[ws[n-1].low].bare
 			case ",":
 				n--
 			default:
@@ -287,9 +296,23 @@ func regender(s string, i, j int, out []string, ws []word) bool {
 		return false
 	}
 	low := ws[art].low
-	// A comma before "die": a relative pronoun, its noun before it.
-	if relative[low] && art > 0 && strings.Contains(gap(art-1, ws[art].start), ",") {
-		return false
+	// A comma before "die": a relative pronoun, its noun before it, a code
+	// span's or the line before's too; an article only where no verb can
+	// follow it.
+	lead := before + s[:ws[art].start]
+	if art > 0 {
+		lead = gap(art-1, ws[art].start)
+	}
+	if x := strings.LastIndexFunc(lead, unicode.IsLetter); x >= 0 {
+		_, n := utf8.DecodeRuneInString(lead[x:])
+		lead = lead[x+n:]
+	}
+	if relative[low] && strings.Contains(lead, ",") {
+		head := before + s[:i]
+		item := listItem(head[strings.LastIndexByte(head, '\n')+1:])
+		if adj >= 0 || !verbless(item, s[j:], after) {
+			return false
+		}
 	}
 	if n, ok := neuterOf[low]; ok {
 		out[ws[art].at] = sameCase(word0(s, ws[art]), n)
@@ -299,15 +322,15 @@ func regender(s string, i, j int, out []string, ws []word) bool {
 		return true
 	}
 	d, dative := dativeOf[low]
-	if !dative || art == 0 || !spaced(art-1, ws[art].start) || !dativePreps[ws[art-1].low] {
+	if !dative || art == 0 || !spaced(art-1, ws[art].start) || !preps[ws[art-1].low].dative {
 		return false
 	}
-	prep := ws[art-1]
-	if c, ok := contracted[prep.low]; ok && low == "der" {
+	p := ws[art-1]
+	if c := preps[p.low].into; c != "" && low == "der" {
 		// "bei der" → "beim": the preposition takes the article in, the
 		// space and the article go.
-		out[prep.at] = sameCase(word0(s, prep), c)
-		for x := prep.at + 1; x <= ws[art].at; x++ {
+		out[p.at] = sameCase(word0(s, p), c)
+		for x := p.at + 1; x <= ws[art].at; x++ {
 			out[x] = ""
 		}
 		return true
@@ -315,6 +338,76 @@ func regender(s string, i, j int, out []string, ws []word) bool {
 	out[ws[art].at] = sameCase(word0(s, ws[art]), d)
 	return true
 }
+
+// verbless reports whether rest, a piece's text after a term, and after,
+// the text after the piece, end the block (blockEnds) with no verb between:
+// capitalised nouns, joins and plain articles alone, spaces and commas
+// between, one ".", "!" or "?" at most. A relative clause has its verb last
+// and lower case, so a "die" before the term is then an article. A sentence
+// end inside a block is never taken: a "." may close an abbreviation ("St.
+// Gallen", "Nr. 3"), a "!" a name or an image ("![Bild]"), and the verb
+// may follow in the next line or a code span.
+func verbless(item bool, rest, after string) bool {
+	for i := 0; i < len(rest); {
+		r, n := utf8.DecodeRuneInString(rest[i:])
+		switch {
+		case unicode.IsLetter(r):
+			j := runEnd(rest, i, true)
+			if w := rest[i:j]; !startsUpper(w) && !joins[w] && !plainArticle(w) {
+				return false
+			}
+			i = j
+		case r == ',' || unicode.IsSpace(r):
+			i += n
+		case r == '.' || r == '!' || r == '?':
+			if strings.TrimSpace(rest[i+n:]) != "" {
+				return false
+			}
+			i = len(rest)
+		default:
+			return false
+		}
+	}
+	return blockEnds(item, rest, after)
+}
+
+// blockEnds reports whether a piece ending in rest is its block's last
+// words: the text ends after it, or a line break does and a blank line, a
+// heading ("## ") or, in a list, the next item follows. A code span after
+// it, or a line going on, is not; nor a "- " after a line of prose (a dash
+// a wrapped line may begin with). item: the piece's line is a list item.
+func blockEnds(item bool, rest, after string) bool {
+	if after == "" {
+		return true
+	}
+	if !strings.HasSuffix(rest, "\n") {
+		return false
+	}
+	next, _, _ := strings.Cut(after, "\n")
+	m := strings.TrimLeft(next, " ")
+	h := strings.TrimLeft(m, "#")
+	return m == "" || len(h) < len(m) && strings.HasPrefix(h, " ") || item && listItem(next)
+}
+
+// listItem reports whether a line opens a list item: "- ", "* ", "+ " or
+// a number and "." or ")" before a space.
+func listItem(line string) bool {
+	m := strings.TrimLeft(line, " ")
+	if strings.HasPrefix(m, "- ") || strings.HasPrefix(m, "* ") || strings.HasPrefix(m, "+ ") {
+		return true
+	}
+	n := strings.TrimLeft(m, "0123456789")
+	return len(n) < len(m) && (strings.HasPrefix(n, ". ") || strings.HasPrefix(n, ") "))
+}
+
+// plainArticle reports whether w is an article or determiner, as the
+// tables above hold them, that no verb is spelled like.
+func plainArticle(w string) bool { return (isArticle(w) || nounCue(w)) && !verbForms[w] }
+
+// verbForms are determiners spelled like a verb's finite form or its
+// infinitive ("einen", "einigen": unite, agree; "meinen": mean), which
+// could be a relative clause's last word.
+var verbForms = map[string]bool{"einen": true, "eine": true, "einige": true, "meine": true, "sein": true}
 
 // lineStart reports whether before, a piece's text before a word, is a
 // line's start: nothing, or a list item's or heading's marker ("- ", "1. ",

@@ -65,10 +65,19 @@ func SwissSS(s string) string {
 // outsideCode applies f to the prose of s alone: fenced blocks, indented
 // code blocks and inline backtick spans stay as written.
 func outsideCode(s string, f func(string) string) string {
+	return proseIn(s, func(_, piece, _ string) string { return f(piece) })
+}
+
+// proseIn is outsideCode with each piece's surroundings: f sees the text of
+// s before the piece and after it, as written, code and all.
+func proseIn(s string, f func(before, piece, after string) string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
 	fence := ""
+	off := 0
 	for _, line := range strings.SplitAfter(s, "\n") {
+		at := off
+		off += len(line)
 		// markup's fence rule: a code span markup.CodeSpan wrote, ``` and all,
 		// opens no fence here either, or every ß after it would stay.
 		trimmed := strings.TrimSpace(line)
@@ -88,12 +97,13 @@ func outsideCode(s string, f func(string) string) string {
 			b.WriteString(line)
 			continue
 		}
-		b.WriteString(proseLine(line, f))
+		b.WriteString(proseLine(s, at, line, f))
 	}
 	return b.String()
 }
 
-func proseLine(line string, f func(string) string) string {
+// proseLine is proseIn on one line, at its offset in s.
+func proseLine(s string, at int, line string, f func(before, piece, after string) string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); {
 		if line[i] == '`' {
@@ -111,7 +121,7 @@ func proseLine(line string, f func(string) string) string {
 		if next < 0 {
 			next = len(line) - i
 		}
-		b.WriteString(f(line[i : i+next]))
+		b.WriteString(f(s[:at+i], line[i:i+next], s[at+i+next:]))
 		i += next
 	}
 	return b.String()
