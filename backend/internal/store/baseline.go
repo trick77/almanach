@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/trick77/almanach/internal/diagram"
 )
@@ -205,14 +204,6 @@ func (s *Store) NextDeparture(ctx context.Context) (BaselineRun, bool, error) {
 // RunByID is one run, ok false when it is gone (its repository removed).
 func (s *Store) RunByID(ctx context.Context, id int64) (BaselineRun, bool, error) {
 	return s.oneRun(ctx, `SELECT `+runColumns+` FROM `+runsFrom+` WHERE b.id = ?`, id)
-}
-
-// RunStreak is what bounds the poller's automatic runs: Failed is how many
-// runs failed since the newest done run (all of them before any), Retried
-// how many of the newest runs in a row were the poller's retries (trigger
-// retry), whatever they retried.
-type RunStreak struct {
-	Failed, Retried int
 }
 
 // retriedB and retriedL count the newest runs in a row that are retries of
@@ -417,18 +408,6 @@ func judgeShape(ctx context.Context, db execer, revisionID int64, shape string) 
 		 WHERE id = ? AND scope = 'project' AND shape IS NULL AND id IN (SELECT current_revision_id FROM pages)`,
 		shape, revisionID))
 	return n > 0, err
-}
-
-// RepoRuns is what the source page shows of one repository's runs: the
-// newest run, what its priced calls cost (nil when none was priced), the
-// commit last documented and how many of the newest runs in a
-// row were the poller's retries (RunStreak.Retried).
-type RepoRuns struct {
-	Last         BaselineRun
-	LastCost     *int64
-	Documented   string
-	DocumentedAt *time.Time
-	Retried      int
 }
 
 // SourceRuns is RepoRuns for every repository of a source that has a run,

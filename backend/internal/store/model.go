@@ -57,6 +57,45 @@ type BaselineRun struct {
 // Open reports whether the run is neither done nor failed.
 func (r BaselineRun) Open() bool { return r.State != RunDone && r.State != RunFailed }
 
+// RunStreak is what bounds the poller's automatic runs: Failed is how many
+// runs failed since the newest done run (all of them before any), Retried
+// how many of the newest runs in a row were the poller's retries (trigger
+// retry), whatever they retried.
+//
+// Table: -
+type RunStreak struct {
+	Failed, Retried int
+}
+
+// RepoRuns is what the source page shows of one repository's runs: the
+// newest run, what its priced calls cost (nil when none was priced), the
+// commit last documented and how many of the newest runs in a
+// row were the poller's retries (RunStreak.Retried).
+//
+// Table: -
+type RepoRuns struct {
+	Last         BaselineRun
+	LastCost     *int64
+	Documented   string
+	DocumentedAt *time.Time
+	Retried      int
+}
+
+// FinishedRun is a run that ended, with what the poller's retry reads of
+// its repository: whether it is the newest run of its kind, and how many
+// runs failed since the newest done one (LastRun's count). A restyle is a
+// kind of its own: the newest restyle, its failures its page's at its
+// epoch as RestyleState counts them (one that failed on the project page,
+// the project's over the project); a reading run's never count a restyle,
+// as LastRun's.
+//
+// Table: baseline_runs
+type FinishedRun struct {
+	BaselineRun
+	Latest      bool
+	FailedInRow int
+}
+
 // Brief is a repository's brief as stored. Markdown is "" before the
 // first was written, and in the listing (Briefs), which carries
 // HasMarkdown alone.

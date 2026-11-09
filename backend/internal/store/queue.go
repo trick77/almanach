@@ -55,19 +55,6 @@ func (s *Store) OpenRuns(ctx context.Context) ([]BaselineRun, error) {
 		ORDER BY b.state = 'queued', b.queued_at, b.id`)
 }
 
-// FinishedRun is a run that ended, with what the poller's retry reads of
-// its repository: whether it is the newest run of its kind, and how many
-// runs failed since the newest done one (LastRun's count). A restyle is a
-// kind of its own: the newest restyle, its failures its page's at its
-// epoch as RestyleState counts them (one that failed on the project page,
-// the project's over the project); a reading run's never count a restyle,
-// as LastRun's.
-type FinishedRun struct {
-	BaselineRun
-	Latest      bool
-	FailedInRow int
-}
-
 // FinishedRuns is the runs that ended at or after since, newest first, at
 // most limit, in one query.
 func (s *Store) FinishedRuns(ctx context.Context, since time.Time, limit int) ([]FinishedRun, error) {

@@ -9,6 +9,7 @@
 Go types:
 
 - `store.BaselineRun` (internal/store): BaselineRun is one run as stored. Plan is the catalogue, the worker's to read; the store keeps it verbatim.
+- `store.FinishedRun` (internal/store): FinishedRun is a run that ended, with what the poller's retry reads of its repository: whether it is the newest run of its kind, and how many runs failed since the newest done one (LastRun's count). A restyle is a kind of its own: the newest restyle, its failures its page's at its epoch as RestyleState counts them (one that failed on the project page, the project's over the project); a reading run's never count a restyle, as LastRun's.
 
 | Column | Type | Null | Default | PK |
 | --- | --- | --- | --- | --- |
@@ -710,6 +711,18 @@ In `internal/store`. ProblemArea is one cluster of bugfixes: a repo and the dire
 | `LastFixPR` | `string` |  |
 | `LastFixAt` | `time.Time` |  |
 
+### store.RepoRuns
+
+In `internal/store`. RepoRuns is what the source page shows of one repository's runs: the newest run, what its priced calls cost (nil when none was priced), the commit last documented and how many of the newest runs in a row were the poller's retries (RunStreak.Retried).
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Last` | `BaselineRun` |  |
+| `LastCost` | `*int64` |  |
+| `Documented` | `string` |  |
+| `DocumentedAt` | `*time.Time` |  |
+| `Retried` | `int` |  |
+
 ### store.RestyleState
 
 In `internal/store`. RestyleState is what is due of a repository's restyle at an epoch: its page, its project's. One answer for the poller's queueing and the run's steps, so the two never disagree and a run never ends with a page left due that it judged not due.
@@ -719,6 +732,15 @@ In `internal/store`. RestyleState is what is due of a repository's restyle at an
 | `RepoDue` | `bool` |  |
 | `ProjectDue` | `bool` |  |
 | `Open` | `bool` | Open: a restyle is open somewhere in the wiki. |
+
+### store.RunStreak
+
+In `internal/store`. RunStreak is what bounds the poller's automatic runs: Failed is how many runs failed since the newest done run (all of them before any), Retried how many of the newest runs in a row were the poller's retries (trigger retry), whatever they retried.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Failed` | `int` |  |
+| `Retried` | `int` |  |
 
 ### store.Spend
 
