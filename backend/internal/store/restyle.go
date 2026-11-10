@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"time"
 )
 
@@ -15,9 +16,15 @@ import (
 
 // EnqueueRestyle queues a restyle run of one repository for epoch at its
 // documented commit, the page's: the run reads no code, so no head is
-// pinned. ErrExists when the repository has an open run, ErrNoRepo when it
-// is no source repository (a deactivated one included).
-func (s *Store) EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int) (int64, error) {
+// pinned. byHand is a button's, which the worker runs past RestyleTries
+// (RestyleDue): its plan says so, the trigger being epoch whoever queued it
+// (the table's check, 0004). ErrExists when the repository has an open run,
+// ErrNoRepo when it is no source repository (a deactivated one included).
+func (s *Store) EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int, byHand bool) (int64, error) {
+	plan := `{"restyle":{}}`
+	if byHand {
+		plan = `{"restyle":{"manual":true}}`
+	}
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil {
 		return 0, err
@@ -28,10 +35,10 @@ func (s *Store) EnqueueRestyle(ctx context.Context, key, slug, commit string, ep
 	var id int64
 	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO baseline_runs (repo_id, mode, trigger, base_commit, "commit", state, plan, queued_at, epoch)
-		SELECT sr.repo_id, 'restyle', 'epoch', ?, ?, 'queued', '{"restyle":{}}', ?, ? FROM source_repos sr
+		SELECT sr.repo_id, 'restyle', 'epoch', ?, ?, 'queued', ?, ?, ? FROM source_repos sr
 		 WHERE sr.repo_id = ? AND `+activeRow+`
 		RETURNING id`,
-		commit, commit, nowStamp(), epoch, rid).Scan(&id)
+		commit, commit, plan, nowStamp(), epoch, rid).Scan(&id)
 	if isForeignKey(err) || errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoRepo
 	}
@@ -76,6 +83,17 @@ func (e Epochs) Run() int { return max(e.Repo, e.Project) }
 // scope gives the other's pages no new tries. Nothing is due of a
 // repository that is no active source.
 func (s *Store) RestyleState(ctx context.Context, key, slug string, e Epochs, failedBefore time.Time) (RestyleState, error) {
+	return s.restyleState(ctx, key, slug, e, failedBefore, RestyleTries)
+}
+
+// RestyleDue is RestyleState for a restyle queued by hand: due while below
+// the scope's epoch, whatever the restyles that failed (a button is the
+// way past RestyleTries).
+func (s *Store) RestyleDue(ctx context.Context, key, slug string, e Epochs) (RestyleState, error) {
+	return s.restyleState(ctx, key, slug, e, time.Now().AddDate(100, 0, 0), math.MaxInt32)
+}
+
+func (s *Store) restyleState(ctx context.Context, key, slug string, e Epochs, failedBefore time.Time, tries int) (RestyleState, error) {
 	var st RestyleState
 	rid, ok, err := repoID(ctx, s.db, key, slug)
 	if err != nil || !ok {
@@ -100,11 +118,95 @@ func (s *Store) RestyleState(ctx context.Context, key, slug string, e Epochs, fa
 		       EXISTS (SELECT 1 FROM baseline_runs o WHERE o.mode = 'restyle' AND o.state NOT IN ('done', 'failed'))
 		  FROM source_repos sr JOIN projects p ON p.id = sr.project_id
 		 WHERE sr.repo_id = ?1 AND `+activeRow,
-		rid, e.Repo, RestyleTries, stamp(failedBefore), RestyleProjectStep, e.Project).Scan(&st.RepoDue, &st.ProjectDue, &st.Open)
+		rid, e.Repo, tries, stamp(failedBefore), RestyleProjectStep, e.Project).Scan(&st.RepoDue, &st.ProjectDue, &st.Open)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RestyleState{}, nil
 	}
 	return st, err
+}
+
+// staleRepo is a repository the poller would restyle: its page below
+// ?1, or, the project's first active repository by slug (the one the
+// poller comes to first), its project's page below ?2 in a project of more
+// than one.
+const staleRepo = `(x.restyle_epoch < ?1
+	   AND EXISTS (SELECT 1 FROM pages pg WHERE pg.scope = 'repository' AND pg.project_id = x.project_id AND pg.repo_id = x.repo_id)
+	  OR xp.restyle_epoch < ?2
+	   AND EXISTS (SELECT 1 FROM pages pg WHERE pg.scope = 'project' AND pg.project_id = x.project_id)
+	   AND (SELECT COUNT(*) FROM source_repos o WHERE o.project_id = x.project_id AND o.deactivated_at IS NULL) > 1
+	   AND xr.slug = (SELECT MIN(r2.slug) FROM source_repos s2 JOIN repos r2 ON r2.id = s2.repo_id
+	                   WHERE s2.project_id = x.project_id AND s2.deactivated_at IS NULL))`
+
+// rank is the place of the repository key/slug among the stale ones in the
+// poller's order, itself counted.
+func (s *Store) rank(ctx context.Context, key, slug string, e Epochs) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM source_repos x JOIN repos xr ON xr.id = x.repo_id JOIN projects xp ON xp.id = x.project_id
+		 WHERE x.deactivated_at IS NULL AND (xp.key < ?3 OR xp.key = ?3 AND xr.slug <= ?4) AND `+staleRepo,
+		e.Repo, e.Project, key, slug).Scan(&n)
+	return max(n, 1), err
+}
+
+// RepoStale reports a repository's page below e.Repo, with its restyles
+// and its rank; ok false when it is at the epoch, unwritten, or no active
+// source.
+func (s *Store) RepoStale(ctx context.Context, key, slug string, e Epochs) (Stale, bool, error) {
+	var st Stale
+	rid, ok, err := repoID(ctx, s.db, key, slug)
+	if err != nil || !ok {
+		return st, false, err
+	}
+	var pkey, rslug string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT sr.restyle_epoch,
+		       (SELECT COUNT(*) FROM baseline_runs f
+		         WHERE f.repo_id = sr.repo_id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch >= ?2),
+		       COALESCE((SELECT o.state FROM baseline_runs o
+		                  WHERE o.repo_id = sr.repo_id AND o.mode = 'restyle' AND o.state NOT IN ('done', 'failed')), ''),
+		       p.key, r.slug
+		  FROM `+sourceReposFrom+`
+		 WHERE sr.repo_id = ?1 AND `+activeRow+` AND sr.restyle_epoch < ?2
+		   AND EXISTS (SELECT 1 FROM pages pg WHERE pg.scope = 'repository' AND pg.project_id = sr.project_id AND pg.repo_id = sr.repo_id)`,
+		rid, e.Repo).Scan(&st.Epoch, &st.Failed, &st.Run, &pkey, &rslug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Stale{}, false, nil
+	}
+	if err != nil {
+		return st, false, err
+	}
+	st.Rank, err = s.rank(ctx, pkey, rslug, e)
+	return st, err == nil, err
+}
+
+// ProjectStale reports a project's page below e.Project, as RepoStale: only
+// a written page of a project of more than one active repository, a project
+// of one having none of its own.
+func (s *Store) ProjectStale(ctx context.Context, key string, e Epochs) (Stale, bool, error) {
+	var st Stale
+	var pkey, first string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.restyle_epoch,
+		       (SELECT COUNT(*) FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
+		         WHERE o.project_id = p.id AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch >= ?2 AND f.step = ?3),
+		       COALESCE((SELECT f.state FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
+		                  WHERE o.project_id = p.id AND f.mode = 'restyle' AND f.state NOT IN ('done', 'failed')), ''),
+		       p.key,
+		       (SELECT MIN(r2.slug) FROM source_repos s2 JOIN repos r2 ON r2.id = s2.repo_id
+		         WHERE s2.project_id = p.id AND s2.deactivated_at IS NULL)
+		  FROM projects p
+		 WHERE p.id = (SELECT project_id FROM project_names WHERE key = ?1) AND p.restyle_epoch < ?2
+		   AND EXISTS (SELECT 1 FROM pages pg WHERE pg.scope = 'project' AND pg.project_id = p.id)
+		   AND (SELECT COUNT(*) FROM source_repos o WHERE o.project_id = p.id AND o.deactivated_at IS NULL) > 1`,
+		key, e.Project, RestyleProjectStep).Scan(&st.Epoch, &st.Failed, &st.Run, &pkey, &first)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Stale{}, false, nil
+	}
+	if err != nil {
+		return st, false, err
+	}
+	st.Rank, err = s.rank(ctx, pkey, first, e)
+	return st, err == nil, err
 }
 
 // MarkProjectRestyled puts the project page of run runID's repository at

@@ -69,6 +69,7 @@ const repo: RepoDetail = {
   project_key: "tools",
   slug: "rongo",
   description: null,
+  stale: null,
   notes_total: 0,
   last_merge: null,
   revisions: [],

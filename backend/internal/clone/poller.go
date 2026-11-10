@@ -47,7 +47,7 @@ type Store interface {
 	MarkRepoReady(ctx context.Context, key, slug, branch, head string) error
 	MarkRepoFailed(ctx context.Context, key, slug, errText string) error
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
-	EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int) (int64, error)
+	EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int, byHand bool) (int64, error)
 	RestyleState(ctx context.Context, key, slug string, e store.Epochs, failedBefore time.Time) (store.RestyleState, error)
 	SetRunReason(ctx context.Context, id int64, reason store.RunReason) error
 	LastRun(ctx context.Context, key, slug string) (store.BaselineRun, store.RunStreak, bool, error)
@@ -674,7 +674,7 @@ func (p *Poller) restyle(ctx context.Context, key, slug string, doc store.Baseli
 	if st.ProjectDue {
 		why.ProjectEpoch = prompts.ProjectEpoch
 	}
-	id, err := p.Store.EnqueueRestyle(ctx, key, slug, doc.Commit, prompts.Epoch)
+	id, err := p.Store.EnqueueRestyle(ctx, key, slug, doc.Commit, prompts.Epoch, false)
 	p.queued(ctx, err, key, slug, id, store.RunRestyle, store.TriggerEpoch, doc.Commit, why)
 }
 

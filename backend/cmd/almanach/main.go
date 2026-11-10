@@ -371,7 +371,7 @@ func serve(log *slog.Logger) error {
 		poller.Start(context.WithoutCancel(ctx))
 		// Removals go through the poller, under its disk lock.
 		sources = &api.SourcesDeps{Store: db, Poller: poller, Git: poller, Key: key, DefaultHost: app.Sources.BitbucketHost,
-			Reconcile: app.Baseline.Reconcile, MaxCalls: app.Baseline.MaxCalls}
+			Reconcile: app.Baseline.Reconcile, SyncInterval: app.Sources.SyncInterval, MaxCalls: app.Baseline.MaxCalls}
 	}
 	worker.Start(context.WithoutCancel(ctx))
 

@@ -14,7 +14,7 @@ import (
 // restyleRun queues and returns a restyle run of key/slug for epoch.
 func restyleRun(t *testing.T, s *Store, key, slug string, epoch int) BaselineRun {
 	t.Helper()
-	id, err := s.EnqueueRestyle(context.Background(), key, slug, "d0c", epoch)
+	id, err := s.EnqueueRestyle(context.Background(), key, slug, "d0c", epoch, false)
 	if err != nil {
 		t.Fatalf("EnqueueRestyle %s/%s: %v", key, slug, err)
 	}
@@ -53,11 +53,20 @@ func TestEnqueueRestyle(t *testing.T) {
 		string(r.Plan) != `{"restyle":{}}` || r.State != RunQueued {
 		t.Fatalf("restyle run = %+v", r)
 	}
-	if _, err := s.EnqueueRestyle(ctx, "tools", "svc", "d0c", 3); !errors.Is(err, ErrExists) {
+	if _, err := s.EnqueueRestyle(ctx, "tools", "svc", "d0c", 3, false); !errors.Is(err, ErrExists) {
 		t.Fatalf("second open run: err = %v, want ErrExists", err)
 	}
-	if _, err := s.EnqueueRestyle(ctx, "tools", "nope", "d0c", 3); !errors.Is(err, ErrNoRepo) {
+	if _, err := s.EnqueueRestyle(ctx, "tools", "nope", "d0c", 3, false); !errors.Is(err, ErrNoRepo) {
 		t.Fatalf("unknown repository: err = %v, want ErrNoRepo", err)
+	}
+	// By hand: the plan says so, the trigger stays the table's.
+	sourceRepo(t, s, "tools", "web")
+	id, err := s.EnqueueRestyle(ctx, "tools", "web", "d0c", 3, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _, _ := s.RunByID(ctx, id); r.Trigger != TriggerEpoch || string(r.Plan) != `{"restyle":{"manual":true}}` {
+		t.Fatalf("restyle by hand = %+v", r)
 	}
 }
 

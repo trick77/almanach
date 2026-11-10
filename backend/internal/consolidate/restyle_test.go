@@ -202,6 +202,20 @@ func TestRestyle_OnlyWhatIsDue(t *testing.T) {
 	}
 }
 
+// A restyle queued by hand asks what is due past the tries; the poller's
+// never does.
+func TestRestyle_ByHandPastTheTries(t *testing.T) {
+	for plan, want := range map[string]bool{`{"restyle":{"manual":true}}`: true, `{"restyle":{}}`: false} {
+		x := restyleWorld(t)
+		x.st.repoCount = map[string]int{"tools": 1}
+		x.st.runs[0].Plan = []byte(plan)
+		x.w.drain(context.Background())
+		if r := x.run(); r.State != store.RunDone || (x.st.manualDue > 0) != want {
+			t.Errorf("%s: run %s, RestyleDue read %d times", plan, r.State, x.st.manualDue)
+		}
+	}
+}
+
 // An answer that only lays the page out writes no revision: the layout in
 // place on the current revision, the map standing, no map call.
 func TestRestyle_LayoutInPlace(t *testing.T) {

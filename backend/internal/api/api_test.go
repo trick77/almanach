@@ -57,6 +57,9 @@ type fakeStore struct {
 
 	sourceRepos map[string]bool
 	sourceErr   error
+	// stale is the stale pages by "key" or "key/slug"; staleErr fails the read.
+	stale    map[string]store.Stale
+	staleErr error
 	// owners is each project's owning team by key, for Ingest's rule.
 	owners       map[string]string
 	sourcedAsked []bool
@@ -109,6 +112,16 @@ func (f *fakeStore) Costs(context.Context, time.Time) ([]store.CostRow, error) {
 func (f *fakeStore) Spent(context.Context, time.Time) (store.Spend, error) {
 	n := int64(1_284_000_000)
 	return store.Spend{NanoUSD: &n, Calls: 23}, nil
+}
+
+func (f *fakeStore) RepoStale(_ context.Context, key, slug string, _ store.Epochs) (store.Stale, bool, error) {
+	st, ok := f.stale[key+"/"+slug]
+	return st, ok, f.staleErr
+}
+
+func (f *fakeStore) ProjectStale(_ context.Context, key string, _ store.Epochs) (store.Stale, bool, error) {
+	st, ok := f.stale[key]
+	return st, ok, f.staleErr
 }
 
 // Libraries answers libs by project key; graphErr fails it.

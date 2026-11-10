@@ -753,6 +753,17 @@ In `internal/store`. Spend is what Almanach's own model calls since a time cost.
 | `Unpriced` | `int` | Unpriced is the calls the gateway billed without a price coming back: answered, or cut mid-answer (a loop cut, the output cap, a stall), the stream ended before its usage. Their cost is unknown, not zero. A call that got no answer (refused, no headers) billed nothing and is not one. |
 | `Dearest` | `int64` | Dearest is the costliest priced call of the last dearestWindow: a day of nothing but unpriced calls still has one. |
 
+### store.Stale
+
+In `internal/store`. Stale is a page below its scope's epoch as the wiki tells its reader (RepoStale, ProjectStale): what the restyles did and when the poller comes to it.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Epoch` | `int` | Epoch is the page's restyle_epoch. |
+| `Failed` | `int` | Failed is its restyles failed under the scope's rules, counted as RestyleState counts them; RestyleTries of them and the poller queues none. |
+| `Run` | `string` | Run is the state of an open restyle of the page (the project's: of any of its repositories), "" for none. |
+| `Rank` | `int` | Rank is the page's place among the repositories the poller would restyle, in its order (SyncJobs: key, slug), 1 next: it queues one restyle at a time, so about one a cycle. Every stale page counts, tries spent or not: an estimate, never a promise. |
+
 ## Diagram
 
 ```mermaid

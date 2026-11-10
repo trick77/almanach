@@ -334,6 +334,48 @@ export const S = {
       "Kein Aufbau: der letzte Run hat jeden Entwurf verworfen, weil er gegen die Regeln der Karte verstiess. Er wird neu gezeichnet, sobald sich die Beschreibung ändert.",
     notes: "Notizen",
   },
+  // A page below today's rules (Regelversion, the queue's word too; user,
+  // 2026-11-10): what happens next and what a reader can do (a clear call
+  // to action; on its own, say so and roughly when).
+  stale: {
+    title: "Veraltete Regelversion",
+    rule: (scope: "repo" | "project", at: number) => {
+      const what = (scope === "project" ? S_EPOCH_PROJECT : S_EPOCH_REPO)[at];
+      return (
+        `Diese Seite wurde noch nicht nach Regelversion ${at} geprüft` +
+        (what ? ` (${what})` : "") +
+        ". Einzelne Aussagen können noch der alten Fassung folgen."
+      );
+    },
+    running: "Wird gerade neu gegliedert.",
+    queued: "Steht in der Queue und wird bald neu gegliedert. Nichts zu tun.",
+    waiting: (eta: string, rank: number) =>
+      `Wird automatisch neu gegliedert, voraussichtlich ${eta} (Platz ${rank}). Nichts zu tun.`,
+    waitingNoEta: (rank: number) =>
+      `Wird automatisch neu gegliedert (Platz ${rank}). Nichts zu tun.`,
+    paused: "Die Queue ist pausiert, darum geschieht nichts.",
+    budget: "Das Tagesbudget ist aufgebraucht, es geht morgen weiter.",
+    manual: {
+      off: "Wird nicht automatisch nachgeführt: die automatischen Runs sind abgeschaltet.",
+      failed:
+        "Wird nicht automatisch nachgeführt: die automatischen Versuche sind gescheitert.",
+    } as Record<string, string>,
+    toQueue: "Queue ansehen",
+    resume: "Queue fortsetzen",
+    toSource: "In den Quellen neu gliedern",
+    // About when, rounded: an estimate, never a promise.
+    eta: (seconds: number) => {
+      const min = Math.max(1, Math.round(seconds / 60));
+      if (min < 60) {
+        return min === 1 ? "in etwa einer Minute" : `in etwa ${min} Minuten`;
+      }
+      const h = Math.round(min / 60);
+      if (h < 48) {
+        return h === 1 ? "in etwa einer Stunde" : `in etwa ${h} Stunden`;
+      }
+      return `in etwa ${Math.round(h / 24)} Tagen`;
+    },
+  },
   // One revision's page: the description as it stood, and what it changed
   // against the revision before.
   revision: {
@@ -747,7 +789,10 @@ export const S = {
       describe: "Beschreiben",
       reconcile: "Aktualisieren",
       full: "Neu beschreiben",
+      restyle: "Neu gliedern",
     },
+    restyleHint:
+      "Bringt die Seiten auf die aktuelle Regelversion, ohne Code zu lesen. Eine Seite, die schon aktuell ist, bleibt unverändert.",
     // A full run is paid for whole: confirmed, with what the last one cost.
     confirmFull: (slug: string, calls: number, last: string) =>
       `${slug} neu beschreiben? Liest das ganze Repository erneut, bis zu ${calls} Modellaufrufe` +
@@ -810,10 +855,10 @@ export const S = {
       intervalFull: (days: number) =>
         `Nie fertig beschrieben; nach ${days} Tagen neu gelesen.`,
       repoLevel: (n: number) =>
-        `Repository-Seite auf Regelstand ${n}` +
+        `Repository-Seite auf Regelversion ${n}` +
         (S_EPOCH_REPO[n] ? ` (${S_EPOCH_REPO[n]})` : ""),
       projectLevel: (n: number) =>
-        `Projektseite auf Regelstand ${n}` +
+        `Projektseite auf Regelversion ${n}` +
         (S_EPOCH_PROJECT[n] ? ` (${S_EPOCH_PROJECT[n]})` : ""),
       // Between a restyle's two page levels.
       levelSep: "; ",

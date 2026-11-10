@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/trick77/almanach/internal/config"
+	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 )
 
@@ -84,6 +86,38 @@ func TestDescribe_RecordsAManualReason(t *testing.T) {
 	fs.enqueued, fs.reasonErr = nil, errors.New("database is locked")
 	if code, _ := do(t, h, "POST", "/api/sources/tools/repos/svc/describe", "", `{}`, jsonHdr); code != 202 || len(fs.enqueued) != 1 {
 		t.Errorf("reason write failed: %d, queued %v, want the run queued", code, fs.enqueued)
+	}
+}
+
+// A restyle by hand: the documented commit, the button's trigger, today's
+// epoch; nothing documented has nothing to restyle.
+func TestDescribe_Restyle(t *testing.T) {
+	fs := describeSources()
+	w := &fakeWaker{}
+	h, _, _ := sourcesHandlerWith(t, fs, newFakeStore(), w, false)
+	if code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos/svc/describe", "", `{"mode":"restyle"}`, jsonHdr); code != 422 ||
+		!strings.Contains(field(t, body, "error"), "nothing documented") {
+		t.Fatalf("undocumented: %d %v, want 422", code, body)
+	}
+	doc := strings.Repeat("a", 40)
+	fs.runs["svc"] = store.RepoRuns{Last: store.BaselineRun{ProjectKey: "tools", State: store.RunDone}, Documented: doc}
+	code, body := do(t, h, http.MethodPost, "/api/sources/tools/repos/svc/describe", "", `{"mode":"Restyle"}`, jsonHdr)
+	if code != 202 || field(t, body, "mode") != store.RunRestyle || w.wakes != 1 {
+		t.Fatalf("restyle: %d %v wakes %d", code, body, w.wakes)
+	}
+	want := fmt.Sprintf("tools svc restyle %s %d true", doc, prompts.Epoch)
+	if len(fs.enqueued) != 1 || fs.enqueued[0] != want || fs.reasons[1].Kind != store.ReasonManual {
+		t.Fatalf("enqueued %q reasons %+v, want %q, manual", fs.enqueued, fs.reasons, want)
+	}
+	for err, c := range map[error]int{store.ErrExists: 409, store.ErrNoRepo: 404, errors.New("db down"): 500} {
+		fs.enqueueErr = err
+		if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/svc/describe", "", `{"mode":"restyle"}`, jsonHdr); code != c {
+			t.Errorf("%v: %d, want %d", err, code, c)
+		}
+	}
+	fs.enqueueErr, fs.reasonErr = nil, errors.New("database is locked")
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos/svc/describe", "", `{"mode":"restyle"}`, jsonHdr); code != 202 {
+		t.Errorf("reason write failed: %d, want the restyle queued", code)
 	}
 }
 
