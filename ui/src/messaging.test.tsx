@@ -118,6 +118,7 @@ const repo: RepoDetail = {
   uses: [],
   used_by: [],
   interfaces: [],
+  parts: { units: [], edges: [], graph: { nodes: [], edges: [] } },
   messaging: {
     topics,
     schemas: [

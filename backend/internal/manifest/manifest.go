@@ -20,10 +20,11 @@ import (
 )
 
 // Version is this package's reading of the manifests: raise it with any
-// change to what Parse makes of one, and every repository's manifests are
-// read again at the next sync, not only those whose head moved. 6: no
-// version read, so no row keeps one.
-const Version = 6
+// change to what Parse or Units makes of one, and every repository's
+// manifests are read again at the next sync, not only those whose head
+// moved. 6: no version read, so no row keeps one. 7: the parts inside a
+// repository (Units).
+const Version = 7
 
 // Ecosystems: the prefix of a coordinate.
 const (
@@ -79,10 +80,12 @@ type Dep struct {
 
 // Read is what one repository's manifests say: the coordinates it provides
 // and the ones it requires, each once, sorted. A coordinate it provides
-// itself is no requirement (a monorepo's modules use each other).
+// itself is no requirement (a monorepo's modules use each other). Units is
+// the parts inside it (Units), read beside, never by Parse.
 type Read struct {
 	Provides []string `json:"provides"`
 	Requires []Dep    `json:"requires"`
+	Units    Inner    `json:"-"`
 }
 
 // Is reports whether a path names a manifest this package reads without
@@ -198,10 +201,10 @@ func trimBOM(body []byte) []byte { return bytes.TrimPrefix(body, []byte("\xef\xb
 // Parse reads the manifests given (path to body). A manifest that does not
 // parse is left out; the rest still count.
 func Parse(in map[string][]byte) Read {
-	files := make(map[string][]byte, len(in))
-	for p, body := range in {
-		files[p] = trimBOM(body)
-	}
+	return parse(read(in))
+}
+
+func parse(files map[string][]byte, g gradleRead, each map[string]fileRead) Read {
 	provides := map[string]bool{}
 	requires := map[string]Dep{}
 	// A coordinate named twice: the strongest scope, whatever the order.
@@ -212,40 +215,14 @@ func Parse(in map[string][]byte) Read {
 			requires[d.Coord] = d
 		}
 	}
-	// A Gradle build's files are read together.
-	gradleProv, gradleReqs := gradle(files)
-	for _, c := range gradleProv {
+	for _, c := range g.provides() {
 		provides[c] = true
 	}
-	cargoWS := cargoWorkspaces(files)
-	pins := pomPins(files)
-	for p, body := range files {
-		var prov []string
-		var reqs []Dep
-		switch b := path.Base(p); b {
-		case "go.mod":
-			prov, reqs = goMod(body)
-		case "go.work", "pnpm-workspace.yaml":
-			// Members only (Modules), nothing provided or required.
-		case "pom.xml":
-			prov, reqs = pom(body, pins.of(dirOf(p)))
-		case "package.json":
-			prov, reqs = packageJSON(body)
-		case "pyproject.toml":
-			prov, reqs = pyproject(body)
-		case "Cargo.toml":
-			prov, reqs = cargo(body, cargoWS.of(dirOf(p)))
-		default:
-			if scope, ok := requirementsScope(b); ok {
-				reqs = requirements(body, toolingScope(dirOf(p), scope))
-			} else {
-				reqs = gradleReqs[p]
-			}
-		}
-		for _, c := range prov {
+	for p := range files {
+		for _, c := range each[p].prov {
 			provides[c] = true
 		}
-		for _, d := range reqs {
+		for _, d := range each[p].reqs {
 			add(d)
 		}
 	}
@@ -261,6 +238,53 @@ func Parse(in map[string][]byte) Read {
 	sort.Strings(out.Provides)
 	sort.Slice(out.Requires, func(i, j int) bool { return out.Requires[i].Coord < out.Requires[j].Coord })
 	return out
+}
+
+// fileRead is what one manifest provides and requires.
+type fileRead struct {
+	prov []string
+	reqs []Dep
+}
+
+// read is the manifests' bodies, a byte order mark off, what the Gradle
+// builds among them say (read together: a build file alone does not say
+// what its project is called), and each manifest's own read, a Gradle
+// build file's requires among them (its provides are the build's, by
+// folder). A manifest that does not parse reads as nothing.
+func read(in map[string][]byte) (map[string][]byte, gradleRead, map[string]fileRead) {
+	files := make(map[string][]byte, len(in))
+	for p, body := range in {
+		files[p] = trimBOM(body)
+	}
+	g := gradle(files)
+	cargoWS := cargoWorkspaces(files)
+	pins := pomPins(files)
+	each := make(map[string]fileRead, len(files))
+	for p, body := range files {
+		var r fileRead
+		switch b := path.Base(p); b {
+		case "go.mod":
+			r.prov, r.reqs = goMod(body)
+		case "go.work", "pnpm-workspace.yaml":
+			// Members only (Modules), nothing provided or required.
+		case "pom.xml":
+			r.prov, r.reqs = pom(body, pins.of(dirOf(p)))
+		case "package.json":
+			r.prov, r.reqs = packageJSON(body)
+		case "pyproject.toml":
+			r.prov, r.reqs = pyproject(body)
+		case "Cargo.toml":
+			r.prov, r.reqs = cargo(body, cargoWS.of(dirOf(p)))
+		default:
+			if scope, ok := requirementsScope(b); ok {
+				r.reqs = requirements(body, toolingScope(dirOf(p), scope))
+			} else {
+				r.reqs = g.reqs[p]
+			}
+		}
+		each[p] = r
+	}
+	return files, g, each
 }
 
 // goMod is a go.mod's module and its requires, line by line: the module

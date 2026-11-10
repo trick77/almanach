@@ -10,6 +10,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/imports"
 	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/redact"
@@ -31,6 +32,8 @@ type ManifestStore interface {
 	SaveTopics(ctx context.Context, repoID int64, commit string, read messaging.Read) error
 	EndpointsCommit(ctx context.Context, repoID int64) (string, bool, error)
 	SaveEndpoints(ctx context.Context, repoID int64, commit string, read endpoints.Read) error
+	ImportsCommit(ctx context.Context, repoID int64) (string, bool, error)
+	SaveImports(ctx context.Context, repoID int64, commit string, read imports.Read) error
 }
 
 // ManifestReads is what reading the manifests and messages needs of
@@ -155,7 +158,7 @@ func (p *Poller) readManifests(ctx context.Context, dir, head string) (manifest.
 			}
 		}
 	}
-	return manifest.Parse(files), nil
+	return manifest.ParseAll(files), nil
 }
 
 // syncedManifests is the manifests of a clone just synced to head, read
@@ -203,6 +206,9 @@ func (p *Poller) ReadManifestsNow(ctx context.Context, key, slug, head string) e
 	}
 	if eps, ok := p.syncedEndpoints(ctx, j, head); ok {
 		p.saveEndpoints(ctx, j, head, eps)
+	}
+	if imps, ok := p.syncedImports(ctx, j, head); ok {
+		p.saveImports(ctx, j, head, imps)
 	}
 	read, ok := p.syncedManifests(ctx, j, head)
 	if !ok {

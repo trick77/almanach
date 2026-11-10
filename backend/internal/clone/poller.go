@@ -23,6 +23,7 @@ import (
 	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/heartbeat"
+	"github.com/trick77/almanach/internal/imports"
 	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/prompts"
@@ -451,6 +452,8 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		var topicsOK bool
 		var eps endpoints.Read
 		var epsOK bool
+		var imps imports.Read
+		var impsOK bool
 		// A panic in the sync is this repository's failure, on its row
 		// like any other; one reading the manifests after a good sync is
 		// a log line, the manifests left unread like any failed read.
@@ -463,6 +466,7 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			_ = p.guarded(j, func() { read, readOK = p.syncedManifests(jobCtx, j, head) })
 			_ = p.guarded(j, func() { topics, topicsOK = p.syncedTopics(jobCtx, j, head) })
 			_ = p.guarded(j, func() { eps, epsOK = p.syncedEndpoints(jobCtx, j, head) })
+			_ = p.guarded(j, func() { imps, impsOK = p.syncedImports(jobCtx, j, head) })
 		}
 		cut := jobCtx.Err() != nil && ctx.Err() == nil
 		p.cur.Lock()
@@ -502,6 +506,9 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 			}
 			if epsOK {
 				p.saveEndpoints(ctx, j, head, eps)
+			}
+			if impsOK {
+				p.saveImports(ctx, j, head, imps)
 			}
 			p.describe(ctx, j, head)
 		})

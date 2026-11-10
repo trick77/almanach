@@ -6,6 +6,7 @@ import type { FlowIR } from "./diagramIR";
 import { RepoInterfaces } from "./Interfaces";
 import { RepoMessages } from "./Messaging";
 import { NotesTable } from "./NotesTable";
+import { RepoParts } from "./Parts";
 import { Problems } from "./Problems";
 import { Revisions } from "./Revisions";
 import {
@@ -58,6 +59,7 @@ const TABS = [DESCRIPTION, HISTORY];
 const ids = {
   map: "structure",
   deps: "dependencies",
+  parts: "parts",
   interfaces: "interfaces",
   messages: "messages",
   problems: "problems",
@@ -167,6 +169,7 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   // A map refused on every try says so: never just a missing section.
   const showMap = data.map !== null || data.map_declined;
   const showDeps = data.uses.length + data.used_by.length > 0;
+  const showParts = data.parts.edges.length > 0;
   const msgs = data.messaging;
   const showMsgs = msgs.topics.length + msgs.schemas.length > 0;
   const apis = data.interfaces;
@@ -194,6 +197,16 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             label: S.deps.title,
             tab: DESCRIPTION,
             count: S.deps.count(data.uses.length, data.used_by.length),
+          },
+        ]
+      : []),
+    ...(showParts
+      ? [
+          {
+            id: ids.parts,
+            label: S.parts.title,
+            tab: DESCRIPTION,
+            count: data.parts.units.length,
           },
         ]
       : []),
@@ -374,6 +387,12 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
                   <section id={ids.deps} className="scroll-mt-16">
                     <div className={eyebrow}>{S.deps.title}</div>
                     <Dependencies data={data} />
+                  </section>
+                )}
+                {showParts && (
+                  <section id={ids.parts} className="scroll-mt-16">
+                    <div className={eyebrow}>{S.parts.title}</div>
+                    <RepoParts parts={data.parts} />
                   </section>
                 )}
                 {apis.length > 0 && (

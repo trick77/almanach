@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -20,6 +21,31 @@ import (
 // group's name says test. An
 // extra may be a runtime feature, but none is what every install pulls in:
 // the maps stay with what surely runs.
+
+// PyProject is what a pyproject.toml says of its distribution for reading
+// its code: its `[project].name`, and the module each of its
+// `[project.scripts]` starts in ("pkg.cli" of "pkg.cli:main"), sorted.
+// False when it does not parse or names none.
+func PyProject(body []byte) (name string, scripts []string, ok bool) {
+	doc, err := parseTOML(trimBOM(body))
+	if err != nil {
+		return "", nil, false
+	}
+	project, _ := doc["project"].(map[string]any)
+	n, _ := project["name"].(string)
+	if strings.TrimSpace(n) == "" {
+		return "", nil, false
+	}
+	s, _ := project["scripts"].(map[string]any)
+	for _, v := range s {
+		if target, isStr := v.(string); isStr {
+			mod, _, _ := strings.Cut(target, ":")
+			scripts = append(scripts, strings.TrimSpace(mod))
+		}
+	}
+	sort.Strings(scripts)
+	return strings.TrimSpace(n), scripts, true
+}
 
 // pyName is the start of a PEP 508 requirement: the distribution's name.
 var pyName = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?`)

@@ -112,6 +112,16 @@ export const S = {
     // The repository page's rail: what it uses · what uses it.
     count: (uses: number, usedBy: number) => `${uses} · ${usedBy}`,
   },
+  // The parts inside a repository, read from its builds by code.
+  parts: {
+    title: "Innere Abhängigkeiten",
+    hint: "Aus Builds und Code gelesen, kein Modell: Gradle-Projekte, Maven-Module, Workspace-Pakete und Module nebeneinander, dazu die Go- und Python-Packages (auf ihre oberste Ebene gefaltet), und welches welches verwendet. Der Graph zeigt die Module ganz, von den Packages nur die Entry Points und was mindestens zwei davon verwenden; die Tabelle zeigt alle.",
+    graph: "Graph",
+    tooLarge: (n: number) =>
+      `${n} Teile sind zu viele für einen Graphen; die Tabelle zeigt alle.`,
+    headers: ["Teil", "Verwendet", "Verwendet von"],
+    kinds: { app: "App", lib: "Library", "": "" } as Record<string, string>,
+  },
   // Topics and schemas, read from the code by the poller, joined at read.
   msg: {
     title: "Messaging",
@@ -272,6 +282,12 @@ export const S = {
     depZones: {
       users: "Nutzer",
       shared: "Verwendet",
+    } as Record<string, string>,
+    // The parts inside a repository by id, drawn by code: those its
+    // build calls applications, then the rest.
+    partZones: {
+      apps: "Anwendungen",
+      parts: "Module",
     } as Record<string, string>,
     // A repository's messages, left to right.
     msgZones: {

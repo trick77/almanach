@@ -284,10 +284,31 @@ export interface RepoDetail {
   uses: Use[];
   /** The source repositories that use this one. */
   used_by: DependencyEnd[];
+  /** The parts inside it that use one another, by its builds. */
+  parts: Parts;
   /** The topics and schemas its code names, read by the poller. */
   messaging: RepoMessaging;
   /** The interfaces its code offers or only declares, read by the poller. */
   interfaces: Interface[];
+}
+
+/** A part inside a repository: its folder ("." the root), its name as its
+ *  build calls it, an app or a library where the build says so. */
+export interface Part {
+  dir: string;
+  name: string;
+  kind: "app" | "lib" | "";
+}
+
+/** The parts inside a repository that use one another, read by code: the
+ *  parts its builds declare and its Go and Python packages, edges by dir;
+ *  both empty when none uses another. graph is what is drawn: the build's
+ *  parts whole, of the packages the entry points and what two or more of
+ *  them reach; empty when there is nothing worth a picture. */
+export interface Parts {
+  units: Part[];
+  edges: { from: string; to: string }[];
+  graph: { nodes: string[]; edges: { from: string; to: string }[] };
 }
 
 /** An interface a repository's code offers (serves) or only declares (a
