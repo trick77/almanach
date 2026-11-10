@@ -113,12 +113,14 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 		if r.Calls >= w.base.Limits.MaxCalls {
 			return fmt.Errorf("no call left for the restyle")
 		}
-		res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, nil), false)
+		shown := describeTaught(page)
+		res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, shown, w.limits, nil), len(shown), false)
 		okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 		if err != nil {
 			return err
 		}
 		if !okCall {
+			w.logRestyledPage(ctx, at, page, len(shown), res.Outcome)
 			return callFailed("the restyle call", res.Call)
 		}
 		if out, err = w.restyled(ctx, at, *r, store.ScopeRepository, page, res); err != nil {
@@ -158,12 +160,14 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		return err
 	}
 	ctxt := &projectContext{repos: otherRepos(repos, ""), contracts: otherContracts(repos, ""), inner: inner, slugs: slugs(repos)}
-	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, w.limits, ctxt), true)
+	shown := describeTaught(page)
+	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, shown, w.limits, ctxt), len(shown), true)
 	okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 	if err != nil {
 		return err
 	}
 	if !okCall {
+		w.logRestyledPage(ctx, at, page, len(shown), res.Outcome)
 		return callFailed("the project restyle call", res.Call)
 	}
 	out, err := w.restyled(ctx, at, *r, store.ScopeProject, page, res)
@@ -172,6 +176,25 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 	}
 	plan.ProjectDone, r.Step = true, store.RestyleMapStep
 	return w.writeRestyle(ctx, r, plan, store.ScopeProject, out)
+}
+
+// logRestyledPage says, beside a failed restyle call, what page it was
+// asked to restyle: its statements, its flows and its prose, the size the
+// answer is held against (a runaway of 2026-11-10 wrote 49k tokens for an
+// 18k-token prompt). Only for an answer cut or off its schema: a gateway's
+// day or a shutdown says nothing of the page.
+func (w *Worker) logRestyledPage(ctx context.Context, at string, page store.Page, shown int, outcome inference.Outcome) {
+	if outcome != inference.OutcomeTooLong && outcome != inference.OutcomeUnparseable {
+		return
+	}
+	flows := 0
+	for _, s := range page.Statements {
+		if s.Kind == "flow" {
+			flows++
+		}
+	}
+	w.log.WarnContext(ctx, fmt.Sprintf("%s: the call failed on a page of %s (%s), %d chars of prose, %d chars as shown",
+		at, plural(len(page.Statements), "statement"), plural(flows, "flow"), prose(page.Summary, page.Statements), shown))
 }
 
 // writeRestyle writes a restyle step with the run's progress and the page's
@@ -462,18 +485,19 @@ type projectContext struct {
 	slugs            []string
 }
 
-// renderRestyle is a restyle call's prompt: the page as the steps show it,
-// which statements pull requests taught without their keys; with project,
-// the project page's, with what it judges the shape by.
-func renderRestyle(r store.BaselineRun, page store.Page, l config.Limits, project *projectContext) string {
+// renderRestyle is a restyle call's prompt: the page as the steps show it
+// (shown, describeTaught's: which statements pull requests taught, without
+// their keys); with project, the project page's, with what it judges the
+// shape by.
+func renderRestyle(r store.BaselineRun, page store.Page, shown string, l config.Limits, project *projectContext) string {
 	if project == nil {
 		return strings.NewReplacer(
-			"{repo}", r.Slug, "{project}", r.ProjectKey, "{repo_description}", describeTaught(page),
+			"{repo}", r.Slug, "{project}", r.ProjectKey, "{repo_description}", shown,
 			"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 		).Replace(prompts.Restyle)
 	}
 	return strings.NewReplacer(
-		"{project}", r.ProjectKey, "{repo_slugs}", backticked(project.slugs), "{project_description}", describeTaught(page),
+		"{project}", r.ProjectKey, "{repo_slugs}", backticked(project.slugs), "{project_description}", shown,
 		"{project_shape}", shapeShown(page), "{inner_edges}", innerEdgesShown(project.inner),
 		"{other_repos}", project.repos, "{other_contracts}", project.contracts,
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),

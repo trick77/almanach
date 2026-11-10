@@ -249,7 +249,7 @@ func TestRestyle(t *testing.T) {
 	srv.SetReply(`{"summary": null, "statements": [{"id": "s1", "kind": "component", "name": "Kern", "text": "Kurz.", "files": [], "area": "Kern"}],
 		"added": [{"from": ["s1", "summary"], "kind": "flow", "name": "Ablauf", "text": [{"kind": "numbered", "text": "", "items": ["a", "b"]}], "files": ["x.go"], "area": "Kern"}],
 		"outline": [{"area": "Kern", "ids": ["s1"]}], "drop": ["s2"], "confirmed": ["s3"]}`)
-	res := testClient(srv.Client()).Restyle(context.Background(), "restyle this", false)
+	res := testClient(srv.Client()).Restyle(context.Background(), "restyle this", 100, false)
 	if res.Outcome != OutcomeOK {
 		t.Fatalf("Outcome = %s err %v", res.Outcome, res.Err)
 	}
@@ -266,13 +266,13 @@ func TestRestyle(t *testing.T) {
 	}
 	for _, reply := range []string{"null", "Gerne!", "{}", `{"summary": null, "added": []}`} {
 		srv.SetReply(reply)
-		if res := testClient(srv.Client()).Restyle(context.Background(), "p", false); res.Outcome != OutcomeUnparseable {
+		if res := testClient(srv.Client()).Restyle(context.Background(), "p", 1, false); res.Outcome != OutcomeUnparseable {
 			t.Errorf("reply %q: Outcome = %s, want unparseable", reply, res.Outcome)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if res := testClient(srv.Client()).Restyle(ctx, "p", true); res.Outcome == OutcomeOK || res.Outcome == OutcomeUnparseable {
+	if res := testClient(srv.Client()).Restyle(ctx, "p", 1, true); res.Outcome == OutcomeOK || res.Outcome == OutcomeUnparseable {
 		t.Errorf("restyle on a cancelled context: Outcome = %s, want a failure of the call", res.Outcome)
 	}
 	for project, kinds := range map[bool][]string{false: RepoKinds, true: ProjectKinds} {
@@ -561,10 +561,10 @@ func TestDescribe_ReadsTheShape(t *testing.T) {
 		}
 	}
 	srv.SetReply(`{"shape": "collection", "shape_reason": "x", "summary": null, "statements": [], "added": [], "drop": ["s1"], "outline": null}`)
-	if res := testClient(srv.Client()).Restyle(context.Background(), "p", true); res.Kind != "collection" || !slices.Equal(res.Patch.Drop, []string{"s1"}) {
+	if res := testClient(srv.Client()).Restyle(context.Background(), "p", 1, true); res.Kind != "collection" || !slices.Equal(res.Patch.Drop, []string{"s1"}) {
 		t.Errorf("project restyle = %+v", res)
 	}
-	if res := testClient(srv.Client()).Restyle(context.Background(), "p", false); res.Shape != (Shape{}) {
+	if res := testClient(srv.Client()).Restyle(context.Background(), "p", 1, false); res.Shape != (Shape{}) {
 		t.Errorf("repository restyle judged a shape: %+v", res.Shape)
 	}
 }

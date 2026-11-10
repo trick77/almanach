@@ -92,7 +92,7 @@ type Describer interface {
 	Describe(ctx context.Context, prompt string) inference.DescriptionResult
 	RepoMap(ctx context.Context, prompt string) inference.RepoMapResult
 	ProjectMap(ctx context.Context, prompt string) inference.RepoMapResult
-	Restyle(ctx context.Context, prompt string, project bool) inference.RestyleResult
+	Restyle(ctx context.Context, prompt string, pageChars int, project bool) inference.RestyleResult
 }
 
 // Baseline is the runs' part of the worker; without it (the sources off)

@@ -292,10 +292,25 @@ func TestRestyle_LayoutCountsAndAnOutlineIsNeeded(t *testing.T) {
 // poller's retry takes it again.
 func TestRestyle_FailedCallFailsTheRun(t *testing.T) {
 	x := restyleWorld(t)
-	x.models.restyles = []inference.RestyleResult{{Call: inference.Call{Outcome: inference.OutcomeUnparseable}}}
+	var logs bytes.Buffer
+	x.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	x.models.restyles = []inference.RestyleResult{{Call: inference.Call{Outcome: inference.OutcomeTooLong, Err: errors.New("cut")}}}
 	x.w.drain(context.Background())
 	if r := x.run(); r.State != store.RunFailed || !strings.Contains(r.Error, "restyle call failed") {
 		t.Fatalf("run = %+v, want failed", r)
+	}
+	// The page beside the failure: what the answer is held against.
+	if n := len(x.repoPage().Statements); !strings.Contains(logs.String(), fmt.Sprintf("the call failed on a page of %d statements (0 flows)", n)) {
+		t.Errorf("log lacks the page's size:\n%s", logs.String())
+	}
+	// A gateway's failure says nothing of the page.
+	y := restyleWorld(t)
+	logs.Reset()
+	y.w.log = slog.New(slog.NewTextHandler(&logs, nil))
+	y.models.restyles = []inference.RestyleResult{{Call: inference.Call{Outcome: inference.OutcomeError, Err: errors.New("bad request")}}}
+	y.w.drain(context.Background())
+	if strings.Contains(logs.String(), "the call failed on a page") {
+		t.Errorf("page logged for a gateway failure:\n%s", logs.String())
 	}
 	if x.st.repoEpoch != 0 || len(x.st.revisions) != 0 {
 		t.Errorf("epoch %d, revisions %d after a failed call", x.st.repoEpoch, len(x.st.revisions))

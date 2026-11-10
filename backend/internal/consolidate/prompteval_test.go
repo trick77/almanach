@@ -160,9 +160,9 @@ func (m evalModels) ProjectMap(ctx context.Context, prompt string) inference.Rep
 	return m.llm.ProjectMap(ctx, prompt)
 }
 
-func (m evalModels) Restyle(ctx context.Context, prompt string, project bool) inference.RestyleResult {
+func (m evalModels) Restyle(ctx context.Context, prompt string, pageChars int, project bool) inference.RestyleResult {
 	m.keep("restyle", prompt)
-	return m.llm.Restyle(ctx, prompt, project)
+	return m.llm.Restyle(ctx, prompt, pageChars, project)
 }
 
 // evalClient is EVAL_MODEL at EVAL_EFFORT.
