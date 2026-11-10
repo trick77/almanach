@@ -25,6 +25,9 @@ func TestPromptsStateTheSpelling(t *testing.T) {
 		if !strings.Contains(p, Spelling) {
 			t.Errorf("%s prompt lacks the spelling rule %q", name, Spelling)
 		}
+		if !strings.Contains(p, Jargon) {
+			t.Errorf("%s prompt lacks the jargon rule %q", name, Jargon)
+		}
 	}
 }
 

@@ -77,10 +77,12 @@ var Brief string
 // today, by a note or a run that reads code. Each bump costs one call per
 // page of its scope.
 const (
-	RepoEpoch = 1
+	// RepoEpoch 3: software terms in English, never word by word (Jargon;
+	// user, 2026-11-10). 2 skipped: a bump goes to Epoch+1.
+	RepoEpoch = 3
 	// ProjectEpoch 2: the project's shape, a system's page only its wiring
-	// (user, 2026-11-04).
-	ProjectEpoch = 2
+	// (user, 2026-11-04). 3: Jargon.
+	ProjectEpoch = 3
 )
 
 // Epoch is the newer of the two: what a restyle run is stamped with. A page
@@ -104,6 +106,13 @@ var DiagramsOff string
 // Spelling is the spelling rule every prompt that asks for German states,
 // word for word: one rule, never five wordings drifting apart.
 const Spelling = `"ss", never "ß"; umlauts stay ä, ö, ü, Ä, Ö, Ü, never spelled out as ae, oe, ue`
+
+// Jargon is what every prompt that asks for German says of software
+// terms, word for word, beside Spelling: asked only for "German", the model
+// wrote Go jargon word by word ("HTTP-Rohrleitungen", "liest Böden", "das
+// Tor"; user, 2026-11-10: "man versteht teilweise gar nicht was gemeint
+// ist"). No word list: lang.Terms holds the words the code can be sure of.
+const Jargon = "Software terms a German developer says in English stay English, as the code and its ecosystem name them; never translate one word by word."
 
 // Redacted is what every prompt that reads code or notes says about the
 // marker the redact package leaves, word for word. The code removes the

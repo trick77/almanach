@@ -337,8 +337,11 @@ describe("QueuePage", () => {
       "Projektseite auf Regelstand 2 (Projektseite nur Verdrahtung, als System oder Sammlung beurteilt)",
     );
     expect(
-      reasonText({ kind: "restyle", repo_epoch: 1, project_epoch: 3 }),
-    ).toBe("Repository-Seite auf Regelstand 1; Projektseite auf Regelstand 3");
+      reasonText({ kind: "restyle", repo_epoch: 1, project_epoch: 9 }),
+    ).toBe("Repository-Seite auf Regelstand 1; Projektseite auf Regelstand 9");
+    expect(reasonText({ kind: "restyle", repo_epoch: 3 })).toBe(
+      "Repository-Seite auf Regelstand 3 (IT-Begriffe englisch statt wörtlich übersetzt)",
+    );
     expect(reasonText({ kind: "manual" })).toBe("Von Hand ausgelöst.");
     expect(
       reasonText({ kind: "returned", from: "abcdef1234", to: "1234abcdef" }),

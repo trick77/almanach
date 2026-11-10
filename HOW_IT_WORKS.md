@@ -1477,7 +1477,9 @@ was last restyled at, 0 for every page written before; a page below its
 scope's is due. `prompts.Epoch`, the newer, is what a run is stamped with,
 its failures counted at, and a page marked at. ProjectEpoch 2 is the
 project's shape: the bump restyles the project pages alone, the
-repository pages restyled at 1 standing. A full run, stamped
+repository pages restyled at 1 standing. Both at 3: software terms in
+English, never word by word (`prompts.Jargon`, user, 2026-11-10), every
+page restyled once. A full run, stamped
 with the epoch when it starts reading (a run a bump's deploy cut in two
 read its first parts under the old rules), puts its repository's page
 there when done with no part skipped (a skipped part's statements stayed
