@@ -163,6 +163,19 @@ export interface Problem {
 
 export type ProjectShape = "system" | "collection";
 
+/** A page below today's rules (Regelstand): what happens next. */
+export interface Stale {
+  /** The page's rule level; at is today's for its scope. */
+  epoch: number;
+  at: number;
+  state: "running" | "queued" | "waiting" | "paused" | "budget" | "manual";
+  /** With manual: off, nothing restyles on its own; failed, too many tries. */
+  why?: "off" | "failed";
+  /** With waiting: its place, 1 next, and about when. */
+  rank?: number;
+  eta_seconds?: number;
+}
+
 export interface ProjectDetail {
   key: string;
   team: string;
@@ -170,6 +183,9 @@ export interface ProjectDetail {
    *  description and map are null and none is expected. */
   single: boolean;
   description: Description | null;
+  /** The project page below today's rules; null at them or for a project
+   *  of one, whose repository's page says it. */
+  stale: Stale | null;
   /** The architecture overview, the system at runtime in production: zones
    *  clients, entry, repositories, stores and external; a
    *  repository node's id is its slug. null before the first baseline
@@ -251,6 +267,8 @@ export interface RepoDetail {
   project_key: string;
   slug: string;
   description: Description | null;
+  /** The repository page below today's rules, null at them. */
+  stale: Stale | null;
   revisions: Revision[];
   /** The newest hundred; notes_total is the whole count. */
   notes: NoteSummary[];

@@ -108,6 +108,7 @@ const repo: RepoDetail = {
   project_key: "shop",
   slug: "orders",
   description: null,
+  stale: null,
   notes_total: 0,
   last_merge: null,
   revisions: [],

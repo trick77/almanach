@@ -66,6 +66,10 @@ type Store interface {
 	// Spent the calls since a time, the page's "today".
 	Costs(ctx context.Context, now time.Time) ([]store.CostRow, error)
 	Spent(ctx context.Context, since time.Time) (store.Spend, error)
+	// RepoStale and ProjectStale are a page below its scope's epoch, the
+	// wiki's hint.
+	RepoStale(ctx context.Context, key, slug string, e store.Epochs) (store.Stale, bool, error)
+	ProjectStale(ctx context.Context, key string, e store.Epochs) (store.Stale, bool, error)
 }
 
 // Waker is poked when a note was queued.
@@ -518,6 +522,8 @@ type projectDetailBody struct {
 	// description and map are then null and none is expected.
 	Single      bool             `json:"single"`
 	Description *descriptionBody `json:"description"`
+	// Stale is the page below the project prompts' epoch, null at it.
+	Stale *staleBody `json:"stale"`
 	// Map is the system map of the current project revision, null before
 	// a baseline project step drew one.
 	Map *diagram.Diagram `json:"map"`
@@ -618,6 +624,13 @@ func (d Deps) project(w http.ResponseWriter, r *http.Request) {
 	out := projectDetailBody{Key: key, Team: team, Single: alone, Description: describe(page, found), Map: drawn, MapExpected: mapExpected,
 		MapDeclined: declined, ProblemDays: d.ProblemWindow,
 		Problems: problemBodies(problems), Notes: noteBodies(notes), Revisions: []revisionBody{}}
+	// A project of one has no page of its own: its repository's says it.
+	if !alone {
+		if out.Stale, err = d.projectStale(ctx, key); err != nil {
+			httpx.ServerError(w, r, err, "project stale")
+			return
+		}
+	}
 	if !alone {
 		revisions, err := d.Store.Revisions(ctx, store.ScopeProject, key, "", 50)
 		if err != nil {
@@ -701,6 +714,8 @@ type repoDetailBody struct {
 	ProjectKey  string           `json:"project_key"`
 	Slug        string           `json:"slug"`
 	Description *descriptionBody `json:"description"`
+	// Stale is the page below the repository prompts' epoch, null at it.
+	Stale *staleBody `json:"stale"`
 	// Map is the repository's map of itself (Aufbau), null before a
 	// baseline run's map step drew one.
 	Map *diagram.Diagram `json:"map"`
@@ -787,6 +802,10 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 	declined := diagram.IsSentinel(page.RepoMap) && page.MapStands()
 	out := repoDetailBody{ProjectKey: key, Slug: slug, Description: describe(page, found), Map: drawn, MapDeclined: declined,
 		Notes: noteBodies(notes), Revisions: revisionBodies(revisions)}
+	if out.Stale, err = d.repoStale(ctx, key, slug); err != nil {
+		httpx.ServerError(w, r, err, "repo stale")
+		return
+	}
 	out.Uses, out.UsedBy = usesOf(g, store.RepoRef{ProjectKey: key, Slug: slug})
 	msgs, err := d.messages(ctx)
 	if err != nil {

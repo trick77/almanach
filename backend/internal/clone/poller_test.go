@@ -117,7 +117,7 @@ func (f *fakeStore) EnqueueRun(_ context.Context, key, slug, mode, trigger, base
 	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, mode, trigger, base, commit}, " "))
 	return int64(len(f.enqueued)), nil
 }
-func (f *fakeStore) EnqueueRestyle(_ context.Context, key, slug, commit string, epoch int) (int64, error) {
+func (f *fakeStore) EnqueueRestyle(_ context.Context, key, slug, commit string, epoch int, _ bool) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.enqueueErr != nil {

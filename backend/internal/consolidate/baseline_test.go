@@ -84,6 +84,8 @@ type runStore struct {
 	repoEpoch, projectEpoch int
 	restyles                int
 	epochErr                error
+	// manualDue counts RestyleDue's reads: a restyle queued by hand.
+	manualDue int
 	// reposErr fails SourceRepos.
 	reposErr error
 	// judged counts JudgeShape's writes.
@@ -99,6 +101,13 @@ func (s *runStore) RestyleState(_ context.Context, key, _ string, e store.Epochs
 	_, page := s.pages[pageKey(store.ScopeProject, key, "")]
 	return store.RestyleState{RepoDue: s.repoEpoch < e.Repo,
 		ProjectDue: s.projectEpoch < e.Project && page && s.repoCount[key] != 1}, s.epochErr
+}
+
+// RestyleDue is RestyleState past the tries, which this fake never counts;
+// manualDue records that it was asked.
+func (s *runStore) RestyleDue(ctx context.Context, key, slug string, e store.Epochs) (store.RestyleState, error) {
+	s.manualDue++
+	return s.RestyleState(ctx, key, slug, e, time.Time{})
 }
 
 // InnerEdges is the project's own build dependencies, as set.

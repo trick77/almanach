@@ -314,6 +314,15 @@ func (f *fakeSources) EnqueueRun(_ context.Context, key, slug, mode, trigger, ba
 	return int64(len(f.enqueued)), nil
 }
 
+// EnqueueRestyle records "key slug restyle commit epoch byHand" beside the runs.
+func (f *fakeSources) EnqueueRestyle(_ context.Context, key, slug, commit string, epoch int, byHand bool) (int64, error) {
+	if f.enqueueErr != nil {
+		return 0, f.enqueueErr
+	}
+	f.enqueued = append(f.enqueued, strings.Join([]string{key, slug, store.RunRestyle, commit, fmt.Sprint(epoch), fmt.Sprint(byHand)}, " "))
+	return int64(len(f.enqueued)), nil
+}
+
 // SetRunReason records why run id was queued; reasonErr fails it.
 func (f *fakeSources) SetRunReason(_ context.Context, id int64, r store.RunReason) error {
 	if f.reasons == nil {

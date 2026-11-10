@@ -35,9 +35,11 @@ import (
 var epochs = store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch}
 
 // restylePlan is a restyle run's progress beside runPlan's ProjectDone:
-// Repo, the repository's page is over (restyled, or not due).
+// Repo, the repository's page is over (restyled, or not due). Manual, set
+// when queued, is a button's restyle, run past the tries (store.RestyleDue).
 type restylePlan struct {
-	Repo bool `json:"repo,omitempty"`
+	Repo   bool `json:"repo,omitempty"`
+	Manual bool `json:"manual,omitempty"`
 }
 
 // startRestyle starts a restyle run: no clone, no head pinned, at the
@@ -54,8 +56,13 @@ func (w *Worker) startRestyle(ctx context.Context, r *store.BaselineRun) error {
 // own answer, so the run never ends with a page left due it judged not
 // due); then the map step.
 func (w *Worker) restyleStep(ctx context.Context, r *store.BaselineRun, plan runPlan) error {
-	// The past failures' wait is the poller's: the run is queued.
+	// The past failures' wait is the poller's: the run is queued. One
+	// queued by hand runs past the tries too, its button the way out of
+	// them.
 	st, err := w.base.Store.RestyleState(ctx, r.ProjectKey, r.Slug, epochs, w.now())
+	if plan.Restyle.Manual {
+		st, err = w.base.Store.RestyleDue(ctx, r.ProjectKey, r.Slug, epochs)
+	}
 	if err != nil {
 		w.log.WarnContext(ctx, "baseline: restyle state read failed, drain paused", logging.Err(err))
 		return errStop

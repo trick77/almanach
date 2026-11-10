@@ -10,6 +10,7 @@ import { NotesTable } from "./NotesTable";
 import { Problems } from "./Problems";
 import { RepoPage } from "./RepoPage";
 import { Revisions } from "./Revisions";
+import { StaleHint } from "./StaleHint";
 import {
   Rail,
   RailPage,
@@ -243,6 +244,7 @@ function Body({ data }: { data: ProjectDetail }) {
         {S.projects.lastMerge}{" "}
         {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
+      <StaleHint stale={data.stale} scope="project" projectKey={data.key} />
       <ExportLine href={projectExportHref(data.key)} />
 
       <Tabs

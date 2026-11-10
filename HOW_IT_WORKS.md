@@ -1495,7 +1495,20 @@ later, while a page has failed fewer than
 run that failed on its step) count over the project, whichever
 repository's run made them. What is due is one store answer
 (`RestyleState`) for the poller and the run's steps alike, so a run never
-ends leaving a page due that it judged done.
+ends leaving a page due that it judged done. The source page's «Neu
+gliedern» queues one by hand (its plan's `manual`; the trigger stays
+`epoch`, the table's check), past the tries (`RestyleDue`): a page
+already at the epoch stays as it is, no call.
+A page below its scope's epoch says so to its reader: a box under the
+header, «Veralteter Regelstand» (`stale` on the page's detail), never a
+mark over the text, since a restyle changes only the statements a rule
+breaks (user, 2026-11-10). It names what comes next and links where to
+act, the wiki staying read-only: its restyle running or queued; waiting,
+with its rank among the stale pages in the poller's order and about
+when (to the next cycle, then a cycle a page ahead: one restyle open at
+a time, an estimate); the queue paused; the day's budget spent; or
+nothing on its own (reconcile or sync interval 0, or the tries spent),
+which links the source page's button.
 The run reads no code. Its steps: the repository's page, one call
 (`almanach_restyle.txt`) over the page alone; the project's page, one call
 (`almanach_project_restyle.txt`), in the run of the first repository of a

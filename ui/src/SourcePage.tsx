@@ -731,7 +731,10 @@ function ReposTable({
   onSync: (slug: string) => Promise<void>;
   onBrief: (slug: string) => Promise<void>;
   onShowBrief: (slug: string) => void;
-  onDescribe: (slug: string, mode: "reconcile" | "full") => Promise<void>;
+  onDescribe: (
+    slug: string,
+    mode: "reconcile" | "full" | "restyle",
+  ) => Promise<void>;
   removing: string | null;
   onAskRemove: (slug: string | null) => void;
   onRemove: (slug: string) => Promise<void>;
@@ -927,7 +930,7 @@ function RepoRow({
    *  to a branch of its own. */
   onBrief: () => Promise<void>;
   onShowBrief: () => void;
-  onDescribe: (mode: "reconcile" | "full") => Promise<void>;
+  onDescribe: (mode: "reconcile" | "full" | "restyle") => Promise<void>;
   /** A full run is asked for under the row (RowConfirm), never sent on
    *  the click: it is paid for whole. */
   onAskFull: () => void;
@@ -956,7 +959,7 @@ function RepoRow({
     r.baseline !== null &&
     r.baseline.documented_commit === r.head_commit &&
     !r.baseline.left_parts;
-  const describe = async (mode: "reconcile" | "full") => {
+  const describe = async (mode: "reconcile" | "full" | "restyle") => {
     setSending(true);
     try {
       await onDescribe(mode);
@@ -1043,6 +1046,20 @@ function RepoRow({
                 onClick={onAskFull}
               >
                 {S.baseline.actions.full}
+              </button>
+            )}
+            {live && documented && (
+              // No code read, a page already current unchanged: sent on
+              // the click, no clone head needed. The wiki's stale hint
+              // points here.
+              <button
+                type="button"
+                className={rowBtn}
+                disabled={sending || held || runOpen(r.baseline)}
+                title={S.baseline.restyleHint}
+                onClick={() => describe("restyle")}
+              >
+                {S.baseline.actions.restyle}
               </button>
             )}
             {live && (
