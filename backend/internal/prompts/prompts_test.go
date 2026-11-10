@@ -17,13 +17,18 @@ func TestPromptsStateTheRedactionMarker(t *testing.T) {
 	}
 }
 
-// Every prompt that asks for German states the one spelling rule.
+// Every prompt that asks for German states the one spelling rule and the
+// one jargon rule, the diagram rules the jargon rule once, by the prompt
+// they are rendered into.
 func TestPromptsStateTheSpelling(t *testing.T) {
 	for name, p := range map[string]string{"merge": Merge, "catalogue": Catalogue, "describe": Describe, "project": Project,
 		"project departure": ProjectDeparture, "repo map": RepoMap, "diagrams": Diagrams, "restyle": Restyle, "project restyle": ProjectRestyle,
 		"brief": Brief, "router": Router} {
 		if !strings.Contains(p, Spelling) {
 			t.Errorf("%s prompt lacks the spelling rule %q", name, Spelling)
+		}
+		if got := strings.Count(p, Jargon); name != "diagrams" && got != 1 || name == "diagrams" && got != 0 {
+			t.Errorf("%s prompt states the jargon rule %d times", name, got)
 		}
 	}
 }
