@@ -52,6 +52,20 @@ func TestTerms(t *testing.T) {
 		"Der Schluessel und die Abhaengigkeiten.": "Der Key und die Dependencies.",
 		// A sentence end is no file name.
 		"Das ist der Dienst. Danach kommt nichts.": "Das ist der Service. Danach kommt nichts.",
+		// Word-by-word Go jargon: the software word as a compound's last part
+		// after an acronym; after a word, or alone, the everyday word.
+		"Sie bündelt die HTTP-Rohrleitungen, setzt Sicherheits- und CORS-Köpfe.": "Sie bündelt die HTTP-Pipelines, setzt Sicherheits- und CORS-Header.",
+		"Ein OIDC-Fluss, der CI-Lauf, (S3-Schreiber), [HTTP-Kopf].":              "Ein OIDC-Flow, der CI-Run, (S3-Writer), [HTTP-Header].",
+		"Der CI/CD-Lauf, die HTTP/2-Köpfe, auf CH-Boden.":                        "Der CI/CD-Run, die HTTP/2-Header, auf CH-Boden.",
+		"„X-Kopf, «A-Lauf,  X-Fluss, kit/X-Kopf.":                                "„X-Kopf, «A-Lauf,  X-Fluss, kit/X-Kopf.",
+		"Der CSV-Schreiber im Test-Lauf, den HTTP-Köpfen.":                       "Der CSV-Writer im Test-Lauf, den HTTP-Headern.",
+		"Der Kopf, zwei Köpfe, der Fluss, im Lauf der Zeit, auf dem Boden.":      "Der Kopf, zwei Köpfe, der Fluss, im Lauf der Zeit, auf dem Boden.",
+		"Der Brief-Kopf, der Geld-Fluss, der Zug-Lauf, der Holz-Boden.":          "Der Brief-Kopf, der Geld-Fluss, der Zug-Lauf, der Holz-Boden.",
+		"Der Gerichts-Schreiber, PV-Anlagen-Kopf, ein Fluss-Lauf, Ab-Lauf.":      "Der Gerichts-Schreiber, PV-Anlagen-Kopf, ein Fluss-Lauf, Ab-Lauf.",
+		"Der PV-Strom, die Drosselung, die Rohrleitung leckt, der Schreiber.":    "Der PV-Strom, die Drosselung, die Rohrleitung leckt, der Schreiber.",
+		"Sie rettet Paniken, nie in Panik.":                                      "Sie rettet Panics, nie in Panik.",
+		"Ein signiertes Sitzungs-Cookie, die Sitzungsdauer.":                     "Ein signiertes Session-Cookie, die Sitzungsdauer.",
+		"Ein Kopf-Teil, die Kopfzeile, der Ablauf.":                              "Ein Kopf-Teil, die Kopfzeile, der Ablauf.",
 	} {
 		if got := Terms(in); got != want {
 			t.Errorf("Terms(%q) = %q, want %q", in, got, want)
@@ -222,12 +236,17 @@ func TestTermsInProse(t *testing.T) {
 	}
 }
 
-// Every form begins with a stem, or Terms never looks for it.
+// Every form begins with a stem, a tail form's with its hyphen, or Terms
+// never looks for it.
 func TestTermsStems(t *testing.T) {
-	for de := range terms {
+	for de, tm := range terms {
+		in := de
+		if tm.tail {
+			in = "-" + de
+		}
 		ok := false
 		for _, st := range stems {
-			ok = ok || strings.HasPrefix(de, st)
+			ok = ok || strings.HasPrefix(in, st)
 		}
 		if !ok {
 			t.Errorf("%q begins with no stem: Terms would never look for it", de)

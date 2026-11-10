@@ -18,21 +18,28 @@ import (
 // ("Go-Binär"). neuter: the German form is feminine and the English a
 // neuter ("die Auslieferung" → "das Deployment"): the article before it,
 // an adjective between, are made neuter where the case is sure, and the
-// form stays German where it is not ("während der Auslieferung").
+// form stays German where it is not ("während der Auslieferung"). tail:
+// the form is an everyday word ("zwei Köpfe", "der Fluss", "im Lauf der
+// Zeit"), the software word only as a hyphenated compound's last part
+// after an acronym ("CORS-Köpfe", "OIDC-Fluss", "CI-Lauf"): after a word
+// it is as often the everyday one ("Brief-Kopf", "Geld-Fluss",
+// "Zug-Lauf").
 type term struct {
 	en     string
 	head   bool
 	plural string
 	noun   bool
 	neuter bool
+	tail   bool
 }
 
 // terms are the software words a German developer says in English (user,
 // 2026-11-08: "No one ever says Repositorium"). Only words whose English
 // takes the German article and whose German means the software thing on a
 // page: "eine Anfrage" would be "eine Request", and "Paket", "Ereignis",
-// "Laufzeit" are business terms too. No prompt lists them: the code alone
-// holds the rule, the prompts stay short (user, 2026-11-08). Every form
+// "Laufzeit" are business terms too. No prompt lists them, the prompts stay
+// short (user, 2026-11-08): they state the rule in one sentence, no word
+// named (prompts.Jargon), for what code cannot be sure of. Every form
 // spelled out: no stemming, no compound but by hyphen.
 var terms = map[string]term{
 	"Dienst": {en: "Service", head: true}, "Dienste": {en: "Services"}, "Dienstes": {en: "Services"}, "Diensten": {en: "Services"},
@@ -58,6 +65,23 @@ var terms = map[string]term{
 	// Fachbegriffe, die wir übersetzen").
 	"Auslieferung": {en: "Deployment", neuter: true}, "Auslieferungen": {en: "Deployments"},
 	"Auslieferungs": {en: "Deployment", head: true},
+	"Sitzungs":      {en: "Session", head: true},
+	// The model's word-by-word German for Go jargon, pages a reader could not
+	// follow (user, 2026-11-10): "HTTP-Rohrleitungen", "CORS-Köpfe",
+	// "OIDC-Fluss", "rettet Paniken". Everyday words alone, so only after an
+	// acronym (tail); "Paniken" no one says of fear, "Panik" one does ("in
+	// Panik"), so it stays. Left to the prompt (prompts.Jargon): "Strom" ("PV-
+	// Strom"), "Drosselung" (a pump's, a line's), "Boden" ("CH-Boden", data
+	// residency), and a calque with no hyphen.
+	"Rohrleitung": {en: "Pipeline", tail: true}, "Rohrleitungen": {en: "Pipelines", tail: true},
+	"Kopf": {en: "Header", tail: true}, "Kopfs": {en: "Headers", tail: true}, "Kopfes": {en: "Headers", tail: true},
+	"Köpfe": {en: "Header", tail: true}, "Köpfen": {en: "Headern", tail: true},
+	"Fluss": {en: "Flow", tail: true}, "Flusses": {en: "Flows", tail: true}, "Flüsse": {en: "Flows", tail: true},
+	"Flüssen": {en: "Flows", tail: true},
+	"Lauf":    {en: "Run", tail: true}, "Laufs": {en: "Runs", tail: true}, "Laufes": {en: "Runs", tail: true},
+	"Läufe": {en: "Runs", tail: true}, "Läufen": {en: "Runs", tail: true},
+	"Schreiber": {en: "Writer", tail: true}, "Schreibers": {en: "Writers", tail: true}, "Schreibern": {en: "Writern", tail: true},
+	"Paniken": {en: "Panics"},
 }
 
 // Older text may write the umlauts out ("Schluessel", "Abhaengigkeit"),
@@ -73,13 +97,20 @@ func init() {
 			stems = append(stems, out)
 		}
 	}
+	// A tail form's stem is the form with its hyphen before it: "Ablauf",
+	// "Kopfzeile" are everyday words, "-Kopf" is not.
+	for de, t := range terms {
+		if t.tail {
+			stems = append(stems, "-"+de)
+		}
+	}
 }
 
-// stems is what every form above begins with: a text holding none is left
-// as it is without a walk.
+// stems is what every form above but a tail form begins with: a text
+// holding none is left as it is without a walk.
 var stems = []string{"Dienst", "Bibliothek", "Schlüssel", "Sitzung", "Abhängigkeit", "Kennung", "Zugangsdaten", "Endpunkt",
 	"Geheimnis", "Nachricht", "Umgebungsvariable", "Einstiegspunkt", "Repositori", "Warteschlange", "Zwischenspeicher", "Binär",
-	"Auslieferung"}
+	"Auslieferung", "Paniken"}
 
 // singularCues are the articles that make such a form a singular, whatever
 // stands before them: "die Klasse, die den Schlüssel hält" holds one key.
@@ -456,6 +487,9 @@ func termFor(w, before, after, prev, prev2 string) string {
 	if strings.HasPrefix(after, "-") && !t.head {
 		return w
 	}
+	if t.tail && !acronymJoined(before) {
+		return w
+	}
 	if w == "Abhängigkeit" && prev == "in" {
 		return w
 	}
@@ -466,6 +500,28 @@ func termFor(w, before, after, prev, prev2 string) string {
 		return t.plural
 	}
 	return t.en
+}
+
+// acronymJoined reports whether before, the text before a word, ends in an
+// acronym and a hyphen: two characters or more, capitals, digits and
+// slashes, at least one capital, a space, an opening mark or a line's
+// start before them ("HTTP-", "OIDC-", "S3-", "CI/CD-", "HTTP/2-"; never
+// "Brief-", "PV-Anlagen-", "X-").
+func acronymJoined(before string) bool {
+	head, ok := strings.CutSuffix(before, "-")
+	if !ok {
+		return false
+	}
+	i := strings.LastIndexFunc(head, func(r rune) bool { return !unicode.IsUpper(r) && !unicode.IsDigit(r) && r != '/' })
+	a := head
+	if i >= 0 {
+		r, n := utf8.DecodeRuneInString(head[i:])
+		if !unicode.IsSpace(r) && !strings.ContainsRune("([„\"'«*_`", r) {
+			return false
+		}
+		a = head[i+n:]
+	}
+	return utf8.RuneCountInString(a) >= 2 && strings.IndexFunc(a, unicode.IsUpper) >= 0
 }
 
 // partOfCode reports whether a word stands in a path, a file name or an

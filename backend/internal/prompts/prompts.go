@@ -77,10 +77,12 @@ var Brief string
 // today, by a note or a run that reads code. Each bump costs one call per
 // page of its scope.
 const (
-	RepoEpoch = 1
+	// RepoEpoch 3: software terms in English, never word by word (Jargon;
+	// user, 2026-11-10). 2 skipped: a bump goes to Epoch+1.
+	RepoEpoch = 3
 	// ProjectEpoch 2: the project's shape, a system's page only its wiring
-	// (user, 2026-11-04).
-	ProjectEpoch = 2
+	// (user, 2026-11-04). 3: Jargon.
+	ProjectEpoch = 3
 )
 
 // Epoch is the newer of the two: what a restyle run is stamped with. A page
@@ -105,6 +107,17 @@ var DiagramsOff string
 // word for word: one rule, never five wordings drifting apart.
 const Spelling = `"ss", never "ß"; umlauts stay ä, ö, ü, Ä, Ö, Ü, never spelled out as ae, oe, ue`
 
+// Jargon is what every prompt that asks for German says of software
+// terms, word for word, beside Spelling: asked only for "German", the model
+// wrote Go jargon word by word ("HTTP-Rohrleitungen", "liest Böden", "das
+// Tor"), pages a reader could not follow (user, 2026-11-10). No word list:
+// lang.Terms holds the words the code can be sure of. The restyles name it
+// among the rules a text is rewritten for (RestyleEdits): without it a
+// restyle may not reword, and the bump that brought it would pay a call a
+// page for nothing. The diagram rules leave it to the prompt they are
+// rendered into.
+const Jargon = "Software terms a German developer says in English stay English, as the code and its ecosystem name them; never translate one word by word."
+
 // Redacted is what every prompt that reads code or notes says about the
 // marker the redact package leaves, word for word. The code removes the
 // value; the sentence only keeps the model from inventing one.
@@ -116,7 +129,7 @@ const Redacted = "`<redacted>` in what you read marks a credential the code remo
 // 2026-11-07) fits when the answer is the diff (user, 2026-11-08: changed
 // statements only, the rest kept by id); an area alone goes by the outline,
 // which an old page without areas otherwise returned whole for.
-const RestyleEdits = "- `statements`: every statement whose kind, name or text the rules here make you change, by its `id` exactly as shown, with its full new `name`, `text`, `files` and `area`. Only ids shown there, never one of your own. As few as the rules need: a text is rewritten only where it breaks a rule here (its layout, a flow or an interface it tells that is another statement's, its kind), never to polish its wording, and a statement the rules accept as it stands is not returned, whatever you would word differently. An area alone is the outline's: a statement whose only change is its area is not returned; the outline places it."
+const RestyleEdits = "- `statements`: every statement whose kind, name or text the rules here make you change, by its `id` exactly as shown, with its full new `name`, `text`, `files` and `area`. Only ids shown there, never one of your own. As few as the rules need: a text is rewritten only where it breaks a rule here (its layout, a flow or an interface it tells that is another statement's, its kind, a software term translated word by word), never to polish its wording, and a statement the rules accept as it stands is not returned, whatever you would word differently. An area alone is the outline's: a statement whose only change is its area is not returned; the outline places it."
 
 // Layout is the text layout rule every prompt that writes statement text
 // or a summary states, word for word: structure where it helps a human

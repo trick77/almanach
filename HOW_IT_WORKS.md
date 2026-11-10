@@ -1477,7 +1477,9 @@ was last restyled at, 0 for every page written before; a page below its
 scope's is due. `prompts.Epoch`, the newer, is what a run is stamped with,
 its failures counted at, and a page marked at. ProjectEpoch 2 is the
 project's shape: the bump restyles the project pages alone, the
-repository pages restyled at 1 standing. A full run, stamped
+repository pages restyled at 1 standing. Both at 3: software terms in
+English, never word by word (`prompts.Jargon`, user, 2026-11-10), every
+page restyled once. A full run, stamped
 with the epoch when it starts reading (a run a bump's deploy cut in two
 read its first parts under the old rules), puts its repository's page
 there when done with no part skipped (a skipped part's statements stayed
@@ -1940,7 +1942,22 @@ so the choice is not undone as a cleanup.
   capitalised nouns, joins and articles follow up to the end of its block:
   the text's end, a blank line, a heading or a list's next item ("Build,
   die Auslieferung und Tests."). A sentence end inside a block is never
-  taken: a "." may be an abbreviation's ("St. Gallen"). A stored
+  taken: a "." may be an abbreviation's ("St. Gallen"). The model's
+  word-by-word German for Go jargon is taken back where the code can be
+  sure (user, 2026-11-10): "Paniken" → "Panics" (the plural no one says
+  of fear; "Panik" stays), "Sitzungs-Cookie" → "Session-Cookie". An
+  everyday word ("Kopf", "Fluss", "Lauf", "Rohrleitung", "Schreiber") is
+  the software word only as a hyphenated compound's last part after an
+  acronym ("CI/CD-" and "HTTP/2-" too): "CORS-Köpfe" → "CORS-Header",
+  "OIDC-Fluss" → "OIDC-Flow", "HTTP-Rohrleitungen" → "HTTP-Pipelines";
+  "Brief-Kopf", "Geld-Fluss", "zwei Köpfe" stay. "Strom" ("PV-Strom"),
+  "Boden" ("CH-Boden") and "Drosselung" (a pump's) are too often another
+  trade's word, and a calque with no hyphen ("liest Böden",
+  "Ereignisströme") or a verb ("rettet") is out of the code's reach: those
+  the prompts' rule keeps out (`prompts.Jargon`, in every German prompt,
+  the restyles among the rules a text is rewritten for, so the epoch's
+  restyle fixes a stored page's text; a stored diagram's labels it keeps,
+  the code's rule alone respelling them). A stored
   German word is the same statement as today's
   English one (`lang.SameButSpelling`): no credit for the swap; a subject
   or area name matches in any case (`lang.SameName`), so a plan stored

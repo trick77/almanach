@@ -16,9 +16,12 @@ import type {
 
 // What each page level (prompts.RepoEpoch, prompts.ProjectEpoch) brought,
 // for the queue's restyle reason; a bump adds its line here.
-const S_EPOCH_REPO: Record<number, string> = {};
+const S_EPOCH_REPO: Record<number, string> = {
+  3: "IT-Begriffe englisch statt wörtlich übersetzt",
+};
 const S_EPOCH_PROJECT: Record<number, string> = {
   2: "Projektseite nur Verdrahtung, als System oder Sammlung beurteilt",
+  3: "IT-Begriffe englisch statt wörtlich übersetzt",
 };
 
 export const S = {
