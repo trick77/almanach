@@ -219,6 +219,7 @@ const repo: RepoDetail = {
   // A repository's messages: messaging.test.tsx.
   messaging: { topics: [], schemas: [] },
   interfaces: [],
+  parts: { units: [], edges: [], graph: { nodes: [], edges: [] } },
 };
 
 /** openTab switches a page to one of its tabs, as a reader does. */

@@ -14,6 +14,7 @@ import (
 
 	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/gitrepo"
+	"github.com/trick77/almanach/internal/imports"
 	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
@@ -31,6 +32,29 @@ type fakeManifests struct {
 	// The interfaces beside them.
 	endpointsAt map[int64]string
 	endpoints   map[int64]endpoints.Read
+	// The imports beside them.
+	importsAt map[int64]string
+	imports   map[int64]imports.Read
+}
+
+func (f *fakeManifests) ImportsCommit(_ context.Context, rid int64) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failAsk != nil {
+		return "", false, f.failAsk
+	}
+	c, ok := f.importsAt[rid]
+	return c, ok, nil
+}
+
+func (f *fakeManifests) SaveImports(_ context.Context, rid int64, commit string, read imports.Read) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.importsAt == nil {
+		f.importsAt, f.imports = map[int64]string{}, map[int64]imports.Read{}
+	}
+	f.importsAt[rid], f.imports[rid] = commit, read
+	return nil
 }
 
 func (f *fakeManifests) EndpointsCommit(_ context.Context, rid int64) (string, bool, error) {
@@ -118,11 +142,15 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 		"jvm/tools/cli/src/main/resources/wsdl/billing.wsdl": `<definitions name="Billing"><portType name="P"><operation name="Bill"/></portType><service name="BillingService"/></definitions>`,
 		"vendor-drop/unused.wsdl":                            `<definitions name="Unused"><portType name="P"><operation name="X"/></portType></definitions>`,
 		// Found by the grep, not by a name: a Go server, an Express app.
-		"cmd/srv/main.go":          "package main\n\nimport \"net/http\"\n\nfunc main() {\n\tm := http.NewServeMux()\n\tm.HandleFunc(\"GET /health\", h)\n\thttp.ListenAndServe(\":8080\", m)\n}\n",
-		"web/server.js":            "const app = require('express')();\napp.post('/hooks', h);\n",
-		"go.mod":                   "module example.invalid/loom\n\nrequire example.invalid/wire v0.1.8\n",
-		"web/package.json":         `{"name": "loom-ui", "dependencies": {"left-pad": "^1.3.0", "vault": "git+https://svc:hunter2@git.example.invalid/vault.git"}}`,
-		"corpus/checkout/a/go.mod": "module example.invalid/copied\n",
+		"cmd/srv/main.go": "package main\n\nimport (\n\t\"net/http\"\n\n\t\"example.invalid/loom/internal/jobs\"\n)\n\nfunc main() {\n\tm := http.NewServeMux()\n\tm.HandleFunc(\"GET /health\", h)\n\thttp.ListenAndServe(\":8080\", m)\n}\n",
+		// The imports: a package the server uses, and a test's, which
+		// counts for nothing.
+		"internal/jobs/jobs.go":      "package jobs\n",
+		"internal/jobs/jobs_test.go": "package jobs\n\nimport \"example.invalid/loom/internal/fixtures\"\n",
+		"web/server.js":              "const app = require('express')();\napp.post('/hooks', h);\n",
+		"go.mod":                     "module example.invalid/loom\n\nrequire example.invalid/wire v0.1.8\n",
+		"web/package.json":           `{"name": "loom-ui", "dependencies": {"left-pad": "^1.3.0", "vault": "git+https://svc:hunter2@git.example.invalid/vault.git"}}`,
+		"corpus/checkout/a/go.mod":   "module example.invalid/copied\n",
 		// A Gradle build's files pass the reader's filters too, and no key
 		// rule takes a catalog alias or a property name for a secret.
 		"build.gradle":              "dependencies {\n implementation libs.wire.api\n implementation libs.jjwt.api\n}\n",
@@ -193,6 +221,8 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 			{Coord: "npm:vault", Scope: manifest.ScopeMain},
 			{Coord: "npm:vitest", Scope: manifest.ScopeDev},
 		},
+		// No part uses another: nothing inside to show.
+		Units: manifest.Inner{Units: []manifest.Unit{}, Edges: []manifest.InnerEdge{}},
 	}
 	rid := idOf("tools/loom")
 	if got := m.saved[rid]; !reflect.DeepEqual(got, want) || m.commit[rid] != head {
@@ -221,6 +251,13 @@ func TestCycle_ReadsTheManifests(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotEps, wantEps) || m.endpointsAt[rid] != head {
 		t.Fatalf("endpoints %q at %q, want %q at the head", gotEps, m.endpointsAt[rid], wantEps)
+	}
+	wantImports := imports.Read{
+		Units: []imports.Unit{{Dir: "cmd/srv", Name: "cmd/srv", Kind: imports.KindApp}, {Dir: "internal/jobs", Name: "internal/jobs"}},
+		Edges: []imports.Edge{{From: "cmd/srv", To: "internal/jobs"}},
+	}
+	if got := m.imports[rid]; !reflect.DeepEqual(got, wantImports) || m.importsAt[rid] != head {
+		t.Fatalf("imports %+v at %q, want %+v at the head", got, m.importsAt[rid], wantImports)
 	}
 	if err := p.CycleOnce(ctx); err != nil {
 		t.Fatal(err)

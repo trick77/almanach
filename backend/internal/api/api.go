@@ -21,7 +21,9 @@ import (
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/httpapi"
+	"github.com/trick77/almanach/internal/imports"
 	"github.com/trick77/almanach/internal/ingest"
+	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/markup"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/almanach/internal/teamkeys"
@@ -59,6 +61,7 @@ type Store interface {
 	ProjectKeyOf(ctx context.Context, key string) (string, bool, error)
 	RepoNamesOf(ctx context.Context, key, slug string) (string, string, bool, error)
 	Dependencies(ctx context.Context, all bool) (store.Graph, error)
+	RepoParts(ctx context.Context, key, slug string) (manifest.Inner, imports.Read, error)
 	Shared(ctx context.Context, key, slug string) ([]store.SharedRepo, error)
 	Messaging(ctx context.Context) (store.Messages, error)
 	Interfaces(ctx context.Context) (store.Interfaces, error)
@@ -732,6 +735,8 @@ type repoDetailBody struct {
 	// UsedBy those that use it.
 	Uses   []useBody `json:"uses"`
 	UsedBy []depBody `json:"used_by"`
+	// Parts are the parts inside it that use one another, by its builds.
+	Parts partsBody `json:"parts"`
 	// Messaging is the topics and schemas its code names, and who is on
 	// the far side of each topic.
 	Messaging repoMessagingBody `json:"messaging"`
@@ -807,6 +812,12 @@ func (d Deps) repo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out.Uses, out.UsedBy = usesOf(g, store.RepoRef{ProjectKey: key, Slug: slug})
+	units, imps, err := d.units(ctx, key, slug)
+	if err != nil {
+		httpx.ServerError(w, r, err, "repo units")
+		return
+	}
+	out.Parts = partsOf(units, imps)
 	msgs, err := d.messages(ctx)
 	if err != nil {
 		httpx.ServerError(w, r, err, "messaging")

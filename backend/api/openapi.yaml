@@ -2975,7 +2975,7 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, stale, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by, messaging, interfaces]
+      required: [project_key, slug, description, stale, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by, parts, messaging, interfaces]
       properties:
         project_key:
           type: string
@@ -3031,6 +3031,8 @@ components:
           description: The source repositories that use this one at runtime (main scope).
           items:
             $ref: "#/components/schemas/DependencyEnd"
+        parts:
+          $ref: "#/components/schemas/Parts"
         messaging:
           $ref: "#/components/schemas/RepoMessaging"
         interfaces:
@@ -3131,6 +3133,71 @@ components:
         version:
           type: string
           description: The version the user's manifest names, as written; empty when it names none.
+
+    Parts:
+      type: object
+      description: >-
+        The parts inside the repository that use one another, read by code,
+        never a model: those its builds declare (Gradle projects, Maven
+        modules, workspace members, several go.mod side by side; main scope
+        only) and its Go and Python packages, folded to their top level
+        (cmd/<x>, internal/<a>, a distribution's subpackages). A part no
+        edge touches is left out. All empty when none uses another, with the
+        sources off or before a first read.
+      required: [units, edges, graph]
+      properties:
+        units:
+          type: array
+          items:
+            type: object
+            required: [dir, name, kind]
+            properties:
+              dir:
+                type: string
+                description: The part's folder, "." the root; a Python module's file (pkg/cli.py).
+              name:
+                type: string
+                description: Its name as its build calls it.
+              kind:
+                type: string
+                enum: [app, lib, ""]
+                description: An application or a library where its build says so, else empty.
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to]
+            properties:
+              from:
+                type: string
+                description: The using part's dir.
+              to:
+                type: string
+                description: The used part's dir.
+        graph:
+          type: object
+          description: >-
+            What the page draws: the build's parts whole; of the packages
+            only the entry points and those two or more of them reach, an
+            edge where one reaches the other through none drawn. Empty when
+            fewer than two entry points share anything.
+          required: [nodes, edges]
+          properties:
+            nodes:
+              type: array
+              items:
+                type: string
+                description: A part's dir.
+            edges:
+              type: array
+              items:
+                type: object
+                required: [from, to]
+                properties:
+                  from:
+                    type: string
+                  to:
+                    type: string
 
     Use:
       type: object

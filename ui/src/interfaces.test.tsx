@@ -83,6 +83,7 @@ const repo: RepoDetail = {
   used_by: [],
   messaging: { topics: [], schemas: [] },
   interfaces: [declared, offered, routes],
+  parts: { units: [], edges: [], graph: { nodes: [], edges: [] } },
 };
 
 describe("RepoPage interfaces", () => {

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/trick77/almanach/internal/imports"
 	"github.com/trick77/almanach/internal/manifest"
 )
 
@@ -389,5 +390,61 @@ func TestLibraries(t *testing.T) {
 	}
 	if libs, err := s.Shared(ctx, "libs", "wire"); err != nil || len(libs) != 0 {
 		t.Fatalf("wire's libraries = %+v %v, want none", libs, err)
+	}
+}
+
+// A repository's parts are stored with its manifests and read back by any
+// of its names; one never read has none.
+func TestRepoUnits(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.CreateSource(ctx, staticSource("libs")); err != nil {
+		t.Fatal(err)
+	}
+	addRepos(t, s, SourceRepo{ProjectKey: "libs", Slug: "mono", CloneURL: "https://forge.example.invalid/x/mono"},
+		SourceRepo{ProjectKey: "libs", Slug: "kit", CloneURL: "https://forge.example.invalid/x/kit"})
+	inner := manifest.Inner{
+		Units: []manifest.Unit{{Dir: "app", Name: "app", Kind: manifest.KindApp}, {Dir: "core", Name: "core"}},
+		Edges: []manifest.InnerEdge{{From: "app", To: "core", Scope: manifest.ScopeMain}},
+	}
+	saveRead(t, s, "libs", "mono", "1", manifest.Read{Provides: []string{"npm:app", "npm:core"}, Units: inner})
+	got, err := s.RepoUnits(ctx, "libs", "mono")
+	if err != nil || !reflect.DeepEqual(got, inner) {
+		t.Fatalf("RepoUnits = %+v %v, want %+v", got, err, inner)
+	}
+	if got, err := s.RepoUnits(ctx, "libs", "kit"); err != nil || len(got.Units) != 0 || got.Edges == nil {
+		t.Fatalf("RepoUnits(never read) = %+v %v, want none", got, err)
+	}
+}
+
+// A repository's imports are stored by the current reader, read back by
+// any of its names, and asked again by none other; one never read has
+// none.
+func TestRepoImports(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.CreateSource(ctx, staticSource("libs")); err != nil {
+		t.Fatal(err)
+	}
+	addRepos(t, s, SourceRepo{ProjectKey: "libs", Slug: "mono", CloneURL: "https://forge.example.invalid/x/mono"})
+	_, rid, _, _ := s.RepoIDs(ctx, "libs", "mono")
+	if _, ok, err := s.ImportsCommit(ctx, rid); ok || err != nil {
+		t.Fatalf("ImportsCommit before a read = %v %v", ok, err)
+	}
+	if got, err := s.RepoImports(ctx, "libs", "mono"); err != nil || len(got.Units) != 0 {
+		t.Fatalf("RepoImports before a read = %+v %v", got, err)
+	}
+	read := imports.Read{
+		Units: []imports.Unit{{Dir: "cmd/a", Name: "cmd/a", Kind: imports.KindApp}, {Dir: "internal/x", Name: "internal/x"}},
+		Edges: []imports.Edge{{From: "cmd/a", To: "internal/x"}},
+	}
+	if err := s.SaveImports(ctx, rid, "c1", read); err != nil {
+		t.Fatal(err)
+	}
+	if at, ok, err := s.ImportsCommit(ctx, rid); at != "c1" || !ok || err != nil {
+		t.Fatalf("ImportsCommit = %q %v %v", at, ok, err)
+	}
+	if got, err := s.RepoImports(ctx, "libs", "mono"); err != nil || !reflect.DeepEqual(got, read) {
+		t.Fatalf("RepoImports = %+v %v, want %+v", got, err, read)
 	}
 }

@@ -179,9 +179,37 @@ type gradleDir struct {
 	hasSet   bool
 }
 
-// gradle reads the Gradle files among files: the coordinates their builds
-// provide, and per build file what it requires.
-func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
+// gradleRead is what the Gradle files among a repository's say: the
+// coordinates each project provides by its folder, per build file what it
+// requires, and per build file the projects of its own build it depends on
+// (`project(':x')`, `projects.x`), each a folder and the scope of its use;
+// and each project's name by its folder, one with no group (no coordinate)
+// too: an included project, or a build's root with a build file.
+type gradleRead struct {
+	prov     map[string][]string
+	reqs     map[string][]Dep
+	refs     map[string][]projectRef
+	projects map[string]string
+}
+
+// projectRef is a dependency on another project of the same build: its
+// folder, the scope its configuration gives it.
+type projectRef struct {
+	Dir, Scope string
+}
+
+// provides is every coordinate the builds provide, sorted.
+func (g gradleRead) provides() []string {
+	var out []string
+	for _, cs := range g.prov {
+		out = append(out, cs...)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// gradle reads the Gradle files among files.
+func gradle(files map[string][]byte) gradleRead {
 	logic := buildLogic(files)
 	dirs := map[string]*gradleDir{}
 	dir := func(d string) *gradleDir {
@@ -218,7 +246,7 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		}
 	}
 	if len(dirs) == 0 {
-		return nil, nil
+		return gradleRead{}
 	}
 	cats := map[string]*catalog{}
 	catOf := func(r string) *catalog {
@@ -307,32 +335,173 @@ func gradle(files map[string][]byte) ([]string, map[string][]Dep) {
 		return ""
 	}
 
-	var prov []string
+	prov := map[string][]string{}
+	projects := map[string]string{}
 	for d, g := range dirs {
 		if !g.hasSet {
 			continue
 		}
-		if c, ok := gradleCoord(groupOf(d, d), firstStr(reRootName, g.settings)); ok {
-			prov = append(prov, c)
+		name := firstStr(reRootName, g.settings)
+		if g.build != "" {
+			projects[d] = name
+		}
+		if c, ok := gradleCoord(groupOf(d, d), name); ok {
+			prov[d] = append(prov[d], c)
 		}
 	}
 	// Each included project once, as its owning build's: one an include
 	// ends at, or one on an include's path with a build file of its own.
+	projectsOf := map[string][]string{} // a build's projects' folders, by its root
 	for pd, m := range member {
 		if !m.leaf && (dirs[pd] == nil || dirs[pd].build == "") {
 			continue
 		}
+		projectsOf[m.build] = append(projectsOf[m.build], pd)
+		projects[pd] = path.Base(pd)
 		if c, ok := gradleCoord(groupOf(m.build, pd), path.Base(pd)); ok {
-			prov = append(prov, c)
+			prov[pd] = append(prov[pd], c)
 		}
 	}
 	reqs := map[string][]Dep{}
+	refs := map[string][]projectRef{}
 	for p, text := range builds {
 		d := dirOf(p)
 		reqs[p] = buildDeps(text, dirs[d].blocks, propsOf(d), catOf(rootOf(d)))
+		r := rootOf(d)
+		refs[p] = projectDeps(text, dirs[d].blocks, r, d, append([]string{r}, projectsOf[r]...))
 	}
-	sort.Strings(prov)
-	return prov, reqs
+	return gradleRead{prov: prov, reqs: reqs, refs: refs, projects: projects}
+}
+
+var (
+	// project(':a:b'), project(path: ':a:b'), project(path = ":a:b") in a
+	// dependency configuration. Group 3: the path.
+	reGradleProject = regexp.MustCompile(gradleConf + `project[ \t]*\([ \t]*(?:path[ \t]*[:=][ \t]*)?` + gradleStr)
+	// A type-safe project accessor: projects.lib.core. Group 3: the rest.
+	reGradleProjects = regexp.MustCompile(gradleConf + `projects\.([A-Za-z0-9_.]+)`)
+)
+
+// othersBlocks configure other projects than the file's own: a block
+// opened after a call (`project(':x') {`, `configure(...) {`) is named "".
+var othersBlocks = map[string]bool{"subprojects": true, "allprojects": true, "": true}
+
+// projectDeps is the projects of its own build a build file's dependency
+// configurations name, but in an excluded block: each the folder Gradle
+// places it in by default (`:lib:core` in the build root's lib/core),
+// when it is one of projects (the build's root and included projects); an
+// accessor (`projects.lib.coreApi`) the project whose path it spells, as
+// Gradle camel-cases a kebab name. A path with no leading colon is the
+// file's own project's child (`project('b')` in a/ is :a:b). One inside a
+// block that configures other projects (`subprojects { }`, `allprojects
+// { }`, `project(':x') { }`, `configure(...) { }`) is theirs, not this
+// file's project's, and left out: which project it lands in only running
+// the script tells.
+func projectDeps(text string, idx blockIndex, root, self string, projects []string) []projectRef {
+	known := map[string]bool{}
+	accessors := map[string]string{}
+	for _, pd := range projects {
+		known[pd] = true
+		rel := pd
+		if root != "" {
+			r, ok := strings.CutPrefix(pd, root+"/")
+			if !ok {
+				continue
+			}
+			rel = r
+		}
+		if rel == "" {
+			continue
+		}
+		var segs []string
+		for _, s := range strings.Split(rel, "/") {
+			segs = append(segs, camelCase(s))
+		}
+		accessors[strings.Join(segs, ".")] = pd
+	}
+	counts := func(m []int, name string) bool {
+		if !gradleConfName(name) {
+			return false
+		}
+		for _, b := range idx.at(m[0]) {
+			if excludedBlocks[b] || othersBlocks[b] {
+				return false
+			}
+		}
+		return true
+	}
+	// The wrap is the text between the configuration's name and the
+	// project, where a platform(...) or testFixtures(...) stands.
+	scopeOf := func(m []int, name string) string {
+		end := m[3]
+		if end < 0 {
+			end = m[5]
+		}
+		at := strings.Index(text[end:m[1]], "project")
+		if at < 0 {
+			at = 0
+		}
+		return gradleScope(name, text[end:end+at])
+	}
+	var out []projectRef
+	for _, m := range reGradleProject.FindAllStringSubmatchIndex(text, -1) {
+		s := subs(text, m)
+		if !counts(m, s[1]+s[2]) {
+			continue
+		}
+		p := strMatch(s, 3)
+		base := root
+		if !strings.HasPrefix(p, ":") {
+			base = self
+		}
+		rel := includeDir(p)
+		d, ok := base, true
+		if rel != "" {
+			d, ok = inRepo(base, rel)
+		}
+		if ok && known[d] {
+			out = append(out, projectRef{Dir: d, Scope: scopeOf(m, s[1]+s[2])})
+		}
+	}
+	for _, m := range reGradleProjects.FindAllStringSubmatchIndex(text, -1) {
+		s := subs(text, m)
+		if !counts(m, s[1]+s[2]) {
+			continue
+		}
+		// The accessor ends at the project; a call or property after it
+		// (`.dependencyProject`) is no part of the path.
+		acc := s[3]
+		for acc != "" {
+			if d, ok := accessors[acc]; ok {
+				out = append(out, projectRef{Dir: d, Scope: scopeOf(m, s[1]+s[2])})
+				break
+			}
+			i := strings.LastIndexByte(acc, '.')
+			if i < 0 {
+				break
+			}
+			acc = acc[:i]
+		}
+	}
+	return out
+}
+
+// camelCase is a project name as its type-safe accessor spells it:
+// "core-api" and "core_api" are "coreApi".
+func camelCase(s string) string {
+	var b strings.Builder
+	up := false
+	for _, r := range s {
+		switch {
+		case r == '-' || r == '_':
+			up = true
+		case up:
+			b.WriteString(strings.ToUpper(string(r)))
+			up = false
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // includeDir is the folder, relative to its build, of the project a

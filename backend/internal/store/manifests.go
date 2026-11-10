@@ -41,12 +41,27 @@ func (s *Store) SaveManifests(ctx context.Context, repoID int64, commit string, 
 	if err != nil {
 		return err
 	}
+	if read.Units.Units == nil {
+		read.Units.Units = []manifest.Unit{}
+	}
+	if read.Units.Edges == nil {
+		read.Units.Edges = []manifest.InnerEdge{}
+	}
+	units, err := jsonOf(read.Units.Units)
+	if err != nil {
+		return err
+	}
+	unitEdges, err := jsonOf(read.Units.Edges)
+	if err != nil {
+		return err
+	}
 	n, err := affected(s.db.ExecContext(ctx, `
-		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, reader, read_at)
-		SELECT sr.repo_id, ?, ?, ?, ?, ? FROM source_repos sr WHERE sr.repo_id = ? AND `+activeRow+`
+		INSERT INTO repo_manifests (repo_id, "commit", provides, requires, units, unit_edges, reader, read_at)
+		SELECT sr.repo_id, ?, ?, ?, ?, ?, ?, ? FROM source_repos sr WHERE sr.repo_id = ? AND `+activeRow+`
 		ON CONFLICT (repo_id) DO UPDATE SET "commit" = excluded."commit", provides = excluded.provides,
-		       requires = excluded.requires, reader = excluded.reader, read_at = excluded.read_at`,
-		commit, provides, requires, manifest.Version, nowStamp(), repoID))
+		       requires = excluded.requires, units = excluded.units, unit_edges = excluded.unit_edges,
+		       reader = excluded.reader, read_at = excluded.read_at`,
+		commit, provides, requires, units, unitEdges, manifest.Version, nowStamp(), repoID))
 	if isForeignKey(err) || err == nil && n == 0 {
 		return ErrNoRepo
 	}
@@ -316,4 +331,32 @@ func (s *Store) sourceSummaries(ctx context.Context, refs []RepoRef) (map[RepoRe
 		out[r] = sum
 	}
 	return out, rows.Err()
+}
+
+// RepoUnits is the parts inside a source repository and their edges, as
+// its manifests were last read (manifest.Units); none for a repository
+// never read, or read before the reader knew of parts.
+func (s *Store) RepoUnits(ctx context.Context, key, slug string) (manifest.Inner, error) {
+	in, _, err := s.RepoParts(ctx, key, slug)
+	return in, err
+}
+
+func (s *Store) unitsOf(ctx context.Context, repoID int64) (manifest.Inner, error) {
+	out := manifest.Inner{Units: []manifest.Unit{}, Edges: []manifest.InnerEdge{}}
+	var units, edges string
+	err := s.db.QueryRowContext(ctx, `SELECT units, unit_edges FROM repo_manifests WHERE repo_id = ?`, repoID).
+		Scan(&units, &edges)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal([]byte(units), &out.Units); err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal([]byte(edges), &out.Edges); err != nil {
+		return out, err
+	}
+	return out, nil
 }

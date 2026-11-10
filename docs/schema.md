@@ -2,7 +2,7 @@
 
 # Database schema
 
-20 tables; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
+21 tables; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
 
 ## baseline_runs
 
@@ -408,6 +408,27 @@ Checks:
 - `CHECK (json_valid(endpoints) AND json_type(endpoints) = 'array')`
 - `CHECK (read_at GLOB '????-??-??T??:??:??.?????????Z')`
 
+## repo_imports
+
+| Column | Type | Null | Default | PK |
+| --- | --- | --- | --- | --- |
+| `repo_id` | INTEGER | no |  | 1 |
+| `commit` | TEXT | no |  |  |
+| `units` | TEXT | no |  |  |
+| `edges` | TEXT | no |  |  |
+| `reader` | INTEGER | no |  |  |
+| `read_at` | TEXT | no |  |  |
+
+Foreign keys:
+
+- `repo_id` → `source_repos` (`repo_id`), on delete CASCADE
+
+Checks:
+
+- `CHECK (json_valid(units) AND json_type(units) = 'array')`
+- `CHECK (json_valid(edges) AND json_type(edges) = 'array')`
+- `CHECK (read_at GLOB '????-??-??T??:??:??.?????????Z')`
+
 ## repo_manifests
 
 | Column | Type | Null | Default | PK |
@@ -418,6 +439,8 @@ Checks:
 | `requires` | TEXT | no |  |  |
 | `reader` | INTEGER | no |  |  |
 | `read_at` | TEXT | no |  |  |
+| `units` | TEXT | no | `'[]'` |  |
+| `unit_edges` | TEXT | no | `'[]'` |  |
 
 Foreign keys:
 
@@ -428,6 +451,8 @@ Checks:
 - `CHECK (json_valid(provides) AND json_type(provides) = 'array')`
 - `CHECK (json_valid(requires) AND json_type(requires) = 'array')`
 - `CHECK (read_at GLOB '????-??-??T??:??:??.?????????Z')`
+- `CHECK (json_valid(units) AND json_type(units) = 'array')`
+- `CHECK (json_valid(unit_edges) AND json_type(unit_edges) = 'array')`
 
 ## repo_names
 
@@ -934,6 +959,14 @@ erDiagram
         INTEGER reader
         TEXT read_at
     }
+    repo_imports {
+        INTEGER repo_id PK, FK
+        TEXT commit
+        TEXT units
+        TEXT edges
+        INTEGER reader
+        TEXT read_at
+    }
     repo_manifests {
         INTEGER repo_id PK, FK
         TEXT commit
@@ -941,6 +974,8 @@ erDiagram
         TEXT requires
         INTEGER reader
         TEXT read_at
+        TEXT units
+        TEXT unit_edges
     }
     repo_names {
         INTEGER project_id PK, FK
@@ -1036,6 +1071,7 @@ erDiagram
     projects }o--o| teams : "team"
     repo_briefs |o--|| source_repos : "repo_id"
     repo_endpoints |o--|| source_repos : "repo_id"
+    repo_imports |o--|| source_repos : "repo_id"
     repo_manifests |o--|| source_repos : "repo_id"
     repo_names }o--|| repos : "repo_id"
     repo_names }o--|| projects : "project_id"

@@ -20,6 +20,7 @@ import (
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/almanach/internal/endpoints"
 	"github.com/trick77/almanach/internal/httpapi"
+	"github.com/trick77/almanach/internal/imports"
 	"github.com/trick77/almanach/internal/manifest"
 	"github.com/trick77/almanach/internal/messaging"
 	"github.com/trick77/almanach/internal/store"
@@ -78,6 +79,23 @@ type fakeStore struct {
 	messages map[store.RepoRef]messaging.Read
 	// interfaces is what Interfaces answers, by repository; graphErr fails it.
 	interfaces map[store.RepoRef]endpoints.Read
+	// units is what RepoUnits answers, by repository; graphErr fails it.
+	units map[store.RepoRef]manifest.Inner
+	// imports is what RepoImports answers, by repository.
+	imports map[store.RepoRef]imports.Read
+}
+
+func (f *fakeStore) RepoParts(_ context.Context, key, slug string) (manifest.Inner, imports.Read, error) {
+	ref := store.RepoRef{ProjectKey: key, Slug: slug}
+	in, ok := f.units[ref]
+	if !ok {
+		in = manifest.Inner{Units: []manifest.Unit{}, Edges: []manifest.InnerEdge{}}
+	}
+	imp, ok := f.imports[ref]
+	if !ok {
+		imp = imports.Read{Units: []imports.Unit{}, Edges: []imports.Edge{}}
+	}
+	return in, imp, f.graphErr
 }
 
 func (f *fakeStore) Messaging(context.Context) (store.Messages, error) {

@@ -147,9 +147,15 @@ func (d Deps) repoMarkdown(w http.ResponseWriter, r *http.Request, key, slug str
 		httpx.ServerError(w, r, err, "interfaces")
 		return
 	}
+	units, imps, err := d.units(ctx, ck, cs)
+	if err != nil {
+		httpx.ServerError(w, r, err, "repo units")
+		return
+	}
 	ref := store.RepoRef{ProjectKey: ck, Slug: cs}
 	writeMarkdown(w, renderMarkdown("Repository "+slug+" (Projekt "+key+")", store.ScopeRepository, page, found)+
-		markdownInterfaces(repoInterfaces(in, ref), false)+markdownMessaging(repoMessaging(msgs, ref))+markdownDeps(uses, usedBy))
+		markdownInterfaces(repoInterfaces(in, ref), false)+markdownMessaging(repoMessaging(msgs, ref))+markdownDeps(uses, usedBy)+
+		markdownParts(partsOf(units, imps)))
 }
 
 func writeMarkdown(w http.ResponseWriter, body string) {

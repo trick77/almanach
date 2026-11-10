@@ -86,6 +86,7 @@ const repo: RepoDetail = {
   used_by: [{ project: "apps", slug: "chat" }],
   messaging: { topics: [], schemas: [] },
   interfaces: [],
+  parts: { units: [], edges: [], graph: { nodes: [], edges: [] } },
 };
 
 describe("dependency graph", () => {
