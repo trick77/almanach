@@ -163,7 +163,7 @@ export interface Problem {
 
 export type ProjectShape = "system" | "collection";
 
-/** A page below today's rules (Regelstand): what happens next. */
+/** A page below today's rules (Regelversion): what happens next. */
 export interface Stale {
   /** The page's rule level; at is today's for its scope. */
   epoch: number;

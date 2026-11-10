@@ -1500,7 +1500,7 @@ gliedern» queues one by hand (its plan's `manual`; the trigger stays
 `epoch`, the table's check), past the tries (`RestyleDue`): a page
 already at the epoch stays as it is, no call.
 A page below its scope's epoch says so to its reader: a box under the
-header, «Veralteter Regelstand» (`stale` on the page's detail), never a
+header, «Veraltete Regelversion» (`stale` on the page's detail), never a
 mark over the text, since a restyle changes only the statements a rule
 breaks (user, 2026-11-10). It names what comes next and links where to
 act, the wiki staying read-only: its restyle running or queued; waiting,

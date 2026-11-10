@@ -1983,7 +1983,7 @@ components:
     Stale:
       type: object
       description: >-
-        A page below its scope's prompt epoch (Regelstand): not yet checked
+        A page below its scope's prompt epoch (Regelversion): not yet checked
         against today's rules, waiting for a restyle. What happens next and
         what a reader can do about it.
       required: [epoch, at, state]

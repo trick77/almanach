@@ -334,15 +334,15 @@ export const S = {
       "Kein Aufbau: der letzte Run hat jeden Entwurf verworfen, weil er gegen die Regeln der Karte verstiess. Er wird neu gezeichnet, sobald sich die Beschreibung ändert.",
     notes: "Notizen",
   },
-  // A page below today's rules (Regelstand, the queue's word): what happens
-  // next and what a reader can do (user, 2026-11-10: a clear call to action;
-  // on its own, say so and roughly when).
+  // A page below today's rules (Regelversion, the queue's word too; user,
+  // 2026-11-10): what happens next and what a reader can do (a clear call
+  // to action; on its own, say so and roughly when).
   stale: {
-    title: "Veralteter Regelstand",
+    title: "Veraltete Regelversion",
     rule: (scope: "repo" | "project", at: number) => {
       const what = (scope === "project" ? S_EPOCH_PROJECT : S_EPOCH_REPO)[at];
       return (
-        `Diese Seite wurde noch nicht nach Regelstand ${at} geprüft` +
+        `Diese Seite wurde noch nicht nach Regelversion ${at} geprüft` +
         (what ? ` (${what})` : "") +
         ". Einzelne Aussagen können noch der alten Fassung folgen."
       );
@@ -792,7 +792,7 @@ export const S = {
       restyle: "Neu gliedern",
     },
     restyleHint:
-      "Bringt die Seiten auf den aktuellen Regelstand, ohne Code zu lesen. Eine Seite, die schon aktuell ist, bleibt unverändert.",
+      "Bringt die Seiten auf die aktuelle Regelversion, ohne Code zu lesen. Eine Seite, die schon aktuell ist, bleibt unverändert.",
     // A full run is paid for whole: confirmed, with what the last one cost.
     confirmFull: (slug: string, calls: number, last: string) =>
       `${slug} neu beschreiben? Liest das ganze Repository erneut, bis zu ${calls} Modellaufrufe` +
@@ -855,10 +855,10 @@ export const S = {
       intervalFull: (days: number) =>
         `Nie fertig beschrieben; nach ${days} Tagen neu gelesen.`,
       repoLevel: (n: number) =>
-        `Repository-Seite auf Regelstand ${n}` +
+        `Repository-Seite auf Regelversion ${n}` +
         (S_EPOCH_REPO[n] ? ` (${S_EPOCH_REPO[n]})` : ""),
       projectLevel: (n: number) =>
-        `Projektseite auf Regelstand ${n}` +
+        `Projektseite auf Regelversion ${n}` +
         (S_EPOCH_PROJECT[n] ? ` (${S_EPOCH_PROJECT[n]})` : ""),
       // Between a restyle's two page levels.
       levelSep: "; ",
