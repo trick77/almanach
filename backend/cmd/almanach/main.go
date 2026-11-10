@@ -116,9 +116,10 @@ func listenAddr() string {
 // startModel builds the client of one llmwire profile and runs its startup
 // check: strict schema support, the reasoning level, the gateway's listing.
 // A gateway that does not answer is a warning; anything else is a fault,
-// ok false.
-func startModel(ctx context.Context, log *slog.Logger, label, model, effort string, noDiagrams bool) (*inference.Client, bool) {
-	llm, err := inference.New(inference.Options{Model: model, ReasoningEffort: effort, Logger: log, Lookup: os.LookupEnv, NoDiagrams: noDiagrams})
+// ok false. cutDir keeps cut answers whole (inference.Options.CutDir).
+func startModel(ctx context.Context, log *slog.Logger, label, model, effort string, noDiagrams bool, cutDir string) (*inference.Client, bool) {
+	llm, err := inference.New(inference.Options{Model: model, ReasoningEffort: effort, Logger: log, Lookup: os.LookupEnv,
+		NoDiagrams: noDiagrams, CutDir: cutDir})
 	var warning string
 	if err == nil {
 		warning, err = llm.Startup(ctx)
@@ -268,7 +269,9 @@ func serve(log *slog.Logger) error {
 	} else {
 		log.Info("Team keys: OK", "teams", keys.Teams())
 	}
-	llm, ok := startModel(ctx, log, "LLM", app.Model, app.ReasoningEffort, app.Limits.MaxDiagrams == 0)
+	// Cut answers beside the database: the gateway keeps none (2026-11-10).
+	cutDir := filepath.Join(filepath.Dir(app.DBPath), "cuts")
+	llm, ok := startModel(ctx, log, "LLM", app.Model, app.ReasoningEffort, app.Limits.MaxDiagrams == 0, cutDir)
 	if !ok {
 		checks = append(checks, "LLM")
 	}
@@ -278,7 +281,7 @@ func serve(log *slog.Logger) error {
 	catalogue := llm
 	if app.Sources.Enabled() && app.Baseline.CatalogueModel != "" && app.Baseline.CatalogueModel != app.Model {
 		var ok bool
-		if catalogue, ok = startModel(ctx, log, "LLM catalogue", app.Baseline.CatalogueModel, "", true); !ok {
+		if catalogue, ok = startModel(ctx, log, "LLM catalogue", app.Baseline.CatalogueModel, "", true, cutDir); !ok {
 			checks = append(checks, "LLM catalogue")
 		}
 	}

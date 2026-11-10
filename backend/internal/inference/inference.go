@@ -84,6 +84,9 @@ type Options struct {
 	// NoDiagrams leaves `diagram` out of every statement schema
 	// (BACKEND_DIAGRAM_MAX_PER_PAGE=0); the project's map is asked for still.
 	NoDiagrams bool
+	// CutDir is where a cut or unparseable answer is kept whole, redacted
+	// (cutFile); "" keeps none.
+	CutDir string
 }
 
 // Client is one model: the merge and baseline model, or the catalogue's.
@@ -93,6 +96,7 @@ type Client struct {
 	effort   string
 	log      *slog.Logger
 	diagrams bool
+	cutDir   string
 	// contextTokens is the gateway's max_input_tokens for the alias, read
 	// off the listing at Startup; 0 unknown.
 	contextTokens int
@@ -112,7 +116,7 @@ func New(opt Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inference: build client for %s: %w", opt.Model, err)
 	}
-	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log, diagrams: !opt.NoDiagrams}, nil
+	return &Client{wire: wire, model: opt.Model, effort: opt.ReasoningEffort, log: log, diagrams: !opt.NoDiagrams, cutDir: opt.CutDir}, nil
 }
 
 // Startup checks the profile can do what a fold needs (a stream, strict JSON-schema
@@ -371,8 +375,22 @@ type Call struct {
 // matches it to the gateway's log) and, cut after its usage arrived, what
 // it was paid.
 func (c *Client) call(ctx context.Context, prompt string, format llmwire.ResponseFormat, maxAnswer int) (string, Call) {
+	return c.callWith(ctx, prompt, format, maxAnswer, callOpts{room: reasoningRoom})
+}
+
+// callOpts is what a call may set beside its cap: the reasoning's room on
+// the wire cap (room), and the listGuard (lists), the restyle's alone: its
+// thresholds are measured on restyle runaways, and a long describe or merge
+// answer with no list has never been seen to run away so.
+type callOpts struct {
+	room  int
+	lists bool
+}
+
+// callWith is call with its options.
+func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.ResponseFormat, maxAnswer int, opt callOpts) (string, Call) {
 	if c.effort != EffortOff {
-		maxAnswer += reasoningRoom
+		maxAnswer += opt.room
 	}
 	// The loop guards cancel a stream whose answer or reasoning repeats
 	// itself, long before the cap: a call of its own context, so a cut is
@@ -380,6 +398,7 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 	ctx, cut := context.WithCancel(ctx)
 	defer cut()
 	var answer, thought loopGuard
+	lists := listGuard{off: !opt.lists}
 	stream, _, err := c.wire.ChatStream(ctx, llmwire.ChatRequest{
 		Model:           c.model,
 		Reasoning:       c.reasoning(),
@@ -406,6 +425,9 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		if g.add(ev.Text) {
 			cut()
 		}
+		if ev.Kind == llmwire.EventContent && lists.add(ev.Text) {
+			cut()
+		}
 	}
 	res, err := stream.Result(), stream.Err()
 	if err != nil {
@@ -421,13 +443,19 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		if answer.looped {
 			out.Outcome = OutcomeTooLong
 			out.Err = fmt.Errorf("the answer repeated itself; cut after %d chars", len(res.Content))
-			c.logCut(res.Gateway.CallID, answerPart(res.Content))
+			c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content))
+			return "", out
+		}
+		if lists.cut {
+			out.Outcome = OutcomeTooLong
+			out.Err = fmt.Errorf("the answer announced a list %d times without one; cut after %d chars", lists.count(), len(res.Content))
+			c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content))
 			return "", out
 		}
 		if thought.looped {
 			out.Outcome = OutcomeTooLong
 			out.Err = fmt.Errorf("the reasoning repeated itself; cut after %d chars of it", len(res.Reasoning))
-			c.logCut(res.Gateway.CallID, reasoningPart(res.Reasoning))
+			c.logCut(res.Gateway.CallID, out.Err, reasoningPart(res.Reasoning))
 			return "", out
 		}
 		// The call cap firing while the answer streamed is the answer's
@@ -441,7 +469,7 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 			out.Outcome = OutcomeTooLong
 			out.Err = fmt.Errorf("cut by the call cap after %d chars of answer, %d of reasoning: %w", len(res.Content), len(res.Reasoning), err)
 			// Either may have run away: both tails, each named.
-			c.logCut(res.Gateway.CallID, answerPart(res.Content), reasoningPart(res.Reasoning))
+			c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content), reasoningPart(res.Reasoning))
 		}
 		return "", out
 	}
@@ -455,7 +483,7 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 		// than reporting the cut as an answer off the schema.
 		out.Outcome = OutcomeTooLong
 		out.Err = errors.New("the answer was cut by the model's output limit")
-		c.logCut(res.Gateway.CallID, answerPart(res.Content))
+		c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content), reasoningPart(res.Reasoning))
 		return "", out
 	}
 	return res.Content, out
@@ -481,14 +509,21 @@ const (
 	// capRoute: the router names files one by one, with up to five
 	// questions a subject: 16 subjects of 30 paths and their questions run
 	// near 12k.
-	capRoute     = 24_000
-	capPatch     = 32_000
-	capDescribe  = 32_000
-	capMap       = 12_000
-	capMerge     = 24_000
-	capBrief     = 8_000
-	capRestyleLo = 4_000
+	capRoute    = 24_000
+	capPatch    = 32_000
+	capDescribe = 32_000
+	capMap      = 12_000
+	capMerge    = 24_000
+	capBrief    = 8_000
+	// capRestyleLo: a small page's restyle may split statements out and
+	// lay it out, with an outline, beyond the page's own size.
+	capRestyleLo = 8_000
 	capRestyleHi = 32_000
+	// restyleRoom is a restyle's reasoning room: it reads no code and
+	// thought 303 to 2015 tokens at the balanced level, a project's shape
+	// judgment among them (2026-11-10), while reasoningRoom's 16k went to a
+	// runaway's answer. Four times the most measured, for a higher level.
+	restyleRoom = 8_000
 )
 
 // RouteReserve is the context a router call keeps for its answer and a
@@ -514,29 +549,42 @@ func PromptTokens(prompt string) int {
 	return (len(prompt)+len(SystemMessage))/3 + 500
 }
 
-// restyleCap is a restyle's cap: the answer rewrites the page the prompt
-// carries, so it is the prompt's size in tokens (about 3 chars each) with
-// room to grow, held between capRestyleLo and capRestyleHi.
-func restyleCap(prompt string) int {
-	return min(max(len(prompt)/3*13/10+2000, capRestyleLo), capRestyleHi)
+// restyleCap is a restyle's cap: the answer rewrites at most the page, in
+// JSON blocks longer than the page as shown, so it is the page's size in
+// tokens, counted high as PromptTokens counts (3 chars each), and half
+// again, held between capRestyleLo and capRestyleHi. The page, not the
+// prompt: the rules and a project's context are no part of the answer.
+// Honest answers ran to 0.7-1.1 times the page's tokens (2026-11-10).
+func restyleCap(pageChars int) int {
+	return min(max(pageChars/3*3/2+2000, capRestyleLo), capRestyleHi)
 }
 
-// logCut leaves the end of a cut stream in the log, credentials redacted,
-// one line per part that ran (what: "answer" or "reasoning"): what a
-// runaway repeats (a list, whitespace, one statement again, a thought
-// going round) is what its prompt or schema needs fixed. A blank part is
-// no line, so a think to the cap that just began its answer ("\n\n")
-// still shows the reasoning.
-func (c *Client) logCut(callID string, parts ...cutPart) {
+// logCut leaves a cut stream in the log, credentials redacted, one line per
+// part that ran (what: "answer" or "reasoning"), its head and its end: what
+// a runaway repeats (a list, whitespace, one statement again, a thought
+// going round) is what its prompt or schema needs fixed. A blank part is no
+// line, so a think to the cap that just began its answer ("\n\n") still
+// shows the reasoning. The answer's shape follows (logShape), and the whole
+// call goes to a file (keepCut): the gateway stores no answer (2026-11-10),
+// and 400 chars of tail named no statement. Each part is redacted once,
+// whole, and the log, the shape and the file all take that text.
+func (c *Client) logCut(callID string, why error, parts ...cutPart) {
+	for i := range parts {
+		parts[i].text = redact.Text(parts[i].text)
+	}
+	file := c.keepCut(cutKindCut, callID, why, parts...)
 	for _, p := range parts {
 		if strings.TrimSpace(p.text) == "" {
 			continue
 		}
-		head, tail := redactedWindow(p.text)
+		head, tail := window(p.text)
 		if tail == "" {
 			tail = head
 		}
-		c.log.Warn("answer cut", "model", c.model, "call_id", callID, "what", p.what, "chars", len(p.text), "tail", tail)
+		c.log.Warn("answer cut", "model", c.model, "call_id", callID, "what", p.what, "chars", len(p.text), "head", head, "tail", tail, "file", file)
+		if p.what == "answer" {
+			c.logShape(callID, p.text, file)
+		}
 	}
 }
 
@@ -545,24 +593,6 @@ type cutPart struct{ what, text string }
 
 func answerPart(s string) cutPart    { return cutPart{"answer", s} }
 func reasoningPart(s string) cutPart { return cutPart{"reasoning", s} }
-
-// redactedWindow is a text's head and end for the log, redacted. A long
-// text is redacted only near its ends, redactMargin past each window, not
-// whole: a call-cap reasoning runs to 200k chars and only 800 bytes stay.
-// The margin keeps a key that stands before the window recognised with its
-// value inside it.
-func redactedWindow(text string) (head, tail string) {
-	if len(text) <= 2*(cutTail+redactMargin) {
-		return window(redact.Text(text))
-	}
-	h := redact.Text(text[:cutTail+redactMargin])
-	t := redact.Text(text[len(text)-cutTail-redactMargin:])
-	return strings.ToValidUTF8(h[:min(cutTail, len(h))], ""), strings.ToValidUTF8(t[max(0, len(t)-cutTail):], "")
-}
-
-// redactMargin is how far before a log window redaction starts: longer
-// than any key-to-value span a credential shape spans.
-const redactMargin = 4096
 
 // window is a redacted answer's head and end for the log, cutTail bytes
 // each on a rune; an answer within twice that is its head alone.
@@ -591,9 +621,12 @@ const cutTail = 400
 // JSON's own error, a field of the wrong type deep in a long answer among
 // them) or an error a later check of the answer returned.
 func (c *Client) unparseable(call *Call, content string, reasons ...any) {
-	head, tail := redactedWindow(content)
+	red := redact.Text(content)
+	head, tail := window(red)
 	why := redact.Text(whyUnparseable(content, reasons))
-	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "why", why, "head", head, "tail", tail)
+	file := c.keepCut(cutKindUnparseable, call.Cost.CallID, errors.New(why), answerPart(red))
+	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "why", why, "head", head, "tail", tail, "file", file)
+	c.logShape(call.Cost.CallID, red, file)
 	begins := []rune(strings.Join(strings.Fields(head), " "))
 	if len(begins) > 120 {
 		begins = append(begins[:120], '…')

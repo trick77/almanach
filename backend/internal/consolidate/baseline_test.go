@@ -431,7 +431,7 @@ type fakeModels struct {
 
 func (m *fakeModels) ContextTokens() int { return m.contextTokens }
 
-func (m *fakeModels) Restyle(_ context.Context, prompt string, project bool) inference.RestyleResult {
+func (m *fakeModels) Restyle(_ context.Context, prompt string, _ int, project bool) inference.RestyleResult {
 	m.prompts = append(m.prompts, prompt)
 	m.restyledProject = append(m.restyledProject, project)
 	if len(m.restyles) == 0 {

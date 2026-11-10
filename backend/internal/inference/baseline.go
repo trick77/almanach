@@ -166,9 +166,10 @@ func routeFormat() llmwire.ResponseFormat {
 
 // Restyle asks for a stored page brought to the rules of today: the
 // repository's, the page alone in the prompt, or with project the
-// project's, whose kinds it takes, with its drops and its shape.
-func (c *Client) Restyle(ctx context.Context, prompt string, project bool) RestyleResult {
-	content, call := c.call(ctx, prompt, restyleFormat(c.diagrams, project), restyleCap(prompt))
+// project's, whose kinds it takes, with its drops and its shape. pageChars
+// is the page as the prompt shows it, what the answer's cap is sized on.
+func (c *Client) Restyle(ctx context.Context, prompt string, pageChars int, project bool) RestyleResult {
+	content, call := c.callWith(ctx, prompt, restyleFormat(c.diagrams, project), restyleCap(pageChars), callOpts{room: restyleRoom, lists: true})
 	out := RestyleResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out

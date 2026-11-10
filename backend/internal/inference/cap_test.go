@@ -29,17 +29,35 @@ func TestCallSendsAnOutputCap(t *testing.T) {
 	}
 }
 
-// A restyle's cap follows the page it rewrites, within its bounds.
-func TestRestyleCapFollowsThePrompt(t *testing.T) {
-	if got := restyleCap("short"); got != capRestyleLo {
-		t.Errorf("short prompt: cap %d, want the floor %d", got, capRestyleLo)
+// A restyle's cap follows the page it rewrites, never the prompt, within
+// its bounds.
+func TestRestyleCapFollowsThePage(t *testing.T) {
+	if got := restyleCap(5); got != capRestyleLo {
+		t.Errorf("short page: cap %d, want the floor %d", got, capRestyleLo)
 	}
-	mid := strings.Repeat("x", 30_000)
-	if got := restyleCap(mid); got <= capRestyleLo || got >= capRestyleHi {
-		t.Errorf("30k-char prompt: cap %d, want between the bounds", got)
+	if got := restyleCap(30_000); got != 17_000 {
+		t.Errorf("30k-char page: cap %d, want 10k tokens and half again, 2k on top", got)
 	}
-	if got := restyleCap(strings.Repeat("x", 1_000_000)); got != capRestyleHi {
-		t.Errorf("huge prompt: cap %d, want the ceiling %d", got, capRestyleHi)
+	if got := restyleCap(1_000_000); got != capRestyleHi {
+		t.Errorf("huge page: cap %d, want the ceiling %d", got, capRestyleHi)
+	}
+}
+
+// A restyle thinks little: its wire cap carries restyleRoom, not
+// reasoningRoom.
+func TestRestyleReasoningRoom(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(`{"outline": null, "summary": null, "statements": [], "added": []}`)
+	// A small page: the test profile's own output limit stays above.
+	testClient(srv.Client()).Restyle(context.Background(), "p", 5, false)
+	body := srv.Last().Body
+	got := body["max_tokens"]
+	if got == nil {
+		got = body["max_completion_tokens"]
+	}
+	n, _ := got.(float64)
+	if want := restyleCap(5) + restyleRoom; int(n) < want || int(n) > want+llmwire.DefaultReasoningOverhead {
+		t.Errorf("wire cap %v, want %d plus llmwire's overhead at most", got, want)
 	}
 }
 
@@ -146,13 +164,14 @@ func TestLengthFinishLogsTheTail(t *testing.T) {
 	}
 }
 
-// The log keeps only the end of a long answer.
+// The log keeps a long answer's head and end, not its middle.
 func TestLogCutKeepsTheTail(t *testing.T) {
 	var logs strings.Builder
 	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil))}
-	c.logCut("id", answerPart(strings.Repeat("a", 5000)+"THE-END"))
+	c.logCut("id", nil, answerPart("THE-START"+strings.Repeat("a", 5000)+"THE-END"))
 	got := logs.String()
-	if !strings.Contains(got, "THE-END") || strings.Count(got, "a") > cutTail+20 || !strings.Contains(got, "what=answer") {
+	if !strings.Contains(got, "THE-START") || !strings.Contains(got, "THE-END") || strings.Count(got, "a") > 2*cutTail+20 ||
+		!strings.Contains(got, "what=answer") {
 		t.Errorf("log = %q", got)
 	}
 	// The key before the window, the value in it: redacted all the same,
@@ -160,23 +179,23 @@ func TestLogCutKeepsTheTail(t *testing.T) {
 	secret := "Authorization: Bearer abcdefghijKLMNOPQRSTuvwxyz0123456789"
 	for _, text := range []string{
 		secret + strings.Repeat(" b", 190),
-		strings.Repeat("x", 3*redactMargin) + secret + strings.Repeat(" b", 190),
+		strings.Repeat("x", 12_288) + secret + strings.Repeat(" b", 190),
 	} {
 		logs.Reset()
-		c.logCut("id", answerPart(text))
+		c.logCut("id", nil, answerPart(text))
 		if got := logs.String(); strings.Contains(got, "0123456789") {
 			t.Errorf("a value whose key fell before the tail was logged: %q", got)
 		}
 	}
 	// Both parts, each named; a blank answer (a think just ended) none.
 	logs.Reset()
-	c.logCut("id", answerPart("\n\n"), reasoningPart("round and round"))
+	c.logCut("id", nil, answerPart("\n\n"), reasoningPart("round and round"))
 	if got := logs.String(); strings.Count(got, "answer cut") != 1 || !strings.Contains(got, "what=reasoning") ||
 		!strings.Contains(got, "round and round") {
 		t.Errorf("blank answer, reasoning: %q", got)
 	}
 	logs.Reset()
-	c.logCut("id", answerPart("{\"x\""), reasoningPart("long thought"))
+	c.logCut("id", nil, answerPart("{\"x\""), reasoningPart("long thought"))
 	if got := logs.String(); strings.Count(got, "answer cut") != 2 {
 		t.Errorf("both parts: %q", got)
 	}
