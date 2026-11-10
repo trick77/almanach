@@ -334,11 +334,13 @@ describe("QueuePage", () => {
     ).toBe(R.interval(31, "abcdef1", "1234abc"));
     expect(reasonText({ kind: "interval", days: 40 })).toBe(R.intervalFull(40));
     expect(reasonText({ kind: "restyle", project_epoch: 2 })).toBe(
-      "Projektseite auf Regelstand 2 (Projektseite nur Verdrahtung, als System oder Sammlung beurteilt)",
+      "Projektseite auf Regelversion 2 (Projektseite nur Verdrahtung, als System oder Sammlung beurteilt)",
     );
     expect(
       reasonText({ kind: "restyle", repo_epoch: 1, project_epoch: 3 }),
-    ).toBe("Repository-Seite auf Regelstand 1; Projektseite auf Regelstand 3");
+    ).toBe(
+      "Repository-Seite auf Regelversion 1; Projektseite auf Regelversion 3",
+    );
     expect(reasonText({ kind: "manual" })).toBe("Von Hand ausgelöst.");
     expect(
       reasonText({ kind: "returned", from: "abcdef1234", to: "1234abcdef" }),

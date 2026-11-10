@@ -105,6 +105,7 @@ const project: ProjectDetail = {
   key: "PAY",
   team: "platform",
   single: false,
+  stale: null,
   description: {
     revision: 7,
     summary:
@@ -191,6 +192,7 @@ const repo: RepoDetail = {
   project_key: "PAY",
   slug: "pay-clearing",
   description: null,
+  stale: null,
   notes_total: 250,
   last_merge: mergedAt,
   revisions: [

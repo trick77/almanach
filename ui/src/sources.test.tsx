@@ -475,6 +475,20 @@ describe("SourcePage baseline", () => {
     ]);
   });
 
+  it("restyles a documented repository on the click, no code read", async () => {
+    const writes = serve({ "sources/werkzeuge": detail });
+    render(<SourcePage projectKey="werkzeuge" />);
+    const [restyle] = await screen.findAllByText(S.baseline.actions.restyle);
+    expect(restyle).toHaveAttribute("title", S.baseline.restyleHint);
+    fireEvent.click(restyle);
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({
+      method: "POST",
+      path: "sources/werkzeuge/repos/acme-cli/describe",
+      body: { mode: "restyle" },
+    });
+  });
+
   it("asks for a PROJECT.md and opens its text when the push is refused", async () => {
     const refused = {
       state: "push_failed" as const,

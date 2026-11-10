@@ -490,6 +490,28 @@ func (st RestyleState) Queue() bool {
 	return (st.RepoDue || st.ProjectDue) && !st.Open
 }
 
+// Stale is a page below its scope's epoch as the wiki tells its reader
+// (RepoStale, ProjectStale): what the restyles did and when the poller
+// comes to it.
+//
+// Table: -
+type Stale struct {
+	// Epoch is the page's restyle_epoch.
+	Epoch int
+	// Failed is its restyles failed under the scope's rules, counted as
+	// RestyleState counts them; RestyleTries of them and the poller queues
+	// none.
+	Failed int
+	// Run is the state of an open restyle of the page (the project's: of any
+	// of its repositories), "" for none.
+	Run string
+	// Rank is the page's place among the repositories the poller would
+	// restyle, in its order (SyncJobs: key, slug), 1 next: it queues one
+	// restyle at a time, so about one a cycle. Every stale page counts,
+	// tries spent or not: an estimate, never a promise.
+	Rank int
+}
+
 // ProjectSource is one configured project source.
 //
 // Table: sources

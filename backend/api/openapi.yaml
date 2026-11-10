@@ -1964,7 +1964,8 @@ components:
       properties:
         mode:
           type: string
-          enum: [reconcile, full]
+          description: restyle brings the stored pages to today's rules without reading code, past the restyles a page has failed; 422 with nothing documented.
+          enum: [reconcile, full, restyle]
 
     Described:
       type: object
@@ -1977,7 +1978,41 @@ components:
           type: integer
         mode:
           type: string
-          enum: [reconcile, full]
+          enum: [reconcile, full, restyle]
+
+    Stale:
+      type: object
+      description: >-
+        A page below its scope's prompt epoch (Regelversion): not yet checked
+        against today's rules, waiting for a restyle. What happens next and
+        what a reader can do about it.
+      required: [epoch, at, state]
+      properties:
+        epoch:
+          type: integer
+          description: The page's rule level.
+        at:
+          type: integer
+          description: Today's rule level for its scope.
+        state:
+          type: string
+          description: >-
+            running, its restyle runs; queued, it waits in the queue; waiting,
+            the poller queues it on its own (rank, eta_seconds); paused, the
+            queue is paused; budget, the day's budget is spent; manual,
+            nothing restyles it on its own (why), a button on the source page
+            does.
+          enum: [running, queued, waiting, paused, budget, manual]
+        why:
+          type: string
+          description: With manual. off, the poller restyles nothing on its own (reconcile or sync interval 0); failed, its restyles failed too often.
+          enum: [off, failed]
+        rank:
+          type: integer
+          description: With waiting. Its place among the pages the poller restyles, one at a time, 1 next.
+        eta_seconds:
+          type: integer
+          description: With waiting. About when, an estimate - to the next cycle, then a cycle a page ahead.
 
     NewSource:
       type: object
@@ -2745,12 +2780,17 @@ components:
 
     ProjectDetail:
       type: object
-      required: [key, team, single, description, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes, revisions, topics, interfaces]
+      required: [key, team, single, description, stale, map, map_expected, map_declined, shape, repos, shared, problems, problem_window_days, recent_notes, revisions, topics, interfaces]
       properties:
         key:
           type: string
         team:
           type: string
+        stale:
+          description: The project page below today's rules, null at them or for a project of one (its repository's page says it).
+          oneOf:
+            - $ref: "#/components/schemas/Stale"
+            - type: "null"
         single:
           type: boolean
           description: >-
@@ -2935,12 +2975,17 @@ components:
 
     RepoDetail:
       type: object
-      required: [project_key, slug, description, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by, messaging, interfaces]
+      required: [project_key, slug, description, stale, map, map_declined, revisions, notes, notes_total, last_merge, uses, used_by, messaging, interfaces]
       properties:
         project_key:
           type: string
         slug:
           type: string
+        stale:
+          description: The repository page below today's rules, null at them.
+          oneOf:
+            - $ref: "#/components/schemas/Stale"
+            - type: "null"
         map:
           description: >-
             The repository's map of itself (Aufbau): a flow whose zones are

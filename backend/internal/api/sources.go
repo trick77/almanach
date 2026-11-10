@@ -15,6 +15,7 @@ import (
 	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/httpapi"
+	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/secret"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/httpx"
@@ -42,6 +43,7 @@ type SourceStore interface {
 	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
 	DocumentedRun(ctx context.Context, key, slug string) (store.BaselineRun, bool, error)
 	EnqueueRun(ctx context.Context, key, slug, mode, trigger, baseCommit, commit string) (int64, error)
+	EnqueueRestyle(ctx context.Context, key, slug, commit string, epoch int, byHand bool) (int64, error)
 	SetRunReason(ctx context.Context, id int64, reason store.RunReason) error
 	SourceRepoByName(ctx context.Context, key, slug string) (store.SourceRepo, bool, error)
 	RenameProject(ctx context.Context, key, to string) (int64, error)
@@ -79,6 +81,9 @@ type SourcesDeps struct {
 	// Reconcile is the poller's reconcile interval (BACKEND_BASELINE_RECONCILE),
 	// zero for buttons only: whether a skipped part is retried on its own.
 	Reconcile time.Duration
+	// SyncInterval is the poller's cycle (BACKEND_SYNC_INTERVAL), zero for
+	// the buttons only: a stale page's wait is about one cycle a page ahead.
+	SyncInterval time.Duration
 	// MaxCalls is the calls one run may make (BACKEND_BASELINE_MAX_CALLS):
 	// what the UI says a source or a full run may cost before the click.
 	MaxCalls int
@@ -1199,12 +1204,16 @@ func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = store.RunReconcile
 	}
-	if mode != store.RunReconcile && mode != store.RunFull {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "mode: reconcile or full")
+	if mode != store.RunReconcile && mode != store.RunFull && mode != store.RunRestyle {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "mode: reconcile, full or restyle")
 		return
 	}
 	rp, ok := d.lookupRepo(w, r, src)
 	if !ok {
+		return
+	}
+	if mode == store.RunRestyle {
+		d.restyleRepo(w, r, src.ProjectKey, rp.Slug)
 		return
 	}
 	slug, head := rp.Slug, rp.HeadCommit
@@ -1247,6 +1256,43 @@ func (d Deps) describeRepo(w http.ResponseWriter, r *http.Request) {
 		d.Worker.Wake()
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, describedBody{Status: "queued", RunID: id, Mode: mode})
+}
+
+// restyleRepo queues a restyle of a repository's pages by hand: no code
+// read, its documented commit the run's, past the tries a failed page has
+// spent (the wiki's stale hint points here). Nothing documented: 422.
+func (d Deps) restyleRepo(w http.ResponseWriter, r *http.Request, key, slug string) {
+	ctx := r.Context()
+	doc, ok, err := d.Sources.Store.DocumentedRun(ctx, key, slug)
+	if err != nil {
+		httpx.ServerError(w, r, err, "documented run")
+		return
+	}
+	if !ok || doc.Commit == "" {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "nothing documented to restyle: describe it first")
+		return
+	}
+	id, err := d.Sources.Store.EnqueueRestyle(ctx, key, slug, doc.Commit, prompts.Epoch, true)
+	switch {
+	case errors.Is(err, store.ErrExists):
+		httpx.WriteError(w, http.StatusConflict, "a run of this repository is open")
+		return
+	case errors.Is(err, store.ErrNoRepo):
+		httpx.WriteError(w, http.StatusNotFound, "unknown repository")
+		return
+	case err != nil:
+		httpx.ServerError(w, r, err, "enqueue restyle")
+		return
+	}
+	if err := d.Sources.Store.SetRunReason(ctx, id, store.RunReason{Kind: store.ReasonManual}); err != nil {
+		d.Log.WarnContext(ctx, "baseline_reason_failed", "project", key, "repo", slug, "run_id", id, logging.Err(err))
+	}
+	d.Log.InfoContext(ctx, "baseline_queued", "project", key, "repo", slug, "run_id", id, "mode", store.RunRestyle,
+		"user", d.user(r))
+	if d.Worker != nil {
+		d.Worker.Wake()
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, describedBody{Status: "queued", RunID: id, Mode: store.RunRestyle})
 }
 
 // skippedPartBody is one part a run left out (baseline.SkippedPart).

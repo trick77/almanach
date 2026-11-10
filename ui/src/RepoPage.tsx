@@ -19,6 +19,7 @@ import {
   type RailItem,
 } from "./Rail";
 import { RepoSwitcher } from "./RepoSwitcher";
+import { StaleHint } from "./StaleHint";
 import { day, refName } from "./format";
 import {
   projectExportHref,
@@ -303,6 +304,11 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
         {S.projects.lastMerge}{" "}
         {lastMerge === null ? S.common.never : day(lastMerge)}
       </p>
+      <StaleHint
+        stale={data.stale}
+        scope="repo"
+        projectKey={data.project_key}
+      />
       <ExportLine
         href={
           single
