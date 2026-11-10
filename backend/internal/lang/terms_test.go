@@ -52,6 +52,16 @@ func TestTerms(t *testing.T) {
 		"Der Schluessel und die Abhaengigkeiten.": "Der Key und die Dependencies.",
 		// A sentence end is no file name.
 		"Das ist der Dienst. Danach kommt nichts.": "Das ist der Service. Danach kommt nichts.",
+		// Word-by-word Go jargon: the software word as a compound's last part,
+		// the everyday word alone.
+		"Sie bündelt die HTTP-Rohrleitungen, setzt Sicherheits- und CORS-Köpfe.": "Sie bündelt die HTTP-Pipelines, setzt Sicherheits- und CORS-Header.",
+		"Ein OIDC-Fluss, der Release-Lauf, Request-Böden, SSE-Ströme.":           "Ein OIDC-Flow, der Release-Run, Request-Bodies, SSE-Streams.",
+		"Der Rahmen-Schreiber im Test-Lauf, den HTTP-Köpfen.":                    "Der Rahmen-Writer im Test-Run, den HTTP-Headern.",
+		"Der Kopf, zwei Köpfe, der Fluss, im Lauf der Zeit, auf dem Boden.":      "Der Kopf, zwei Köpfe, der Fluss, im Lauf der Zeit, auf dem Boden.",
+		"Der Strom fällt aus, die Rohrleitung leckt, der Schreiber notiert.":     "Der Strom fällt aus, die Rohrleitung leckt, der Schreiber notiert.",
+		"Sie rettet Paniken, nie in Panik.":                                      "Sie rettet Panics, nie in Panik.",
+		"Ein signiertes Sitzungs-Cookie, die Sitzungsdauer.":                     "Ein signiertes Session-Cookie, die Sitzungsdauer.",
+		"Ein Kopf-Teil, der Fluss-Lauf.":                                         "Ein Kopf-Teil, der Fluss-Run.",
 	} {
 		if got := Terms(in); got != want {
 			t.Errorf("Terms(%q) = %q, want %q", in, got, want)
@@ -96,6 +106,8 @@ func TestTermsNeuter(t *testing.T) {
 		"Auslieferung per Pipeline.":                       "Deployment per Pipeline.",
 		"Die Auslieferungen laufen.":                       "Die Deployments laufen.",
 		"Die Auslieferungs-Pipeline baut.":                 "Die Deployment-Pipeline baut.",
+		"Kit/ratelimit die Drosselung, keine Drosselung.":  "Kit/ratelimit das Rate-Limiting, kein Rate-Limiting.",
+		"Bei der Drosselung":                               "Beim Rate-Limiting",
 		// A genitive or dative the code cannot tell apart, an adjective
 		// without an article (a strong ending): German.
 		"Während der Auslieferung wartet sie.": "Während der Auslieferung wartet sie.",
@@ -137,7 +149,7 @@ func TestTermsNeuter(t *testing.T) {
 		"Build, die Auslieferung\nbraucht.":                               "Build, die Auslieferung\nbraucht.",
 		"Die Pipeline, die Auslieferung `startet`.":                       "Die Pipeline, die Auslieferung `startet`.",
 		"Die Pipeline, die Auslieferung **startet**.":                     "Die Pipeline, die Auslieferung **startet**.",
-		"Die Pipeline, die Auslieferung und Test-Läufe.":                  "Die Pipeline, die Auslieferung und Test-Läufe.",
+		"Die Pipeline, die Auslieferung und Test-Läufe.":                  "Die Pipeline, die Auslieferung und Test-Runs.",
 		"Die Pipeline, die Auslieferung und Tests (CI) baut.":             "Die Pipeline, die Auslieferung und Tests (CI) baut.",
 		"Die Pipeline, die Auslieferung und Tests Nr. 3 baut":             "Die Pipeline, die Auslieferung und Tests Nr. 3 baut",
 		"Die Pipeline, die Auslieferung und Tests: alle.":                 "Die Pipeline, die Auslieferung und Tests: alle.",

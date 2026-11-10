@@ -18,13 +18,17 @@ import (
 // ("Go-Binär"). neuter: the German form is feminine and the English a
 // neuter ("die Auslieferung" → "das Deployment"): the article before it,
 // an adjective between, are made neuter where the case is sure, and the
-// form stays German where it is not ("während der Auslieferung").
+// form stays German where it is not ("während der Auslieferung"). tail:
+// the form is an everyday word ("zwei Köpfe", "der Fluss", "im Lauf der
+// Zeit"), the software word only as a hyphenated compound's last part
+// ("CORS-Köpfe", "OIDC-Fluss", "Release-Lauf").
 type term struct {
 	en     string
 	head   bool
 	plural string
 	noun   bool
 	neuter bool
+	tail   bool
 }
 
 // terms are the software words a German developer says in English (user,
@@ -58,6 +62,24 @@ var terms = map[string]term{
 	// Fachbegriffe, die wir übersetzen").
 	"Auslieferung": {en: "Deployment", neuter: true}, "Auslieferungen": {en: "Deployments"},
 	"Auslieferungs": {en: "Deployment", head: true},
+	"Sitzungs":      {en: "Session", head: true},
+	"Drosselung":    {en: "Rate-Limiting", neuter: true},
+	// The model's word-by-word German for Go jargon (user, 2026-11-10: "man
+	// versteht teilweise gar nicht was gemeint ist"): "HTTP-Rohrleitungen",
+	// "CORS-Köpfe", "OIDC-Fluss", "rettet Paniken". Everyday words alone, so
+	// only as a compound's last part; "Paniken" no one says of fear.
+	"Rohrleitung": {en: "Pipeline", tail: true}, "Rohrleitungen": {en: "Pipelines", tail: true},
+	"Kopf": {en: "Header", tail: true}, "Kopfs": {en: "Headers", tail: true}, "Kopfes": {en: "Headers", tail: true},
+	"Köpfe": {en: "Header", tail: true}, "Köpfen": {en: "Headern", tail: true},
+	"Fluss": {en: "Flow", tail: true}, "Flusses": {en: "Flows", tail: true}, "Flüsse": {en: "Flows", tail: true},
+	"Flüssen": {en: "Flows", tail: true},
+	"Lauf":    {en: "Run", tail: true}, "Laufs": {en: "Runs", tail: true}, "Laufes": {en: "Runs", tail: true},
+	"Läufe": {en: "Runs", tail: true}, "Läufen": {en: "Runs", tail: true},
+	"Boden": {en: "Body", tail: true}, "Bodens": {en: "Bodys", tail: true}, "Böden": {en: "Bodies", tail: true},
+	"Strom": {en: "Stream", tail: true}, "Stroms": {en: "Streams", tail: true}, "Stromes": {en: "Streams", tail: true},
+	"Ströme": {en: "Streams", tail: true}, "Strömen": {en: "Streams", tail: true},
+	"Schreiber": {en: "Writer", tail: true}, "Schreibers": {en: "Writers", tail: true}, "Schreibern": {en: "Writern", tail: true},
+	"Paniken": {en: "Panics"},
 }
 
 // Older text may write the umlauts out ("Schluessel", "Abhaengigkeit"),
@@ -79,7 +101,8 @@ func init() {
 // as it is without a walk.
 var stems = []string{"Dienst", "Bibliothek", "Schlüssel", "Sitzung", "Abhängigkeit", "Kennung", "Zugangsdaten", "Endpunkt",
 	"Geheimnis", "Nachricht", "Umgebungsvariable", "Einstiegspunkt", "Repositori", "Warteschlange", "Zwischenspeicher", "Binär",
-	"Auslieferung"}
+	"Auslieferung", "Drosselung", "Rohrleitung", "Kopf", "Köpfe", "Fluss", "Flüsse", "Lauf", "Läufe", "Boden", "Böden",
+	"Strom", "Ström", "Schreiber", "Paniken"}
 
 // singularCues are the articles that make such a form a singular, whatever
 // stands before them: "die Klasse, die den Schlüssel hält" holds one key.
@@ -454,6 +477,9 @@ func termFor(w, before, after, prev, prev2 string) string {
 		return w
 	}
 	if strings.HasPrefix(after, "-") && !t.head {
+		return w
+	}
+	if t.tail && !strings.HasSuffix(before, "-") {
 		return w
 	}
 	if w == "Abhängigkeit" && prev == "in" {

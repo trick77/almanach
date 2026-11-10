@@ -1927,7 +1927,17 @@ so the choice is not undone as a cleanup.
   capitalised nouns, joins and articles follow up to the end of its block:
   the text's end, a blank line, a heading or a list's next item ("Build,
   die Auslieferung und Tests."). A sentence end inside a block is never
-  taken: a "." may be an abbreviation's ("St. Gallen"). A stored
+  taken: a "." may be an abbreviation's ("St. Gallen"). The model's
+  word-by-word German for Go jargon is taken back where the word cannot
+  mean anything else (user, 2026-11-10): "Paniken" → "Panics",
+  "Sitzungs-Cookie" → "Session-Cookie", "die Drosselung" → "das
+  Rate-Limiting" (as "Auslieferung"). An everyday word ("Kopf", "Fluss",
+  "Lauf", "Boden", "Strom", "Rohrleitung", "Schreiber") is the software
+  word only as a hyphenated compound's last part: "CORS-Köpfe" →
+  "CORS-Header", "OIDC-Fluss" → "OIDC-Flow", "HTTP-Rohrleitungen" →
+  "HTTP-Pipelines"; "zwei Köpfe", "im Lauf der Zeit" stay. A calque with
+  no hyphen ("liest Böden", "Ereignisströme") or a verb ("rettet") is out
+  of the code's reach. A stored
   German word is the same statement as today's
   English one (`lang.SameButSpelling`): no credit for the swap; a subject
   or area name matches in any case (`lang.SameName`), so a plan stored
