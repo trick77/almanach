@@ -855,7 +855,7 @@ keeps one.
 Only main uses are the system: the maps, the
 prompts (`store.Shared`, the project step's build dependencies), a
 repository's `uses`, `used_by` and its export count them alone; the page
-"Dependencies" draws the others dashed. A row read before scopes
+"Abhängigkeiten" draws the others dashed. A row read before scopes
 (`manifest.Version` 4) is main until its next sync reads it again. Maps a
 project's last run drew from a test-only edge keep it until its next run:
 the rule is code's input, no prompt's, so no epoch.
@@ -892,9 +892,9 @@ provide (a fork, a copy) gives no edge to either and is listed as
 ambiguous; when the providers share one clone URL (two sources cloned it
 before the rule) it says so, and removing all but one row gives the edges
 back. A repository's body carries `uses` (with the other users, `also`)
-and `used_by`, the `.md` export a `Dependencies` section, and
+and `used_by`, the `.md` export an `Abhängigkeiten` section, and
 `GET /api/dependencies` the whole graph, every scope, each edge its
-strongest, drawn on the page "Dependencies" as a flow from users to the
+strongest, drawn on the page "Abhängigkeiten" as a flow from users to the
 repositories they use, a non-main edge amber dashed with what it is for
 (a gray dashed one is the flow's loop back, any scope); when
 all would not fit and the main ones do, the main ones alone, said under
@@ -912,7 +912,7 @@ those of other projects the project's repositories depend on; both
 prompts ask how the repository or the system uses them, never what they
 are. A project with a map carries them as `shared`, and the UI draws them
 on the architecture overview in a zone of its own ("Geteilte
-Repositories") with an edge from each user ("Dependency"); the stored
+Repositories") with an edge from each user ("Abhängigkeit"); the stored
 map never holds them. The model is told not to draw them and gets a node
 and edge cap lowered by what they need (`mapRoom`); the UI draws as many
 as fit. An external node the model drew anyway, named by the repository's
@@ -1933,8 +1933,10 @@ so the choice is not undone as a cleanup.
   Service, not Dienst; Repository, not Repositorium. Code replaces them
   (`lang.Terms`, in `lang.Prose` and `lang.Laid`), no prompt lists them, so
   the prompts stay lean: whole words outside code spans, never a path, a
-  file name or an identifier, a compound only by hyphen ("Dienst-Registry"),
-  "in Abhängigkeit von" left alone. Only words whose English takes the
+  file name or an identifier, a compound only by hyphen ("Dienst-Registry").
+  One word goes the other way: "Dependency" becomes "Abhängigkeit" (user,
+  2026-11-10), "Dependency-Graph" "Abhängigkeits-Graph", while an English
+  term it opens stays ("Dependency Injection", "Dependency Check"). Only words whose English takes the
   German article and whose German means only the software thing: "eine
   Anfrage" would become "eine Request", and "Paket", "Ereignis", "Laufzeit"
   are business terms too; those stay as the model writes them.

@@ -2,7 +2,8 @@
 // never the sharp s), generic masculine. There is no second language: the
 // readers are German speaking, and the wiki itself is German. A software
 // word a German developer says in English stays English: Repository, Queue,
-// Dependency, Run, Timeout, Session (user, 2026-11-08).
+// Run, Timeout, Session (user, 2026-11-08). Abhängigkeit stays German, as on
+// the pages (user, 2026-11-10).
 
 import type {
   BriefState,
@@ -29,7 +30,7 @@ export const S = {
   nav: {
     label: "Seiten",
     projects: "Projekte",
-    deps: "Dependencies",
+    deps: "Abhängigkeiten",
     sources: "Quellen",
     queue: "Queue",
     costs: "Kosten",
@@ -74,13 +75,13 @@ export const S = {
     project: (key: string) => `Projekt ${key}`,
   },
   deps: {
-    title: "Dependencies",
-    failed: "Die Dependencies konnten nicht geladen werden.",
+    title: "Abhängigkeiten",
+    failed: "Die Abhängigkeiten konnten nicht geladen werden.",
     lede: "Welche Repositories der Quellen welche anderen verwenden. Almanach liest dafür nach jedem Sync die Build-Manifeste (go.mod, pom.xml, package.json, Gradle: build.gradle(.kts), settings.gradle(.kts), gradle.properties, gradle/libs.versions.toml; Python: pyproject.toml, requirements.txt; Rust: Cargo.toml; im Root-Verzeichnis, eine Ebene darunter und in jedem Ordner, den der Build als Gradle-Projekt, Maven-Modul oder Workspace-Paket einbindet) und verbindet, was ein Repository verlangt, mit dem, was ein anderes liefert. Code zieht die Kanten, kein Modell. Eine Verwendung nur für Tests, für den Build oder als Versionsvorgabe ist ocker gestrichelt; die Karten und die Beschreibungen zählen nur die Verwendungen zur Laufzeit. Jedes Repository wird einmal geclont und beschrieben, wie viele es auch verwenden.",
     disabled:
-      "Dependencies gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
+      "Abhängigkeiten gibt es nur zwischen Quellen, und Quellen sind auf dieser Instanz nicht konfiguriert (BACKEND_REPOS_DIR).",
     empty:
-      "Noch keine Dependency: kein Repository der Quellen verwendet ein anderes, oder die Manifeste sind noch nicht gelesen.",
+      "Noch keine Abhängigkeit: kein Repository der Quellen verwendet ein anderes, oder die Manifeste sind noch nicht gelesen.",
     graph: "Graph",
     tooLarge: (n: number) =>
       `${n} Repositories sind zu viele für einen Graphen; die Tabelle zeigt alle.`,
@@ -266,7 +267,7 @@ export const S = {
       shared: "Geteilte Repositories",
     } as Record<string, string>,
     // The edge code draws from a repository to one it depends on.
-    sharedEdge: "Dependency",
+    sharedEdge: "Abhängigkeit",
     // The dependency graph's zones by id, drawn by code.
     depZones: {
       users: "Nutzer",

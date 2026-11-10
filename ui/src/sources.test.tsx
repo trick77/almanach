@@ -1219,7 +1219,7 @@ describe("App with sources", () => {
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
     expect(await screen.findByText("Quellen")).toBeInTheDocument();
-    // Dependencies before Quellen, no FAQ. The label alone: the queue's
+    // Abhängigkeiten before Quellen, no FAQ. The label alone: the queue's
     // count sits in its link beside it.
     const entries = () =>
       within(screen.getByRole("navigation", { name: "Seiten" }))
@@ -1227,7 +1227,7 @@ describe("App with sources", () => {
         .map((a) => a.firstElementChild?.textContent);
     expect(entries()).toEqual([
       "Projekte",
-      "Dependencies",
+      "Abhängigkeiten",
       "Quellen",
       "Queue",
       "Kosten",

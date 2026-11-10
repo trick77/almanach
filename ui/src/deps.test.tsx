@@ -213,7 +213,9 @@ describe("DepsPage", () => {
     serve({ dependencies: graph });
     render(<DepsPage />);
     expect(
-      await screen.findByText("Die Dependencies konnten nicht geladen werden."),
+      await screen.findByText(
+        "Die Abhängigkeiten konnten nicht geladen werden.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -224,7 +226,7 @@ describe("DepsPage", () => {
     });
     const { unmount } = render(<DepsPage />);
     expect(
-      await screen.findByText(/Noch keine Dependency/),
+      await screen.findByText(/Noch keine Abhängigkeit/),
     ).toBeInTheDocument();
     unmount();
     serve({
@@ -250,7 +252,7 @@ describe("RepoPage dependencies", () => {
     expect(chat.getAttribute("href")).toBe("/projects/apps/repos/chat");
     // The rail points at the section, uses · used by; it lists none.
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
-    const entry = within(rail).getByText("Dependencies").closest("a")!;
+    const entry = within(rail).getByText("Abhängigkeiten").closest("a")!;
     expect(entry.getAttribute("href")).toBe("#dependencies");
     expect(entry.textContent).toContain("1 · 1");
     expect(within(rail).queryByText("llmwire")).toBeNull();
@@ -262,6 +264,6 @@ describe("RepoPage dependencies", () => {
     });
     render(<RepoPage projectKey="tools" slug="rongo" />);
     await screen.findByRole("tabpanel", { name: "Beschreibung" });
-    expect(screen.queryByText("Dependencies")).toBeNull();
+    expect(screen.queryByText("Abhängigkeiten")).toBeNull();
   });
 });
