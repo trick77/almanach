@@ -34,9 +34,19 @@ func TestTerms(t *testing.T) {
 		"Die Klasse, die den Schlüssel hält.":         "Die Klasse, die den Key hält.",
 		"Ein Teil, die einen Zwischenspeicher nutzt.": "Ein Teil, die einen Cache nutzt.",
 		"Den Schlüssel liest der Dienst.":             "Den Key liest der Service.",
-		// "depending on" is no dependency.
-		"Der Tarif steht in Abhängigkeit von der Region.": "Der Tarif steht in Abhängigkeit von der Region.",
-		"Eine Abhängigkeit zur Library.":                  "Eine Dependency zur Library.",
+		// Dependency goes into German, a compound's head with its joint; an
+		// English term it opens stays, as does German already there.
+		"Der Tarif steht in Abhängigkeit von der Region.":                        "Der Tarif steht in Abhängigkeit von der Region.",
+		"Eine Dependency zur Library, die Dependencies des Repos.":               "Eine Abhängigkeit zur Library, die Abhängigkeiten des Repos.",
+		"Der Dependency-Graph und die Maven-Dependency.":                         "Der Abhängigkeits-Graph und die Maven-Abhängigkeit.",
+		"Per Dependency Injection, Dependency-Injection, Dependency Check.":      "Per Dependency Injection, Dependency-Injection, Dependency Check.",
+		"OWASP Dependency-Check, Dependency-Track, das Maven Dependency Plugin.": "OWASP Dependency-Check, Dependency-Track, das Maven Dependency Plugin.",
+		// The English terms keep only Dependency: other terms before such a
+		// word go into English as before.
+		"Das Schlüssel Management und die Sitzung Scope.":      "Das Key Management und die Session Scope.",
+		"Das Dependency-Management.":                           "Das Abhängigkeits-Management.",
+		"Dependabot hebt die `Dependency` in Dependency.java.": "Dependabot hebt die `Dependency` in Dependency.java.",
+		"Eine Dependency. Graph folgt.":                        "Eine Abhängigkeit. Graph folgt.",
 		// Hyphenated: the base form leads, a joint form stays, a second part goes.
 		"Die Dienst-Registry hält das Nachrichten-Format.": "Die Service-Registry hält das Nachrichten-Format.",
 		"Jede Kafka-Nachricht.":                            "Jede Kafka-Message.",
@@ -49,7 +59,7 @@ func TestTerms(t *testing.T) {
 		// Lower case or upper case is no noun as written here.
 		"dienst DIENST": "dienst DIENST",
 		// Umlauts written out, as older text has them.
-		"Der Schluessel und die Abhaengigkeiten.": "Der Key und die Dependencies.",
+		"Der Schluessel und die Sitzungen.": "Der Key und die Sessions.",
 		// A sentence end is no file name.
 		"Das ist der Dienst. Danach kommt nichts.": "Das ist der Service. Danach kommt nichts.",
 		// Word-by-word Go jargon: the software word as a compound's last part

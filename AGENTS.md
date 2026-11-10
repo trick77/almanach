@@ -26,7 +26,8 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   `claims` never trusted.
 - Persist failure = 500, never swallowed; each 500 its own line, 401 access log only.
 - Money: integer nano-USD, never a float.
-- IT words English by code (`lang.Terms`), never a prompt list (user).
+- IT words English by code (`lang.Terms`), never a prompt list (user). But Abhängigkeit, UI and pages
+  (user, 2026-11-10).
 - Credentials never leave, by regex, not prompt (`redact`): a shape needs a value's mark, so prose stays.
   New shape → test.
 - Description = documentation: a statement as long as its subject needs (user, 2026-10-28).

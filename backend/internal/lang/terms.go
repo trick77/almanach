@@ -7,7 +7,7 @@ import (
 )
 
 // term is one German form of a software word and the English one it
-// becomes. head: the form may open a hyphenated compound ("Dienst-Registry"
+// becomes (one English form the German, see terms). head: the form may open a hyphenated compound ("Dienst-Registry"
 // → "Service-Registry"); an inflected one there is a joint ("Nachrichten-
 // Format"), left alone. plural: the English for the same German form read
 // as a plural ("die Schlüssel" → "die Keys"), "" when the German plural is
@@ -23,9 +23,11 @@ import (
 // Zeit"), the software word only as a hyphenated compound's last part
 // after an acronym ("CORS-Köpfe", "OIDC-Fluss", "CI-Lauf"): after a word
 // it is as often the everyday one ("Brief-Kopf", "Geld-Fluss",
-// "Zug-Lauf").
+// "Zug-Lauf"). joint: the form a hyphenated compound opens with, when it
+// is not en ("Dependency-Graph" → "Abhängigkeits-Graph").
 type term struct {
 	en     string
+	joint  string
 	head   bool
 	plural string
 	noun   bool
@@ -46,7 +48,10 @@ var terms = map[string]term{
 	"Bibliothek": {en: "Library", head: true}, "Bibliotheken": {en: "Libraries"},
 	"Schlüssel": {en: "Key", head: true, plural: "Keys"}, "Schlüssels": {en: "Keys"}, "Schlüsseln": {en: "Keys"},
 	"Sitzung": {en: "Session", head: true}, "Sitzungen": {en: "Sessions"},
-	"Abhängigkeit": {en: "Dependency", head: true}, "Abhängigkeiten": {en: "Dependencies"},
+	// The one word the other way: German on every page (user, 2026-11-10:
+	// "dependency können wir überall Abhängigkeit nennen"). An English term
+	// it opens stays (englishAfter).
+	"Dependency": {en: "Abhängigkeit", joint: "Abhängigkeits", head: true}, "Dependencies": {en: "Abhängigkeiten"},
 	"Kennung": {en: "ID", head: true}, "Kennungen": {en: "IDs"},
 	"Zugangsdaten": {en: "Credentials", head: true},
 	"Endpunkt":     {en: "Endpoint", head: true}, "Endpunkte": {en: "Endpoints"}, "Endpunkten": {en: "Endpoints"},
@@ -108,7 +113,7 @@ func init() {
 
 // stems is what every form above but a tail form begins with: a text
 // holding none is left as it is without a walk.
-var stems = []string{"Dienst", "Bibliothek", "Schlüssel", "Sitzung", "Abhängigkeit", "Kennung", "Zugangsdaten", "Endpunkt",
+var stems = []string{"Dienst", "Bibliothek", "Schlüssel", "Sitzung", "Dependenc", "Kennung", "Zugangsdaten", "Endpunkt",
 	"Geheimnis", "Nachricht", "Umgebungsvariable", "Einstiegspunkt", "Repositori", "Warteschlange", "Zwischenspeicher", "Binär",
 	"Auslieferung", "Paniken"}
 
@@ -135,8 +140,8 @@ var pluralCues = map[string]bool{
 // stored before it reads the same once respelled (store.Respell). Code
 // stays: fenced and indented blocks, backtick spans, and a
 // word that is part of a path, a file name or an identifier ("Dienst.java",
-// "/dienst", "Dienst_v2"). "in Abhängigkeit von" means "depending on" and
-// stays. Deterministic and idempotent: no English form holds a German one.
+// "/dienst", "Dienst_v2"). "Dependency" alone goes the other way, into
+// German. Deterministic and idempotent: no form a term becomes is a term.
 func Terms(s string) string {
 	for _, st := range stems {
 		if strings.Contains(s, st) {
@@ -490,8 +495,11 @@ func termFor(w, before, after, prev, prev2 string) string {
 	if t.tail && !acronymJoined(before) {
 		return w
 	}
-	if w == "Abhängigkeit" && prev == "in" {
+	if next, hyphen := nextWord(after); t.joint != "" && englishAfter[next] && (!hyphen || englishJoined[next]) {
 		return w
+	}
+	if t.joint != "" && strings.HasPrefix(after, "-") {
+		return t.joint
 	}
 	if t.noun && !strings.HasSuffix(before, "-") && !nounCue(prev) && !nounCue(prev2) {
 		return w
@@ -500,6 +508,39 @@ func termFor(w, before, after, prev, prev2 string) string {
 		return t.plural
 	}
 	return t.en
+}
+
+// englishAfter are the words that make "Dependency" (the one term going
+// into German, a joint's) before them, a space between, part of an English
+// term that stays as it is ("Dependency Injection", "Dependency Check",
+// "Maven Dependency Plugin"); hyphenated, German compounds them
+// ("Abhängigkeits-Graph"), but for englishJoined, names and idioms: never
+// "Abhängigkeits-Injection", OWASP's "Dependency-Check" stays.
+var englishAfter = map[string]bool{
+	"Injection": true, "Inversion": true, "Management": true, "Graph": true, "Check": true, "Track": true,
+	"Tree": true, "Resolution": true, "Confusion": true, "Hell": true, "Scanning": true, "Lock": true,
+	"Pinning": true, "Scope": true, "Plugin": true,
+}
+
+var englishJoined = map[string]bool{
+	"Injection": true, "Inversion": true, "Confusion": true, "Hell": true, "Check": true, "Track": true,
+}
+
+// nextWord is the word after and whether a hyphen joins it, a single space
+// or hyphen before it: "" when anything else stands between.
+func nextWord(after string) (string, bool) {
+	rest, hyphen := strings.CutPrefix(after, "-")
+	if !hyphen {
+		var ok bool
+		if rest, ok = strings.CutPrefix(after, " "); !ok {
+			return "", false
+		}
+	}
+	end := strings.IndexFunc(rest, func(r rune) bool { return !unicode.IsLetter(r) })
+	if end < 0 {
+		end = len(rest)
+	}
+	return rest[:end], hyphen
 }
 
 // acronymJoined reports whether before, the text before a word, ends in an

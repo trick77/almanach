@@ -27,7 +27,7 @@ Layout, as blocks in reading order, the code joins them: `paragraph`, full sente
 
 {project_description}
 
-## Dependencies between repositories
+## Repository dependencies
 
 {dependencies}
 

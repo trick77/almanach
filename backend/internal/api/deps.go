@@ -118,7 +118,7 @@ func markdownDeps(uses []useBody, usedBy []depBody) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n## Dependencies\n\n")
+	b.WriteString("\n## Abhängigkeiten\n\n")
 	line := func(d depBody) {
 		fmt.Fprintf(&b, "- `%s/%s`\n", d.Project, d.Slug)
 	}

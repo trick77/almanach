@@ -142,7 +142,7 @@ func TestRepoMarkdown_Dependencies(t *testing.T) {
 	st := depsStore()
 	h, _, _ := sourcesHandlerWith(t, newFakeSources(), st, &fakeWaker{}, false)
 	rec := getMD(h, "/api/projects/libs/repos/wire.md", "")
-	want := "## Dependencies\n\nVerwendet von:\n\n- `apps/loom`\n- `apps/rongo`\n"
+	want := "## Abhängigkeiten\n\nVerwendet von:\n\n- `apps/loom`\n- `apps/rongo`\n"
 	if rec.Code != 200 || !strings.HasSuffix(rec.Body.String(), want) {
 		t.Fatalf("export: %d %q, want it to end in %q", rec.Code, rec.Body.String(), want)
 	}
@@ -151,7 +151,7 @@ func TestRepoMarkdown_Dependencies(t *testing.T) {
 		t.Fatalf("rongo export: %q", rec.Body.String())
 	}
 	st.graph = store.Graph{}
-	if rec = getMD(h, "/api/projects/libs/repos/wire.md", ""); strings.Contains(rec.Body.String(), "## Dependencies") {
+	if rec = getMD(h, "/api/projects/libs/repos/wire.md", ""); strings.Contains(rec.Body.String(), "## Abhängigkeiten") {
 		t.Fatalf("export without edges: %q", rec.Body.String())
 	}
 }
