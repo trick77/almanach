@@ -36,6 +36,7 @@ import {
   type RailItem,
 } from "./Rail";
 import { RepoSwitcher } from "./RepoSwitcher";
+import { factIds } from "./repoFacts";
 import { StaleHint } from "./StaleHint";
 import { refName } from "./format";
 import {
@@ -68,17 +69,15 @@ import {
 } from "./ui";
 
 /** The sections' ids, the rail's anchors: the path's steps, the facts on
- *  the reference tab, the history's lists. */
+ *  the reference tab (fact tables elsewhere link to them), the history's
+ *  lists. */
 const ids = {
   what: "what",
   map: "structure",
   guard: "guard",
   change: "change",
   pitfalls: "pitfalls",
-  deps: "dependencies",
-  parts: "parts",
-  interfaces: "interfaces",
-  messages: "messages",
+  ...factIds,
   notes: "notes",
   revisions: "revisions",
 };
@@ -161,7 +160,8 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   // The question chip pressed on the reference tab: a tab switch by the
   // tab bar lets it go, a path's "Alle n" presses one.
   const { ask, setAsk, kinds, rejump } = useAsk(data.description);
-  useJumpTo(landing, tab === DESCRIPTION && data.description !== null, rejump);
+  // Without a description the tab still holds the facts, a link's target.
+  useJumpTo(landing, tab === DESCRIPTION, rejump);
   const problems = useMemo(
     () => (project?.problems ?? []).filter((p) => p.repo_slug === data.slug),
     [project, data.slug],

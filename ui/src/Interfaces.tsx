@@ -1,5 +1,5 @@
 import type { Interface } from "./api";
-import { repoPath } from "./routing";
+import { factPath } from "./repoFacts";
 import { S } from "./strings";
 import { Link, mono, table, tableBox, td, tdMono, th } from "./ui";
 
@@ -55,7 +55,7 @@ function Block({ a, owner }: { a: Interface; owner: boolean }) {
         )}
         {owner && (
           <Link
-            to={repoPath(a.repo.project, a.repo.slug)}
+            to={factPath(a.repo.project, a.repo.slug, "interfaces")}
             className={mono + " text-ink-dim hover:text-ink"}
           >
             {a.repo.slug}

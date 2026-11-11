@@ -2,6 +2,7 @@ import { Fragment, useEffect } from "react";
 import type { Dependencies, RepoRef, Sources } from "./api";
 import { Diagram, titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
+import { factPath } from "./repoFacts";
 import { repoPath } from "./routing";
 import { refName } from "./format";
 import { S } from "./strings";
@@ -244,7 +245,7 @@ function DepsBody({ data }: { data: Dependencies }) {
 function RepoLink({ r, name }: { r: RepoRef; name: (r: RepoRef) => string }) {
   return (
     <Link
-      to={repoPath(r.project, r.slug)}
+      to={factPath(r.project, r.slug, "deps")}
       className={mono + " text-ink hover:text-accent-strong"}
     >
       {name(r)}

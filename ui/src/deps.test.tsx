@@ -179,8 +179,15 @@ describe("DepsPage", () => {
         .getAllByText("llmwire")[0]
         .closest("a")
         ?.getAttribute("href"),
-    ).toBe("/projects/tools/repos/llmwire");
+    ).toBe("/projects/tools/repos/llmwire#description/dependencies");
+    expect(
+      within(table).getByRole("link", { name: "rongo" }).getAttribute("href"),
+    ).toBe("/projects/tools/repos/rongo#description/dependencies");
     expect(screen.getByText("npm:shared")).toBeInTheDocument();
+    // An ambiguous provider too, its page holding the section or not.
+    expect(screen.getByRole("link", { name: "a" }).getAttribute("href")).toBe(
+      "/projects/tools/repos/a#description/dependencies",
+    );
     expect(screen.getByText(/von zwei Quellen geclont/)).toBeInTheDocument();
   });
 
