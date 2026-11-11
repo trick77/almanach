@@ -1218,20 +1218,25 @@ describe("App with sources", () => {
     serve({ me, sources, projects: { projects: [] } });
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
-    expect(await screen.findByText("Quellen")).toBeInTheDocument();
-    // Abhängigkeiten before Quellen, no FAQ. The label alone: the queue's
-    // count sits in its link beside it.
+    // Knowledge in the nav, operations behind the Betrieb button: Quellen
+    // first there, no FAQ. The label alone: the queue's count sits in its
+    // entry beside it.
     const entries = () =>
       within(screen.getByRole("navigation", { name: "Seiten" }))
         .getAllByRole("link")
         .map((a) => a.firstElementChild?.textContent);
-    expect(entries()).toEqual([
-      "Projekte",
-      "Abhängigkeiten",
-      "Quellen",
-      "Queue",
-      "Kosten",
-    ]);
+    const ops = () => {
+      fireEvent.click(screen.getByRole("button", { name: "Betrieb" }));
+      const menu = screen.getByRole("menu");
+      const list = within(menu)
+        .getAllByRole("menuitem")
+        .map((a) => a.firstElementChild?.textContent);
+      fireEvent.keyDown(menu, { key: "Escape" });
+      return list;
+    };
+    expect(await screen.findByText("Abhängigkeiten")).toBeInTheDocument();
+    expect(entries()).toEqual(["Projekte", "Abhängigkeiten"]);
+    expect(ops()).toEqual(["Quellen", "Queue", "Kosten"]);
     unmount();
     vi.unstubAllGlobals();
     serve({
@@ -1243,8 +1248,9 @@ describe("App with sources", () => {
     // The nav entry and the page title both read "Projekte".
     await screen.findAllByText("Projekte");
     await waitFor(() =>
-      expect(screen.queryByText("Quellen")).not.toBeInTheDocument(),
+      expect(screen.queryByText("Abhängigkeiten")).not.toBeInTheDocument(),
     );
-    expect(entries()).toEqual(["Projekte", "Queue", "Kosten"]);
+    expect(entries()).toEqual(["Projekte"]);
+    expect(ops()).toEqual(["Queue", "Kosten"]);
   });
 });

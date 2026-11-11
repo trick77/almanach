@@ -21,7 +21,7 @@ import {
   descriptionRail,
   statementMatches,
 } from "./Description";
-import { Rail, type RailItem } from "./Rail";
+import { Rail, shortcutFree, type RailItem } from "./Rail";
 import { breakable } from "./RepoSwitcher";
 import { useRef } from "react";
 import { S } from "./strings";
@@ -1917,6 +1917,140 @@ describe("App", () => {
     fireEvent.change(box, { target: { value: "  " } });
     fireEvent.submit(box.closest("form")!);
     expect(window.location.search).toBe("?q=Geb%C3%BChren");
+  });
+
+  it("keeps operations in a menu that closes on Escape, a press outside and a pick", async () => {
+    serve({
+      me: anonymous,
+      projects,
+      sources: { enabled: true, default_host: "", max_calls: 0, sources: [] },
+    });
+    window.history.replaceState({}, "", "/");
+    render(<App />);
+    const opener = await screen.findByRole("button", { name: S.nav.ops });
+    expect(opener).toHaveAttribute("aria-haspopup", "menu");
+    expect(opener).toHaveAttribute("aria-expanded", "false");
+    // The knowledge stays in the nav; operations are not in it.
+    const nav = screen.getByRole("navigation", { name: S.nav.label });
+    expect(within(nav).queryByText(S.nav.queue)).toBeNull();
+    await screen.findByText(S.nav.deps);
+
+    fireEvent.click(opener);
+    const menu = screen.getByRole("menu", { name: S.nav.opsMenu(true) });
+    expect(opener).toHaveAttribute("aria-expanded", "true");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((a) => a.textContent),
+    ).toEqual([S.nav.sources, S.nav.queue, S.nav.costs]);
+    // The first entry takes the focus; the arrows walk the entries.
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items[0]).toHaveFocus();
+    fireEvent.keyDown(items[0]!, { key: "ArrowDown" });
+    expect(items[1]).toHaveFocus();
+    fireEvent.keyDown(items[1]!, { key: "ArrowUp" });
+    fireEvent.keyDown(items[0]!, { key: "ArrowUp" });
+    expect(items[2]).toHaveFocus();
+    // Out of the tab order: Tab leaves the menu, the arrows walk it.
+    expect(items.every((a) => a.getAttribute("tabindex") === "-1")).toBe(true);
+
+    // Escape closes, gives the focus back to the button and is the
+    // menu's alone: no other Escape listener hears it.
+    const elsewhere = vi.fn();
+    document.addEventListener("keydown", elsewhere);
+    fireEvent.keyDown(items[2]!, { key: "Escape" });
+    document.removeEventListener("keydown", elsewhere);
+    expect(elsewhere).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(opener).toHaveFocus();
+    expect(opener).toHaveAttribute("aria-expanded", "false");
+
+    // The focus leaving by keyboard closes; the page's shortcuts hold off
+    // while the menu stands.
+    fireEvent.click(opener);
+    const first = within(screen.getByRole("menu")).getAllByRole("menuitem")[0]!;
+    const slash = () => new KeyboardEvent("keydown", { key: "/" });
+    expect(shortcutFree(slash())).toBe(false);
+    fireEvent.blur(first, {
+      relatedTarget: screen.getByRole("searchbox", { name: S.search.box }),
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(shortcutFree(slash())).toBe(true);
+
+    // A press outside closes; one on the button toggles.
+    fireEvent.click(opener);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(opener);
+    fireEvent.click(opener);
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    // A pick opens its page and closes the menu; the button is current.
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole("menuitem", { name: S.nav.costs }));
+    await waitFor(() => expect(window.location.pathname).toBe("/costs"));
+    expect(screen.queryByRole("menu")).toBeNull();
+    // A pick that navigates leaves the focus to the new page.
+    expect(opener).not.toHaveFocus();
+    expect(opener.className).toContain("bg-active text-ink");
+    expect(
+      within(nav).getByText(S.nav.projects).getAttribute("aria-current"),
+    ).toBeNull();
+
+    // The page's own entry goes nowhere: the focus back on the button.
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole("menuitem", { name: S.nav.costs }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(opener).toHaveFocus();
+  });
+
+  it("counts and marks the queue on the operations button, no Quellen without sources", async () => {
+    serve({
+      me: anonymous,
+      projects,
+      "queue/count": { count: 3, paused: true },
+    });
+    window.history.replaceState({}, "", "/");
+    render(<App />);
+    const opener = await screen.findByRole("button", {
+      name: S.nav.opsLabel(3, true),
+    });
+    expect(opener).toHaveAccessibleName("Betrieb, 3 in der Queue, Pausiert");
+    expect(S.nav.opsMenu(true)).toBe("Betrieb: Quellen, Queue, Kosten");
+    expect(within(opener).getByTestId("queue-count")).toHaveTextContent("3");
+    expect(within(opener).getByTestId("queue-paused")).toHaveTextContent(
+      S.queue.pausedBadge,
+    );
+    expect(opener.className).not.toContain("bg-active text-ink");
+    fireEvent.click(opener);
+    const menu = screen.getByRole("menu", { name: S.nav.opsMenu(false) });
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((a) => a.firstElementChild?.textContent),
+    ).toEqual([S.nav.queue, S.nav.costs]);
+    // The queue's entry carries its count and pause too, without the ids.
+    expect(
+      within(menu).getByRole("menuitem", { name: /Queue/ }),
+    ).toHaveTextContent(`3${S.queue.pausedBadge}`);
+    expect(screen.getAllByTestId("queue-count")).toHaveLength(1);
+  });
+
+  it("marks the operations button on the queue and closes on a route change", async () => {
+    serve({ me: anonymous, projects, "queue/count": { count: 0 } });
+    window.history.replaceState({}, "", "/queue");
+    render(<App />);
+    const opener = await screen.findByRole("button", { name: S.nav.ops });
+    expect(opener.className).toContain("bg-active text-ink");
+    fireEvent.click(opener);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    act(() => {
+      window.history.pushState({}, "", "/");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(opener.className).not.toContain("bg-active text-ink");
   });
 });
 

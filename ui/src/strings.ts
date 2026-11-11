@@ -34,6 +34,19 @@ export const S = {
     sources: "Quellen",
     queue: "Queue",
     costs: "Kosten",
+    ops: "Betrieb",
+    // The button's name: its badges said, not run together. Composed from
+    // the visible words, so a renamed entry renames both.
+    opsLabel: (queued: number, paused: boolean): string =>
+      [
+        S.nav.ops,
+        queued > 0 ? `${queued} in der ${S.nav.queue}` : "",
+        paused ? S.queue.pausedBadge : "",
+      ]
+        .filter((p) => p !== "")
+        .join(", "),
+    opsMenu: (sources: boolean): string =>
+      `${S.nav.ops}: ${[...(sources ? [S.nav.sources] : []), S.nav.queue, S.nav.costs].join(", ")}`,
   },
   costs: {
     title: "Kosten",
