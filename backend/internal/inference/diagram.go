@@ -1,6 +1,12 @@
 package inference
 
-import "github.com/trick77/almanach/internal/diagram"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+
+	"github.com/trick77/almanach/internal/diagram"
+)
 
 // The diagrams' strict schemas: rongo's intermediate form (a flow, a
 // sequence, an entity model) as JSON the model fills in. The schema keeps
@@ -21,6 +27,62 @@ func object(properties map[string]any) map[string]any {
 		"required":             required,
 		"properties":           properties,
 	}
+}
+
+// orderedObject is object with its properties on the wire in the order
+// given, not sorted: strict structured output writes an object's keys in
+// its schema's order, so the first key is where a model picks an anyOf
+// branch. Sorted, a list block began with "items" and a paragraph with
+// "kind"; a model that opened a block with "kind", as every prompt shows
+// it, was held to paragraph or heading, announced its list and wrote
+// paragraphs on (restyle runaways, 2026-11-10 and -11: 1500 blocks, not
+// one list). The order must name each property once.
+func orderedObject(order []string, properties map[string]any) map[string]any {
+	if len(order) != len(properties) {
+		panic(fmt.Sprintf("orderedObject: order %v for %d properties", order, len(properties)))
+	}
+	required := make([]any, len(order))
+	for i, k := range order {
+		if _, ok := properties[k]; !ok {
+			panic("orderedObject: no property " + k)
+		}
+		required[i] = k
+	}
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             required,
+		"properties":           orderedProps{keys: order, props: properties},
+	}
+}
+
+// orderedProps is an object's properties, marshalled in keys' order.
+type orderedProps struct {
+	keys  []string
+	props map[string]any
+}
+
+func (o orderedProps) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, k := range o.keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		key, err := json.Marshal(k)
+		if err != nil {
+			return nil, err
+		}
+		v, err := json.Marshal(o.props[k])
+		if err != nil {
+			return nil, err
+		}
+		b.Write(key)
+		b.WriteByte(':')
+		b.Write(v)
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
 }
 
 func enum(values ...string) map[string]any {

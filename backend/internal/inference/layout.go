@@ -16,13 +16,15 @@ import (
 // Two shapes, so neither can come back empty, as minLength on the one
 // string guaranteed: a paragraph or heading with text, a list with items
 // (its text an optional lead-in). An empty summary rejects a whole fold.
+// Both open with kind, then text, a list's items last (orderedObject): the
+// kind is where the model chooses the shape.
 func blocks() map[string]any {
 	nonEmpty := map[string]any{"type": "string", "minLength": 1}
 	items := array(nonEmpty)
 	items["minItems"] = 1
 	b := array(map[string]any{"anyOf": []any{
-		object(map[string]any{"kind": enum(markup.BlockParagraph, markup.BlockHeading), "text": nonEmpty}),
-		object(map[string]any{"kind": enum(markup.BlockList, markup.BlockNumbered), "text": str(), "items": items}),
+		orderedObject([]string{"kind", "text"}, map[string]any{"kind": enum(markup.BlockParagraph, markup.BlockHeading), "text": nonEmpty}),
+		orderedObject([]string{"kind", "text", "items"}, map[string]any{"kind": enum(markup.BlockList, markup.BlockNumbered), "text": str(), "items": items}),
 	}})
 	b["minItems"] = 1
 	return b

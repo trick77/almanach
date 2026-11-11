@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/trick77/almanach/internal/redact"
 )
 
 // shape is what a cut or unparseable answer held, read as far as it goes:
@@ -16,18 +18,46 @@ import (
 type shape struct {
 	top   []string
 	elems []*shapeElem
+	// blocks is every text's blocks by kind, a summary's too.
+	blocks map[string]int
 }
 
 // shapeElem is one statement of an answer: where it stands, what it is,
-// its span in the answer, open when the answer ended inside it.
+// its span in the answer, open when the answer ended inside it. run is
+// its text's paragraphs since its last list, longest the most of them.
 type shapeElem struct {
 	path, id, kind, name string
 	start, end           int
 	open                 bool
 	blocks               map[string]int
+	run, longest         int
 }
 
 func (e *shapeElem) size() int { return e.end - e.start }
+
+// block counts one block of the statement's text: a paragraph lengthens
+// the stretch without a list, a list or numbered block ends it; a heading
+// neither (a runaway's headings never brought its list).
+func (e *shapeElem) block(kind string) {
+	e.blocks[kind]++
+	switch kind {
+	case "paragraph":
+		e.run++
+		e.longest = max(e.longest, e.run)
+	case "list", "numbered":
+		e.run = 0
+	}
+}
+
+// blockCounts is blocks by kind as the log names them.
+func blockCounts(blocks map[string]int) string {
+	n := 0
+	for _, c := range blocks {
+		n += c
+	}
+	return fmt.Sprintf("%d blocks (%d paragraph, %d heading, %d list, %d numbered)", n,
+		blocks["paragraph"], blocks["heading"], blocks["list"], blocks["numbered"])
+}
 
 // String is the element for the log: path, id, kind, name, size, blocks.
 func (e *shapeElem) String() string {
@@ -41,12 +71,7 @@ func (e *shapeElem) String() string {
 	if e.name != "" {
 		b.WriteString(" " + strconv.Quote(e.name))
 	}
-	n := 0
-	for _, c := range e.blocks {
-		n += c
-	}
-	fmt.Fprintf(&b, " %d chars, %d blocks (%d paragraph, %d heading, %d list, %d numbered)", e.size(), n,
-		e.blocks["paragraph"], e.blocks["heading"], e.blocks["list"], e.blocks["numbered"])
+	fmt.Fprintf(&b, " %d chars, %s, at most %d paragraphs without a list", e.size(), blockCounts(e.blocks), e.longest)
 	if e.open {
 		b.WriteString(", open")
 	}
@@ -76,7 +101,7 @@ type shapeFrame struct {
 // by token until it ends or breaks: what it read stands. A statement is an
 // object in one of shapeLists.
 func answerShape(content string) shape {
-	var sh shape
+	sh := shape{blocks: map[string]int{}}
 	base := strings.IndexByte(content, '{')
 	if base < 0 {
 		return sh
@@ -163,8 +188,11 @@ func answerShape(content string) shape {
 		// A value of the current key.
 		s, _ := tok.(string)
 		switch {
-		case top.block && top.key == "kind" && top.owner != nil:
-			top.owner.blocks[s]++
+		case top.block && top.key == "kind":
+			sh.blocks[s]++
+			if top.owner != nil {
+				top.owner.block(s)
+			}
 		case top.elem != nil && top.key == "id":
 			top.elem.id = s
 		case top.elem != nil && top.key == "kind":
@@ -226,5 +254,34 @@ func (c *Client) logShape(callID, content, file string) {
 		head = strings.ToValidUTF8(content[e.start:min(e.end, e.start+shapeHead)], "")
 	}
 	c.log.Warn("answer shape", "model", c.model, "call_id", callID, "top", strings.Join(sh.top, "; "),
-		"statements", len(sh.elems), "largest", strings.Join(largest, " | "), "runaway_head", head, "file", file)
+		"blocks", blockCounts(sh.blocks), "statements", len(sh.elems), "largest", strings.Join(largest, " | "), "runaway_head", head, "file", file)
+}
+
+// logBlocks logs the layout of an answer that arrived whole, one line:
+// its blocks by kind, the largest statement, the one with the longest
+// stretch of paragraphs without a list, and, where the listGuard watched
+// (leadIns >= 0), how many lead-ins it saw left without their list. A cut
+// answer's shape was logged and an ok one's was not, so whether answers
+// gave their lists at all (the restyle runaways gave none) and where the
+// guard's thresholds sit against honest answers was nowhere to read. An
+// answer with no blocks (a catalogue, a route) is no line.
+func (c *Client) logBlocks(callID, content string, leadIns int) {
+	sh := answerShape(content)
+	if len(sh.blocks) == 0 {
+		return
+	}
+	attrs := []any{"model", c.model, "call_id", callID, "blocks", blockCounts(sh.blocks), "statements", len(sh.elems)}
+	if leadIns >= 0 {
+		attrs = append(attrs, "lead_ins_without_list", leadIns)
+	}
+	if len(sh.elems) > 0 {
+		longest := sh.elems[0]
+		for _, e := range sh.elems[1:] {
+			if e.longest > longest.longest {
+				longest = e
+			}
+		}
+		attrs = append(attrs, "largest", redact.Text(sh.elems[0].String()), "longest_run", redact.Text(longest.String()))
+	}
+	c.log.Info("answer blocks", attrs...)
 }

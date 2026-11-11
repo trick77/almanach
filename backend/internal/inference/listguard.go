@@ -25,7 +25,10 @@ type listGuard struct {
 	lead  bool
 	// orphans is the current text's, run the answer's since its last list.
 	orphans, run int
-	cut          bool
+	// seen is every lead-in without its list in the answer, for the log
+	// (logBlocks): where honest answers stand against the thresholds.
+	seen int
+	cut  bool
 }
 
 const (
@@ -68,6 +71,18 @@ func (g *listGuard) add(delta string) bool {
 	return g.cut
 }
 
+// leadIns is the lead-ins without their list in an answer that arrived
+// whole, its last stretch scanned; -1 where the guard is off.
+func (g *listGuard) leadIns() int {
+	if g.off {
+		return -1
+	}
+	if !g.cut {
+		g.scan()
+	}
+	return g.seen
+}
+
 // count is the lead-ins without their list that cut the answer.
 func (g *listGuard) count() int { return max(g.orphans, g.run) }
 
@@ -94,6 +109,7 @@ func (g *listGuard) scan() {
 		if g.lead {
 			g.orphans++
 			g.run++
+			g.seen++
 			if g.orphans >= listOrphans || g.run >= listRunOrphans {
 				g.cut = true
 				return

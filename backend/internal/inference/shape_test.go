@@ -77,6 +77,37 @@ func TestLogShape(t *testing.T) {
 	}
 }
 
+// An answer that arrived whole logs its blocks, summary's too, the
+// statement with the longest stretch of paragraphs without a list (a
+// heading does not end it, a list does) and the guard's lead-ins; an answer
+// without blocks logs nothing.
+func TestLogBlocks(t *testing.T) {
+	var logs strings.Builder
+	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil))}
+	p := func(s string) string { return `{"kind": "paragraph", "text": "` + s + `"}` }
+	text := func(bs ...string) string { return `"text": [` + strings.Join(bs, ", ") + `]` }
+	answer := `{"summary": [` + p("Was es ist.") + `], "statements": [` +
+		`{"id": "s1", "kind": "flow", "name": "Ablauf", ` + text(p("Die Schritte:"), `{"kind": "numbered", "text": "", "items": ["a", "b"]}`, p("Danach.")) + `}, ` +
+		`{"id": "s2", "kind": "rule", "name": "Lang", ` + text(p("Eins."), p("Zwei."), `{"kind": "heading", "text": "Teil"}`, p("Drei."),
+		`{"kind": "list", "text": "", "items": ["x"]}`, p("Vier.")) + `}]}`
+	c.logBlocks("id", answer, 3)
+	got := logs.String()
+	for _, want := range []string{"answer blocks", `blocks="10 blocks (7 paragraph, 1 heading, 1 list, 1 numbered)"`, "statements=2",
+		"lead_ins_without_list=3", `longest_run="statements[1] s2 rule \"Lang\"`, "at most 3 paragraphs without a list"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	logs.Reset()
+	c.logBlocks("id", `{"subjects": [{"name": "a", "paths": ["x"]}]}`, -1)
+	if logs.Len() != 0 {
+		t.Errorf("a line for an answer without blocks: %q", logs.String())
+	}
+	if strings.Contains(got, "lead_ins_without_list=-1") {
+		t.Errorf("a guard that is off logged: %q", got)
+	}
+}
+
 // A cut call is kept whole in the folder, redacted, the newest cutKeep of
 // its kind; blanks, or no folder, keep none; a folder that cannot be
 // written is a warning only.
