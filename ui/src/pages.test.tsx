@@ -2640,8 +2640,8 @@ describe("App", () => {
     const opener = await screen.findByRole("button", {
       name: S.nav.opsLabel(3, true),
     });
-    expect(opener).toHaveAccessibleName("Betrieb, 3 in der Queue, Pausiert");
-    expect(S.nav.opsMenu(true)).toBe("Betrieb: Quellen, Queue, Kosten");
+    expect(opener).toHaveAccessibleName("Admin, 3 in der Queue, Pausiert");
+    expect(S.nav.opsMenu(true)).toBe("Admin: Quellen, Queue, Kosten");
     expect(within(opener).getByTestId("queue-count")).toHaveTextContent("3");
     expect(within(opener).getByTestId("queue-paused")).toHaveTextContent(
       S.queue.pausedBadge,

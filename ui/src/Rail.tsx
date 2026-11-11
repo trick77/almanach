@@ -68,7 +68,7 @@ export interface RailGroup {
 }
 
 /** shortcutFree says a page's key shortcut may act: not while typing,
- *  and not while a dialog (a diagram's full view) or a menu (Betrieb)
+ *  and not while a dialog (a diagram's full view) or a menu (the operations')
  *  holds the page, whose focus would leave it for the page behind. Option and AltGr pass: e.key
  *  is the character typed, and the Swiss layouts type "[" and "]" with
  *  them (Option+5/6 on a Mac, AltGr, ctrl and alt at once, on Windows);

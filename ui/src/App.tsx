@@ -94,8 +94,8 @@ function Shell({ me }: { me: Me }) {
   const { data: sources } = useFetch<Sources>("sources");
   const sourcesOn = sources?.enabled ?? false;
   const inSources = route.page === "sources" || route.page === "source";
-  // The operations' pages, Betrieb's: one list, so Projekte and Betrieb
-  // never both or neither read as current.
+  // The operations menu's pages: one list, so Projekte and the menu never
+  // both or neither read as current.
   const inOps = inSources || route.page === "queue" || route.page === "costs";
   // The queue's count beside its entry: work in flight and waiting.
   const { data: queue, reload: reloadQueue } = useFetch<QueueCount>(
@@ -125,11 +125,13 @@ function Shell({ me }: { me: Me }) {
 
   return (
     // h-dvh, not h-screen: iOS Safari counts the collapsed toolbar into 100vh.
-    // Below lg the header is two rows: the wordmark, the nav and Betrieb,
-    // then the search with the reader's slot. One row there would leave
-    // the search no width beside the nav, Betrieb's badges and the
-    // sign-out. A crowded first row (Abhängigkeiten, both badges, a phone)
-    // wraps Betrieb onto a row of its own, never off the screen.
+    // Below lg the header is two rows: the wordmark, the nav and the
+    // operations menu, then the search with the reader's slot. One row
+    // there would leave the search no width beside the nav, the menu's
+    // badges and the sign-out. A crowded first row (Abhängigkeiten, both
+    // badges, a phone) wraps the menu onto a row of its own, never off the
+    // screen. From lg the search follows the nav, the knowledge it
+    // searches (user, 2026-11-11); the menu's ml-auto takes it right.
     <div className="grid h-dvh grid-rows-[auto_1fr] lg:grid-rows-[56px_1fr]">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-panel px-4 py-2 sm:px-5 lg:flex-nowrap lg:gap-6 lg:py-0">
         <h1 className="font-serif text-[21px] leading-7 font-medium whitespace-nowrap text-wordmark">
@@ -150,7 +152,7 @@ function Shell({ me }: { me: Me }) {
         </nav>
         {/* A line break below lg; -mt-1 takes back its own row's gap. */}
         <span aria-hidden className="order-last -mt-1 basis-full lg:hidden" />
-        <div className="order-last flex min-w-0 flex-1 justify-center lg:order-none">
+        <div className="order-last flex min-w-0 flex-1 lg:order-none lg:flex-none">
           <SearchBox
             key={route.page === "search" ? route.q : ""}
             route={route}
@@ -175,7 +177,7 @@ function Shell({ me }: { me: Me }) {
                   {S.auth.signOutFailed}
                 </span>
               )}
-              {/* Capped: a long name must not push Betrieb off the one
+              {/* Capped: a long name must not push the menu off the one
                   lg row, which does not wrap. */}
               <span className="hidden max-w-[16ch] truncate sm:inline">
                 {me.user}
@@ -427,7 +429,7 @@ function SearchBox({ route }: { route: Route }) {
   return (
     <form
       role="search"
-      className="w-full min-w-0 shrink lg:w-auto"
+      className="w-full min-w-0 shrink lg:w-[240px]"
       onSubmit={(e) => {
         e.preventDefault();
         if (q.trim() !== "") navigateTo(searchFor(q.trim()));
@@ -439,7 +441,7 @@ function SearchBox({ route }: { route: Route }) {
         onChange={(e) => setQ(e.target.value)}
         placeholder={S.search.placeholder}
         aria-label={S.search.box}
-        className="h-[32px] w-full rounded-ui-sm border border-border bg-bg px-2.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-elevated-border focus:bg-active lg:max-w-[240px]"
+        className="h-[32px] w-full rounded-ui-sm border border-border bg-bg px-2.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-elevated-border focus:bg-active"
       />
     </form>
   );
