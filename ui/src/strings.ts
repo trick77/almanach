@@ -34,7 +34,8 @@ export const S = {
     sources: "Quellen",
     queue: "Queue",
     costs: "Kosten",
-    ops: "Betrieb",
+    // The operations behind one button: IT word, English (user, 2026-11-11).
+    ops: "Admin",
     // The button's name: its badges said, not run together. Composed from
     // the visible words, so a renamed entry renames both.
     opsLabel: (queued: number, paused: boolean): string =>

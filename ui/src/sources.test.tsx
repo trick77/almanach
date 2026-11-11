@@ -1218,7 +1218,7 @@ describe("App with sources", () => {
     serve({ me, sources, projects: { projects: [] } });
     window.history.replaceState({}, "", "/");
     const { unmount } = render(<App />);
-    // Knowledge in the nav, operations behind the Betrieb button: Quellen
+    // Knowledge in the nav, operations behind the menu's button: Quellen
     // first there, no FAQ. The label alone: the queue's count sits in its
     // entry beside it.
     const entries = () =>
@@ -1226,7 +1226,7 @@ describe("App with sources", () => {
         .getAllByRole("link")
         .map((a) => a.firstElementChild?.textContent);
     const ops = () => {
-      fireEvent.click(screen.getByRole("button", { name: "Betrieb" }));
+      fireEvent.click(screen.getByRole("button", { name: S.nav.ops }));
       const menu = screen.getByRole("menu");
       const list = within(menu)
         .getAllByRole("menuitem")
