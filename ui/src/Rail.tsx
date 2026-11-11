@@ -160,12 +160,15 @@ export function Rail({
     document.getElementById(item.id)?.scrollIntoView();
   }
 
+  // The narrow row's bleed to the page edge holds in closed ranges: Tailwind
+  // emits lg: after min-[1180px]:, so an open lg:-mx-10 won wide and pushed
+  // the rail 40px into the gap, its scrollbar onto the column's text.
   return (
     <nav
       aria-label={S.rail.label}
       className={
-        "sticky top-0 z-20 -mx-4 flex items-center gap-3 overflow-x-auto border-b border-border-soft bg-bg px-4 py-2.5 sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10 " +
-        "min-[1180px]:mx-0 min-[1180px]:block min-[1180px]:max-h-[calc(100dvh-56px-56px)] min-[1180px]:overflow-y-auto min-[1180px]:overflow-x-visible min-[1180px]:border-0 min-[1180px]:p-0 min-[1180px]:pr-1 " +
+        "sticky top-0 z-20 flex items-center gap-3 overflow-x-auto border-b border-border-soft bg-bg py-2.5 max-sm:-mx-4 max-sm:px-4 sm:max-lg:-mx-6 sm:max-lg:px-6 lg:max-[1180px]:-mx-10 lg:max-[1180px]:px-10 " +
+        "min-[1180px]:block min-[1180px]:max-h-[calc(100dvh-56px-56px)] min-[1180px]:overflow-y-auto min-[1180px]:overflow-x-visible min-[1180px]:border-0 min-[1180px]:p-0 min-[1180px]:pr-1 " +
         stickyTop
       }
     >
