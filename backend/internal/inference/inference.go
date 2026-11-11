@@ -364,6 +364,9 @@ type Call struct {
 	Outcome Outcome
 	Cost    CallCost
 	Err     error
+	// budget is what the call was allowed and used, for an answer that
+	// arrives whole but fails its parse (unparseable) to name it too.
+	budget cutBudget
 }
 
 // call is one streamed Chat with a strict schema, no retry, the stream read
@@ -381,17 +384,22 @@ func (c *Client) call(ctx context.Context, prompt string, format llmwire.Respons
 // callOpts is what a call may set beside its cap: the reasoning's room on
 // the wire cap (room), and the listGuard (lists), the restyle's alone: its
 // thresholds are measured on restyle runaways, and a long describe or merge
-// answer with no list has never been seen to run away so.
+// answer with no list has never been seen to run away so. page is the size
+// the cap was sized on, a restyle's page, named with a cut (cutBudget).
 type callOpts struct {
 	room  int
 	lists bool
+	page  int
 }
 
 // callWith is call with its options.
 func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.ResponseFormat, maxAnswer int, opt callOpts) (string, Call) {
+	budget := cutBudget{Cap: maxAnswer, PageChars: opt.page, PromptTokens: PromptTokens(prompt)}
 	if c.effort != EffortOff {
 		maxAnswer += opt.room
+		budget.Room = opt.room
 	}
+	budget.WireCap, budget.MaxOutput = c.wireCap(maxAnswer)
 	// The loop guards cancel a stream whose answer or reasoning repeats
 	// itself, long before the cap: a call of its own context, so a cut is
 	// told from the worker's.
@@ -399,7 +407,7 @@ func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.Res
 	defer cut()
 	var answer, thought loopGuard
 	lists := listGuard{off: !opt.lists}
-	stream, _, err := c.wire.ChatStream(ctx, llmwire.ChatRequest{
+	stream, warns, err := c.wire.ChatStream(ctx, llmwire.ChatRequest{
 		Model:           c.model,
 		Reasoning:       c.reasoning(),
 		Messages:        []llmwire.Message{llmwire.System(SystemMessage), llmwire.User(prompt)},
@@ -430,8 +438,11 @@ func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.Res
 		}
 	}
 	res, err := stream.Result(), stream.Err()
+	budget.OutTokens, budget.ReasoningTokens = res.Usage.Output.Total, res.Usage.Output.Reasoning
+	budget.Warnings = warningTexts(warns)
 	if err != nil {
 		out := failed(err)
+		out.budget = budget
 		out.Cost = c.costFrom(res)
 		out.Cost.Answered = false
 		if n, ok := res.Usage.Total(); !ok || n == 0 {
@@ -441,21 +452,15 @@ func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.Res
 		// stream reports no usage, so the call is unpriced, but it was cut
 		// at a fraction of what the cap would have billed.
 		if answer.looped {
-			out.Outcome = OutcomeTooLong
-			out.Err = fmt.Errorf("the answer repeated itself; cut after %d chars", len(res.Content))
-			c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content))
+			c.tooLong(&out, res.Gateway.CallID, fmt.Errorf("the answer repeated itself; cut after %d chars", len(res.Content)), answerPart(res.Content))
 			return "", out
 		}
 		if lists.cut {
-			out.Outcome = OutcomeTooLong
-			out.Err = fmt.Errorf("the answer announced a list %d times without one; cut after %d chars", lists.count(), len(res.Content))
-			c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content))
+			c.tooLong(&out, res.Gateway.CallID, fmt.Errorf("the answer announced a list %d times without one; cut after %d chars", lists.count(), len(res.Content)), answerPart(res.Content))
 			return "", out
 		}
 		if thought.looped {
-			out.Outcome = OutcomeTooLong
-			out.Err = fmt.Errorf("the reasoning repeated itself; cut after %d chars of it", len(res.Reasoning))
-			c.logCut(res.Gateway.CallID, out.Err, reasoningPart(res.Reasoning))
+			c.tooLong(&out, res.Gateway.CallID, fmt.Errorf("the reasoning repeated itself; cut after %d chars of it", len(res.Reasoning)), reasoningPart(res.Reasoning))
 			return "", out
 		}
 		// The call cap firing while the answer streamed is the answer's
@@ -466,14 +471,13 @@ func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.Res
 		// or no headers stay the gateway's. A model that thinks to the cap
 		// without a word of answer ran away the same.
 		if errors.Is(err, llmwire.ErrCallCap) && (res.Content != "" || res.Reasoning != "") {
-			out.Outcome = OutcomeTooLong
-			out.Err = fmt.Errorf("cut by the call cap after %d chars of answer, %d of reasoning: %w", len(res.Content), len(res.Reasoning), err)
 			// Either may have run away: both tails, each named.
-			c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content), reasoningPart(res.Reasoning))
+			c.tooLong(&out, res.Gateway.CallID, fmt.Errorf("cut by the call cap after %d chars of answer, %d of reasoning: %w", len(res.Content), len(res.Reasoning), err),
+				answerPart(res.Content), reasoningPart(res.Reasoning))
 		}
 		return "", out
 	}
-	out := Call{Cost: c.costFrom(res)}
+	out := Call{Cost: c.costFrom(res), budget: budget}
 	out.Cost.Answered = true
 	if out.Cost.NanoUSD == nil {
 		c.logUnpriced(res.Gateway.CallID, stream.Warnings())
@@ -481,12 +485,19 @@ func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.Res
 	if res.FinishReason == "length" {
 		// Cut by the output cap, so the JSON is incomplete: say so, rather
 		// than reporting the cut as an answer off the schema.
-		out.Outcome = OutcomeTooLong
-		out.Err = errors.New("the answer was cut by the model's output limit")
-		c.logCut(res.Gateway.CallID, out.Err, answerPart(res.Content), reasoningPart(res.Reasoning))
+		c.tooLong(&out, res.Gateway.CallID, errors.New("the answer was cut by the model's output limit"), answerPart(res.Content), reasoningPart(res.Reasoning))
 		return "", out
 	}
 	return res.Content, out
+}
+
+// tooLong ends a cut call: too long, why with the call's budget as its
+// error, the parts logged and kept (logCut). Every cut goes through here, so
+// none can name no budget.
+func (c *Client) tooLong(out *Call, callID string, why error, parts ...cutPart) {
+	out.Outcome = OutcomeTooLong
+	out.Err = fmt.Errorf("%w (%s)", why, out.budget)
+	c.logCut(callID, out.Err, out.budget, parts...)
 }
 
 // Output caps, in answer tokens, per call: none is unbounded (a runaway
@@ -568,11 +579,11 @@ func restyleCap(pageChars int) int {
 // call goes to a file (keepCut): the gateway stores no answer (2026-11-10),
 // and 400 chars of tail named no statement. Each part is redacted once,
 // whole, and the log, the shape and the file all take that text.
-func (c *Client) logCut(callID string, why error, parts ...cutPart) {
+func (c *Client) logCut(callID string, why error, budget cutBudget, parts ...cutPart) {
 	for i := range parts {
 		parts[i].text = redact.Text(parts[i].text)
 	}
-	file := c.keepCut(cutKindCut, callID, why, parts...)
+	file := c.keepCut(cutKindCut, callID, why, budget, parts...)
 	for _, p := range parts {
 		if strings.TrimSpace(p.text) == "" {
 			continue
@@ -581,7 +592,7 @@ func (c *Client) logCut(callID string, why error, parts ...cutPart) {
 		if tail == "" {
 			tail = head
 		}
-		c.log.Warn("answer cut", "model", c.model, "call_id", callID, "what", p.what, "chars", len(p.text), "head", head, "tail", tail, "file", file)
+		c.log.Warn("answer cut", "model", c.model, "call_id", callID, "what", p.what, "chars", len(p.text), "budget", budget, "head", head, "tail", tail, "file", file)
 		if p.what == "answer" {
 			c.logShape(callID, p.text, file)
 		}
@@ -624,14 +635,14 @@ func (c *Client) unparseable(call *Call, content string, reasons ...any) {
 	red := redact.Text(content)
 	head, tail := window(red)
 	why := redact.Text(whyUnparseable(content, reasons))
-	file := c.keepCut(cutKindUnparseable, call.Cost.CallID, errors.New(why), answerPart(red))
-	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "why", why, "head", head, "tail", tail, "file", file)
+	file := c.keepCut(cutKindUnparseable, call.Cost.CallID, errors.New(why), call.budget, answerPart(red))
+	c.log.Warn("answer unparseable", "model", c.model, "call_id", call.Cost.CallID, "chars", len(content), "budget", call.budget, "why", why, "head", head, "tail", tail, "file", file)
 	c.logShape(call.Cost.CallID, red, file)
 	begins := []rune(strings.Join(strings.Fields(head), " "))
 	if len(begins) > 120 {
 		begins = append(begins[:120], '…')
 	}
-	call.Outcome, call.Err = OutcomeUnparseable, fmt.Errorf("%s; the answer begins %q", why, string(begins))
+	call.Outcome, call.Err = OutcomeUnparseable, fmt.Errorf("%s; the answer begins %q (%s)", why, string(begins), call.budget)
 }
 
 // whyUnparseable is what is wrong with an answer parse refused: a check's

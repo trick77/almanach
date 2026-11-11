@@ -2,12 +2,15 @@ package inference
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -164,11 +167,94 @@ func TestLengthFinishLogsTheTail(t *testing.T) {
 	}
 }
 
+// A restyle cut by the output cap names its budget in the error, the log
+// line and the kept file: the tokens and of them the reasoning as the
+// gateway counted them, the caps, the page.
+func TestLengthFinishNamesTheBudget(t *testing.T) {
+	var logs strings.Builder
+	c := streamGateway(t, []string{answerFrame,
+		`{"model": "sol", "choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]}`,
+		`{"model": "sol", "choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 17000, "total_tokens": 17010, "completion_tokens_details": {"reasoning_tokens": 9800}}}`,
+	}, false, time.Minute)
+	c.log = slog.New(slog.NewTextHandler(&logs, nil))
+	c.cutDir = t.TempDir()
+	res := c.Restyle(context.Background(), "p", 900, false)
+	if res.Outcome != OutcomeTooLong {
+		t.Fatalf("Outcome = %s, want too long", res.Outcome)
+	}
+	wire, limit := c.wireCap(restyleCap(900) + restyleRoom)
+	want := fmt.Sprintf("output limit (17000 tokens out, 9800 of them reasoning; cap %d (answer %d, reasoning room %d, model limit %d), page 900 chars)",
+		wire, restyleCap(900), restyleRoom, limit)
+	if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
+		t.Errorf("err %v, want it to name %q", res.Err, want)
+	}
+	if got := logs.String(); !strings.Contains(got, "budget.reasoning_tokens=9800") || !strings.Contains(got, "budget.page_chars=900") {
+		t.Errorf("cut line names no budget: %q", got)
+	}
+	var f cutFile
+	readCut(t, c.cutDir, &f)
+	if f.Cap != restyleCap(900) || f.Room != restyleRoom || f.WireCap != wire || f.MaxOutput != limit || f.PageChars != 900 || f.PromptTokens == 0 ||
+		f.OutTokens == nil || *f.OutTokens != 17000 || f.ReasoningTokens == nil || *f.ReasoningTokens != 9800 {
+		t.Errorf("cut file budget %+v", f.cutBudget)
+	}
+}
+
+// Without the gateway's usage, the wire cap or a room the budget names what
+// it knows, never a zero for what it does not.
+func TestBudgetWithoutUsage(t *testing.T) {
+	got := cutBudget{Cap: 8000}.String()
+	if got != "cap: answer 8000" {
+		t.Errorf("budget %q", got)
+	}
+}
+
+// The wire cap the budget names is the max_tokens llmwire sends, its
+// reasoning allowance and the model's limit taken as llmwire takes them.
+func TestBudgetWireCapIsTheSentCap(t *testing.T) {
+	for _, effort := range []string{"", EffortOff} {
+		srv := llmwiretest.NewServer(t)
+		srv.SetReply(`{"repository": null, "project": null}`)
+		c := testClient(srv.Client())
+		c.effort = effort
+		c.Merge(context.Background(), MergeRequest{Prompt: "p"})
+		body := srv.Last().Body
+		sent := body["max_tokens"]
+		if sent == nil {
+			sent = body["max_completion_tokens"]
+		}
+		asked := capMerge
+		if effort != EffortOff {
+			asked += reasoningRoom
+		}
+		if n, _ := sent.(float64); int(n) == 0 {
+			t.Fatalf("effort %q: no cap on the wire: %v", effort, body)
+		} else if wire, _ := c.wireCap(asked); wire != int(n) {
+			t.Errorf("effort %q: wire cap %d, sent %v", effort, wire, sent)
+		}
+	}
+}
+
+// readCut decodes the one file keepCut wrote to dir.
+func readCut(t *testing.T, dir string, into any) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("cut dir: %v, %d files, want 1", err, len(entries))
+	}
+	b, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, into); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The log keeps a long answer's head and end, not its middle.
 func TestLogCutKeepsTheTail(t *testing.T) {
 	var logs strings.Builder
 	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil))}
-	c.logCut("id", nil, answerPart("THE-START"+strings.Repeat("a", 5000)+"THE-END"))
+	c.logCut("id", nil, cutBudget{}, answerPart("THE-START"+strings.Repeat("a", 5000)+"THE-END"))
 	got := logs.String()
 	if !strings.Contains(got, "THE-START") || !strings.Contains(got, "THE-END") || strings.Count(got, "a") > 2*cutTail+20 ||
 		!strings.Contains(got, "what=answer") {
@@ -182,20 +268,20 @@ func TestLogCutKeepsTheTail(t *testing.T) {
 		strings.Repeat("x", 12_288) + secret + strings.Repeat(" b", 190),
 	} {
 		logs.Reset()
-		c.logCut("id", nil, answerPart(text))
+		c.logCut("id", nil, cutBudget{}, answerPart(text))
 		if got := logs.String(); strings.Contains(got, "0123456789") {
 			t.Errorf("a value whose key fell before the tail was logged: %q", got)
 		}
 	}
 	// Both parts, each named; a blank answer (a think just ended) none.
 	logs.Reset()
-	c.logCut("id", nil, answerPart("\n\n"), reasoningPart("round and round"))
+	c.logCut("id", nil, cutBudget{}, answerPart("\n\n"), reasoningPart("round and round"))
 	if got := logs.String(); strings.Count(got, "answer cut") != 1 || !strings.Contains(got, "what=reasoning") ||
 		!strings.Contains(got, "round and round") {
 		t.Errorf("blank answer, reasoning: %q", got)
 	}
 	logs.Reset()
-	c.logCut("id", nil, answerPart("{\"x\""), reasoningPart("long thought"))
+	c.logCut("id", nil, cutBudget{}, answerPart("{\"x\""), reasoningPart("long thought"))
 	if got := logs.String(); strings.Count(got, "answer cut") != 2 {
 		t.Errorf("both parts: %q", got)
 	}

@@ -25,12 +25,13 @@ const (
 
 // cutFile is one cut or unparseable call as keepCut writes it.
 type cutFile struct {
-	CallID    string    `json:"call_id"`
-	Model     string    `json:"model"`
-	At        time.Time `json:"at"`
-	Err       string    `json:"err"`
-	Answer    string    `json:"answer"`
-	Reasoning string    `json:"reasoning"`
+	CallID string    `json:"call_id"`
+	Model  string    `json:"model"`
+	At     time.Time `json:"at"`
+	Err    string    `json:"err"`
+	cutBudget
+	Answer    string `json:"answer"`
+	Reasoning string `json:"reasoning"`
 }
 
 // unsafeName is what a call id may not carry into a file name.
@@ -43,12 +44,12 @@ var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 // come redacted, whole (logCut, unparseable). Its path, or "" for none: no
 // cutDir, nothing but blanks, or a write that failed, which is logged and
 // never fails the call.
-func (c *Client) keepCut(kind, callID string, why error, parts ...cutPart) string {
+func (c *Client) keepCut(kind, callID string, why error, budget cutBudget, parts ...cutPart) string {
 	if c.cutDir == "" || !slices.ContainsFunc(parts, func(p cutPart) bool { return strings.TrimSpace(p.text) != "" }) {
 		return ""
 	}
 	now := time.Now().UTC()
-	f := cutFile{CallID: callID, Model: c.model, At: now}
+	f := cutFile{CallID: callID, Model: c.model, At: now, cutBudget: budget}
 	if why != nil {
 		f.Err = redact.Text(why.Error())
 	}

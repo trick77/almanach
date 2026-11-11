@@ -345,6 +345,9 @@ func TestMergeUnparseable(t *testing.T) {
 	if !res.Cost.Answered {
 		t.Error("an unparseable answer still cost tokens: Answered = false")
 	}
+	if want := fmt.Sprintf("(answer %d, reasoning room %d", capMerge, reasoningRoom); !strings.Contains(res.Err.Error(), want) {
+		t.Errorf("err %v names no budget", res.Err)
+	}
 }
 
 func TestMergeTimeout(t *testing.T) {
