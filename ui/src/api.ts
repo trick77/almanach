@@ -777,9 +777,13 @@ export interface RunReason {
 /** A note or a run in the queue; as the current item also a repository's
  *  brief, its call or its push. */
 export interface QueueItem {
-  kind: "note" | "run" | "brief";
+  /** restyle: a page below today's rules before the poller queues its
+   *  run, about when in due_at (the page's stale hint says the same). */
+  kind: "note" | "run" | "brief" | "restyle";
   project: string;
   repo: string;
+  /** A restyle's pages. */
+  scopes?: ("repo" | "project")[];
   pr_key?: string;
   title?: string;
   change_kind?: string;
@@ -787,7 +791,7 @@ export interface QueueItem {
   /** The run of the note's repository it waits for. */
   held_by?: number;
   /** When the note's repository is consolidated, while it waits for the
-   *  delay. */
+   *  delay; a restyle's, about when the poller queues it. */
   due_at?: string;
   /** How many notes the call in flight takes; the current item, when more
    *  than one. */

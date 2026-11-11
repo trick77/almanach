@@ -49,12 +49,13 @@ const pollEvery = 3000;
 const idleEvery = 15000;
 
 /** busy reports whether the queue has work it takes or a sync runs: a
- *  paused queue's waiting items do not move. */
+ *  paused queue's waiting items do not move, nor a restyle to come before
+ *  a cycle queues it. */
 export function queueBusy(q: Queue | null): boolean {
   return (
     q !== null &&
     (q.current !== null ||
-      (q.paused === null && q.next.length > 0) ||
+      (q.paused === null && q.next.some((i) => i.kind !== "restyle")) ||
       !!q.sync?.running)
   );
 }
@@ -179,6 +180,7 @@ function Body({ q }: { q: Queue }) {
   const now = useNow();
   const notes = q.next.filter((i) => i.kind === "note").length;
   const runs = q.next.filter((i) => i.kind === "run").length;
+  const restyles = q.next.filter((i) => i.kind === "restyle").length;
   const first = q.current ?? q.next[0];
   const hold = q.current === null ? q.next[0]?.wait : undefined;
   return (
@@ -212,7 +214,7 @@ function Body({ q }: { q: Queue }) {
           <Tile
             label={S.queue.tiles.waiting}
             value={q.next.length}
-            note={S.queue.counts(notes, runs) || undefined}
+            note={S.queue.counts(notes, runs, restyles) || undefined}
           />
           <Tile
             label={S.queue.tiles.spent}
@@ -328,6 +330,9 @@ function Timeline({ q, now }: { q: Queue; now: number }) {
 }
 
 function itemKey(it: QueueItem): string {
+  if (it.kind === "restyle") {
+    return `restyle-${it.project}/${it.repo}`;
+  }
   return it.run ? `run-${it.run.id}` : `note-${it.pr_key}`;
 }
 
@@ -385,7 +390,7 @@ function Item({
         <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
           <KindChip item={item} />
           <span className="text-[15px] text-ink">
-            {run || item.kind === "brief" ? (
+            {run || item.kind === "brief" || item.kind === "restyle" ? (
               <Where item={item} />
             ) : (
               <NoteTitle item={item} />
@@ -409,6 +414,8 @@ function Item({
             <RunMeta run={run} attempts={item.attempts} now={now} />
           ) : item.kind === "brief" ? (
             item.since && S.queue.briefRunning(since(item.since, now))
+          ) : item.kind === "restyle" ? (
+            <RestyleMeta item={item} />
           ) : (
             <NoteMeta item={item} now={now} />
           )}
@@ -449,7 +456,9 @@ function KindChip({ item }: { item: QueueItem }) {
         ? S.queue.run(item.run.id)
         : item.kind === "brief"
           ? S.queue.brief
-          : S.queue.note}
+          : item.kind === "restyle"
+            ? S.queue.restyle
+            : S.queue.note}
     </span>
   );
 }
@@ -486,6 +495,21 @@ function NoteTitle({ item }: { item: QueueItem }) {
         <span>{item.pr_key}</span>
       )}{" "}
       {item.title}
+    </>
+  );
+}
+
+/** RestyleMeta is a restyle to come: the pages it lifts, about when. */
+function RestyleMeta({ item }: { item: QueueItem }) {
+  return (
+    <>
+      {S.queue.restyleScopes(item.scopes ?? [])}
+      {item.due_at && (
+        <>
+          <Sep />
+          {S.queue.restyleDue(dayTime(item.due_at))}
+        </>
+      )}
     </>
   );
 }

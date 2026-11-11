@@ -786,8 +786,27 @@ In `internal/store`. Stale is a page below its scope's epoch as the wiki tells i
 | --- | --- | --- |
 | `Epoch` | `int` | Epoch is the page's restyle_epoch. |
 | `Failed` | `int` | Failed is its restyles failed under the scope's rules, counted as RestyleState counts them; RestyleTries of them and the poller queues none. |
+| `FailedAt` | `*time.Time` | FailedAt is when the newest of them finished, nil for none: the poller queues the page again only past its retry wait. |
 | `Run` | `string` | Run is the state of an open restyle of the page (the project's: of any of its repositories), "" for none. |
 | `Rank` | `int` | Rank is the page's place among the repositories the poller would restyle, in its order (SyncJobs: key, slug), 1 next: it queues one restyle at a time, so about one a cycle. Every stale page counts, tries spent or not: an estimate, never a promise. |
+
+### store.StaleRepo
+
+In `internal/store`. StaleRepo is a repository the poller would restyle (staleRepo), as the queue page lists it ahead of its run.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `ProjectKey` | `string` |  |
+| `Slug` | `string` |  |
+| `Rank` | `int` | Rank is its place among them in the poller's order, 1 first: Stale's. |
+| `RepoDue` | `bool` | RepoDue and ProjectDue say which page is below its scope's epoch. |
+| `ProjectDue` | `bool` | see `RepoDue` |
+| `RepoFailed` | `int` | RepoFailed and ProjectFailed are the failed restyles each page counts, as RepoStale and ProjectStale count them; the FailedAt when the newest finished, nil for none. |
+| `ProjectFailed` | `int` | see `RepoFailed` |
+| `RepoFailedAt` | `*time.Time` |  |
+| `ProjectFailedAt` | `*time.Time` |  |
+| `RepoOpen` | `bool` | RepoOpen is any run of the repository open (no restyle is queued beside it, it is listed as itself), ProjectOpen a restyle of any repository of its project: the project page waits as that run. |
+| `ProjectOpen` | `bool` | see `RepoOpen` |
 
 ## Diagram
 

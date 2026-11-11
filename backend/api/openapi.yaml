@@ -1624,16 +1624,24 @@ components:
       type: object
       description: >-
         A note or a run, with what it waits for; as the current item also a
-        repository's brief (its call or its push), never queued here.
+        repository's brief (its call or its push), never queued here; a
+        restyle is a page below its scope's epoch before the poller queues
+        its run, about when in due_at, as the page's stale hint says.
       required: [kind, project, repo, attempts]
       properties:
         kind:
           type: string
-          enum: [note, run, brief]
+          enum: [note, run, brief, restyle]
         project:
           type: string
         repo:
           type: string
+        scopes:
+          type: array
+          items:
+            type: string
+            enum: [repo, project]
+          description: A restyle's pages, its repository's, its project's or both.
         pr_key:
           type: string
           description: A note's.
@@ -1653,7 +1661,7 @@ components:
         due_at:
           type: string
           format: date-time
-          description: When the note's repository is consolidated, its oldest note's arrival plus BACKEND_FOLD_DELAY; set while it waits for that, omitted otherwise.
+          description: When the note's repository is consolidated, its oldest note's arrival plus BACKEND_FOLD_DELAY; set while it waits for that, omitted otherwise. A restyle's is about when the poller queues its run.
         batch:
           type: integer
           description: How many notes the call in flight takes; on the current item, when more than one.
