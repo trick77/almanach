@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type { Me, QueueCount, Sources } from "./api";
 import { CostsPage } from "./CostsPage";
 import { DepsPage } from "./DepsPage";
@@ -88,6 +94,9 @@ function Shell({ me }: { me: Me }) {
   const { data: sources } = useFetch<Sources>("sources");
   const sourcesOn = sources?.enabled ?? false;
   const inSources = route.page === "sources" || route.page === "source";
+  // The operations' pages, Betrieb's: one list, so Projekte and Betrieb
+  // never both or neither read as current.
+  const inOps = inSources || route.page === "queue" || route.page === "costs";
   // The queue's count beside its entry: work in flight and waiting.
   const { data: queue, reload: reloadQueue } = useFetch<QueueCount>(
     "queue/count",
@@ -100,13 +109,7 @@ function Shell({ me }: { me: Me }) {
     return () => window.removeEventListener(queueChanged, reloadQueue);
   }, [reloadQueue]);
 
-  const nav = (
-    label: string,
-    to: string,
-    current: boolean,
-    count = 0,
-    paused = false,
-  ) => (
+  const nav = (label: string, to: string, current: boolean) => (
     <Link
       to={to}
       className={
@@ -117,61 +120,52 @@ function Shell({ me }: { me: Me }) {
       }
     >
       <span aria-current={current ? "page" : undefined}>{label}</span>
-      {count > 0 && (
-        <span
-          data-testid="queue-count"
-          className="ml-1.5 rounded-full bg-accent-dim px-1.5 text-[11.5px] text-ink tabular-nums"
-        >
-          {count}
-        </span>
-      )}
-      {paused && (
-        <span
-          data-testid="queue-paused"
-          className="ml-1.5 rounded-full border border-ochre px-1.5 text-[11.5px] text-ochre"
-        >
-          {S.queue.pausedBadge}
-        </span>
-      )}
     </Link>
   );
 
   return (
     // h-dvh, not h-screen: iOS Safari counts the collapsed toolbar into 100vh.
-    <div className="grid h-dvh grid-rows-[56px_1fr]">
-      <header className="flex items-center gap-4 border-b border-border bg-panel px-4 sm:gap-6 sm:px-5">
+    // Below lg the header is two rows: the wordmark, the nav and Betrieb,
+    // then the search with the reader's slot. One row there would leave
+    // the search no width beside the nav, Betrieb's badges and the
+    // sign-out. A crowded first row (Abhängigkeiten, both badges, a phone)
+    // wraps Betrieb onto a row of its own, never off the screen.
+    <div className="grid h-dvh grid-rows-[auto_1fr] lg:grid-rows-[56px_1fr]">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-panel px-4 py-2 sm:px-5 lg:flex-nowrap lg:gap-6 lg:py-0">
         <h1 className="font-serif text-[21px] leading-7 font-medium whitespace-nowrap text-wordmark">
           <Link to="/" className="text-wordmark hover:text-ink">
             {S.app}
           </Link>
         </h1>
         <nav
-          className="flex flex-1 flex-wrap items-center gap-0.5"
+          className="flex flex-wrap items-center gap-0.5"
           aria-label={S.nav.label}
         >
           {nav(
             S.nav.projects,
             "/",
-            route.page !== "queue" &&
-              route.page !== "deps" &&
-              route.page !== "costs" &&
-              route.page !== "search" &&
-              !inSources,
+            route.page !== "deps" && route.page !== "search" && !inOps,
           )}
           {sourcesOn && nav(S.nav.deps, depsPath, route.page === "deps")}
-          {sourcesOn && nav(S.nav.sources, sourcesPath, inSources)}
-          {nav(
-            S.nav.queue,
-            queuePath,
-            route.page === "queue",
-            queued,
-            queue?.paused ?? false,
-          )}
-          {nav(S.nav.costs, costsPath, route.page === "costs")}
         </nav>
-        <SearchBox key={route.page === "search" ? route.q : ""} route={route} />
+        {/* A line break below lg; -mt-1 takes back its own row's gap. */}
+        <span aria-hidden className="order-last -mt-1 basis-full lg:hidden" />
+        <div className="order-last flex min-w-0 flex-1 justify-center lg:order-none">
+          <SearchBox
+            key={route.page === "search" ? route.q : ""}
+            route={route}
+          />
+        </div>
+        <OpsMenu
+          route={route}
+          current={inOps}
+          inSources={inSources}
+          sourcesOn={sourcesOn}
+          queued={queued}
+          paused={queue?.paused ?? false}
+        />
         <span
-          className="flex items-center gap-3 text-[13px] text-muted"
+          className="order-last flex items-center gap-3 text-[13px] text-muted empty:hidden lg:order-none"
           data-slot="reader"
         >
           {me.mode === "oidc" && (
@@ -181,7 +175,11 @@ function Shell({ me }: { me: Me }) {
                   {S.auth.signOutFailed}
                 </span>
               )}
-              <span className="hidden truncate sm:inline">{me.user}</span>
+              {/* Capped: a long name must not push Betrieb off the one
+                  lg row, which does not wrap. */}
+              <span className="hidden max-w-[16ch] truncate sm:inline">
+                {me.user}
+              </span>
               <button
                 type="button"
                 className={btn}
@@ -237,6 +235,188 @@ function Shell({ me }: { me: Me }) {
   );
 }
 
+/** OpsMenu is the operations behind one button, apart from the knowledge
+ *  in the nav: Quellen (with the feature only), Queue, Kosten. The
+ *  button carries the queue's count and pause mark, so they read from
+ *  every page while the list is closed; current is the route's being one
+ *  of them. The list closes on Escape (the focus back on the button, the
+ *  key no other control's), on a press outside, when the focus leaves it
+ *  (Tab: the entries are out of the tab order, the arrows walk them), on
+ *  a pick (the page's own: the focus back on the button) and on every
+ *  route change. While it stands the page's shortcuts hold off
+ *  (shortcutFree). */
+function OpsMenu({
+  route,
+  current,
+  inSources,
+  sourcesOn,
+  queued,
+  paused,
+}: {
+  route: Route;
+  current: boolean;
+  inSources: boolean;
+  sourcesOn: boolean;
+  queued: number;
+  paused: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLUListElement>(null);
+
+  // Any route change closes: a pick that navigates, back and forward.
+  // Set while rendering, as React advises for state that follows a prop.
+  const [shownAt, setShownAt] = useState(route);
+  if (shownAt !== route) {
+    setShownAt(route);
+    setOpen(false);
+  }
+
+  function closeBack() {
+    setOpen(false);
+    button.current?.focus();
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    list.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const onDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && box.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  function walk(e: KeyboardEvent<HTMLUListElement>) {
+    const items = [
+      ...(list.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ??
+        []),
+    ];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const to =
+      e.key === "ArrowDown"
+        ? (at + 1) % items.length
+        : e.key === "ArrowUp"
+          ? (at - 1 + items.length) % items.length
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? items.length - 1
+              : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    items[to]?.focus();
+  }
+
+  const entry = (
+    label: string,
+    to: string,
+    here: boolean,
+    count = 0,
+    pausedHere = false,
+  ) => (
+    <li role="none">
+      <Link
+        to={to}
+        role="menuitem"
+        tabIndex={-1}
+        className={
+          "flex items-center rounded-ui-sm px-3 py-2 text-sm outline-none hover:bg-active hover:text-ink focus-visible:bg-active focus-visible:text-ink " +
+          (here ? "text-ink" : "text-muted")
+        }
+      >
+        <span aria-current={here ? "page" : undefined}>{label}</span>
+        {count > 0 && <span className={countBadge}>{count}</span>}
+        {pausedHere && (
+          <span className={pausedBadge}>{S.queue.pausedBadge}</span>
+        )}
+      </Link>
+    </li>
+  );
+
+  return (
+    <div
+      ref={box}
+      className="relative ml-auto shrink-0"
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || !open) return;
+        // The menu's Escape alone: a pinned map box stays pinned.
+        e.stopPropagation();
+        closeBack();
+      }}
+      onBlur={(e) => {
+        // Focus gone elsewhere by keyboard; a press outside is onDown's.
+        const to = e.relatedTarget;
+        if (open && to instanceof Node && !box.current?.contains(to))
+          setOpen(false);
+      }}
+    >
+      <button
+        ref={button}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={S.nav.opsLabel(queued, paused)}
+        onClick={() => setOpen(!open)}
+        className={
+          "flex items-center rounded-ui-sm px-3 py-1.5 text-sm whitespace-nowrap transition-colors " +
+          (current
+            ? "bg-active text-ink"
+            : "text-muted hover:bg-active hover:text-ink")
+        }
+      >
+        {S.nav.ops}
+        {queued > 0 && (
+          <span data-testid="queue-count" className={countBadge}>
+            {queued}
+          </span>
+        )}
+        {paused && (
+          <span data-testid="queue-paused" className={pausedBadge}>
+            {S.queue.pausedBadge}
+          </span>
+        )}
+      </button>
+      {open && (
+        <ul
+          ref={list}
+          role="menu"
+          aria-label={S.nav.opsMenu(sourcesOn)}
+          onKeyDown={walk}
+          onClickCapture={(e) => {
+            // Before the entry's own click navigates: the page's own entry
+            // navigates nowhere, and the focus would fall to the page's
+            // top with the list.
+            const a = (e.target as Element).closest("a");
+            const { pathname, search } = window.location;
+            if (a?.getAttribute("href") === pathname + search) closeBack();
+            else setOpen(false);
+          }}
+          className="absolute top-full right-0 z-50 mt-1.5 min-w-[160px] rounded-ui border border-elevated-border bg-elevated p-1.5 shadow-panel"
+        >
+          {sourcesOn && entry(S.nav.sources, sourcesPath, inSources)}
+          {entry(
+            S.nav.queue,
+            queuePath,
+            route.page === "queue",
+            queued,
+            paused,
+          )}
+          {entry(S.nav.costs, costsPath, route.page === "costs")}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** countBadge is the queue's count beside a label, pausedBadge its pause. */
+const countBadge =
+  "ml-1.5 rounded-full bg-accent-dim px-1.5 text-[11.5px] text-ink tabular-nums";
+const pausedBadge =
+  "ml-1.5 rounded-full border border-ochre px-1.5 text-[11.5px] text-ochre";
+
 /** SearchBox is the header's search over the whole wiki: a phrase
  *  submitted goes to the search page, which holds it in its address. On
  *  that page the box shows the phrase searched (the key above remounts
@@ -247,7 +427,7 @@ function SearchBox({ route }: { route: Route }) {
   return (
     <form
       role="search"
-      className="min-w-0 shrink"
+      className="w-full min-w-0 shrink lg:w-auto"
       onSubmit={(e) => {
         e.preventDefault();
         if (q.trim() !== "") navigateTo(searchFor(q.trim()));
@@ -259,7 +439,7 @@ function SearchBox({ route }: { route: Route }) {
         onChange={(e) => setQ(e.target.value)}
         placeholder={S.search.placeholder}
         aria-label={S.search.box}
-        className="h-[32px] w-full max-w-[110px] rounded-ui-sm border border-border bg-bg px-2.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-elevated-border focus:bg-active sm:max-w-[180px] lg:max-w-[240px]"
+        className="h-[32px] w-full rounded-ui-sm border border-border bg-bg px-2.5 text-[13px] text-ink outline-none placeholder:text-faint focus:border-elevated-border focus:bg-active lg:max-w-[240px]"
       />
     </form>
   );
