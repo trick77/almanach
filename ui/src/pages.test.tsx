@@ -619,12 +619,12 @@ describe("ProjectPage", () => {
       within(row)
         .getByRole("link", { name: "pay-clearing" })
         .getAttribute("href"),
-    ).toBe("/projects/PAY/repos/pay-clearing");
+    ).toBe("/projects/PAY/repos/pay-clearing#description/messages");
     expect(
       within(row)
         .getByRole("link", { name: "LEDGER/ledger-core" })
         .getAttribute("href"),
-    ).toBe("/projects/LEDGER/repos/ledger-core");
+    ).toBe("/projects/LEDGER/repos/ledger-core#description/messages");
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
     expect(
       within(rail).getByText("Messaging").closest("a")?.getAttribute("href"),
@@ -2524,6 +2524,72 @@ describe("App", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/"));
     expect(await screen.findByText("PAY")).toBeInTheDocument();
     await waitFor(() => expect(document.title).toContain("Projekte"));
+  });
+
+  it("follows a fact table's link to a project of one onto its section", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    serve({
+      me: anonymous,
+      projects,
+      dependencies: {
+        repos: [
+          { project: "PAY", slug: "pay-api" },
+          { project: "MOB", slug: "mob-app" },
+        ],
+        edges: [
+          {
+            from: { project: "MOB", slug: "mob-app" },
+            to: { project: "PAY", slug: "pay-api" },
+            coords: ["go:example.invalid/pay-api"],
+            scope: "main",
+          },
+        ],
+        ambiguous: [],
+      },
+      sources: { enabled: true, sources: [], default_host: "", max_calls: 16 },
+      "projects/MOB": {
+        ...project,
+        key: "MOB",
+        single: true,
+        description: null,
+        map: null,
+        map_expected: false,
+        repos: [
+          {
+            slug: "mob-app",
+            revision: 0,
+            summary: "",
+            notes: 0,
+            last_merge: null,
+          },
+        ],
+      },
+      "projects/MOB/repos/mob-app": {
+        ...repo,
+        project_key: "MOB",
+        slug: "mob-app",
+        uses: [{ project: "PAY", slug: "pay-api", also: [] }],
+      },
+    });
+    window.history.replaceState({}, "", "/dependencies");
+    render(<App />);
+    const table = await screen.findByRole("table");
+    within(table)
+      .getByRole("link", { name: /mob-app/ })
+      .click();
+    // The project's path, the reference tab kept in the address through
+    // the switch to it, the section scrolled to.
+    await waitFor(() => expect(window.location.pathname).toBe("/projects/MOB"));
+    expect(window.location.hash).toBe("#description/dependencies");
+    expect(
+      await screen.findByRole("tab", { name: /Nachschlagen/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    await waitFor(() =>
+      expect(scrolled.mock.contexts).toContain(
+        document.getElementById("dependencies"),
+      ),
+    );
   });
 
   it("searches the wiki from the header, the phrase in the address", async () => {

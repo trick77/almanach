@@ -1,7 +1,13 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RepoDetail, RepoTopic, TopicFlow } from "./api";
-import { flowGraph, topicGraph } from "./Messaging";
+import { ProjectMessages, flowGraph, topicGraph } from "./Messaging";
 import { RepoPage } from "./RepoPage";
 
 function serve(table: Record<string, unknown>) {
@@ -19,6 +25,9 @@ function serve(table: Record<string, unknown>) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  window.history.replaceState({}, "", "/");
+  // jsdom has no scrollIntoView; a test that stubs one leaves none.
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
 });
 
 const ref = (project: string, slug: string) => ({ project, slug });
@@ -187,5 +196,60 @@ describe("RepoPage messages", () => {
     render(<RepoPage projectKey="shop" slug="orders" />);
     fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
     expect(screen.queryByText("Messaging")).toBeNull();
+  });
+
+  it("opens on its messages from a link to them, without a description", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.replaceState(
+      {},
+      "",
+      "/projects/shop/repos/orders#description/messages",
+    );
+    serve({ "projects/shop/repos/orders": repo });
+    render(<RepoPage projectKey="shop" slug="orders" />);
+    expect(
+      await screen.findByRole("tab", { name: /Nachschlagen/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    await waitFor(() =>
+      expect(scrolled.mock.contexts).toContain(
+        document.getElementById("messages"),
+      ),
+    );
+  });
+
+  it("opens the reference tab on a link to a section it does not have", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.replaceState(
+      {},
+      "",
+      "/projects/shop/repos/orders#description/interfaces",
+    );
+    serve({ "projects/shop/repos/orders": repo });
+    render(<RepoPage projectKey="shop" slug="orders" />);
+    const desc = await screen.findByRole("tabpanel", { name: "Nachschlagen" });
+    expect(within(desc).getByText("order.placed")).toBeInTheDocument();
+    expect(scrolled).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProjectMessages", () => {
+  it("links each sender and receiver to its messages", () => {
+    const flows: TopicFlow[] = [
+      {
+        name: "order.placed",
+        producers: [ref("shop", "orders")],
+        consumers: [ref("ops", "audit")],
+        declared: [],
+      },
+    ];
+    render(<ProjectMessages project="shop" flows={flows} />);
+    expect(
+      screen.getByRole("link", { name: "orders" }).getAttribute("href"),
+    ).toBe("/projects/shop/repos/orders#description/messages");
+    expect(
+      screen.getByRole("link", { name: "ops/audit" }).getAttribute("href"),
+    ).toBe("/projects/ops/repos/audit#description/messages");
   });
 });

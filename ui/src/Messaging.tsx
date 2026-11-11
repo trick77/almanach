@@ -8,6 +8,7 @@ import type {
 import { Diagram, titledZones } from "./Diagram";
 import { fits, type FlowIR, type FlowNodeIR } from "./diagramIR";
 import { refName } from "./format";
+import { factPath } from "./repoFacts";
 import { repoPath } from "./routing";
 import { S } from "./strings";
 import { Link, mono, table, tableBox, td, tdMono, th } from "./ui";
@@ -139,13 +140,16 @@ function Drawing({ ir }: { ir: FlowIR }) {
   return <Diagram ir={ir} title={S.msg.title} links={repoLink} />;
 }
 
-/** Peers is a list of repositories, each linked. */
+/** Peers is a list of repositories, each linked to its page; with toFacts,
+ *  to its messages there (a project's table: the start tab shows none). */
 function Peers({
   refs,
   name,
+  toFacts = false,
 }: {
   refs: RepoRef[];
   name: (r: RepoRef) => string;
+  toFacts?: boolean;
 }) {
   if (refs.length === 0)
     return <span className="text-faint">{S.msg.noPeer}</span>;
@@ -155,7 +159,11 @@ function Peers({
         <span key={`${r.project}/${r.slug}`}>
           {i > 0 && ", "}
           <Link
-            to={repoPath(r.project, r.slug)}
+            to={
+              toFacts
+                ? factPath(r.project, r.slug, "messages")
+                : repoPath(r.project, r.slug)
+            }
             className={mono + " text-ink-dim hover:text-ink"}
           >
             {name(r)}
@@ -272,10 +280,10 @@ export function ProjectMessages({
               <tr key={f.name}>
                 <td className={tdMono}>{f.name}</td>
                 <td className={td}>
-                  <Peers refs={f.producers} name={name} />
+                  <Peers refs={f.producers} name={name} toFacts />
                 </td>
                 <td className={td}>
-                  <Peers refs={f.consumers} name={name} />
+                  <Peers refs={f.consumers} name={name} toFacts />
                   {f.declared.length > 0 && (
                     <span className="ml-2 text-[12.5px] text-faint">
                       {S.msg.declared} {f.declared.map(name).join(", ")}

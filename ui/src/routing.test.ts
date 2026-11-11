@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { factIds, factPath } from "./repoFacts";
 import {
   notePath,
   notePathFor,
@@ -102,6 +103,25 @@ describe("routeFromPath", () => {
     expect(notePathFor("PLAT/~x#3")).toBeNull();
     // Builders encode, so a bad key is a visible 404 rather than a silent miss.
     expect(repoPath("a b", "files")).toBe("/projects/a%20b/repos/files");
+  });
+
+  it("builds a fact table's link: the reference tab at the section", () => {
+    expect(factPath("PAY", "pay-api", "messages")).toBe(
+      "/projects/PAY/repos/pay-api#description/messages",
+    );
+    expect(factPath("PAY", "pay-api", "interfaces")).toBe(
+      "/projects/PAY/repos/pay-api#description/interfaces",
+    );
+    expect(factPath("a b", "pay-api", "deps")).toBe(
+      "/projects/a%20b/repos/pay-api#description/dependencies",
+    );
+    // The section ids the repository page gives its sections.
+    expect(factIds).toEqual({
+      deps: "dependencies",
+      parts: "parts",
+      interfaces: "interfaces",
+      messages: "messages",
+    });
   });
 });
 

@@ -123,10 +123,12 @@ describe("RepoPage interfaces", () => {
 });
 
 describe("ProjectInterfaces", () => {
-  it("names each interface's repository, linked", () => {
+  it("names each interface's repository, linked to its interfaces", () => {
     render(<ProjectInterfaces apis={[offered]} />);
     const link = screen.getByRole("link", { name: "orders" });
-    expect(link.getAttribute("href")).toBe("/projects/shop/repos/orders");
+    expect(link.getAttribute("href")).toBe(
+      "/projects/shop/repos/orders#description/interfaces",
+    );
     expect(screen.getByText("List orders")).toBeInTheDocument();
   });
 });
