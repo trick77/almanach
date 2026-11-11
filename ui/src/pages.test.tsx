@@ -88,6 +88,7 @@ const projects: Projects = {
       revision: 7,
       summary: "Der Zahlungsverkehr über alle Kanäle.",
       last_merge: mergedAt,
+      shape: null,
       repo: null,
     },
     {
@@ -98,6 +99,7 @@ const projects: Projects = {
       revision: 0,
       summary: "",
       last_merge: null,
+      shape: null,
       repo: null,
     },
   ],
@@ -224,6 +226,11 @@ const repo: RepoDetail = {
   parts: { units: [], edges: [], graph: { nodes: [], edges: [] } },
 };
 
+/** stepText is a path step's title as a text query matches it: the DOM's
+ *  text normalized, its en spaces plain. */
+const stepText = (n: number, title: string) =>
+  S.path.step(n, title).replace(/\s+/g, " ");
+
 /** openTab switches a page to one of its tabs, as a reader does. */
 async function openTab(name: RegExp) {
   fireEvent.click(await screen.findByRole("tab", { name }));
@@ -277,22 +284,28 @@ const note: NoteDetail = {
 };
 
 describe("ProjectsPage", () => {
-  it("lists projects as cards, a project without a description says so", async () => {
+  it("lists projects as cards, no figures on them, a project without a description says so", async () => {
     serve({ projects });
     render(<ProjectsPage />);
-    expect(await screen.findByText("PAY")).toBeInTheDocument();
-    expect(screen.getByText(/Revision 7/)).toBeInTheDocument();
+    const pay = (await screen.findByRole("heading", { name: "PAY" })).closest(
+      "a",
+    )!;
+    expect(pay.getAttribute("href")).toBe("/projects/PAY");
     // A project of several shows its own page's summary.
     expect(
-      screen.getByText("Der Zahlungsverkehr über alle Kanäle."),
+      within(pay).getByText("Der Zahlungsverkehr über alle Kanäle."),
     ).toBeInTheDocument();
-    expect(screen.getByText("noch keine Beschreibung")).toBeInTheDocument();
-    expect(screen.getByText(/letzter Merge nie/)).toHaveClass(
-      "first-letter:uppercase",
-    );
-    expect(screen.getByText("PAY").closest("a")?.getAttribute("href")).toBe(
-      "/projects/PAY",
-    );
+    // Team and repositories, no revision, notes or last merge: those are
+    // the table's.
+    expect(pay).toHaveTextContent("Team platform·4 Repositories");
+    expect(pay.textContent).not.toMatch(/Revision|Notiz|Merge/);
+    const mob = screen.getByRole("heading", { name: "MOB" }).closest("a")!;
+    expect(
+      within(mob).getByText("noch keine Beschreibung"),
+    ).toBeInTheDocument();
+    // No system: one group, no titles over it.
+    expect(screen.queryByText(S.projects.systems)).toBeNull();
+    expect(screen.getByText(S.projects.lede)).toBeInTheDocument();
   });
   it("leaves out the team of a project known only as a source", async () => {
     serve({
@@ -317,6 +330,7 @@ describe("ProjectsPage", () => {
             revision: 0,
             summary: "#### Zweck\n\nEin Recherche-Agent, `loom`.",
             last_merge: null,
+            shape: null,
             repo: {
               slug: "loom",
               revision: 3,
@@ -357,12 +371,146 @@ describe("ProjectsPage", () => {
       within(tile).getByText("loom", { selector: "code" }),
     ).toBeInTheDocument();
     expect(within(tile).queryByText(/Zweck/)).toBeNull();
-    expect(within(tile).getByText(/Revision 3/)).toBeInTheDocument();
+    // Its repository has a description: none missing in the meta line.
+    expect(within(tile).queryByText("noch keine Beschreibung")).toBeNull();
     expect(within(tile).getByText("llmwire")).toBeInTheDocument();
     // A test use is no use of the project's.
     expect(within(tile).queryByText("testkit")).toBeNull();
     // No headings splitting projects: one grid.
     expect(screen.queryByText("Einzelne Repositories")).toBeNull();
+  });
+
+  /** home is a list with a system, a collection, a project of one and a
+   *  project not judged yet. */
+  const home: Projects = {
+    projects: [
+      { ...projects.projects[0]!, shape: "system" },
+      {
+        ...projects.projects[0]!,
+        key: "CORE",
+        team: "",
+        repos: 6,
+        notes: 0,
+        revision: 2,
+        summary: "Geteilte Libraries.",
+        last_merge: null,
+        shape: "collection",
+      },
+      {
+        ...projects.projects[1]!,
+        key: "TOOLS",
+        repos: 1,
+        notes: 9,
+        revision: 0,
+        summary: "Ein CLI.",
+        last_merge: "2026-11-02T10:00:00Z",
+        repo: {
+          slug: "tools-cli",
+          revision: 4,
+          summary: "Ein CLI.",
+          notes: 9,
+          last_merge: "2026-11-02T10:00:00Z",
+        },
+      },
+      projects.projects[1]!,
+    ],
+  };
+
+  it("puts the systems first, the rest compact under them", async () => {
+    serve({ projects: home });
+    render(<ProjectsPage />);
+    const systems = (await screen.findByText(S.projects.systems)).closest(
+      "section",
+    )!;
+    // Each group is a titled region; its tiles' keys a level below.
+    expect(screen.getByRole("region", { name: S.projects.systems })).toBe(
+      systems,
+    );
+    expect(
+      within(systems).getByRole("heading", { level: 4, name: "PAY" }),
+    ).toBeInTheDocument();
+    expect(
+      within(systems).getByRole("heading", { name: "PAY" }),
+    ).toBeInTheDocument();
+    const others = screen.getByText(S.projects.others).closest("section")!;
+    const row = (key: string) =>
+      within(others).getByText(key, { exact: true }).closest("a")!;
+    // Form and size on the right: a collection, a project of one with its
+    // repository, the rest their count.
+    expect(row("CORE")).toHaveTextContent("Sammlung·6 Repositories");
+    expect(row("CORE").getAttribute("href")).toBe("/projects/CORE");
+    expect(row("TOOLS")).toHaveTextContent(`${S.projects.oneRepo}·tools-cli`);
+    expect(row("MOB")).toHaveTextContent("1 Repository");
+    expect(row("MOB").textContent).not.toMatch(/Sammlung|System/);
+    // A row's teaser on one line.
+    expect(within(row("CORE")).getByText("Geteilte Libraries.")).toHaveClass(
+      "truncate",
+    );
+  });
+
+  it("shows the figures in a table, kept in the address, sortable", async () => {
+    serve({ projects: home });
+    window.history.replaceState({}, "", "/");
+    render(<ProjectsPage />);
+    const view = await screen.findByRole("group", { name: S.projects.view });
+    expect(
+      within(view).getByRole("button", { name: S.projects.tiles }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(
+      within(view).getByRole("button", { name: S.projects.table }),
+    );
+    expect(window.location.hash).toBe("#table");
+    const table = screen.getByRole("table");
+    const heads = within(table).getAllByRole("columnheader");
+    expect(heads.map((h) => h.textContent)).toEqual(
+      Object.values(S.projects.headers),
+    );
+    // A cell that opens on a lowercase word shows it as a capital.
+    expect(
+      within(table).getByText("CORE").closest("tr")!.lastElementChild!
+        .className,
+    ).toContain("first-letter:uppercase");
+    const keys = () =>
+      within(table)
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => r.querySelector("td")!.textContent);
+    // By project, ascending, to start.
+    expect(heads[0]).toHaveAttribute("aria-sort", "ascending");
+    expect(keys()).toEqual(["CORE", "MOB", "PAY", "TOOLS"]);
+    // A project of one reads as its repository: revision 4.
+    const tools = within(table).getByText("TOOLS").closest("tr")!;
+    expect(tools.textContent).toContain(S.projects.oneRepo);
+    expect(within(tools).getByText("4")).toBeInTheDocument();
+    // The last merge, newest first on a first click, oldest on a second;
+    // "nie" stays last.
+    const merge = heads[6]!;
+    fireEvent.click(within(merge).getByRole("button"));
+    expect(merge).toHaveAttribute("aria-sort", "descending");
+    expect(heads[0]).not.toHaveAttribute("aria-sort");
+    expect(keys()).toEqual(["TOOLS", "PAY", "CORE", "MOB"]);
+    fireEvent.click(within(merge).getByRole("button"));
+    expect(merge).toHaveAttribute("aria-sort", "ascending");
+    expect(keys()).toEqual(["PAY", "TOOLS", "CORE", "MOB"]);
+    // The notes: a number column, the most first.
+    fireEvent.click(within(heads[4]!).getByRole("button"));
+    expect(keys()).toEqual(["PAY", "TOOLS", "MOB", "CORE"]);
+    // The kind: one not judged yet last.
+    fireEvent.click(within(heads[1]!).getByRole("button"));
+    expect(keys().at(-1)).toBe("MOB");
+    // Back to the tiles: the address without a hash.
+    fireEvent.click(
+      within(view).getByRole("button", { name: S.projects.tiles }),
+    );
+    expect(window.location.hash).toBe("");
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("opens on the table the address names", async () => {
+    serve({ projects: home });
+    window.history.replaceState({}, "", "/#table");
+    render(<ProjectsPage />);
+    expect(await screen.findByRole("table")).toBeInTheDocument();
   });
   it("shows the empty and the failed state", async () => {
     serve({ projects: { projects: [] } });
@@ -898,7 +1046,7 @@ describe("ProjectPage", () => {
       expect(within(rail).getByText(title)).toBeInTheDocument();
     // The path's steps, numbered as on the page.
     expect(
-      within(rail).getByText(S.path.step(2, S.path.repos)),
+      within(rail).getByText(stepText(2, S.path.repos)),
     ).toBeInTheDocument();
     // The description's sections are its areas, no kind among them.
     expect(within(rail).getByText("Aufträge").closest("a")?.textContent).toBe(
@@ -1002,7 +1150,7 @@ describe("ProjectPage", () => {
     // those steps are not there.
     const start = await screen.findByRole("tabpanel", { name: S.tabs.start });
     const what = within(start)
-      .getByText(S.path.step(1, S.path.projectWhat))
+      .getByText(stepText(1, S.path.projectWhat))
       .closest("section")!;
     expect(what).toHaveTextContent(
       `${S.project.noDescription} ${S.project.noDescriptionHint}`,
@@ -1433,7 +1581,7 @@ describe("ProjectPage", () => {
         name: S.tabs.start,
       });
       const guard = within(start)
-        .getByText(S.path.step(3, S.path.guard))
+        .getByText(stepText(3, S.path.guard))
         .closest("section")!;
       expect(
         within(guard)
@@ -1442,7 +1590,7 @@ describe("ProjectPage", () => {
       ).toEqual(["Aussage g2", "Aussage g3", "Aussage g4"]);
       // Two pitfalls, no problem areas: the step stands, no more link.
       const hurt = within(start)
-        .getByText(S.path.step(4, S.path.hurt))
+        .getByText(stepText(4, S.path.hurt))
         .closest("section")!;
       expect(
         within(hurt)
@@ -1814,7 +1962,7 @@ describe("RepoPage", () => {
       const start = await screen.findByRole("tabpanel", {
         name: S.tabs.start,
       });
-      await within(start).findByText(S.path.step(5, S.path.pitfalls));
+      await within(start).findByText(stepText(5, S.path.pitfalls));
       expect(
         within(start)
           .getAllByRole("heading", { level: 3 })
@@ -1841,7 +1989,7 @@ describe("RepoPage", () => {
       ).toBe("/projects/PAY/repos/pay-clearing#description/summary");
       // Where to change what: the most cited three, the rest a chip away.
       const change = within(start)
-        .getByText(S.path.step(4, S.path.change))
+        .getByText(stepText(4, S.path.change))
         .closest("section")!;
       expect(
         within(change)
@@ -1856,7 +2004,7 @@ describe("RepoPage", () => {
       expect(within(start).getAllByText("Erweiterung").length).toBe(3);
       // Pitfalls, then this repository's problem areas, without its column.
       const pitfalls = within(start)
-        .getByText(S.path.step(5, S.path.pitfalls))
+        .getByText(stepText(5, S.path.pitfalls))
         .closest("section")!;
       const pitfall = within(pitfalls).getByRole("link", {
         name: "Aussage f1",
@@ -2165,9 +2313,7 @@ describe("RepoPage", () => {
     expect(await screen.findByText(/^Kein Aufbau: /)).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "Aufbau" })).toBeNull();
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
-    expect(
-      within(rail).getByText(S.path.step(2, S.repo.map)),
-    ).toBeInTheDocument();
+    expect(within(rail).getByText(stepText(2, S.repo.map))).toBeInTheDocument();
   });
 
   it("goes without the project's parts when the project fails", async () => {
@@ -2349,7 +2495,9 @@ describe("App", () => {
     serve({ me: anonymous, projects, "projects/PAY": project });
     window.history.replaceState({}, "", "/");
     render(<App />);
-    expect(await screen.findByText(/Revision 7/)).toBeInTheDocument();
+    expect(
+      await screen.findByText("Der Zahlungsverkehr über alle Kanäle."),
+    ).toBeInTheDocument();
     screen.getByText("PAY").closest("a")!.click();
     await waitFor(() => expect(window.location.pathname).toBe("/projects/PAY"));
     expect(await screen.findByText("Clearing-Adapter")).toBeInTheDocument();
@@ -2580,7 +2728,7 @@ function answer(
 /** stubLocation swaps window.location for a plain object, so a test can
  *  see where the gate sends the browser; jsdom does not navigate. */
 function stubLocation(search = "", pathname = "/") {
-  const loc = { href: "/", pathname, search, reload: vi.fn() };
+  const loc = { href: "/", pathname, search, hash: "", reload: vi.fn() };
   vi.stubGlobal("location", loc);
   return loc;
 }

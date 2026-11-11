@@ -339,6 +339,9 @@ type ProjectRow struct {
 	// Summary is the current project page's, whole; "" before the first.
 	Summary   string
 	LastMerge *time.Time
+	// Shape is the current project page's judgment (ShapeSystem,
+	// ShapeCollection); "" before a project step judged one.
+	Shape string
 }
 
 // RepoRow is one repository of a project.

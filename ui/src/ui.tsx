@@ -39,8 +39,12 @@ export const h2 =
   "font-serif text-[22px] font-medium leading-tight tracking-tight text-ink sm:text-[28px]";
 export const meta = "mt-1.5 text-[14.5px] text-muted";
 export const lede = "mt-1 mb-6 text-[14.5px] text-muted " + measure;
-export const eyebrow =
-  "mt-7 mb-2.5 text-[11px] font-medium tracking-[.12em] text-faint uppercase";
+/** eyebrowBase is the eyebrow without its top margin, for a caller that
+ *  sets its own (eyebrow + a margin would leave two to the stylesheet's
+ *  order). */
+export const eyebrowBase =
+  "mb-2.5 text-[11px] font-medium tracking-[.12em] text-faint uppercase";
+export const eyebrow = "mt-7 " + eyebrowBase;
 export const mono = "font-mono text-[12.5px]";
 /** kindLabelStyle is a statement's kind over or beside its name. */
 export const kindLabelStyle =

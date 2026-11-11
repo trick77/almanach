@@ -21,7 +21,7 @@ func TestProjectsAndRepos(t *testing.T) {
 	ingest(t, s, noteFor("PRJ", "svc", 2))
 	ingest(t, s, noteFor("PRJ", "lib", 3))
 	ingest(t, s, noteFor("ZED", "z", 4))
-	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeProject, ProjectKey: "PRJ", Summary: "project", SourcePR: "PRJ/svc#2"}); err != nil {
+	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeProject, ProjectKey: "PRJ", Summary: "project", SourcePR: "PRJ/svc#2", Shape: ShapeCollection}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.InsertRevision(ctx, NewRevision{Scope: ScopeRepository, ProjectKey: "PRJ", RepoSlug: "svc", Summary: "svc summary", SourcePR: "PRJ/svc#2"}); err != nil {
@@ -36,8 +36,12 @@ func TestProjectsAndRepos(t *testing.T) {
 		t.Fatalf("Projects = %+v, want PRJ, ZED", ps)
 	}
 	p := ps[0]
-	if p.Team != "alpha" || p.Repos != 2 || p.Notes != 3 || p.Revision != 1 || p.Summary != "project" {
-		t.Errorf("PRJ = %+v, want team alpha, 2 repos, 3 notes, revision 1, summary project", p)
+	if p.Team != "alpha" || p.Repos != 2 || p.Notes != 3 || p.Revision != 1 || p.Summary != "project" || p.Shape != ShapeCollection {
+		t.Errorf("PRJ = %+v, want team alpha, 2 repos, 3 notes, revision 1, summary project, a collection", p)
+	}
+	// Not judged yet: no shape.
+	if ps[1].Shape != "" {
+		t.Errorf("ZED shape = %q, want none", ps[1].Shape)
 	}
 	if p.LastMerge == nil || !p.LastMerge.Equal(mergedBase.Add(3*time.Minute)) {
 		t.Errorf("PRJ last merge = %v, want PR 3's", p.LastMerge)

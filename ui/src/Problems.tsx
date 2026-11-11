@@ -6,7 +6,7 @@ import {
   Chip,
   Empty,
   Pill,
-  eyebrow,
+  eyebrowBase,
   mono,
   table,
   tableBox,
@@ -34,7 +34,7 @@ export function ProblemsSection({
   if (problems.length === 0) return null;
   return (
     <>
-      <div className={eyebrow.replace("mt-7", first ? "mt-0" : "mt-5")}>
+      <div className={(first ? "mt-0 " : "mt-5 ") + eyebrowBase}>
         {S.project.problems}
         <span className="ml-2 font-normal tracking-normal normal-case text-faint">
           {S.project.problemsWindow(windowDays)}

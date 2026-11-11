@@ -13,7 +13,7 @@ import {
   Sep,
   Summary,
   Teaser,
-  eyebrow,
+  eyebrowBase,
   kindLabelStyle,
   measure,
   teaserLines,
@@ -190,9 +190,7 @@ export function kindStep(
 /** FactsTitle heads the facts read from the code after a description,
  *  set apart from its last chapter. */
 export function FactsTitle() {
-  return (
-    <div className={eyebrow.replace("mt-7", "mt-10")}>{S.facts.title}</div>
-  );
+  return <div className={"mt-10 " + eyebrowBase}>{S.facts.title}</div>;
 }
 
 /** useTabMoves is a page's ways between its tabs, the question chip in

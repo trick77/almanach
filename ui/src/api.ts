@@ -17,6 +17,9 @@ export interface Project {
    *  A project of one: its repository's. */
   summary: string;
   last_merge: string | null;
+  /** What the last project step judged the project to be; null before one
+   *  judged it, and for a project of one. */
+  shape: ProjectShape | null;
   /** The repository of a project of one (a source with one repository):
    *  its page is the project's. null for every other project. */
   repo: Repo | null;

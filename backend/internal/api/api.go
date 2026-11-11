@@ -344,6 +344,10 @@ type projectBody struct {
 	// the first; a project of one's is its repository's (Repo's).
 	Summary   string     `json:"summary"`
 	LastMerge *time.Time `json:"last_merge"`
+	// Shape is what the last project step judged the project to be, as on
+	// its page (projectDetailBody.Shape); null before one judged it, and
+	// for a project of one.
+	Shape *string `json:"shape"`
 	// Repo is the repository of a project of one (a source with one
 	// repository): its page is the project's. Null for every other project.
 	Repo *repoBody `json:"repo"`
@@ -370,7 +374,12 @@ func (d Deps) projects(w http.ResponseWriter, r *http.Request) {
 	for _, p := range rows {
 		body := projectBody{Key: p.Key, Team: p.Team, Repos: p.Repos, Notes: p.Notes, Revision: p.Revision,
 			Summary: firstSentence(lead(p.Summary)), LastMerge: p.LastMerge}
-		if rp, ok := single[p.Key]; ok {
+		rp, alone := single[p.Key]
+		// A project of one has no shape: nor one judged when it had more.
+		if p.Shape != "" && !alone {
+			body.Shape = &p.Shape
+		}
+		if alone {
 			b := repoBodies([]store.RepoRow{rp})[0]
 			body.Repo = &b
 			// Its page is the repository's, a project page left from when
