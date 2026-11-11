@@ -980,6 +980,11 @@ describe("ProjectPage", () => {
     expect(screen.queryByText("Projekt loom")).toBeNull();
     // Its own path, not the repository's.
     expect(window.location.pathname).toBe("/projects/loom");
+    // The start tab, no next repository: there is none.
+    expect(
+      screen.getByRole("tabpanel", { name: S.tabs.start }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(S.path.next)).toBeNull();
   });
 
   it("says so without a description and fails cleanly", async () => {
@@ -1641,7 +1646,8 @@ describe("RepoPage", () => {
       },
     });
     render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    await openTab(/Nachschlagen/);
+    const desc = screen.getByRole("tabpanel", { name: S.tabs.reference });
     // A page not laid out yet is one chapter, in the stored order; an
     // unknown kind shows as stored.
     expect(
@@ -1722,6 +1728,7 @@ describe("RepoPage", () => {
       },
     });
     render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    await openTab(/Nachschlagen/);
     // The statement's chip carries the commit's date.
     const chip = await screen.findByText("Basis 4e1f0c2");
     expect(chip.closest("a")).toBeNull();
@@ -1755,48 +1762,195 @@ describe("RepoPage", () => {
     ],
   };
 
-  it("leads with its map, then the summary and its own problem areas", async () => {
-    serve({
-      "projects/PAY/repos/pay-clearing": {
-        ...repo,
-        map: repoMap,
-        description: project.description,
-      },
-      "projects/PAY": {
-        ...project,
-        repos: [
-          ...project.repos,
-          { ...project.repos[1]!, slug: "pay-clearing" },
+  describe("reading path", () => {
+    const st = (
+      id: string,
+      kind: Statement["kind"],
+      sources = 0,
+    ): Statement => ({
+      id,
+      kind,
+      name: `Aussage ${id}`,
+      text: `Text ${id}.`,
+      files: [],
+      sources: Array.from({ length: sources }, (_, i) => ({
+        pr_key: `PAY/pay-clearing#${i + 1}`,
+      })),
+      area: "Abrechnung",
+    });
+    const full: RepoDetail = {
+      ...repo,
+      map: repoMap,
+      description: {
+        ...project.description!,
+        summary: "Gleicht Zahlungen ab.\n\n#### Teile\n\nExport, Abgleich.",
+        statements: [
+          st("r1", "rule", 1),
+          st("x1", "extension", 0),
+          st("x2", "extension", 2),
+          st("x3", "extension", 1),
+          st("x4", "extension", 3),
+          st("f1", "pitfall", 1),
+          st("c1", "component"),
         ],
       },
+    };
+    // The project lists pay-clearing second of three: pay-lib comes next.
+    const listing: ProjectDetail = {
+      ...project,
+      repos: [
+        project.repos[0]!,
+        { ...project.repos[1]!, slug: "pay-clearing" },
+        { ...project.repos[1]!, summary: "Teilt Code." },
+      ],
+    };
+
+    it("leads through what, map, guard, change and pitfalls, then the next repository", async () => {
+      serve({
+        "projects/PAY/repos/pay-clearing": full,
+        "projects/PAY": listing,
+      });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const start = await screen.findByRole("tabpanel", {
+        name: S.tabs.start,
+      });
+      await within(start).findByText(S.path.step(5, S.path.pitfalls));
+      expect(
+        within(start)
+          .getAllByRole("heading", { level: 3 })
+          .map((h) => h.textContent),
+      ).toEqual([
+        S.path.step(1, S.path.repoWhat),
+        S.path.step(2, S.repo.map),
+        S.path.step(3, S.path.guard),
+        S.path.step(4, S.path.change),
+        S.path.step(5, S.path.pitfalls),
+      ]);
+      // The map: zones titled from strings.ts, parts not pages.
+      const drawing = within(start).getByRole("img", { name: "Aufbau" });
+      expect(drawing.textContent).toContain("Eingang");
+      expect(within(drawing.parentElement!).queryByRole("link")).toBeNull();
+      // The summary's opening, the whole of it a link away.
+      expect(
+        within(start).getByText("Gleicht Zahlungen ab."),
+      ).toBeInTheDocument();
+      expect(
+        within(start)
+          .getByRole("link", { name: /Ganzer Überblick/ })
+          .getAttribute("href"),
+      ).toBe("/projects/PAY/repos/pay-clearing#description/summary");
+      // Where to change what: the most cited three, the rest a chip away.
+      const change = within(start)
+        .getByText(S.path.step(4, S.path.change))
+        .closest("section")!;
+      expect(
+        within(change)
+          .getAllByRole("link")
+          .map((a) => [a.textContent, a.getAttribute("href")]),
+      ).toEqual([
+        ["Aussage x4", "/projects/PAY/repos/pay-clearing#description/x4"],
+        ["Aussage x2", "/projects/PAY/repos/pay-clearing#description/x2"],
+        ["Aussage x3", "/projects/PAY/repos/pay-clearing#description/x3"],
+      ]);
+      // A repository's statement is labelled as one, not a shared one.
+      expect(within(start).getAllByText("Erweiterung").length).toBe(3);
+      // Pitfalls, then this repository's problem areas, without its column.
+      const pitfalls = within(start)
+        .getByText(S.path.step(5, S.path.pitfalls))
+        .closest("section")!;
+      const pitfall = within(pitfalls).getByRole("link", {
+        name: "Aussage f1",
+      });
+      const area = await within(pitfalls).findByText("Clearing-Adapter");
+      expect(
+        pitfall.compareDocumentPosition(area) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(within(pitfalls).queryByText("Repository")).toBeNull();
+      // Next: the repository after this one in the project's list.
+      const next = within(start).getByRole("link", { name: /Weiter/ });
+      expect(next.getAttribute("href")).toBe("/projects/PAY/repos/pay-lib");
+      expect(next).toHaveTextContent("Teilt Code.");
+      // The rail: the path, the reference, the history.
+      const rail = screen.getByRole("navigation", { name: "Inhalt" });
+      for (const title of [S.path.label, S.tabs.reference, S.tabs.history])
+        expect(within(rail).getByText(title)).toBeInTheDocument();
+      expect(within(rail).queryByText("Problemzonen")).toBeNull();
+      // All four extensions: the reference tab, its chip pressed.
+      fireEvent.click(
+        within(change).getByRole("button", { name: /Alle 4 Erweiterungen/ }),
+      );
+      const reference = screen.getByRole("tabpanel", {
+        name: S.tabs.reference,
+      });
+      expect(
+        within(reference).getByRole("button", { name: /Wo ändere ich was/ }),
+      ).toHaveAttribute("aria-pressed", "true");
+      expect(
+        [...reference.querySelectorAll("article h4")].map((h) => h.textContent),
+      ).toEqual(["Aussage x1", "Aussage x2", "Aussage x3", "Aussage x4"]);
+      // The problem areas are the path's, not the reference's.
+      expect(within(reference).queryByText("Clearing-Adapter")).toBeNull();
     });
-    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
-    const drawing = await screen.findByRole("img", { name: "Aufbau" });
-    // The zones are titled from strings.ts, not by the model.
-    expect(drawing.textContent).toContain("Eingang");
-    expect(drawing.textContent).not.toContain("Entry");
-    // Its nodes are parts, not pages.
-    expect(within(drawing.parentElement!).queryByRole("link")).toBeNull();
-    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
-    const summary = within(desc).getByText(
-      "Das Projekt Payments nimmt Zahlungsaufträge an.",
-    );
-    expect(
-      drawing.compareDocumentPosition(summary) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // This repository's problem areas, from the project, without the
-    // repository column; under the summary.
-    const area = await within(desc).findByText("Clearing-Adapter");
-    expect(
-      summary.compareDocumentPosition(area) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(within(desc).queryByText("Repository")).toBeNull();
-    // The rail lists none of the project's repositories: its head is the
-    // project and one switch.
-    const rail = screen.getByRole("navigation", { name: "Inhalt" });
-    expect(within(rail).queryByText("pay-api")).toBeNull();
-    expect(within(rail).getByText("Aufbau")).toBeInTheDocument();
+
+    it("leaves out the steps it has nothing for, the last repository no next", async () => {
+      serve({
+        "projects/PAY/repos/pay-clearing": {
+          ...repo,
+          description: {
+            ...project.description!,
+            statements: [st("c1", "component")],
+          },
+        },
+        "projects/PAY": {
+          ...project,
+          problems: [],
+          repos: [
+            ...project.repos,
+            { ...project.repos[1]!, slug: "pay-clearing" },
+          ],
+        },
+      });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const start = await screen.findByRole("tabpanel", {
+        name: S.tabs.start,
+      });
+      // Wait for the project: the switch in the rail.
+      await screen.findAllByRole("link", { name: /Projekt PAY/ });
+      expect(
+        within(start)
+          .getAllByRole("heading", { level: 3 })
+          .map((h) => h.textContent),
+      ).toEqual([S.path.step(1, S.path.repoWhat)]);
+      expect(within(start).queryByText(S.path.next)).toBeNull();
+    });
+
+    it("says so without a description, the quiet line too", async () => {
+      serve({
+        "projects/PAY/repos/pay-clearing": repo,
+        "projects/PAY": listing,
+      });
+      render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+      const start = await screen.findByRole("tabpanel", {
+        name: S.tabs.start,
+      });
+      expect(start).toHaveTextContent(
+        `${S.project.noDescription} ${S.projects.firstDescription}`,
+      );
+      expect(
+        screen.getByRole("button", {
+          name: /^Stand: noch keine Beschreibung\W*250 Notizen/,
+        }),
+      ).toBeInTheDocument();
+      // The meta line names the project, no figures.
+      const metaLine = screen.getByRole("heading", { level: 2 })
+        .nextElementSibling!.textContent;
+      expect(metaLine).toBe("Projekt PAY");
+      // The history tab counts the notes.
+      expect(screen.getByRole("tab", { name: /Verlauf/ })).toHaveTextContent(
+        "250",
+      );
+    });
   });
 
   describe("rail head", () => {
@@ -2011,18 +2165,22 @@ describe("RepoPage", () => {
     expect(await screen.findByText(/^Kein Aufbau: /)).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "Aufbau" })).toBeNull();
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
-    expect(within(rail).getByText("Aufbau")).toBeInTheDocument();
+    expect(
+      within(rail).getByText(S.path.step(2, S.repo.map)),
+    ).toBeInTheDocument();
   });
 
   it("goes without the project's parts when the project fails", async () => {
     serve({ "projects/PAY/repos/pay-clearing": repo });
     render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
     expect(
-      await screen.findByRole("tabpanel", { name: "Beschreibung" }),
+      await screen.findByRole("tabpanel", { name: S.tabs.start }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "Aufbau" })).toBeNull();
     expect(screen.queryByText("Problemzonen")).toBeNull();
     expect(screen.queryByText("pay-api")).toBeNull();
+    // No project, no next repository.
+    expect(screen.queryByText(S.path.next)).toBeNull();
   });
 
   it("names the repository of a baseline source when it carries one", async () => {
@@ -2047,6 +2205,7 @@ describe("RepoPage", () => {
       },
     });
     render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    await openTab(/Nachschlagen/);
     expect(
       await screen.findByText("Basis pay-api 4e1f0c2"),
     ).toBeInTheDocument();
@@ -2821,21 +2980,21 @@ describe("DescriptionView areas", () => {
     expect(screen.getByText(S.rail.noHits)).toBeInTheDocument();
     // The rail counts what the kinds keep, as hits.
     expect(
-      descriptionRail(description, "", "description", [], [], rules).items.map(
-        (c) => [c.label, c.count, c.hit],
-      ),
+      descriptionRail(description, "", "description", rules).items.map((c) => [
+        c.label,
+        c.count,
+        c.hit,
+      ]),
     ).toEqual([
       [S.rail.summary, undefined, undefined],
       ["Abfrage", 1, true],
     ]);
     // The search's line counts what the chip keeps of the hits.
     expect(
-      descriptionRail(description, "Regel", "description", [], [], rules)
-        .hitLine,
+      descriptionRail(description, "Regel", "description", rules).hitLine,
     ).toBe("1 von 1 Eintrag · 1 Kapitel");
     expect(
-      descriptionRail(description, "Gradle", "description", [], [], rules)
-        .hitLine,
+      descriptionRail(description, "Gradle", "description", rules).hitLine,
     ).toBe(S.rail.noHits);
     // No description: the tail still stands.
     rerender(

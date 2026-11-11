@@ -103,16 +103,13 @@ export function shownStatements(
 
 /** descriptionRail is the rail's part of a description: the summary and
  *  each area with its count, the shown statements' count while a search
- *  or a chip (kinds) narrows them, and the search's line under it. lead
- *  is the sections before the summary (a map), extra the ones after it
- *  (problem areas, dependencies). An area left without a shown statement
- *  has no chapter to point at and is left out. */
+ *  or a chip (kinds) narrows them, and the search's line under it. An
+ *  area left without a shown statement has no chapter to point at and is
+ *  left out. */
 export function descriptionRail(
   description: Description | null,
   query: string,
   tab: string,
-  lead: RailItem[] = [],
-  extra: RailItem[] = [],
   kinds?: readonly Kind[],
 ): { items: RailItem[]; hitLine: string } {
   const statements = description?.statements ?? [];
@@ -121,9 +118,7 @@ export function descriptionRail(
   const shown = shownStatements(statements, query, kinds);
   const names = areaNames(statements);
   const items: RailItem[] = [
-    ...lead,
     { id: summaryId, label: S.rail.summary, tab },
-    ...extra,
     ...names.flatMap((area, i): RailItem[] => {
       const n = shown.filter((s) => areaOf(s) === area).length;
       return n === 0
@@ -161,9 +156,8 @@ export function descriptionRail(
  *  whose slug its chips leave out; without it the page is a project's.
  *  query keeps the statements it matches and sets the matches off; the
  *  summary stays, marked. kinds (a question chip) keeps those kinds
- *  alone, the search on top. lead comes first (a map), afterSummary
- *  under the summary (a repository's problem areas), tail after the
- *  chapters (the facts read from the code). tab is the tab the view
+ *  alone, the search on top. tail comes after the chapters (the facts
+ *  read from the code). tab is the tab the view
  *  stands on, for each statement's own address (anchorHash); target the
  *  statement the address names, set off; onTarget makes one the target,
  *  the page writing its address. */
@@ -173,8 +167,6 @@ export function DescriptionView({
   pageRepo,
   query = "",
   kinds,
-  lead,
-  afterSummary,
   tail,
   tab,
   target = "",
@@ -185,8 +177,6 @@ export function DescriptionView({
   pageRepo?: string;
   query?: string;
   kinds?: readonly Kind[];
-  lead?: ReactNode;
-  afterSummary?: ReactNode;
   tail?: ReactNode;
   tab?: string;
   target?: string;
@@ -195,14 +185,12 @@ export function DescriptionView({
   if (description === null) {
     return (
       <>
-        {lead}
         <section id={summaryId} className="scroll-mt-16">
           <div className={eyebrow}>{S.rail.summary}</div>
           <Empty>
             {S.project.noDescription} {emptyHint}
           </Empty>
         </section>
-        {afterSummary}
         {tail}
       </>
     );
@@ -213,12 +201,10 @@ export function DescriptionView({
   const narrowed = query.trim() !== "" || kinds !== undefined;
   return (
     <>
-      {lead}
       <section id={summaryId} className="scroll-mt-16">
         <div className={eyebrow}>{S.rail.summary}</div>
         <Summary text={description.summary} query={query} layout />
       </section>
-      {afterSummary}
       {all.length === 0 ? (
         <Empty>{S.areas.none}</Empty>
       ) : (

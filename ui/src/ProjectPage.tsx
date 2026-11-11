@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ProjectDetail, Repo, SharedRepo } from "./api";
-import {
-  DESCRIPTION,
-  DescriptionView,
-  descriptionRail,
-  summaryId,
-} from "./Description";
+import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import {
   AskChips,
+  EntryLead,
   EntryPath,
-  EntryStatement,
+  FactsTitle,
+  HISTORY,
   NextCard,
+  START,
   StandLine,
-  askKinds,
-  ofKinds,
-  pick,
-  type Ask,
+  kindStep,
+  pageTabs,
+  tabLabels,
+  useAsk,
+  useTabMoves,
   type Step,
 } from "./Entry";
 import { CompactMap } from "./CompactMap";
@@ -24,7 +23,7 @@ import { fits, type FlowIR } from "./diagramIR";
 import { ProjectInterfaces } from "./Interfaces";
 import { ProjectMessages } from "./Messaging";
 import { NotesTable } from "./NotesTable";
-import { Problems } from "./Problems";
+import { ProblemsSection } from "./Problems";
 import { RepoPage } from "./RepoPage";
 import { Revisions } from "./Revisions";
 import { StaleHint } from "./StaleHint";
@@ -32,14 +31,13 @@ import {
   Rail,
   RailPage,
   Tabs,
-  anchorHash,
   stickyCrumbs,
   useHashTab,
   useJumpTo,
   type RailGroup,
   type RailItem,
 } from "./Rail";
-import { day, leadOf, refName } from "./format";
+import { day, refName } from "./format";
 import { projectExportHref, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
@@ -52,7 +50,6 @@ import {
   Link,
   Sep,
   Skeleton,
-  Summary,
   column,
   eyebrow,
   h2,
@@ -71,18 +68,6 @@ import {
   teaserLines,
 } from "./ui";
 
-/** The project page's tabs by their hash: the start tab first, a reading
- *  path; the reference second (DESCRIPTION, the hash statement links
- *  carry); the history third. */
-const START = "start";
-const HISTORY = "history";
-const TABS = [START, DESCRIPTION, HISTORY];
-const tabLabels: Record<string, string> = {
-  [START]: S.tabs.start,
-  [DESCRIPTION]: S.tabs.reference,
-  [HISTORY]: S.tabs.history,
-};
-
 /** The sections' ids, the rail's anchors: the path's steps, the facts
  *  on the reference tab, the history's tables. */
 const ids = {
@@ -97,9 +82,6 @@ const ids = {
   notes: "notes",
   revisions: "revisions",
 };
-
-/** perStep is how many statements a step of the path shows. */
-const perStep = 3;
 
 export function ProjectPage({ projectKey }: { projectKey: string }) {
   const { data, failed } = useFetch<ProjectDetail>(
@@ -138,42 +120,15 @@ function ProjectCrumbs({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const { tab, setTab, target, setTarget, landing } = useHashTab(TABS, START);
+  const { tab, setTab, target, setTarget, landing } = useHashTab(
+    pageTabs,
+    START,
+  );
   const [query, setQuery] = useState("");
   const statements = data.description?.statements ?? [];
-  // The question chip pressed on the reference tab, page state alone: a
-  // tab switch by the tab bar lets it go, a path's "Alle n" presses one.
-  const [pressed, setAsk] = useState<Ask>("all");
-  // A chip whose kinds a reload left without a statement shows no chip
-  // to let go of: it reads as all.
-  const ask =
-    pressed !== "all" &&
-    statements.some((s) => askKinds[pressed].includes(s.kind))
-      ? pressed
-      : "all";
-  // A statement an address followed lands on that the chip hides: the
-  // chip lets go and the jump goes there again. Heard on the address
-  // itself, not on landing: the same link followed again names the same
-  // target, which landing would not see change.
-  const [rejump, setRejump] = useState(0);
-  useEffect(() => {
-    if (ask === "all") return;
-    const onAddress = () => {
-      const [t, id] = window.location.hash.slice(1).split("/");
-      if (t !== DESCRIPTION || !id) return;
-      const s = data.description?.statements.find((x) => x.id === id);
-      if (!s || askKinds[ask].includes(s.kind)) return;
-      setAsk("all");
-      setRejump((n) => n + 1);
-    };
-    window.addEventListener("popstate", onAddress);
-    window.addEventListener("hashchange", onAddress);
-    return () => {
-      window.removeEventListener("popstate", onAddress);
-      window.removeEventListener("hashchange", onAddress);
-    };
-  }, [ask, data.description]);
-  const kinds = ask === "all" ? undefined : askKinds[ask];
+  // The question chip pressed on the reference tab: a tab switch by the
+  // tab bar lets it go, a path's "Alle n" presses one.
+  const { ask, setAsk, kinds, rejump } = useAsk(data.description);
   useJumpTo(landing, tab === DESCRIPTION && data.description !== null, rejump);
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
@@ -189,23 +144,7 @@ function Body({ data }: { data: ProjectDetail }) {
   const showMap =
     data.map !== null || (data.map_expected && !data.map_declined);
 
-  // A new tab starts at its top, not where the last one was left; a
-  // switch by the tab bar lets the question chip go. The tab open already
-  // goes to its top and keeps its chip: no switch.
-  function openTab(t: string) {
-    if (t !== tab) {
-      setTab(t);
-      setAsk("all");
-    }
-    if (scroller.current) scroller.current.scrollTop = 0;
-  }
-
-  // A path's "Alle n": the reference tab, at its top, the chip pressed.
-  function openAsk(a: Ask) {
-    setAsk(a);
-    setTab(DESCRIPTION);
-    if (scroller.current) scroller.current.scrollTop = 0;
-  }
+  const { openTab, openAsk } = useTabMoves({ tab, setTab, setAsk, scroller });
 
   // A search is over the description: typing elsewhere goes there.
   function onQuery(q: string) {
@@ -223,14 +162,7 @@ function Body({ data }: { data: ProjectDetail }) {
     () => entrySteps(data, showMap, teasers),
     [data, showMap, teasers],
   );
-  const desc = descriptionRail(
-    data.description,
-    query,
-    DESCRIPTION,
-    [],
-    [],
-    kinds,
-  );
+  const desc = descriptionRail(data.description, query, DESCRIPTION, kinds);
   const facts: RailItem[] = [
     ...(data.interfaces.length > 0
       ? [
@@ -395,38 +327,20 @@ function entrySteps(
   teasers: Map<string, string[]>,
 ): Step[] {
   const statements = data.description?.statements ?? [];
-  const at = (id: string) =>
-    projectPath(data.key) + anchorHash(DESCRIPTION, id);
-  const shown = (picked: typeof statements) =>
-    picked.map((s) => (
-      <EntryStatement key={s.id} statement={s} to={at(s.id)} project />
-    ));
+  const page = projectPath(data.key);
   const steps: Step[] = [];
 
-  const d = data.description;
-  const lead = d === null ? "" : leadOf(d.summary);
   steps.push({
     id: ids.what,
     title:
       data.shape === "collection" ? S.path.collectionWhat : S.path.projectWhat,
-    body:
-      d === null ? (
-        <Empty>
-          {S.project.noDescription} {S.project.noDescriptionHint}
-        </Empty>
-      ) : (
-        <>
-          <Summary text={lead} layout heading="h4" />
-          {lead !== d.summary && (
-            <Link
-              to={at(summaryId)}
-              className="mt-2 inline-block text-[14px] text-accent-strong hover:text-ink"
-            >
-              {S.path.wholeSummary} <span aria-hidden>→</span>
-            </Link>
-          )}
-        </>
-      ),
+    body: (
+      <EntryLead
+        description={data.description}
+        page={page}
+        empty={S.project.noDescriptionHint}
+      />
+    ),
   });
 
   if (showMap)
@@ -453,45 +367,32 @@ function entrySteps(
     body: <RepoTable data={data} teasers={teasers} />,
   });
 
-  const guards = ofKinds(statements, askKinds.guard);
-  if (guards.length > 0)
+  const guards = kindStep(statements, "guard", page, true, S.path.allGuards);
+  if (guards.total > 0)
     steps.push({
       id: ids.guard,
       title: S.path.guard,
-      body: shown(pick(statements, askKinds.guard, perStep)),
-      more:
-        guards.length > perStep
-          ? { label: S.path.allGuards(guards.length), ask: "guard" }
-          : undefined,
+      body: guards.body,
+      more: guards.more,
     });
 
-  const pitfalls = ofKinds(statements, askKinds.hurt);
-  if (data.problems.length > 0 || pitfalls.length > 0)
+  // The problem areas first, then the pitfalls under them.
+  const hurt = kindStep(statements, "hurt", page, true, S.path.allPitfalls);
+  if (data.problems.length > 0 || hurt.total > 0)
     steps.push({
       id: ids.hurt,
       title: S.path.hurt,
       body: (
         <>
-          {data.problems.length > 0 && (
-            <>
-              <div className={eyebrow + " mt-0"}>
-                {S.project.problems}
-                <span className="ml-2 font-normal tracking-normal normal-case text-faint">
-                  {S.project.problemsWindow(data.problem_window_days)}
-                </span>
-              </div>
-              <Problems problems={data.problems} />
-            </>
-          )}
-          <div className="mt-3">
-            {shown(pick(statements, askKinds.hurt, perStep))}
-          </div>
+          <ProblemsSection
+            problems={data.problems}
+            windowDays={data.problem_window_days}
+            first
+          />
+          <div className="mt-3">{hurt.body}</div>
         </>
       ),
-      more:
-        pitfalls.length > perStep
-          ? { label: S.path.allPitfalls(pitfalls.length), ask: "hurt" }
-          : undefined,
+      more: hurt.more,
     });
   return steps;
 }
@@ -577,7 +478,7 @@ function Facts({ data }: { data: ProjectDetail }) {
   if (data.interfaces.length === 0 && data.topics.length === 0) return null;
   return (
     <>
-      <div className={eyebrow + " mt-10"}>{S.facts.title}</div>
+      <FactsTitle />
       {data.interfaces.length > 0 && (
         <section id={ids.interfaces} className="scroll-mt-16">
           <div className={eyebrow}>{S.ifc.title}</div>

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint, Interface, RepoDetail } from "./api";
 import { ProjectInterfaces } from "./Interfaces";
@@ -90,7 +90,8 @@ describe("RepoPage interfaces", () => {
   it("lists what its code offers, then what it only declares, each operation, and points the rail at them", async () => {
     serve({ "projects/shop/repos/orders": repo });
     render(<RepoPage projectKey="shop" slug="orders" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
+    const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
     const blocks = within(desc).getAllByTestId("interface");
     expect(blocks.map((b) => b.querySelector("summary")!.textContent)).toEqual([
       expect.stringContaining("Orders API"),
@@ -116,7 +117,7 @@ describe("RepoPage interfaces", () => {
   it("has no section for a repository without interfaces", async () => {
     serve({ "projects/shop/repos/orders": { ...repo, interfaces: [] } });
     render(<RepoPage projectKey="shop" slug="orders" />);
-    await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
     expect(screen.queryByText("Schnittstellen")).toBeNull();
   });
 });

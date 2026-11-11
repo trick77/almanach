@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Parts, RepoDetail } from "./api";
 import { partLabel, partsGraph, reduced } from "./Parts";
@@ -145,7 +145,8 @@ describe("RepoPage parts", () => {
   it("lists every part with what it uses and what uses it", async () => {
     serve({ "projects/tools/repos/mono": repo });
     render(<RepoPage projectKey="tools" slug="mono" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
+    const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
     // The part's own row: its name in the first cell.
     const row = within(desc)
       .getAllByRole("row")
@@ -168,7 +169,7 @@ describe("RepoPage parts", () => {
       },
     });
     render(<RepoPage projectKey="tools" slug="mono" />);
-    await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
     expect(screen.queryByText("Innere Abhängigkeiten")).toBeNull();
   });
 });

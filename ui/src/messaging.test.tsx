@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RepoDetail, RepoTopic, TopicFlow } from "./api";
 import { flowGraph, topicGraph } from "./Messaging";
@@ -135,7 +135,8 @@ describe("RepoPage messages", () => {
   it("lists its topics with the far side, its schemas, and points the rail at them", async () => {
     serve({ "projects/shop/repos/orders": repo });
     render(<RepoPage projectKey="shop" slug="orders" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
+    const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
     const sent = within(desc).getByText("order.placed").closest("tr")!;
     expect(within(sent).getByText("Producer")).toBeInTheDocument();
     expect(
@@ -169,7 +170,8 @@ describe("RepoPage messages", () => {
       },
     });
     render(<RepoPage projectKey="shop" slug="orders" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
+    const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
     expect(
       within(desc).getByText("Keine unter den Quellen"),
     ).toBeInTheDocument();
@@ -183,7 +185,7 @@ describe("RepoPage messages", () => {
       },
     });
     render(<RepoPage projectKey="shop" slug="orders" />);
-    await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
     expect(screen.queryByText("Messaging")).toBeNull();
   });
 });
