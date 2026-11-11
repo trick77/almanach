@@ -182,15 +182,14 @@ function Tiles({ projects }: { projects: Project[] }) {
 /** ProjectRow is a project that is no system, compact: its key, its
  *  teaser on one line, its form and size on the right. A project of one
  *  says neither (every such row would repeat "ein Repository"), only its
- *  repository's slug, and that only where it differs from the key. */
+ *  repository's slug, and that only where it is no spelling of the key
+ *  (MY_APP, my-app). */
 function ProjectRow({ p }: { p: Project }) {
   const teaser = teaserLines(p.summary);
-  const kind = p.repo ? "" : kindOf(p);
-  const size = p.repo
-    ? p.repo.slug.toLowerCase() !== p.key.toLowerCase() && (
-        <span className="font-mono text-[12.5px]">{p.repo.slug}</span>
-      )
-    : S.projects.repos(p.repos);
+  const plain = (s: string) => s.toLowerCase().replace(/[-_]/g, "");
+  const slug =
+    p.repo && plain(p.repo.slug) !== plain(p.key) ? p.repo.slug : null;
+  const kind = p.shape ? S.project.shape[p.shape] : "";
   return (
     <Link
       to={projectPath(p.key)}
@@ -208,21 +207,21 @@ function ProjectRow({ p }: { p: Project }) {
           <span className="text-faint">{S.projects.noDescription}</span>
         )}
       </span>
-      {size && (
-        // A capital for the form's lowercase word only, never a slug's.
-        <span
-          className={
-            "ml-auto text-[13px] whitespace-nowrap text-muted" +
-            (kind !== "" ? " first-letter:uppercase" : "")
-          }
-        >
+      {p.repo ? (
+        slug !== null && (
+          <span className="ml-auto font-mono text-[12.5px] whitespace-nowrap text-muted">
+            {slug}
+          </span>
+        )
+      ) : (
+        <span className="ml-auto text-[13px] whitespace-nowrap text-muted">
           {kind !== "" && (
             <>
               {kind}
               <Sep />
             </>
           )}
-          {size}
+          {S.projects.repos(p.repos)}
         </span>
       )}
     </Link>

@@ -417,10 +417,19 @@ describe("ProjectsPage", () => {
   };
 
   it("puts the systems first, the rest compact under them", async () => {
-    // A project of one whose repository has its key, but for the case.
+    // Projects of one whose repository is a spelling of the key: other case,
+    // other separator.
     const tools = home.projects[2]!;
-    const cli = { ...tools, key: "CLI", repo: { ...tools.repo!, slug: "cli" } };
-    serve({ projects: { projects: [...home.projects, cli] } });
+    const of = (key: string, slug: string) => ({
+      ...tools,
+      key,
+      repo: { ...tools.repo!, slug },
+    });
+    serve({
+      projects: {
+        projects: [...home.projects, of("CLI", "cli"), of("MY_APP", "my-app")],
+      },
+    });
     render(<ProjectsPage />);
     const systems = (await screen.findByText(S.projects.systems)).closest(
       "section",
@@ -443,19 +452,12 @@ describe("ProjectsPage", () => {
     // repeat of the key.
     expect(row("CORE")).toHaveTextContent("Sammlung·6 Repositories");
     expect(row("CORE").getAttribute("href")).toBe("/projects/CORE");
-    expect(row("TOOLS")).toHaveTextContent(/tools-cli$/);
-    expect(row("TOOLS").textContent).not.toContain(S.projects.oneRepo);
-    // A slug keeps its case: no capital for it.
-    expect(
-      within(row("TOOLS")).getByText("tools-cli").parentElement,
-    ).not.toHaveClass("first-letter:uppercase");
-    expect(
-      within(row("CORE"))
-        .getByText(/Sammlung/)
-        .closest("span"),
-    ).toHaveClass("first-letter:uppercase");
-    expect(row("CLI").textContent).not.toContain(S.projects.oneRepo);
-    expect(within(row("CLI")).queryByText("cli")).toBeNull();
+    expect(row("TOOLS").textContent).toBe("TOOLSEin CLI.tools-cli");
+    expect(within(row("TOOLS")).getByText("tools-cli")).not.toHaveClass(
+      "first-letter:uppercase",
+    );
+    expect(row("CLI").textContent).toBe("CLIEin CLI.");
+    expect(row("MY_APP").textContent).toBe("MY_APPEin CLI.");
     expect(row("MOB")).toHaveTextContent("1 Repository");
     expect(row("MOB").textContent).not.toMatch(/Sammlung|System/);
     // A row's teaser on one line.
