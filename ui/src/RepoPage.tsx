@@ -1,13 +1,29 @@
-import { useEffect, useRef, useState } from "react";
-import type { DependencyEnd, ProjectDetail, RepoDetail } from "./api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { DependencyEnd, Problem, ProjectDetail, RepoDetail } from "./api";
 import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
+import {
+  AskChips,
+  EntryLead,
+  EntryPath,
+  FactsTitle,
+  HISTORY,
+  NextCard,
+  START,
+  StandLine,
+  kindStep,
+  pageTabs,
+  tabLabels,
+  useAsk,
+  useTabMoves,
+  type Step,
+} from "./Entry";
 import { Diagram, titledZones } from "./Diagram";
 import type { FlowIR } from "./diagramIR";
 import { RepoInterfaces } from "./Interfaces";
 import { RepoMessages } from "./Messaging";
 import { NotesTable } from "./NotesTable";
 import { RepoParts } from "./Parts";
-import { Problems } from "./Problems";
+import { ProblemsSection } from "./Problems";
 import { Revisions } from "./Revisions";
 import {
   Rail,
@@ -21,7 +37,7 @@ import {
 } from "./Rail";
 import { RepoSwitcher } from "./RepoSwitcher";
 import { StaleHint } from "./StaleHint";
-import { day, refName } from "./format";
+import { refName } from "./format";
 import {
   projectExportHref,
   projectPath,
@@ -37,7 +53,6 @@ import {
   ExportLine,
   Failed,
   Link,
-  Sep,
   Skeleton,
   column,
   eyebrow,
@@ -49,20 +64,21 @@ import {
   tableBox,
   td,
   th,
+  teaserLines,
 } from "./ui";
 
-/** The repository page's tabs by their hash: the page is a leaf, its
- *  content first; notes and revisions are where it came from. */
-const HISTORY = "history";
-const TABS = [DESCRIPTION, HISTORY];
-
+/** The sections' ids, the rail's anchors: the path's steps, the facts on
+ *  the reference tab, the history's lists. */
 const ids = {
+  what: "what",
   map: "structure",
+  guard: "guard",
+  change: "change",
+  pitfalls: "pitfalls",
   deps: "dependencies",
   parts: "parts",
   interfaces: "interfaces",
   messages: "messages",
-  problems: "problems",
   notes: "notes",
   revisions: "revisions",
 };
@@ -133,8 +149,8 @@ function RepoCrumbs({
 function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const scroller = useRef<HTMLDivElement>(null);
   const { tab, setTab, target, setTarget, landing } = useHashTab(
-    TABS,
-    DESCRIPTION,
+    pageTabs,
+    START,
   );
   const [query, setQuery] = useState("");
   // The project, for its other repositories and this one's problem areas:
@@ -142,25 +158,34 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const { data: project } = useFetch<ProjectDetail>(
     `projects/${encodeURIComponent(data.project_key)}`,
   );
-  useJumpTo(landing, tab === DESCRIPTION && data.description !== null);
-  const problems = (project?.problems ?? []).filter(
-    (p) => p.repo_slug === data.slug,
+  // The question chip pressed on the reference tab: a tab switch by the
+  // tab bar lets it go, a path's "Alle n" presses one.
+  const { ask, setAsk, kinds, rejump } = useAsk(data.description);
+  useJumpTo(landing, tab === DESCRIPTION && data.description !== null, rejump);
+  const problems = useMemo(
+    () => (project?.problems ?? []).filter((p) => p.repo_slug === data.slug),
+    [project, data.slug],
   );
   // A project of one: its page is this one, at the project's path.
   // Known at once when the project page renders this one; else when the
   // project detail lands.
   const single = given || (project?.single ?? false);
   useCanonical(single ? projectPath(data.project_key) : null);
-  const lastMerge = data.last_merge;
   const current = data.description?.revision ?? 0;
+  const pagePath = single
+    ? projectPath(data.project_key)
+    : repoPath(data.project_key, data.slug);
+  // The next repository in the project's order; none after the last, none
+  // for a project of one.
+  const at = project?.repos.findIndex((r) => r.slug === data.slug) ?? -1;
+  const next = !single && at >= 0 ? project?.repos[at + 1] : undefined;
+  const nextTeaser = useMemo(
+    () => (next ? teaserLines(next.summary) : []),
+    [next],
+  );
+  const { openTab, openAsk } = useTabMoves({ tab, setTab, setAsk, scroller });
 
-  // A new tab starts at its top, not where the last one was left.
-  function openTab(t: string) {
-    setTab(t);
-    if (scroller.current) scroller.current.scrollTop = 0;
-  }
-
-  // A search is over the description: typing in the history goes there.
+  // A search is over the description: typing elsewhere goes there.
   function onQuery(q: string) {
     setQuery(q);
     if (q.trim() !== "" && tab !== DESCRIPTION) openTab(DESCRIPTION);
@@ -174,22 +199,21 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
   const showMsgs = msgs.topics.length + msgs.schemas.length > 0;
   const apis = data.interfaces;
   const offered = apis.filter((a) => a.direction === "offers").length;
-  const lead: RailItem[] = showMap
-    ? [{ id: ids.map, label: S.repo.map, tab: DESCRIPTION }]
-    : [];
-  // Under the summary, overview before detail: where it broke, then what
-  // it is tied to.
-  const extra: RailItem[] = [
-    ...(problems.length > 0
-      ? [
-          {
-            id: ids.problems,
-            label: S.project.problems,
-            tab: DESCRIPTION,
-            count: problems.length,
-          },
-        ]
-      : []),
+  // Not on every keystroke of a search: the path is the data's alone.
+  const steps = useMemo(
+    () =>
+      entrySteps(
+        data,
+        pagePath,
+        showMap,
+        problems,
+        project?.problem_window_days ?? 0,
+      ),
+    [data, pagePath, showMap, problems, project?.problem_window_days],
+  );
+  // The facts read from the code, after the description: what it is tied
+  // to, then what it offers and sends.
+  const facts: RailItem[] = [
     ...(showDeps
       ? [
           {
@@ -231,15 +255,17 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
         ]
       : []),
   ];
-  const desc = descriptionRail(
-    data.description,
-    query,
-    DESCRIPTION,
-    lead,
-    extra,
-  );
+  const desc = descriptionRail(data.description, query, DESCRIPTION, kinds);
   const groups: RailGroup[] = [
-    { title: S.tabs.description, items: desc.items },
+    {
+      title: S.path.label,
+      items: steps.map((s, i) => ({
+        id: s.id,
+        label: S.path.step(i + 1, s.title),
+        tab: START,
+      })),
+    },
+    { title: S.tabs.reference, items: [...desc.items, ...facts] },
     {
       title: S.tabs.history,
       items: [
@@ -307,20 +333,12 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             </Link>
           </>
         )}
-        <Sep />
-        {S.projects.notes(data.notes_total)}
-        <Sep />
-        {data.description
-          ? S.project.descriptionRevision(data.description.revision)
-          : S.projects.noDescription}
-        <Sep />
-        {S.projects.lastMerge}{" "}
-        {lastMerge === null ? S.common.never : day(lastMerge)}
       </p>
-      <StaleHint
-        stale={data.stale}
-        scope="repo"
-        projectKey={data.project_key}
+      <StandLine
+        revision={data.description?.revision ?? null}
+        notes={data.notes_total}
+        lastMerge={data.last_merge}
+        onHistory={() => openTab(HISTORY)}
       />
       <ExportLine
         href={
@@ -329,12 +347,18 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
             : repoExportHref(data.project_key, data.slug)
         }
       />
+      <StaleHint
+        stale={data.stale}
+        scope="repo"
+        projectKey={data.project_key}
+      />
 
       <Tabs
         tabs={[
+          { id: START, label: S.tabs.start },
           {
             id: DESCRIPTION,
-            label: S.tabs.description,
+            label: S.tabs.reference,
             count: data.description?.statements.length,
           },
           { id: HISTORY, label: S.tabs.history, count: data.notes_total },
@@ -343,82 +367,168 @@ function Body({ data, single: given }: { data: RepoDetail; single: boolean }) {
         onChange={openTab}
       />
 
-      <div
-        role="tabpanel"
-        aria-label={tab === DESCRIPTION ? S.tabs.description : S.tabs.history}
-      >
-        {tab === DESCRIPTION ? (
-          <DescriptionView
-            description={data.description}
-            emptyHint={S.projects.firstDescription}
-            pageRepo={data.slug}
-            query={query}
-            tab={DESCRIPTION}
-            target={target}
-            onTarget={setTarget}
-            lead={
-              showMap && (
-                <section id={ids.map} className="scroll-mt-16">
-                  <div className={eyebrow}>{S.repo.map}</div>
-                  {data.map === null ? (
-                    <Empty>{S.repo.mapDeclined}</Empty>
-                  ) : (
-                    <RepoMap map={data.map} />
-                  )}
-                </section>
-              )
-            }
-            afterSummary={
-              <>
-                {problems.length > 0 && (
-                  <section id={ids.problems} className="scroll-mt-16">
-                    <div className={eyebrow}>
-                      {S.project.problems}
-                      <span className="ml-2 font-normal tracking-normal normal-case text-faint">
-                        {S.project.problemsWindow(
-                          project?.problem_window_days ?? 0,
-                        )}
-                      </span>
-                    </div>
-                    <Problems problems={problems} repoColumn={false} />
-                  </section>
-                )}
-                {showDeps && (
-                  <section id={ids.deps} className="scroll-mt-16">
-                    <div className={eyebrow}>{S.deps.title}</div>
-                    <Dependencies data={data} />
-                  </section>
-                )}
-                {showParts && (
-                  <section id={ids.parts} className="scroll-mt-16">
-                    <div className={eyebrow}>{S.parts.title}</div>
-                    <RepoParts parts={data.parts} />
-                  </section>
-                )}
-                {apis.length > 0 && (
-                  <section id={ids.interfaces} className="scroll-mt-16">
-                    <div className={eyebrow}>{S.ifc.title}</div>
-                    <RepoInterfaces apis={apis} />
-                  </section>
-                )}
-                {showMsgs && (
-                  <section id={ids.messages} className="scroll-mt-16">
-                    <div className={eyebrow}>{S.msg.title}</div>
-                    <RepoMessages
-                      self={{ project: data.project_key, slug: data.slug }}
-                      data={msgs}
-                    />
-                  </section>
-                )}
-              </>
-            }
-          />
-        ) : (
-          <History data={data} current={current} />
+      <div role="tabpanel" aria-label={tabLabels[tab]}>
+        {tab === START && (
+          <>
+            <EntryPath steps={steps} onAsk={openAsk} />
+            {next && project && (
+              <NextCard
+                to={repoPath(project.key, next.slug)}
+                slug={next.slug}
+                teaser={nextTeaser}
+              />
+            )}
+          </>
         )}
+        {tab === DESCRIPTION && (
+          <>
+            <AskChips
+              statements={data.description?.statements ?? []}
+              value={ask}
+              onChange={setAsk}
+            />
+            <DescriptionView
+              description={data.description}
+              emptyHint={S.projects.firstDescription}
+              pageRepo={data.slug}
+              query={query}
+              kinds={kinds}
+              tab={DESCRIPTION}
+              target={target}
+              onTarget={setTarget}
+              tail={<RepoFacts data={data} />}
+            />
+          </>
+        )}
+        {tab === HISTORY && <History data={data} current={current} />}
       </div>
     </RailPage>
   );
+}
+
+/** RepoFacts is what the code tells of the repository, after its
+ *  description on the reference tab: what it is tied to, its parts, what
+ *  it offers and sends; not there without any. */
+function RepoFacts({ data }: { data: RepoDetail }) {
+  const showDeps = data.uses.length + data.used_by.length > 0;
+  const showParts = data.parts.edges.length > 0;
+  const msgs = data.messaging;
+  const showMsgs = msgs.topics.length + msgs.schemas.length > 0;
+  const apis = data.interfaces;
+  if (!showDeps && !showParts && apis.length === 0 && !showMsgs) return null;
+  return (
+    <>
+      <FactsTitle />
+      {showDeps && (
+        <section id={ids.deps} className="scroll-mt-16">
+          <div className={eyebrow}>{S.deps.title}</div>
+          <Dependencies data={data} />
+        </section>
+      )}
+      {showParts && (
+        <section id={ids.parts} className="scroll-mt-16">
+          <div className={eyebrow}>{S.parts.title}</div>
+          <RepoParts parts={data.parts} />
+        </section>
+      )}
+      {apis.length > 0 && (
+        <section id={ids.interfaces} className="scroll-mt-16">
+          <div className={eyebrow}>{S.ifc.title}</div>
+          <RepoInterfaces apis={apis} />
+        </section>
+      )}
+      {showMsgs && (
+        <section id={ids.messages} className="scroll-mt-16">
+          <div className={eyebrow}>{S.msg.title}</div>
+          <RepoMessages
+            self={{ project: data.project_key, slug: data.slug }}
+            data={msgs}
+          />
+        </section>
+      )}
+    </>
+  );
+}
+
+/** entrySteps is the repository's reading path, each step there only
+ *  when it has something to show: what it is for, how it is built, what
+ *  must not break, where to change what, its pitfalls with its problem
+ *  areas; a step with more of its kind than it shows names the question
+ *  that shows them all. page is the page's path, a statement's link's. */
+function entrySteps(
+  data: RepoDetail,
+  page: string,
+  showMap: boolean,
+  problems: Problem[],
+  windowDays: number,
+): Step[] {
+  const statements = data.description?.statements ?? [];
+  const steps: Step[] = [
+    {
+      id: ids.what,
+      title: S.path.repoWhat,
+      body: (
+        <EntryLead
+          description={data.description}
+          page={page}
+          empty={S.projects.firstDescription}
+        />
+      ),
+    },
+  ];
+  if (showMap)
+    steps.push({
+      id: ids.map,
+      title: S.repo.map,
+      body:
+        data.map === null ? (
+          <Empty>{S.repo.mapDeclined}</Empty>
+        ) : (
+          <RepoMap map={data.map} />
+        ),
+    });
+  const guards = kindStep(statements, "guard", page, false, S.path.allGuards);
+  if (guards.total > 0)
+    steps.push({
+      id: ids.guard,
+      title: S.path.guard,
+      body: guards.body,
+      more: guards.more,
+    });
+  const change = kindStep(
+    statements,
+    "where",
+    page,
+    false,
+    S.path.allExtensions,
+  );
+  if (change.total > 0)
+    steps.push({
+      id: ids.change,
+      title: S.path.change,
+      body: change.body,
+      more: change.more,
+    });
+  // The pitfalls first, then the problem areas under them.
+  const hurt = kindStep(statements, "hurt", page, false, S.path.allPitfalls);
+  if (hurt.total > 0 || problems.length > 0)
+    steps.push({
+      id: ids.pitfalls,
+      title: S.path.pitfalls,
+      body: (
+        <>
+          {hurt.body}
+          <ProblemsSection
+            problems={problems}
+            windowDays={windowDays}
+            repoColumn={false}
+            first={hurt.total === 0}
+          />
+        </>
+      ),
+      more: hurt.more,
+    });
+  return steps;
 }
 
 /** Dependencies is what the repository uses, with who else uses each, and

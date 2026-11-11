@@ -11,6 +11,7 @@ import {
   askKinds,
   pick,
 } from "./Entry";
+import { ProblemsSection } from "./Problems";
 import { S } from "./strings";
 
 /** st is a statement of a kind with n sources. */
@@ -210,5 +211,46 @@ describe("EntryMore, NextCard, StandLine", () => {
     expect(screen.getByRole("button")).toHaveTextContent(
       "Stand: noch keine Beschreibung·1 Notiz·letzter Merge nie·Verlauf",
     );
+  });
+});
+
+describe("ProblemsSection", () => {
+  const problem = {
+    repo_slug: "pay-api",
+    area: "internal/orders",
+    component: "Aufträge",
+    bugfixes: 3,
+    top_cause: "logic",
+    top_cause_count: 2,
+    issues_posted: 1,
+    suggestions_posted: 0,
+    last_fix_pr_key: "PAY/pay-api#7",
+    last_fix_at: "2026-11-09T10:00:00Z",
+  };
+
+  it("is nothing without problem areas", () => {
+    const { container } = render(
+      <ProblemsSection problems={[]} windowDays={90} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("titles them with their window, right under a step's title when first", () => {
+    const { rerender } = render(
+      <ProblemsSection problems={[problem]} windowDays={90} first />,
+    );
+    const title = screen.getByText(S.project.problems);
+    expect(title).toHaveTextContent(S.project.problemsWindow(90));
+    expect(title.className).toContain("mt-0");
+    expect(title.className).not.toContain("mt-7");
+    rerender(
+      <ProblemsSection
+        problems={[problem]}
+        windowDays={90}
+        repoColumn={false}
+      />,
+    );
+    expect(screen.getByText(S.project.problems).className).toContain("mt-5");
+    expect(screen.queryByText("pay-api")).toBeNull();
   });
 });

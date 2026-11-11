@@ -6,6 +6,7 @@ import {
   Chip,
   Empty,
   Pill,
+  eyebrow,
   mono,
   table,
   tableBox,
@@ -15,6 +16,34 @@ import {
   th,
   thNum,
 } from "./ui";
+
+/** ProblemsSection is the problem areas under their title and window, as
+ *  a reading path's step shows them; nothing without one. first: it
+ *  stands right under the step's title, no gap above. */
+export function ProblemsSection({
+  problems,
+  windowDays,
+  repoColumn = true,
+  first = false,
+}: {
+  problems: Problem[];
+  windowDays: number;
+  repoColumn?: boolean;
+  first?: boolean;
+}) {
+  if (problems.length === 0) return null;
+  return (
+    <>
+      <div className={eyebrow.replace("mt-7", first ? "mt-0" : "mt-5")}>
+        {S.project.problems}
+        <span className="ml-2 font-normal tracking-normal normal-case text-faint">
+          {S.project.problemsWindow(windowDays)}
+        </span>
+      </div>
+      <Problems problems={problems} repoColumn={repoColumn} />
+    </>
+  );
+}
 
 /** Problems is the problem areas, bugfixes per shared directory: the
  *  project page's for every repository, a repository page's for its own,

@@ -208,8 +208,12 @@ export const S = {
     repos: "Die Repositories",
     guard: "Was nicht brechen darf",
     hurt: "Wo es bisher wehtat",
+    repoWhat: "Wofür es da ist",
+    change: "Wo ändere ich was",
+    pitfalls: "Fallstricke",
     wholeSummary: "Ganzer Überblick",
     allGuards: (n: number) => `Alle ${n} Invarianten und Regeln`,
+    allExtensions: (n: number) => `Alle ${n} Erweiterungen`,
     allPitfalls: (n: number) => `Alle ${n} Fallstricke`,
     next: "Weiter",
     readEntry: "Einstieg lesen",
@@ -370,9 +374,6 @@ export const S = {
     label: "Ansicht",
     start: "Einstieg",
     reference: "Nachschlagen",
-    // TRANSITIONAL(reference tab): Remove when the repository page's
-    // description tab reads Nachschlagen too.
-    description: "Beschreibung",
     history: "Verlauf",
   },
   rail: {

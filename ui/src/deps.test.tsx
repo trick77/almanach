@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dependencies, RepoDetail } from "./api";
 import {
@@ -243,7 +243,8 @@ describe("RepoPage dependencies", () => {
   it("lists what it uses, who else does, and who uses it, in the column", async () => {
     serve({ "projects/tools/repos/rongo": repo });
     render(<RepoPage projectKey="tools" slug="rongo" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
+    const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
     const link = within(desc).getByRole("link", { name: "llmwire" });
     expect(link.getAttribute("href")).toBe("/projects/tools/repos/llmwire");
     const row = link.closest("tr")!;
@@ -264,7 +265,7 @@ describe("RepoPage dependencies", () => {
       "projects/tools/repos/rongo": { ...repo, uses: [], used_by: [] },
     });
     render(<RepoPage projectKey="tools" slug="rongo" />);
-    await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
     expect(screen.queryByText("Abhängigkeiten")).toBeNull();
   });
 });

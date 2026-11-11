@@ -1,19 +1,109 @@
 // The start tab's reading path and the reference tab's question chips:
 // built from the page's own data by code, never by a model call.
-import type { ReactNode } from "react";
-import type { Kind, Statement } from "./api";
-import { areaHeading, kindLabel } from "./Description";
-import { day } from "./format";
+import { useEffect, useState, type ReactNode, type RefObject } from "react";
+import type { Description, Kind, Statement } from "./api";
+import { DESCRIPTION, areaHeading, kindLabel, summaryId } from "./Description";
+import { anchorHash } from "./Rail";
+import { day, leadOf } from "./format";
 import { S } from "./strings";
 import {
+  Empty,
   Inline,
   Link,
   Sep,
+  Summary,
   Teaser,
+  eyebrow,
   kindLabelStyle,
   measure,
   teaserLines,
 } from "./ui";
+
+/** The project and the repository page's tabs by their hash: the start
+ *  tab first, a reading path; the reference second (DESCRIPTION, the hash
+ *  statement links carry); the history third, where the page came from.
+ *  The start tab has no hash. */
+export const START = "start";
+export const HISTORY = "history";
+export const pageTabs = [START, DESCRIPTION, HISTORY];
+export const tabLabels: Record<string, string> = {
+  [START]: S.tabs.start,
+  [DESCRIPTION]: S.tabs.reference,
+  [HISTORY]: S.tabs.history,
+};
+
+/** useAsk is a page's question chip, page state alone: ask the one in
+ *  force, setAsk to press one, kinds what it keeps (undefined for all),
+ *  rejump to pass to useJumpTo. A chip whose kinds a reload left without
+ *  a statement shows no chip to let go of: it reads as all. A statement
+ *  an address followed lands on that the chip hides: the chip lets go
+ *  and the jump goes there again. Heard on the address itself, not on
+ *  landing: the same link followed again names the same target, which
+ *  landing would not see change. */
+export function useAsk(description: Description | null) {
+  const statements = description?.statements;
+  const [pressed, setAsk] = useState<Ask>("all");
+  const ask: Ask =
+    pressed !== "all" &&
+    (statements ?? []).some((s) => askKinds[pressed].includes(s.kind))
+      ? pressed
+      : "all";
+  const [rejump, setRejump] = useState(0);
+  useEffect(() => {
+    if (ask === "all") return;
+    const onAddress = () => {
+      const [t, id] = window.location.hash.slice(1).split("/");
+      if (t !== DESCRIPTION || !id) return;
+      const s = statements?.find((x) => x.id === id);
+      if (!s || askKinds[ask].includes(s.kind)) return;
+      setAsk("all");
+      setRejump((n) => n + 1);
+    };
+    window.addEventListener("popstate", onAddress);
+    window.addEventListener("hashchange", onAddress);
+    return () => {
+      window.removeEventListener("popstate", onAddress);
+      window.removeEventListener("hashchange", onAddress);
+    };
+  }, [ask, statements]);
+  const kinds = ask === "all" ? undefined : askKinds[ask];
+  return { ask, setAsk, kinds, rejump };
+}
+
+/** EntryLead is the path's first step: the summary's opening (leadOf),
+ *  its sub-headings under the step's, and the whole of it a link away on
+ *  the reference tab (page, the page's path); empty, what the page says
+ *  without a description. */
+export function EntryLead({
+  description,
+  page,
+  empty,
+}: {
+  description: Description | null;
+  page: string;
+  empty: string;
+}) {
+  if (description === null)
+    return (
+      <Empty>
+        {S.project.noDescription} {empty}
+      </Empty>
+    );
+  const lead = leadOf(description.summary);
+  return (
+    <>
+      <Summary text={lead} layout heading="h4" />
+      {lead !== description.summary && (
+        <Link
+          to={page + anchorHash(DESCRIPTION, summaryId)}
+          className="mt-2 inline-block text-[14px] text-accent-strong hover:text-ink"
+        >
+          {S.path.wholeSummary} <span aria-hidden>→</span>
+        </Link>
+      )}
+    </>
+  );
+}
 
 /** Ask is a question chip: all statements, or the kinds one question
  *  reads. */
@@ -46,12 +136,20 @@ export function pick(
   kinds: readonly Kind[],
   n: number,
 ): Statement[] {
-  return ofKinds(statements, kinds)
+  return mostCited(ofKinds(statements, kinds), n);
+}
+
+/** mostCited is pick on statements already of the kinds asked. */
+function mostCited(statements: Statement[], n: number): Statement[] {
+  return statements
     .map((s, i) => ({ s, i }))
     .sort((a, b) => b.s.sources.length - a.s.sources.length || a.i - b.i)
     .slice(0, n)
     .map(({ s }) => s);
 }
+
+/** perStep is how many statements a step of the path shows. */
+export const perStep = 3;
 
 /** Step is one step of the reading path: its section id, its title, what
  *  it shows, and more, its way to all of its kind (a question chip). */
@@ -60,6 +158,76 @@ export interface Step {
   title: string;
   body: ReactNode;
   more?: { label: string; ask: Ask };
+}
+
+/** kindStep is what a step shows of one question's kinds: how many the
+ *  page has, the most cited perStep of them as links to their place on
+ *  the reference tab (page, the page's path; project, a project page's
+ *  labels), and more when there are more than it shows. */
+export function kindStep(
+  statements: Statement[],
+  ask: Exclude<Ask, "all">,
+  page: string,
+  project: boolean,
+  allLabel: (n: number) => string,
+): { total: number; body: ReactNode; more?: Step["more"] } {
+  const all = ofKinds(statements, askKinds[ask]);
+  return {
+    total: all.length,
+    body: mostCited(all, perStep).map((s) => (
+      <EntryStatement
+        key={s.id}
+        statement={s}
+        to={page + anchorHash(DESCRIPTION, s.id)}
+        project={project}
+      />
+    )),
+    more:
+      all.length > perStep ? { label: allLabel(all.length), ask } : undefined,
+  };
+}
+
+/** FactsTitle heads the facts read from the code after a description,
+ *  set apart from its last chapter. */
+export function FactsTitle() {
+  return (
+    <div className={eyebrow.replace("mt-7", "mt-10")}>{S.facts.title}</div>
+  );
+}
+
+/** useTabMoves is a page's ways between its tabs, the question chip in
+ *  step: openTab for the tab bar (a new tab starts at its top and lets
+ *  the chip go; the tab open already goes to its top and keeps it),
+ *  openAsk for a path's "Alle n" (the reference tab, at its top, the chip
+ *  pressed). */
+export function useTabMoves({
+  tab,
+  setTab,
+  setAsk,
+  scroller,
+}: {
+  tab: string;
+  setTab: (t: string) => void;
+  setAsk: (a: Ask) => void;
+  scroller: RefObject<HTMLElement | null>;
+}) {
+  const top = () => {
+    if (scroller.current) scroller.current.scrollTop = 0;
+  };
+  return {
+    openTab(t: string) {
+      if (t !== tab) {
+        setTab(t);
+        setAsk("all");
+      }
+      top();
+    },
+    openAsk(a: Ask) {
+      setAsk(a);
+      setTab(DESCRIPTION);
+      top();
+    },
+  };
 }
 
 /** EntryPath is the reading path: the steps given, numbered in turn, so a
