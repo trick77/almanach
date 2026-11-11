@@ -505,6 +505,9 @@ type Stale struct {
 	// RestyleState counts them; RestyleTries of them and the poller queues
 	// none.
 	Failed int
+	// FailedAt is when the newest of them finished, nil for none: the
+	// poller queues the page again only past its retry wait.
+	FailedAt *time.Time
 	// Run is the state of an open restyle of the page (the project's: of any
 	// of its repositories), "" for none.
 	Run string
@@ -513,6 +516,27 @@ type Stale struct {
 	// restyle at a time, so about one a cycle. Every stale page counts,
 	// tries spent or not: an estimate, never a promise.
 	Rank int
+}
+
+// StaleRepo is a repository the poller would restyle (staleRepo), as the
+// queue page lists it ahead of its run.
+//
+// Table: -
+type StaleRepo struct {
+	ProjectKey, Slug string
+	// Rank is its place among them in the poller's order, 1 first: Stale's.
+	Rank int
+	// RepoDue and ProjectDue say which page is below its scope's epoch.
+	RepoDue, ProjectDue bool
+	// RepoFailed and ProjectFailed are the failed restyles each page
+	// counts, as RepoStale and ProjectStale count them; the FailedAt when
+	// the newest finished, nil for none.
+	RepoFailed, ProjectFailed     int
+	RepoFailedAt, ProjectFailedAt *time.Time
+	// RepoOpen is any run of the repository open (no restyle is queued
+	// beside it, it is listed as itself), ProjectOpen a restyle of any
+	// repository of its project: the project page waits as that run.
+	RepoOpen, ProjectOpen bool
 }
 
 // ProjectSource is one configured project source.

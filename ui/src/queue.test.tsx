@@ -562,6 +562,33 @@ describe("QueuePage", () => {
     expect(screen.getByText(S.queue.shared(3))).toBeInTheDocument();
   });
 
+  it("lists a page below today's rules before its run, its pages and about when", async () => {
+    const due = iso(40);
+    serve({
+      queue: queue({
+        next: [
+          {
+            kind: "restyle",
+            project: "pay",
+            repo: "billing",
+            scopes: ["repo", "project"],
+            due_at: due,
+            attempts: 0,
+          },
+        ],
+      }),
+    });
+    render(<QueuePage />);
+    const [item] = await screen.findAllByTestId("queue-item");
+    expect(item).toHaveTextContent(S.queue.restyle);
+    expect(within(item).getByRole("link", { name: "billing" })).toBeVisible();
+    expect(item).toHaveTextContent("Repository-Seite, Projektseite");
+    expect(item).toHaveTextContent(S.queue.restyleDue(dayTime(due)));
+    expect(screen.getByText(S.queue.lane.next)).toBeInTheDocument();
+    expect(screen.getByText(S.queue.counts(0, 0, 1))).toBeInTheDocument();
+    expect(screen.queryByText(S.queue.nothingToDo)).not.toBeInTheDocument();
+  });
+
   it("counts what it does not list", async () => {
     serve({ queue: queue({ next: [note(812)], more: 5 }) });
     render(<QueuePage />);
@@ -630,6 +657,16 @@ describe("the queue's entry", () => {
   it("is idle while paused with only waiting items", () => {
     const waiting = queue({ next: [note(812)] });
     expect(queueBusy(waiting)).toBe(true);
+    // A restyle to come moves only with a cycle: nothing to poll for.
+    expect(
+      queueBusy(
+        queue({
+          next: [
+            { kind: "restyle", project: "pay", repo: "billing", attempts: 0 },
+          ],
+        }),
+      ),
+    ).toBe(false);
     expect(queueBusy({ ...waiting, paused: { at: iso(-1) } })).toBe(false);
     expect(
       queueBusy({

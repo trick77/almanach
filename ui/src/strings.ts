@@ -8,6 +8,7 @@
 import type {
   BriefState,
   Kind,
+  QueueItem,
   QueueRun,
   SkippedPart,
   SkipReason,
@@ -974,10 +975,15 @@ export const S = {
     },
     idle: "–",
     nothingToDo: "Nichts zu tun",
-    counts: (notes: number, runs: number) =>
+    counts: (notes: number, runs: number, restyles: number) =>
       [
         notes > 0 ? (notes === 1 ? "1 Notiz" : `${notes} Notizen`) : "",
         runs > 0 ? (runs === 1 ? "1 Run" : `${runs} Runs`) : "",
+        restyles > 0
+          ? restyles === 1
+            ? "1 Neugliederung"
+            : `${restyles} Neugliederungen`
+          : "",
       ]
         .filter((s) => s !== "")
         .join(", "),
@@ -1054,6 +1060,14 @@ export const S = {
     // A repository's notes are consolidated together once a day: when this
     // one's turn comes, and how many notes one call takes.
     dueAt: (at: string) => `Vorgemerkt, frühestens ${at}`,
+    // A page below today's rules before the poller queues its run: the
+    // pages it lifts, about when (the page's hint says the same).
+    restyle: "Neugliederung",
+    restyleDue: (at: string) => `Vorgemerkt, voraussichtlich ${at}`,
+    restyleScopes: (scopes: NonNullable<QueueItem["scopes"]>) =>
+      scopes
+        .map((s) => (s === "project" ? "Projektseite" : "Repository-Seite"))
+        .join(", "),
     batch: (n: number) => `${n} Notizen in einem Aufruf`,
     // A consolidated note's cost is its call's, shared with the others.
     shared: (n: number) => `Für ${n} Notizen`,

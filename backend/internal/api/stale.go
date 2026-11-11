@@ -68,30 +68,50 @@ func (d Deps) stale(ctx context.Context, st store.Stale, at int) (*staleBody, er
 		out.State = staleBudget
 	case st.Run == store.RunQueued:
 		out.State = staleQueued
-	case d.Sources.Reconcile <= 0 || d.Sources.SyncInterval <= 0:
+	case !d.restyleOn():
 		out.State, out.Why = staleManual, staleOff
 	case st.Failed >= store.RestyleTries:
 		out.State, out.Why = staleManual, staleFailed
 	default:
 		out.State, out.Rank = staleWaiting, st.Rank
-		out.EtaSeconds = int64(d.staleWait(st.Rank) / time.Second)
+		out.EtaSeconds = int64(d.restyleEta(st.Rank, st.Failed, st.FailedAt) / time.Second)
 	}
 	return out, nil
 }
 
-// staleWait is about how long until the poller restyles the page at rank:
-// the time to its next cycle, then a cycle for each page ahead. The poller
-// queues one restyle at a time, so a cycle that runs while one is open
-// queues none.
-func (d Deps) staleWait(rank int) time.Duration {
+// restyleEta is about how long until the poller queues the restyle of the
+// page at rank, the wiki's hint's and the queue page's one sum: the time to
+// its next cycle, then a cycle for each page ahead (the poller queues one
+// restyle at a time, so a cycle that runs while one is open queues none),
+// never before the retry wait of its newest failed restyle, failed of them
+// finished, the newest at failedAt (nil for none).
+func (d Deps) restyleEta(rank, failed int, failedAt *time.Time) time.Duration {
 	every := d.Sources.SyncInterval
-	first := every
-	if d.Queue != nil && d.Queue.Sync != nil {
-		if next := d.Queue.Sync.Cycle().NextAt; next != nil {
-			first = max(next.Sub(d.Queue.now()), 0)
+	first, now := every, time.Now()
+	var sync SyncStatus
+	if d.Queue != nil {
+		now, sync = d.Queue.now(), d.Queue.Sync
+	}
+	if sync != nil {
+		if next := sync.Cycle().NextAt; next != nil {
+			first = max(next.Sub(now), 0)
 		}
 	}
-	return first + time.Duration(rank-1)*every
+	wait := first + time.Duration(rank-1)*every
+	if failedAt != nil && sync != nil && every > 0 {
+		// Queued by the first cycle past the retry wait.
+		if at, ok := sync.RestyleRetryAt(*failedAt, failed); ok && at.Sub(now) > wait {
+			cycles := (at.Sub(now) - first + every - 1) / every
+			wait = first + cycles*every
+		}
+	}
+	return wait
+}
+
+// restyleOn reports whether the poller restyles pages on its own: the
+// reconcile interval and the cycle on, else only a button does.
+func (d Deps) restyleOn() bool {
+	return d.Sources != nil && d.Sources.Reconcile > 0 && d.Sources.SyncInterval > 0
 }
 
 // budgetSpent reports whether the day's budget is spent: the worker holds

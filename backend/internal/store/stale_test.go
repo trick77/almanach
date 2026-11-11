@@ -93,6 +93,68 @@ func TestProjectStale(t *testing.T) {
 	}
 }
 
+// StaleRepos lists the repositories in the poller's order, each with the
+// rank RepoStale and ProjectStale give it, what of it is due, the failures
+// each page counts with the newest's end, any run open of it and a restyle
+// open of its project.
+func TestStaleRepos(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	at := Epochs{Repo: 3, Project: 3}
+	sourceRepo(t, s, "alpha", "x")
+	repoPage(t, s, "alpha", "x")
+	sourceRepo(t, s, "beta", "y")
+	repoPage(t, s, "beta", "y")
+	sourceRepo(t, s, "tools", "a")
+	sourceRepo(t, s, "tools", "b")
+	sourceRepo(t, s, "tools", "c")
+	projectPage(t, s, "tools")
+	repoPage(t, s, "tools", "b")
+	b := finish(t, s, restyleRun(t, s, "tools", "b", 3), RunFailed)
+	r := restyleRun(t, s, "tools", "c", 3)
+	r.Step = RestyleProjectStep
+	c := finish(t, s, r, RunFailed)
+	restyleRun(t, s, "alpha", "x", 3)
+	// Any run open counts, a full one too: no restyle is queued beside it.
+	if _, err := s.EnqueueRun(ctx, "beta", "y", RunFull, TriggerManual, "", "c0ffee"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.StaleRepos(ctx, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []StaleRepo{
+		{ProjectKey: "alpha", Slug: "x", Rank: 1, RepoDue: true, RepoOpen: true, ProjectOpen: true},
+		{ProjectKey: "beta", Slug: "y", Rank: 2, RepoDue: true, RepoOpen: true},
+		// a: the project page alone, it being tools' first repository.
+		{ProjectKey: "tools", Slug: "a", Rank: 3, ProjectDue: true, ProjectFailed: 1, ProjectFailedAt: c.FinishedAt},
+		{ProjectKey: "tools", Slug: "b", Rank: 4, RepoDue: true, RepoFailed: 1, RepoFailedAt: b.FinishedAt,
+			ProjectFailed: 1, ProjectFailedAt: c.FinishedAt},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("StaleRepos = %+v, want %+v", got, want)
+	}
+	same := func(a, b *time.Time) bool { return (a == nil) == (b == nil) && (a == nil || a.Equal(*b)) }
+	for i := range want {
+		g, w := got[i], want[i]
+		if !same(g.RepoFailedAt, w.RepoFailedAt) || !same(g.ProjectFailedAt, w.ProjectFailedAt) {
+			t.Errorf("StaleRepos[%d] failed at %v/%v, want %v/%v", i, g.RepoFailedAt, g.ProjectFailedAt, w.RepoFailedAt, w.ProjectFailedAt)
+		}
+		g.RepoFailedAt, g.ProjectFailedAt, w.RepoFailedAt, w.ProjectFailedAt = nil, nil, nil, nil
+		if g != w {
+			t.Errorf("StaleRepos[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+	// The ranks and the failures' end are the pages' own.
+	if st, _, _ := s.RepoStale(ctx, "tools", "b", at); st.Rank != 4 || !same(st.FailedAt, b.FinishedAt) {
+		t.Errorf("RepoStale(b) = %+v, want rank 4, failed at %v", st, b.FinishedAt)
+	}
+	if st, _, _ := s.ProjectStale(ctx, "tools", at); st.Rank != 3 || !same(st.FailedAt, c.FinishedAt) {
+		t.Errorf("ProjectStale(tools) = %+v, want rank 3, failed at %v", st, c.FinishedAt)
+	}
+}
+
 // A restyle queued by hand reads what is due past the tries a page spent.
 func TestRestyleDue_PastTheTries(t *testing.T) {
 	s := testStore(t)

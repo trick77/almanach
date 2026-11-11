@@ -38,6 +38,14 @@ type fakeQueueStore struct {
 	// pause is the queue's pause; pauseErr fails its reads and writes.
 	pause    *store.Pause
 	pauseErr error
+	// stale is the repositories the poller would restyle; staleErr fails
+	// their read.
+	stale    []store.StaleRepo
+	staleErr error
+}
+
+func (f *fakeQueueStore) StaleRepos(context.Context, store.Epochs) ([]store.StaleRepo, error) {
+	return f.stale, f.staleErr
 }
 
 func (f *fakeQueueStore) PendingNotes(_ context.Context, limit int) ([]store.PendingNote, error) {
@@ -130,10 +138,17 @@ func (f fakeSync) RestyleRetryAt(finished time.Time, failed int) (time.Time, boo
 
 func getQueue(t *testing.T, q *QueueDeps) queueBody {
 	t.Helper()
+	return getQueueWith(t, q, nil)
+}
+
+// getQueueWith is getQueue with the sources on as src says.
+func getQueueWith(t *testing.T, q *QueueDeps, src *SourcesDeps) queueBody {
+	t.Helper()
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httpapi.New(func(context.Context) error { return nil }, discard)
 	q.Now = func() time.Time { return queueNow }
-	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), Worker: &fakeWaker{}, AuthMode: config.AuthNone, Queue: q, Log: discard})
+	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), Worker: &fakeWaker{}, AuthMode: config.AuthNone, Queue: q,
+		Sources: src, Log: discard})
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/queue", nil))
 	if rec.Code != http.StatusOK {
@@ -460,6 +475,98 @@ func TestQueueCount(t *testing.T) {
 		Queue: &QueueDeps{Store: st, Worker: fakeWorkerStatus{}, Sync: fakeSync{}}, Log: discard})
 	if code, body := do(t, srv.Handler(), "GET", "/api/queue/count", "", "", nil); code != 200 || field(t, body, "count") != "2" {
 		t.Errorf("sources on: count = %d %v", code, body)
+	}
+}
+
+// A page below its scope's epoch is in the queue before the poller queues
+// its run, as the wiki's hint tells it: about when by the same sum, among
+// the notes waiting for their delay. A page whose restyle is open is that
+// run's, one whose tries are spent its button's; the count says what the
+// list shows. With the poller restyling nothing on its own, none.
+func TestQueue_RestylesToCome(t *testing.T) {
+	next := queueNow.Add(10 * time.Minute)
+	failed := at(-5)
+	st := &fakeQueueStore{
+		notes: []store.PendingNote{pending("billing", "pay/billing#7", -60, 0)},
+		stale: []store.StaleRepo{
+			// A run of api open, whatever its mode: listed as itself.
+			{ProjectKey: "pay", Slug: "api", Rank: 1, RepoDue: true, RepoOpen: true, ProjectDue: true},
+			// A restyle of web failed 5 minutes ago: not before its retry,
+			// an hour on (fakeSync), queued by the first cycle past it
+			// (+10m, +40m, +70m).
+			{ProjectKey: "pay", Slug: "web", Rank: 1, RepoDue: true, RepoFailed: 1, RepoFailedAt: &failed},
+			// cash's page waits out its retry, its project's is due: the
+			// run comes for the project page.
+			{ProjectKey: "pay", Slug: "cash", Rank: 2, RepoDue: true, RepoFailed: 1, RepoFailedAt: &failed, ProjectDue: true},
+			{ProjectKey: "pay", Slug: "billing", Rank: 2, RepoDue: true, ProjectDue: true, RepoFailed: 1},
+			{ProjectKey: "pay", Slug: "ledger", Rank: 3, RepoDue: true, RepoFailed: store.RestyleTries},
+			{ProjectKey: "tools", Slug: "svc", Rank: 4, RepoDue: true, RepoFailed: store.RestyleTries, ProjectDue: true},
+			{ProjectKey: "web", Slug: "app", Rank: 5, ProjectDue: true, ProjectOpen: true},
+		},
+	}
+	src := &SourcesDeps{Reconcile: 720 * time.Hour, SyncInterval: 30 * time.Minute}
+	q := &QueueDeps{Store: st, Sync: fakeSync{c: clone.CycleStatus{NextAt: &next}},
+		Worker: fakeWorkerStatus{consolidate.Status{FoldDelay: 24 * time.Hour}}}
+	out := getQueueWith(t, q, src)
+	var order []string
+	for _, it := range out.Next {
+		key := it.PRKey
+		if it.Kind == itemRestyle {
+			key = it.Repo + strings.Join(it.Scopes, "+")
+		}
+		order = append(order, key+"@"+it.DueAt.Sub(queueNow).String())
+	}
+	want := []string{"cashproject@40m0s", "billingrepo+project@40m0s", "webrepo@1h10m0s", "svcproject@1h40m0s", "pay/billing#7@23h0m0s"}
+	if !slices.Equal(order, want) {
+		t.Errorf("next = %v, want %v", order, want)
+	}
+	// The hints on billing's and web's pages say the same.
+	for i, s := range map[int]store.Stale{1: {Rank: 2}, 2: {Rank: 1, Failed: 1, FailedAt: &failed}} {
+		hint, err := Deps{Sources: src, Queue: q}.stale(context.Background(), s, 3)
+		if err != nil || hint.EtaSeconds != int64(out.Next[i].DueAt.Sub(queueNow)/time.Second) {
+			t.Errorf("hint = %+v err=%v, the queue says %v", hint, err, out.Next[i].DueAt.Sub(queueNow))
+		}
+	}
+
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httpapi.New(func(context.Context) error { return nil }, discard)
+	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), Worker: &fakeWaker{}, AuthMode: config.AuthNone,
+		Queue: q, Sources: src, Log: discard})
+	if code, body := do(t, srv.Handler(), "GET", "/api/queue/count", "", "", nil); code != 200 || field(t, body, "count") != "5" {
+		t.Errorf("count = %d %v, want the note and four restyles", code, body)
+	}
+
+	// Past restylesMax they are counted, not listed; the soonest listed.
+	many := &fakeQueueStore{}
+	for i := range restylesMax + 5 {
+		many.stale = append(many.stale, store.StaleRepo{ProjectKey: "pay", Slug: "r" + itoa(i), Rank: restylesMax + 5 - i, RepoDue: true})
+	}
+	out = getQueueWith(t, &QueueDeps{Store: many, Sync: q.Sync, Worker: fakeWorkerStatus{}}, src)
+	if len(out.Next) != restylesMax || out.More != 5 || out.Next[0].Repo != "r"+itoa(restylesMax+4) {
+		t.Errorf("many: %d listed, %d more, first %s; want %d, 5, the soonest", len(out.Next), out.More, out.Next[0].Repo, restylesMax)
+	}
+
+	// Reconcile off: nothing restyles on its own, nothing listed.
+	if out := getQueueWith(t, q, &SourcesDeps{SyncInterval: 30 * time.Minute}); len(out.Next) != 1 {
+		t.Errorf("reconcile off: next = %+v, want the note alone", out.Next)
+	}
+	// A failed read is the page's 500, not an empty list.
+	st.staleErr = errors.New("database is locked")
+	srv = httpapi.New(func(context.Context) error { return nil }, discard)
+	Register(srv, Deps{Store: newFakeStore(), Keys: keysFile(t), Worker: &fakeWaker{}, AuthMode: config.AuthNone,
+		Queue: q, Sources: src, Log: discard})
+	if code, _ := do(t, srv.Handler(), "GET", "/api/queue", "", "", nil); code != http.StatusInternalServerError {
+		t.Errorf("failed read: %d, want 500", code)
+	}
+}
+
+// byDue puts an item without its time after all, never a nil read.
+func TestByDue(t *testing.T) {
+	soon, late := at(1), at(2)
+	items := []queueItemBody{{Repo: "none"}, {Repo: "late", DueAt: &late}, {Repo: "soon", DueAt: &soon}}
+	slices.SortStableFunc(items, byDue)
+	if items[0].Repo != "soon" || items[1].Repo != "late" || items[2].Repo != "none" {
+		t.Errorf("order = %+v", items)
 	}
 }
 

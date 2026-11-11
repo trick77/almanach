@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"slices"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/trick77/almanach/internal/clone"
 	"github.com/trick77/almanach/internal/consolidate"
+	"github.com/trick77/almanach/internal/prompts"
 	"github.com/trick77/almanach/internal/store"
 	"github.com/trick77/ship/kit/httpx"
 )
@@ -20,6 +22,7 @@ import (
 type QueueStore interface {
 	PendingNotes(ctx context.Context, limit int) ([]store.PendingNote, error)
 	OpenRuns(ctx context.Context) ([]store.BaselineRun, error)
+	StaleRepos(ctx context.Context, e store.Epochs) ([]store.StaleRepo, error)
 	RunByID(ctx context.Context, id int64) (store.BaselineRun, bool, error)
 	FinishedRuns(ctx context.Context, since time.Time, limit int) ([]store.FinishedRun, error)
 	FoldedNotes(ctx context.Context, since time.Time, limit int) ([]store.FoldedNote, error)
@@ -105,6 +108,14 @@ func (d Deps) queueCount(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "queue count")
 		return
 	}
+	// The pages the poller will restyle, as the page lists them: the
+	// count says what the list shows.
+	restyles, err := d.restyleItems(r.Context())
+	if err != nil {
+		httpx.ServerError(w, r, err, "queue restyles")
+		return
+	}
+	n += len(restyles)
 	p, err := d.Queue.Store.WorkerPause(r.Context())
 	if err != nil {
 		httpx.ServerError(w, r, err, "queue pause")
@@ -113,11 +124,24 @@ func (d Deps) queueCount(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, queueCountBody{Count: n, Paused: p != nil})
 }
 
-// queueItemBody is a note or a run, with what it waits for.
+// itemRestyle is a queue item of a page below its scope's epoch, before the
+// poller queues its restyle run: no row yet, so no worker kind.
+const itemRestyle = "restyle"
+
+// The pages a restyle item lifts (queueItemBody.Scopes).
+const (
+	scopeRepo    = "repo"
+	scopeProject = "project"
+)
+
+// queueItemBody is a note, a run or a restyle to come, with what it waits
+// for.
 type queueItemBody struct {
 	Kind    string `json:"kind"`
 	Project string `json:"project"`
 	Repo    string `json:"repo"`
+	// Scopes is a restyle's pages: its repository's, its project's or both.
+	Scopes []string `json:"scopes,omitempty"`
 	// A note's.
 	PRKey      string     `json:"pr_key,omitempty"`
 	Title      string     `json:"title,omitempty"`
@@ -126,7 +150,8 @@ type queueItemBody struct {
 	// HeldBy is the run of its repository the note waits for.
 	HeldBy int64 `json:"held_by,omitempty"`
 	// DueAt is when the note's repository is folded, set while it waits for
-	// the fold delay (BACKEND_FOLD_DELAY).
+	// the fold delay (BACKEND_FOLD_DELAY); a restyle's, about when the
+	// poller queues it.
 	DueAt *time.Time `json:"due_at,omitempty"`
 	// Batch is how many notes the fold in flight takes, on the current item
 	// when more than one.
@@ -251,7 +276,12 @@ func (d Deps) queue(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
 	q := d.Queue
-	out, err := q.build(ctx)
+	restyles, err := d.restyleItems(ctx)
+	if err != nil {
+		httpx.ServerError(w, r, err, "queue restyles")
+		return
+	}
+	out, err := q.build(ctx, restyles)
 	if err != nil {
 		httpx.ServerError(w, r, err, "queue")
 		return
@@ -314,7 +344,85 @@ func (q *QueueDeps) spent(ctx context.Context, runs []store.BaselineRun) (bool, 
 	return store.OverBudget(spent.Budgeted(), q.Budget), nil
 }
 
-func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
+// restylesMax bounds the restyles the page lists; the rest are counted
+// (More), as the notes past notesMax.
+const restylesMax = notesMax
+
+// restyleItems are the pages the poller will restyle on its own, one item a
+// repository, about when by the wiki's hint's sum (restyleEta: the
+// queueing of its run, a pause or a spent budget the page's own banner and
+// the run's wait). A repository with a run open is that run, a project page
+// whose restyle is open that run's, a page whose tries are spent its
+// button's. None with the sources off or the poller restyling nothing on
+// its own.
+func (d Deps) restyleItems(ctx context.Context) ([]queueItemBody, error) {
+	q := d.Queue
+	if q == nil || q.Sync == nil || !d.restyleOn() {
+		return nil, nil
+	}
+	repos, err := q.Store.StaleRepos(ctx, store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch})
+	if err != nil {
+		return nil, err
+	}
+	now := q.now()
+	var out []queueItemBody
+	for _, r := range repos {
+		if r.RepoOpen {
+			continue
+		}
+		// The run is queued once one of its pages is due, the sooner, and
+		// lifts the pages due then: one still in its retry wait comes later.
+		type page struct {
+			scope string
+			eta   time.Duration
+		}
+		var pages []page
+		if r.RepoDue && r.RepoFailed < store.RestyleTries {
+			pages = append(pages, page{scopeRepo, d.restyleEta(r.Rank, r.RepoFailed, r.RepoFailedAt)})
+		}
+		if r.ProjectDue && !r.ProjectOpen && r.ProjectFailed < store.RestyleTries {
+			pages = append(pages, page{scopeProject, d.restyleEta(r.Rank, r.ProjectFailed, r.ProjectFailedAt)})
+		}
+		if len(pages) == 0 {
+			continue
+		}
+		eta := slices.MinFunc(pages, func(a, b page) int { return cmp.Compare(a.eta, b.eta) }).eta
+		var scopes []string
+		for _, p := range pages {
+			if p.eta == eta {
+				scopes = append(scopes, p.scope)
+			}
+		}
+		at := now.Add(eta).UTC()
+		out = append(out, queueItemBody{Kind: itemRestyle, Project: r.ProjectKey, Repo: r.Slug, Scopes: scopes, DueAt: &at})
+	}
+	// By when, so the first restylesMax listed are the soonest.
+	slices.SortStableFunc(out, byDue)
+	return out, nil
+}
+
+// byDue orders items by DueAt, one without after all.
+func byDue(a, b queueItemBody) int {
+	switch {
+	case a.DueAt == nil || b.DueAt == nil:
+		return cmp.Compare(boolInt(a.DueAt == nil), boolInt(b.DueAt == nil))
+	default:
+		return a.DueAt.Compare(*b.DueAt)
+	}
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// build is the page; restyles (restyleItems, by when) wait with the notes
+// waiting for their fold delay, the first restylesMax of them listed.
+func (q *QueueDeps) build(ctx context.Context, restyles []queueItemBody) (queueBody, error) {
+	unlisted := max(len(restyles)-restylesMax, 0)
+	restyles = restyles[:len(restyles)-unlisted]
 	st := q.Worker.Status()
 	out := queueBody{Next: []queueItemBody{}, Recent: []recentBody{}, PollSeconds: int(st.Poll / time.Second),
 		MaxAttempts: consolidate.MaxAttempts}
@@ -445,6 +553,8 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 		}
 		out.Next = append(out.Next, it)
 	}
+	waiting = append(waiting, restyles...)
+	slices.SortStableFunc(waiting, byDue)
 	out.Next = append(out.Next, waiting...)
 
 	// Why the next item waits: a hold stops everything; a run step that
@@ -468,12 +578,14 @@ func (q *QueueDeps) build(ctx context.Context) (queueBody, error) {
 		if err != nil {
 			return out, err
 		}
-		shown := len(out.Next)
+		// The restyles are no rows QueueCount counts.
+		shown := len(out.Next) - len(restyles)
 		if out.Current != nil {
 			shown++
 		}
 		out.More = max(total-shown, 0)
 	}
+	out.More += unlisted
 
 	if q.Sync != nil {
 		c := q.Sync.Cycle()
