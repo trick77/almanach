@@ -488,6 +488,7 @@ func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.Res
 		c.tooLong(&out, res.Gateway.CallID, errors.New("the answer was cut by the model's output limit"), answerPart(res.Content), reasoningPart(res.Reasoning))
 		return "", out
 	}
+	c.logBlocks(res.Gateway.CallID, res.Content, lists.leadIns())
 	return res.Content, out
 }
 

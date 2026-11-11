@@ -340,8 +340,14 @@ func TestStrictFormatsRequireEveryProperty(t *testing.T) {
 func walkObjects(t *testing.T, s any) {
 	t.Helper()
 	switch v := s.(type) {
+	case orderedProps:
+		walkObjects(t, v.props)
 	case map[string]any:
-		if props, ok := v["properties"].(map[string]any); ok {
+		props, ok := v["properties"].(map[string]any)
+		if o, isOrdered := v["properties"].(orderedProps); isOrdered {
+			props, ok = o.props, true
+		}
+		if ok {
 			req, _ := v["required"].([]any)
 			if len(req) != len(props) || v["additionalProperties"] != false {
 				t.Errorf("object with properties %v: required %v", sortedKeys(props), req)
