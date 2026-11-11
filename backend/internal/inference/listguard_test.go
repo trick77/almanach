@@ -182,6 +182,9 @@ func TestListGuardCutsTheCall(t *testing.T) {
 	if res.Outcome != OutcomeTooLong || !strings.Contains(res.Err.Error(), "announced a list") {
 		t.Fatalf("Outcome = %s, err %v", res.Outcome, res.Err)
 	}
+	if !strings.Contains(res.Err.Error(), "(answer 32000, reasoning room ") {
+		t.Errorf("err %v names no budget", res.Err)
+	}
 	if got := logs.String(); !strings.Contains(got, "answer cut") || !strings.Contains(got, "answer shape") {
 		t.Errorf("log = %q", got)
 	}

@@ -58,7 +58,7 @@ func TestLogShape(t *testing.T) {
 	var logs strings.Builder
 	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil))}
 	secret := "Authorization: Bearer abcdefghijKLMNOPQRSTuvwxyz0123456789"
-	c.logCut("id", nil, answerPart(`{"statements": [{"id": "s1", "kind": "rule", "name": "R", "text": [], "diagram": {"nodes": [{"id": "n1", "label": "A"}]}}, `+
+	c.logCut("id", nil, cutBudget{}, answerPart(`{"statements": [{"id": "s1", "kind": "rule", "name": "R", "text": [], "diagram": {"nodes": [{"id": "n1", "label": "A"}]}}, `+
 		statementOpen("s9")+para(secret)+runaway(20)))
 	got := logs.String()
 	if strings.Contains(got, "nodes[0]") || !strings.Contains(got, "statements=2") {
@@ -86,7 +86,7 @@ func TestKeepCut(t *testing.T) {
 	c := &Client{model: "m", log: slog.New(slog.NewTextHandler(&logs, nil)), cutDir: dir}
 	secret := "Authorization: Bearer abcdefghijKLMNOPQRSTuvwxyz0123456789"
 	middle := strings.Repeat("x ", 12_288) + secret + strings.Repeat(" y", 12_288)
-	c.logCut("call/1", os.ErrDeadlineExceeded, answerPart(middle), reasoningPart("thought"))
+	c.logCut("call/1", os.ErrDeadlineExceeded, cutBudget{}, answerPart(middle), reasoningPart("thought"))
 	path := filepath.Join(dir, "cut-call_1.json")
 	if !strings.Contains(logs.String(), "file="+path) {
 		t.Fatalf("log = %.500q", logs.String())
@@ -104,12 +104,12 @@ func TestKeepCut(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An unparseable answer has a pool of its own: it never pushes a cut out.
-	unparseable := c.keepCut(cutKindUnparseable, "u", nil, answerPart("a"))
+	unparseable := c.keepCut(cutKindUnparseable, "u", nil, cutBudget{}, answerPart("a"))
 	if err := os.Chtimes(unparseable, old.Add(-time.Hour), old.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	for i := range cutKeep {
-		c.keepCut(cutKindCut, "n"+string(rune('a'+i)), nil, answerPart("a"))
+		c.keepCut(cutKindCut, "n"+string(rune('a'+i)), nil, cutBudget{}, answerPart("a"))
 	}
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != cutKeep+1 {
@@ -121,10 +121,10 @@ func TestKeepCut(t *testing.T) {
 	if _, err := os.Stat(unparseable); err != nil {
 		t.Errorf("the unparseable one went with the cuts: %v", err)
 	}
-	if got := c.keepCut(cutKindCut, "blank", nil, answerPart("\n\n"), reasoningPart("")); got != "" {
+	if got := c.keepCut(cutKindCut, "blank", nil, cutBudget{}, answerPart("\n\n"), reasoningPart("")); got != "" {
 		t.Errorf("blanks kept: %q", got)
 	}
-	if got := (&Client{log: c.log}).keepCut(cutKindCut, "id", nil, answerPart("a")); got != "" {
+	if got := (&Client{log: c.log}).keepCut(cutKindCut, "id", nil, cutBudget{}, answerPart("a")); got != "" {
 		t.Errorf("no folder: %q", got)
 	}
 	blocked := filepath.Join(dir, "file")
@@ -132,7 +132,7 @@ func TestKeepCut(t *testing.T) {
 		t.Fatal(err)
 	}
 	logs.Reset()
-	if got := (&Client{log: c.log, cutDir: filepath.Join(blocked, "cuts")}).keepCut(cutKindCut, "id", nil, answerPart("a")); got != "" ||
+	if got := (&Client{log: c.log, cutDir: filepath.Join(blocked, "cuts")}).keepCut(cutKindCut, "id", nil, cutBudget{}, answerPart("a")); got != "" ||
 		!strings.Contains(logs.String(), "cut answer not kept") {
 		t.Errorf("unwritable: %q, log %q", got, logs.String())
 	}

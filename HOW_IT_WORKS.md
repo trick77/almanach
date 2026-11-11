@@ -1542,7 +1542,13 @@ the answer's last list, cut it as `too_long`. A cut or unparseable answer
 of any call is logged with its head, its end and its shape (every
 statement's size and blocks, the largest first, the start of the
 largest), and kept whole, redacted, in `cuts/` beside the database, the
-newest 20 of each: the gateway stores no answer. With areas by the outline alone, an answer without
+newest 20 of each: the gateway stores no answer. Its error, log line and
+file name its budget (the cap sent and what it is made of: answer cap,
+reasoning room, llmwire's allowance, the model's limit; a restyle's page
+size; the tokens out and of them reasoning, where the gateway counted
+them): two restyles cut at the output limit
+(2026-11-11) could not be told apart, a think past the room, an honest
+answer past the cap or a runaway, once the log was gone. With areas by the outline alone, an answer without
 one for a page that lacks some fails the step (a try spent), never a page
 left unarranged at the new epoch. It
 learns nothing, so it neither credits nor checks: an edit keeps its files,
