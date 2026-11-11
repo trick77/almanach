@@ -1,5 +1,5 @@
-// The project and the repository page's frame: two tabs, and a rail beside
-// them that holds the search and the sections of both tabs. The rail never
+// The project and the repository page's frame: its tabs, and a rail beside
+// them that holds the search and the sections of every tab. The rail never
 // leaves, so the column never moves sideways on a tab switch, and rail and
 // column start on one top edge.
 import {
@@ -303,7 +303,7 @@ function useActiveSection(
   return active;
 }
 
-/** Tabs is the page's two views, under its header. */
+/** Tabs is the page's views, under its header. */
 export function Tabs({
   tabs,
   value,
@@ -450,8 +450,10 @@ const settleMs = 3000;
 /** useJumpTo scrolls the element a deep link names into view once it is
  *  on the page: the statements render after the fetch, so the effect runs
  *  on ready, not on mount; then again on each change of the page until it
- *  has settled (settleMs). A reload on the link lands on it again. */
-export function useJumpTo(landing: string, ready: boolean) {
+ *  has settled (settleMs). A reload on the link lands on it again; so
+ *  does a change of again, for a jump to the same target once more (a
+ *  link followed again that a question chip had hidden). */
+export function useJumpTo(landing: string, ready: boolean, again = 0) {
   useEffect(() => {
     if (landing === "" || !ready) return;
     const el = document.getElementById(landing);
@@ -485,7 +487,7 @@ export function useJumpTo(landing: string, ready: boolean) {
     for (const ev of taken) window.addEventListener(ev, stop);
     const settled = window.setTimeout(stop, settleMs);
     return stop;
-  }, [landing, ready]);
+  }, [landing, ready, again]);
 }
 
 /** anchorHash is a statement's deep link on its page: the tab, then its

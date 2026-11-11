@@ -87,6 +87,32 @@ const headingMark = "#### ";
 /** The longest heading title, in code points (markup.MaxHeading). */
 const maxHeading = 120;
 
+/** markedTitle is a trimmed line's text after the heading mark, "" for a
+ *  line without one. */
+function markedTitle(line: string): string {
+  return line.startsWith(headingMark)
+    ? line.slice(headingMark.length).trim()
+    : "";
+}
+
+/** headingTitle says a marked line's title (markedTitle) makes it a
+ *  sub-heading as blocks reads it: a title no longer than a heading may
+ *  be. */
+function headingTitle(title: string): boolean {
+  return title !== "" && [...title].length <= maxHeading;
+}
+
+/** leadOf is a summary's opening: the text before its first sub-heading
+ *  (blocks' reading), trailing blanks gone; the whole text when it has no
+ *  heading or one comes first. */
+export function leadOf(text: string): string {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => headingTitle(markedTitle(l.trim())));
+  if (at === -1) return text;
+  const lead = lines.slice(0, at).join("\n").trimEnd();
+  return lead === "" ? text : lead;
+}
+
 /** listItem is a line as a list item in the stored form markup.Normalize
  *  writes ("- text", "12. text"), or null. */
 function listItem(
@@ -130,10 +156,8 @@ export function blocks(text: string): Block[] {
       gap = false;
       if (listItem(line) === null) close();
     }
-    const title = line.startsWith(headingMark)
-      ? line.slice(headingMark.length).trim()
-      : "";
-    if (title !== "" && [...title].length <= maxHeading) {
+    const title = markedTitle(line);
+    if (headingTitle(title)) {
       close();
       out.push({ kind: "h", text: title });
       continue;

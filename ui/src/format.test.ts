@@ -8,6 +8,7 @@ import {
   codeSpans,
   day,
   dayTime,
+  leadOf,
   money,
   paragraphs,
   plain,
@@ -118,6 +119,30 @@ describe("blocks", () => {
       },
     ]);
     expect(blocks("  \n\n")).toEqual([]);
+  });
+});
+
+describe("leadOf", () => {
+  it("is the whole text without a heading", () => {
+    expect(leadOf("Erst.\n\n- eins\n- zwei")).toBe("Erst.\n\n- eins\n- zwei");
+  });
+  it("ends before the first heading, its trailing blank gone", () => {
+    expect(leadOf("Erst.\nZeile.\n\n  #### Ablauf\n\nDanach.")).toBe(
+      "Erst.\nZeile.",
+    );
+  });
+  it("is the whole text when a heading comes first", () => {
+    const text = "#### Zweck\n\nDer Kern.\n\n#### Rollen\n\n- a";
+    expect(leadOf(text)).toBe(text);
+  });
+  it("reads a heading as blocks does: one of a paragraph's length is text", () => {
+    const long = "#### " + "Wort ".repeat(30).trim();
+    expect(leadOf("Erst.\n\n" + long + "\n\n#### Ablauf\n\nx")).toBe(
+      "Erst.\n\n" + long,
+    );
+    expect(leadOf("Erst.\n\n####   \n\nDanach.")).toBe(
+      "Erst.\n\n####   \n\nDanach.",
+    );
   });
 });
 

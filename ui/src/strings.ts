@@ -194,6 +194,42 @@ export const S = {
     statementAnchor: "#",
     statementLink: (name: string) => `Link zur Aussage ${name}`,
     statementLinkHint: "Adresse dieser Aussage kopieren",
+    // Before the export's two links: who they are for.
+    forAgents: "Für Agents:",
+  },
+  // The start tab's reading path: numbered steps built from the page's
+  // own data, no model call.
+  path: {
+    label: "Lesepfad",
+    step: (n: number, title: string) => `${n} · ${title}`,
+    projectWhat: "Was das System tut",
+    collectionWhat: "Was die Sammlung enthält",
+    how: "Wie es zusammenhängt",
+    repos: "Die Repositories",
+    guard: "Was nicht brechen darf",
+    hurt: "Wo es bisher wehtat",
+    wholeSummary: "Ganzer Überblick",
+    allGuards: (n: number) => `Alle ${n} Invarianten und Regeln`,
+    allPitfalls: (n: number) => `Alle ${n} Fallstricke`,
+    next: "Weiter",
+    readEntry: "Einstieg lesen",
+  },
+  // The reference tab's question chips: a filter by kind, never a regrouping.
+  ask: {
+    label: "Lesen nach Frage",
+    all: "Alles",
+    guard: "Was darf nicht brechen?",
+    why: "Warum ist das so?",
+    hurt: "Was ging schon schief?",
+    where: "Wo ändere ich was?",
+  },
+  // The quiet line under a page's head: its figures, a way to its history.
+  stand: {
+    label: "Stand:",
+    toHistory: "Verlauf",
+  },
+  facts: {
+    title: "Fakten aus dem Code",
   },
   projects: {
     title: "Projekte",
@@ -225,7 +261,9 @@ export const S = {
       "Die erste Beschreibung entsteht, wenn Almanach ein Repository dieses Projekts aus dem Code beschreibt oder ein Pull Request gemergt wird.",
     descriptionRevision: (n: number) => `Beschreibung Revision ${n}`,
     repos: "Repositories",
-    repoHeaders: ["Repository", "Beschreibung", "Notizen", "Letzter Merge"],
+    repoHeaders: ["Repository", "Beschreibung"],
+    // The history tab's table: each repository's figures.
+    repoStatHeaders: ["Repository", "Revision", "Notizen", "Letzter Merge"],
     noRepos: "Noch kein Repository.",
     problems: "Problemzonen",
     problemsWindow: (days: number) => `letzte ${days} Tage`,
@@ -330,7 +368,10 @@ export const S = {
   // address keeps the tab, so a shared link opens it.
   tabs: {
     label: "Ansicht",
-    overview: "Übersicht",
+    start: "Einstieg",
+    reference: "Nachschlagen",
+    // TRANSITIONAL(reference tab): Remove when the repository page's
+    // description tab reads Nachschlagen too.
     description: "Beschreibung",
     history: "Verlauf",
   },

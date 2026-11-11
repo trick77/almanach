@@ -286,7 +286,8 @@ export function Inline({
  *  headings; anything else as written. Held at measure, in the font size
  *  the caller's className sets. query sets off a search's matches in every
  *  block. heading is the sub-headings' level, one under the text's own: a
- *  statement's h5 under its h4 name, a summary's h3 under the page's h2. */
+ *  statement's h5 under its h4 name, a summary's h3 under the page's h2,
+ *  h4 under a reading path's h3 step. */
 export function Doc({
   text,
   className = "",
@@ -296,7 +297,7 @@ export function Doc({
   text: string;
   className?: string;
   query?: string;
-  heading?: "h3" | "h5";
+  heading?: "h3" | "h4" | "h5";
 }) {
   const block = "mb-3.5 last:mb-0";
   return (
@@ -355,14 +356,17 @@ export function Summary({
   text,
   query,
   layout = false,
+  heading = "h3",
 }: {
   text: string;
   query?: string;
   layout?: boolean;
+  /** heading: its sub-headings' level when laid out (Doc). */
+  heading?: "h3" | "h4";
 }) {
   const className = "font-serif text-[17px] leading-[1.6] text-ink-prose";
   return layout ? (
-    <Doc text={text} query={query} className={className} heading="h3" />
+    <Doc text={text} query={query} className={className} heading={heading} />
   ) : (
     <Prose text={text} query={query} className={className} />
   );
@@ -582,11 +586,12 @@ export function CopyButton({
 }
 
 /** ExportLine is a page's way out to its Markdown export, the agent's
- *  interface: open it, or copy its address for one. */
+ *  interface: open it, or copy its address for one; said who it is for. */
 export function ExportLine({ href }: { href: string }) {
   const url = window.location.origin + href;
   return (
     <p className="mt-1 flex flex-wrap gap-x-3 text-[12.5px] text-muted">
+      <span className="text-faint">{S.copy.forAgents}</span>
       <a href={href} target="_blank" rel="noopener" className="hover:text-ink">
         {S.copy.openMarkdown}
       </a>
