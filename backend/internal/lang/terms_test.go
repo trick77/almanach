@@ -2,6 +2,7 @@ package lang
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -52,6 +53,14 @@ func TestTerms(t *testing.T) {
 		"Jede Kafka-Nachricht.":                            "Jede Kafka-Message.",
 		// Compounds stay: no stemming.
 		"Der Projektschlüssel und die Sitzungsdauer.": "Der Projektschlüssel und die Sitzungsdauer.",
+		// But a closed form's: hyphenated, its head as a hyphenated one's.
+		"Das Zielrepositorium und die Quellrepositorien.":                                           "Das Ziel-Repository und die Quell-Repositories.",
+		"Des Zielrepositoriums Systemumgebungsvariablen.":                                           "Des Ziel-Repositorys System-Environment-Variablen.",
+		"Das Dienstrepositorium, das Sitzungsrepositorium.":                                         "Das Service-Repository, das Session-Repository.",
+		"Die Zielrepositorium-Liste, die Umgebungsvariablen-Datei.":                                 "Die Ziel-Repository-Liste, die Umgebungsvariablen-Datei.",
+		"Der Kundendienst, der Notenschlüssel, der Energiezwischenspeicher, der Streckenendpunkt.":  "Der Kundendienst, der Notenschlüssel, der Energiezwischenspeicher, der Streckenendpunkt.",
+		"Der Markteinstiegspunkt, der Haupteinstiegspunkt, das Xrepositorium, das Gitrepositorium.": "Der Markteinstiegspunkt, der Haupteinstiegspunkt, das Xrepositorium, das Git-Repository.",
+		"Das zielrepositorium, `Zielrepositorium`, Zielrepositorium.go":                             "Das zielrepositorium, `Zielrepositorium`, Zielrepositorium.go",
 		// Code stays.
 		"Die Klasse `Dienst` in Dienst.java, /api/Dienst und Dienst_v2.": "Die Klasse `Dienst` in Dienst.java, /api/Dienst und Dienst_v2.",
 		"Zuerst:\n\n```\nDienst\n```\n\nDann der Dienst.":                "Zuerst:\n\n```\nDienst\n```\n\nDann der Service.",
@@ -271,9 +280,34 @@ func TestTermsNotInThePrompts(t *testing.T) {
 		"project": prompts.Project, "project departure": prompts.ProjectDeparture, "repo map": prompts.RepoMap,
 		"diagrams": prompts.Diagrams, "restyle": prompts.Restyle, "project restyle": prompts.ProjectRestyle, "brief": prompts.Brief} {
 		for _, w := range strings.FieldsFunc(p, func(r rune) bool { return !unicode.IsLetter(r) }) {
-			if _, ok := terms[w]; ok {
-				t.Errorf("%s prompt says %q; Terms makes it %q", name, w, terms[w].en)
+			if replaces(w) {
+				t.Errorf("%s prompt says %q; Terms makes it %q", name, w, Terms("das "+w))
 			}
+		}
+	}
+}
+
+// replaces reports whether w is a word Terms may replace: a form, or a
+// compound closed by one.
+func replaces(w string) bool {
+	_, ok := terms[w]
+	_, _, closed := closedSplit(w)
+	return ok || closed
+}
+
+// A closed form ends a compound in lower case behind a closed stem, and
+// takes no cue from the words before it: a closed compound's head hides
+// them.
+func TestTermsClosed(t *testing.T) {
+	for de, tm := range terms {
+		if !tm.closed {
+			continue
+		}
+		if !slices.ContainsFunc(closedStems, func(st string) bool { return strings.HasPrefix(lowerFirst(de), st) }) {
+			t.Errorf("%q begins with no closed stem: Terms would never look for its compound", de)
+		}
+		if tm.neuter || tm.plural != "" || tm.noun || tm.tail {
+			t.Errorf("%q is closed with a cue from the words before it", de)
 		}
 	}
 }
@@ -285,8 +319,8 @@ func TestTermsInTheUI(t *testing.T) {
 		t.Skipf("no UI beside the backend: %v", err)
 	}
 	for _, w := range strings.FieldsFunc(string(raw), func(r rune) bool { return !unicode.IsLetter(r) }) {
-		if _, ok := terms[w]; ok {
-			t.Errorf("ui/src/strings.ts says %q; Terms makes it %q", w, terms[w].en)
+		if replaces(w) {
+			t.Errorf("ui/src/strings.ts says %q; Terms makes it %q", w, Terms("das "+w))
 		}
 	}
 }

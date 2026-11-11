@@ -1,6 +1,8 @@
 package lang
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -24,7 +26,15 @@ import (
 // after an acronym ("CORS-Köpfe", "OIDC-Fluss", "CI-Lauf"): after a word
 // it is as often the everyday one ("Brief-Kopf", "Geld-Fluss",
 // "Zug-Lauf"). joint: the form a hyphenated compound opens with, when it
-// is not en ("Dependency-Graph" → "Abhängigkeits-Graph").
+// is not en ("Dependency-Graph" → "Abhängigkeits-Graph"). closed: the form
+// ends a compound written as one word too, which German does far more
+// often than with a hyphen ("Zielrepositorium" → "Ziel-Repository"): only
+// a form no German compound ends in but the software word. "Kundendienst",
+// "Notenschlüssel", "Energiezwischenspeicher", "Streckenendpunkt",
+// "Markteinstiegspunkt" are not. Never with neuter, plural, noun or tail:
+// their cues read the words before the form, which a closed compound's
+// own head hides ("die Paketauslieferung" would turn "die
+// Paket-Deployment"; TestTermsClosed).
 type term struct {
 	en     string
 	joint  string
@@ -33,6 +43,7 @@ type term struct {
 	noun   bool
 	neuter bool
 	tail   bool
+	closed bool
 }
 
 // terms are the software words a German developer says in English (user,
@@ -42,7 +53,7 @@ type term struct {
 // "Laufzeit" are business terms too. No prompt lists them, the prompts stay
 // short (user, 2026-11-08): they state the rule in one sentence, no word
 // named (prompts.Jargon), for what code cannot be sure of. Every form
-// spelled out: no stemming, no compound but by hyphen.
+// spelled out: no stemming, no compound but by hyphen or closed.
 var terms = map[string]term{
 	"Dienst": {en: "Service", head: true}, "Dienste": {en: "Services"}, "Dienstes": {en: "Services"}, "Diensten": {en: "Services"},
 	"Bibliothek": {en: "Library", head: true}, "Bibliotheken": {en: "Libraries"},
@@ -58,10 +69,12 @@ var terms = map[string]term{
 	"Endpunkts": {en: "Endpoints"}, "Endpunktes": {en: "Endpoints"},
 	"Geheimnis": {en: "Secret", head: true}, "Geheimnisse": {en: "Secrets"}, "Geheimnisses": {en: "Secrets"}, "Geheimnissen": {en: "Secrets"},
 	"Nachricht": {en: "Message", head: true}, "Nachrichten": {en: "Messages"},
-	"Umgebungsvariable": {en: "Environment-Variable"}, "Umgebungsvariablen": {en: "Environment-Variablen"},
+	"Umgebungsvariable": {en: "Environment-Variable", closed: true}, "Umgebungsvariablen": {en: "Environment-Variablen", closed: true},
+	// Not closed: "Markteinstiegspunkt", "Wiedereinstiegspunkt".
 	"Einstiegspunkt": {en: "Entry Point"}, "Einstiegspunkte": {en: "Entry Points"}, "Einstiegspunkten": {en: "Entry Points"},
 	"Einstiegspunkts": {en: "Entry Points"}, "Einstiegspunktes": {en: "Entry Points"},
-	"Repositorium": {en: "Repository", head: true}, "Repositoriums": {en: "Repositorys"}, "Repositorien": {en: "Repositories"},
+	"Repositorium": {en: "Repository", head: true, closed: true}, "Repositoriums": {en: "Repositorys", closed: true},
+	"Repositorien":  {en: "Repositories", closed: true},
 	"Warteschlange": {en: "Queue", head: true}, "Warteschlangen": {en: "Queues"},
 	"Zwischenspeicher": {en: "Cache", head: true, plural: "Caches"}, "Zwischenspeichers": {en: "Caches"}, "Zwischenspeichern": {en: "Caches"},
 	"Binär": {en: "Binary", noun: true}, "Binärs": {en: "Binarys", plural: "Binaries", noun: true},
@@ -109,6 +122,50 @@ func init() {
 			stems = append(stems, "-"+de)
 		}
 	}
+	// A closed form ends a compound in lower case: "Zielrepositorium"
+	// holds no "Repositori". Longest first, so a form wins over one it
+	// ends in.
+	for de, t := range terms {
+		if t.closed {
+			closedForms = append(closedForms, closedForm{low: lowerFirst(de), de: de})
+		}
+	}
+	slices.SortFunc(closedForms, func(a, b closedForm) int { return cmp.Or(len(b.low)-len(a.low), strings.Compare(a.low, b.low)) })
+	stems = append(stems, closedStems...)
+}
+
+// closedStems is what every closed form begins with, lower case first: the
+// stems of a compound ending in one.
+var closedStems = []string{"repositori", "umgebungsvariable"}
+
+// closedForm is a closed term's form as a compound ends in it, lower case
+// first (low), and as terms has it (de).
+type closedForm struct{ low, de string }
+
+var closedForms []closedForm
+
+func lowerFirst(s string) string {
+	r, n := utf8.DecodeRuneInString(s)
+	return string(unicode.ToLower(r)) + s[n:]
+}
+
+// closedSplit is a word written as a compound that ends in a closed form:
+// the part before it, a capitalised noun's start of three letters at least
+// (never a lone letter, "Xrepositorium"), and the form as terms has it
+// ("Zielrepositorium" → "Ziel", "Repositorium").
+func closedSplit(w string) (head, form string, ok bool) {
+	if !startsUpper(w) {
+		return "", "", false
+	}
+	for _, f := range closedForms {
+		if h, found := strings.CutSuffix(w, f.low); found {
+			if utf8.RuneCountInString(h) < 3 {
+				return "", "", false
+			}
+			return h, f.de, true
+		}
+	}
+	return "", "", false
 }
 
 // stems is what every form above but a tail form begins with: a text
@@ -486,7 +543,22 @@ func sameCase(was, to string) string {
 // prev and prev2 the two words before it.
 func termFor(w, before, after, prev, prev2 string) string {
 	t, ok := terms[w]
-	if !ok || partOfCode(before, after) {
+	if !ok {
+		// A closed compound reads as its hyphenated one, and is written so,
+		// as German couples an English word in. Its head too, as the
+		// hyphenated one's: else the next pass would take it
+		// ("Dienstrepositorium" → "Service-Repository", never "Dienst-").
+		head, form, closed := closedSplit(w)
+		if !closed || partOfCode(before, after) {
+			return w
+		}
+		en := termFor(form, before+head+"-", after, prev, prev2)
+		if en == form {
+			return w
+		}
+		return termFor(head, before, "-"+form+after, prev, prev2) + "-" + en
+	}
+	if partOfCode(before, after) {
 		return w
 	}
 	if strings.HasPrefix(after, "-") && !t.head {
