@@ -19,9 +19,11 @@ import {
   areaTitle,
   kindLabel,
   descriptionRail,
+  shownStatements,
   statementMatches,
 } from "./Description";
 import { Rail, shortcutFree, type RailItem } from "./Rail";
+import { day } from "./format";
 import { breakable } from "./RepoSwitcher";
 import { useRef } from "react";
 import { S } from "./strings";
@@ -375,22 +377,54 @@ describe("ProjectsPage", () => {
 });
 
 describe("ProjectPage", () => {
-  it("opens on the overview: the tables first, the description a tab away", async () => {
+  it("opens on the start tab: the reading path in order, the tables a tab away", async () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
-    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
-    expect(within(overview).getByText("Clearing-Adapter")).toBeInTheDocument();
-    expect(within(overview).getByText("Logik")).toBeInTheDocument();
+    const start = await screen.findByRole("tabpanel", { name: S.tabs.start });
+    // No map promised: the steps there number on without it.
     expect(
-      within(overview).getByText("Tageslimit und Kontolimit gemeinsam prüfen"),
+      within(start)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([
+      S.path.step(1, S.path.projectWhat),
+      S.path.step(2, S.path.repos),
+      S.path.step(3, S.path.guard),
+      S.path.step(4, S.path.hurt),
+    ]);
+    // What it does: the summary's opening, here all of it.
+    expect(
+      within(start).getByText(
+        "Das Projekt Payments nimmt Zahlungsaufträge an.",
+      ),
     ).toBeInTheDocument();
+    expect(within(start).queryByText(S.path.wholeSummary)).toBeNull();
+    // The repositories, each a link; where it hurt, the problem areas.
     expect(
-      within(overview).getByText("pay-lib").closest("a")?.getAttribute("href"),
+      within(start).getByRole("link", { name: "pay-lib" }).getAttribute("href"),
     ).toBe("/projects/PAY/repos/pay-lib");
+    expect(within(start).getByText("Clearing-Adapter")).toBeInTheDocument();
+    // The statement that must not break links to its place.
     expect(
-      screen.queryByText("Das Projekt Payments nimmt Zahlungsaufträge an."),
+      within(start)
+        .getByRole("link", { name: "Grenze aus limit()" })
+        .getAttribute("href"),
+    ).toBe("/projects/PAY#description/s2");
+    // The notes and the interfaces are not on the path.
+    expect(
+      within(start).queryByText("Tageslimit und Kontolimit gemeinsam prüfen"),
     ).toBeNull();
-    expect(screen.getByText(/Beschreibung Revision 7/)).toBeInTheDocument();
+    // Next: the first repository.
+    const next = within(start).getByRole("link", { name: /Weiter/ });
+    expect(next.getAttribute("href")).toBe("/projects/PAY/repos/pay-api");
+    // The figures in the quiet line, none in the meta line.
+    expect(
+      screen.getByRole("button", { name: /^Stand: Beschreibung Revision 7/ }),
+    ).toBeInTheDocument();
+    const metaLine = screen.getByRole("heading", { level: 2 })
+      .nextElementSibling!.textContent;
+    expect(metaLine).toContain("2 Repositories");
+    expect(metaLine).not.toMatch(/Notiz|Revision|Merge/);
     expect(document.title).toContain("PAY");
     // The start tab has no hash.
     expect(window.location.hash).toBe("");
@@ -410,8 +444,11 @@ describe("ProjectPage", () => {
     ];
     serve({ "projects/PAY": { ...project, topics } });
     render(<ProjectPage projectKey="PAY" />);
-    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
-    const row = within(overview).getByText("pay.booked.v1").closest("tr")!;
+    await openTab(/Nachschlagen/);
+    const reference = screen.getByRole("tabpanel", { name: S.tabs.reference });
+    // After the description, under the facts read from the code.
+    expect(within(reference).getByText(S.facts.title)).toBeInTheDocument();
+    const row = within(reference).getByText("pay.booked.v1").closest("tr")!;
     expect(
       within(row)
         .getByRole("link", { name: "pay-clearing" })
@@ -431,11 +468,13 @@ describe("ProjectPage", () => {
   it("has no messages section for a project whose code names no topic", async () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
-    await screen.findByRole("tabpanel", { name: "Übersicht" });
+    await openTab(/Nachschlagen/);
     expect(screen.queryByText("Messaging")).toBeNull();
+    // Neither interfaces nor topics: no facts heading either.
+    expect(screen.queryByText(S.facts.title)).toBeNull();
   });
 
-  it("lists the project page's revisions on the overview, each a link", async () => {
+  it("lists the project page's revisions on the history tab, each a link", async () => {
     serve({
       "projects/PAY": {
         ...project,
@@ -460,11 +499,20 @@ describe("ProjectPage", () => {
       },
     });
     render(<ProjectPage projectKey="PAY" />);
-    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    await openTab(/Verlauf/);
+    const overview = screen.getByRole("tabpanel", { name: S.tabs.history });
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
     expect(within(rail).getByText("Revisionen").closest("a")?.textContent).toBe(
       "Revisionen2",
     );
+    // Each repository's figures head the history.
+    const stats = within(overview).getByText("pay-api").closest("tr")!;
+    expect(stats.textContent).toBe("pay-api511" + day(mergedAt));
+    expect(
+      within(within(overview).getByText("pay-lib").closest("tr")!).getByText(
+        S.projects.noDescription,
+      ),
+    ).toBeInTheDocument();
     expect(within(overview).getByText("aktuell")).toBeInTheDocument();
     expect(
       within(overview).getByText("7", { selector: "a" }).getAttribute("href"),
@@ -499,7 +547,10 @@ describe("ProjectPage", () => {
       },
     });
     render(<ProjectPage projectKey="PAY" />);
-    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    const start = await screen.findByRole("tabpanel", { name: S.tabs.start });
+    const overview = within(start)
+      .getByRole("link", { name: "pay-lib" })
+      .closest("table")!;
     const code = within(overview).getByText("limit");
     expect(code.closest("code")).not.toBeNull();
     const row = code.closest("tr")!;
@@ -522,7 +573,8 @@ describe("ProjectPage", () => {
   it("opens a row's page from anywhere on it, but not after a selection", async () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
-    const overview = await screen.findByRole("tabpanel", { name: "Übersicht" });
+    await openTab(/Verlauf/);
+    const overview = screen.getByRole("tabpanel", { name: S.tabs.history });
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     const here = window.location.pathname;
     const note = within(overview).getByText(
@@ -550,8 +602,8 @@ describe("ProjectPage", () => {
   it("renders the description as paragraphs, the statements with chips", async () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
-    await openTab(/Beschreibung/);
-    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
+    await openTab(/Nachschlagen/);
+    const desc = screen.getByRole("tabpanel", { name: S.tabs.reference });
     expect(
       within(desc).getByText("Das Projekt Payments nimmt Zahlungsaufträge an."),
     ).toBeInTheDocument();
@@ -600,8 +652,8 @@ describe("ProjectPage", () => {
       },
     });
     render(<ProjectPage projectKey="PAY" />);
-    await openTab(/Beschreibung/);
-    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
+    await openTab(/Nachschlagen/);
+    const desc = screen.getByRole("tabpanel", { name: S.tabs.reference });
     // A summary's parts sit under the page's h2, a statement's under its h4.
     expect(within(desc).getByText("Zweck").tagName).toBe("H3");
     expect(within(desc).getByText("Rollen").tagName).toBe("H3");
@@ -635,11 +687,13 @@ describe("ProjectPage", () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
     expect(
-      await screen.findByRole("tabpanel", { name: "Beschreibung" }),
+      await screen.findByRole("tabpanel", { name: S.tabs.reference }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /Übersicht/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Einstieg/ }));
     expect(window.location.hash).toBe("");
     expect(window.location.pathname).toBe("/projects/PAY");
+    fireEvent.click(screen.getByRole("tab", { name: /Verlauf/ }));
+    expect(window.location.hash).toBe("#history");
   });
 
   it("opens the statement the address names, scrolled and set off, and copies its link", async () => {
@@ -653,7 +707,9 @@ describe("ProjectPage", () => {
     window.history.replaceState({}, "", "/projects/PAY#description/s2");
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    const desc = await screen.findByRole("tabpanel", {
+      name: S.tabs.reference,
+    });
     const s2 = within(desc).getByText("Grenze aus").closest("article");
     expect(s2?.id).toBe("s2");
     expect(s2?.dataset.targeted).toBe("true");
@@ -686,7 +742,7 @@ describe("ProjectPage", () => {
     // target is scrolled to.
     expect(scrolled).toHaveBeenCalledTimes(1);
     // A tab switch drops the target; the start tab has no hash.
-    fireEvent.click(screen.getByRole("tab", { name: /Übersicht/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Einstieg/ }));
     expect(window.location.hash).toBe("");
   });
 
@@ -745,7 +801,9 @@ describe("ProjectPage", () => {
     window.history.replaceState({}, "", "/projects/PAY#description/s99");
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    const desc = await screen.findByRole("tabpanel", {
+      name: S.tabs.reference,
+    });
     expect(within(desc).getByText("Auftragsannahme")).toBeInTheDocument();
     expect(desc.querySelector("[data-targeted]")).toBeNull();
   });
@@ -763,6 +821,10 @@ describe("ProjectPage", () => {
     });
     expect(open.getAttribute("href")).toBe("/api/projects/PAY.md");
     expect(open.getAttribute("target")).toBe("_blank");
+    // Said who the two links are for.
+    expect(open.parentElement!.firstElementChild!.textContent).toBe(
+      S.copy.forAgents,
+    );
     fireEvent.click(screen.getByRole("button", { name: "URL kopieren" }));
     expect(written).toEqual(["http://localhost:3000/api/projects/PAY.md"]);
     expect(
@@ -777,14 +839,16 @@ describe("ProjectPage", () => {
     window.history.replaceState({}, "", "/projects/PAY");
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
-    await screen.findByRole("tab", { name: /Übersicht/ });
-    // A search hit's link from the header, on the overview: the tab opens
+    await screen.findByRole("tab", { name: /Einstieg/ });
+    // A search hit's link from the header, on the start tab: the tab opens
     // and the statement is scrolled to.
     act(() => {
       window.history.pushState({}, "", "/projects/PAY#description/s1");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    const desc = await screen.findByRole("tabpanel", { name: "Beschreibung" });
+    const desc = await screen.findByRole("tabpanel", {
+      name: S.tabs.reference,
+    });
     await waitFor(() =>
       expect(scrolled.mock.contexts).toContain(document.getElementById("s1")),
     );
@@ -795,9 +859,16 @@ describe("ProjectPage", () => {
   it("opens the start tab on a hash it does not know, a broken one too", async () => {
     window.history.replaceState({}, "", "/projects/PAY#%E0");
     serve({ "projects/PAY": project });
+    const { unmount } = render(<ProjectPage projectKey="PAY" />);
+    expect(
+      await screen.findByRole("tabpanel", { name: S.tabs.start }),
+    ).toBeInTheDocument();
+    unmount();
+    // The overview tab of old is gone: its link opens the start tab.
+    window.history.replaceState({}, "", "/projects/PAY#overview");
     render(<ProjectPage projectKey="PAY" />);
     expect(
-      await screen.findByRole("tabpanel", { name: "Übersicht" }),
+      await screen.findByRole("tabpanel", { name: S.tabs.start }),
     ).toBeInTheDocument();
   });
 
@@ -816,14 +887,19 @@ describe("ProjectPage", () => {
     ]);
   });
 
-  it("lists both tabs' sections in the rail and jumps across", async () => {
+  it("lists the three tabs' sections in the rail and jumps across", async () => {
     // jsdom lays nothing out and has no scrollIntoView.
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
     const rail = await screen.findByRole("navigation", { name: "Inhalt" });
-    expect(within(rail).getByText("Repositories")).toBeInTheDocument();
+    for (const title of [S.path.label, S.tabs.reference, S.tabs.history])
+      expect(within(rail).getByText(title)).toBeInTheDocument();
+    // The path's steps, numbered as on the page.
+    expect(
+      within(rail).getByText(S.path.step(2, S.path.repos)),
+    ).toBeInTheDocument();
     // The description's sections are its areas, no kind among them.
     expect(within(rail).getByText("Aufträge").closest("a")?.textContent).toBe(
       "Aufträge1",
@@ -831,23 +907,31 @@ describe("ProjectPage", () => {
     expect(within(rail).queryByText("Regeln")).toBeNull();
     fireEvent.click(within(rail).getByText("Grenzwerte"));
     expect(
-      screen.getByRole("tabpanel", { name: "Beschreibung" }),
+      screen.getByRole("tabpanel", { name: S.tabs.reference }),
     ).toBeInTheDocument();
     // A section link scrolls, once the other tab has rendered; it never
     // writes the address, which holds the tab.
     expect(scrolled.mock.contexts[0]).toBe(document.getElementById("area-1"));
     expect(window.location.hash).toBe("#description");
+    // And on to the history.
+    fireEvent.click(within(rail).getByText(S.revision.list));
+    expect(
+      screen.getByRole("tabpanel", { name: S.tabs.history }),
+    ).toBeInTheDocument();
+    expect(scrolled.mock.contexts.at(-1)).toBe(
+      document.getElementById("revisions"),
+    );
     delete (Element.prototype as Partial<Element>).scrollIntoView;
   });
 
-  it("searches the description: typing on the overview goes there", async () => {
+  it("searches the description: typing on the start tab goes there", async () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
     const search = await screen.findByRole("searchbox", {
       name: "Beschreibung durchsuchen",
     });
     fireEvent.change(search, { target: { value: "mandant" } });
-    const desc = screen.getByRole("tabpanel", { name: "Beschreibung" });
+    const desc = screen.getByRole("tabpanel", { name: S.tabs.reference });
     // The statement that matches stays, its match set off; the other goes.
     expect(within(desc).getByText("Auftragsannahme")).toBeInTheDocument();
     expect(within(desc).getByText("Mandant").tagName).toBe("MARK");
@@ -908,16 +992,39 @@ describe("ProjectPage", () => {
         repos: [],
       },
     });
-    render(<ProjectPage projectKey="PAY" />);
+    const { unmount } = render(<ProjectPage projectKey="PAY" />);
+    // The path's first step says so; nothing to guard, nowhere it hurt:
+    // those steps are not there.
+    const start = await screen.findByRole("tabpanel", { name: S.tabs.start });
+    const what = within(start)
+      .getByText(S.path.step(1, S.path.projectWhat))
+      .closest("section")!;
+    expect(what).toHaveTextContent(
+      `${S.project.noDescription} ${S.project.noDescriptionHint}`,
+    );
     expect(
-      await screen.findByText("Keine Bugfixes im Zeitfenster."),
+      within(start)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([
+      S.path.step(1, S.path.projectWhat),
+      S.path.step(2, S.path.repos),
+    ]);
+    expect(within(start).getByText(S.project.noRepos)).toBeInTheDocument();
+    // No repository, no next card; the quiet line says there is no page yet.
+    expect(within(start).queryByText(S.path.next)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^Stand: noch keine Beschreibung/ }),
     ).toBeInTheDocument();
-    await openTab(/Beschreibung/);
+    await openTab(/Nachschlagen/);
     expect(screen.getByText(/Noch keine Beschreibung\./)).toBeInTheDocument();
+    // No statements, no question chips.
+    expect(screen.queryByRole("group", { name: S.ask.label })).toBeNull();
     // The rail points only at what the page shows: no kind sections.
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
     expect(within(rail).getByText("Überblick")).toBeInTheDocument();
     expect(within(rail).queryByText("Regeln")).toBeNull();
+    unmount();
     serve({});
     render(<ProjectPage projectKey="NOPE" />);
     expect(
@@ -1023,10 +1130,13 @@ describe("ProjectPage", () => {
       screen.queryByRole("link", { name: /PostgreSQL|Browser/ }),
     ).toBeNull();
     expect(screen.queryByRole("link", { name: /pay-gone/ })).toBeNull();
-    // Above the repositories.
+    // Its own step, above the repositories.
+    expect(drawing.closest("section")?.querySelector("h3")?.textContent).toBe(
+      S.path.step(2, S.path.how),
+    );
     const repos = within(
-      screen.getByRole("tabpanel", { name: "Übersicht" }),
-    ).getByText("pay-lib");
+      screen.getByRole("tabpanel", { name: S.tabs.start }),
+    ).getByRole("link", { name: "pay-lib" });
     expect(
       drawing.compareDocumentPosition(repos) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
@@ -1207,7 +1317,7 @@ describe("ProjectPage", () => {
       },
     });
     render(<ProjectPage projectKey="PAY" />);
-    await openTab(/Beschreibung/);
+    await openTab(/Nachschlagen/);
     const drawing = await screen.findByRole("img", { name: "Sequenzdiagramm" });
     expect(drawing.textContent).toContain("Limit prüfen");
     const text = screen.getByText("Der Mandant kommt aus der Kopfzeile.");
@@ -1244,6 +1354,13 @@ describe("ProjectPage", () => {
       "title",
       expect.stringContaining("kurze Zusammenfassung"),
     );
+    // A collection's path says what it holds.
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: S.path.step(1, S.path.collectionWhat),
+      }),
+    ).toBeInTheDocument();
     unmount();
     serve({ "projects/PAY": { ...project, shape: "system" } });
     const again = render(<ProjectPage projectKey="PAY" />);
@@ -1267,6 +1384,206 @@ describe("ProjectPage", () => {
       expect.stringContaining("sources"),
       expect.anything(),
     );
+  });
+
+  describe("reading path", () => {
+    const st = (
+      id: string,
+      kind: Statement["kind"],
+      sources: number,
+    ): Statement => ({
+      id,
+      kind,
+      name: `Aussage ${id}`,
+      text: `Text ${id}.`,
+      files: [],
+      sources: Array.from({ length: sources }, (_, i) => ({
+        pr_key: `PAY/pay-api#${i + 1}`,
+      })),
+      area: "Aufträge",
+    });
+    const many: ProjectDetail = {
+      ...project,
+      description: {
+        ...project.description!,
+        summary:
+          "Nimmt Zahlungen an.\n\n#### Ablauf\n\nAnnahme, Buchung, Meldung.",
+        statements: [
+          st("g1", "rule", 0),
+          st("g2", "invariant", 4),
+          st("g3", "rule", 2),
+          st("g4", "invariant", 1),
+          st("p1", "pitfall", 0),
+          st("p2", "pitfall", 3),
+          st("d1", "decision", 1),
+        ],
+      },
+      problems: [],
+    };
+
+    it("shows the three most cited of a kind, the rest a chip away", async () => {
+      serve({ "projects/PAY": many });
+      render(<ProjectPage projectKey="PAY" />);
+      const start = await screen.findByRole("tabpanel", {
+        name: S.tabs.start,
+      });
+      const guard = within(start)
+        .getByText(S.path.step(3, S.path.guard))
+        .closest("section")!;
+      expect(
+        within(guard)
+          .getAllByRole("link")
+          .map((a) => a.textContent),
+      ).toEqual(["Aussage g2", "Aussage g3", "Aussage g4"]);
+      // Two pitfalls, no problem areas: the step stands, no more link.
+      const hurt = within(start)
+        .getByText(S.path.step(4, S.path.hurt))
+        .closest("section")!;
+      expect(
+        within(hurt)
+          .getAllByRole("link")
+          .map((a) => a.textContent),
+      ).toEqual(["Aussage p2", "Aussage p1"]);
+      expect(within(hurt).queryByRole("button")).toBeNull();
+      // The summary's opening, the whole of it a link away.
+      expect(
+        within(start).getByText("Nimmt Zahlungen an."),
+      ).toBeInTheDocument();
+      expect(within(start).queryByText("Ablauf")).toBeNull();
+      expect(
+        within(start)
+          .getByRole("link", { name: /Ganzer Überblick/ })
+          .getAttribute("href"),
+      ).toBe("/projects/PAY#description/summary");
+      // All four: the reference tab, its chip pressed, the others hidden.
+      fireEvent.click(
+        within(guard).getByRole("button", { name: /Alle 4 Invarianten/ }),
+      );
+      const reference = screen.getByRole("tabpanel", {
+        name: S.tabs.reference,
+      });
+      expect(
+        within(reference).getByRole("button", { name: /Was darf nicht/ }),
+      ).toHaveAttribute("aria-pressed", "true");
+      expect(
+        [...reference.querySelectorAll("h4")].map((h) => h.textContent),
+      ).toEqual(["Aussage g1", "Aussage g2", "Aussage g3", "Aussage g4"]);
+      // The summary stays; the rail counts what the chip keeps.
+      expect(
+        within(reference).getByText("Nimmt Zahlungen an."),
+      ).toBeInTheDocument();
+      const rail = screen.getByRole("navigation", { name: "Inhalt" });
+      expect(within(rail).getByText("Aufträge").closest("a")?.textContent).toBe(
+        "Aufträge4",
+      );
+      // A switch by the tab bar lets the chip go.
+      fireEvent.click(screen.getByRole("tab", { name: /Einstieg/ }));
+      fireEvent.click(screen.getByRole("tab", { name: /Nachschlagen/ }));
+      expect(
+        screen.getByRole("button", { name: new RegExp(`^${S.ask.all}`) }),
+      ).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("lets the chip go when the address lands on a statement it hides", async () => {
+      const scrolled = vi.fn();
+      Element.prototype.scrollIntoView = scrolled;
+      serve({ "projects/PAY": many });
+      render(<ProjectPage projectKey="PAY" />);
+      await openTab(/Nachschlagen/);
+      fireEvent.click(
+        screen.getByRole("button", { name: /Was ging schon schief/ }),
+      );
+      expect(
+        [...document.querySelectorAll("article h4")].map((h) => h.textContent),
+      ).toEqual(["Aussage p1", "Aussage p2"]);
+      act(() => {
+        window.history.pushState({}, "", "/projects/PAY#description/d1");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+      await waitFor(() =>
+        expect(scrolled.mock.contexts).toContain(document.getElementById("d1")),
+      );
+      expect(
+        screen.getByRole("button", { name: new RegExp(`^${S.ask.all}`) }),
+      ).toHaveAttribute("aria-pressed", "true");
+      // The same link again, the chip pressed meanwhile: it lets go again,
+      // though the address names the target it named before.
+      fireEvent.click(
+        screen.getByRole("button", { name: /Was ging schon schief/ }),
+      );
+      expect(document.getElementById("d1")).toBeNull();
+      act(() => {
+        window.history.pushState({}, "", "/projects/PAY#description/d1");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+      await waitFor(() => expect(document.getElementById("d1")).not.toBeNull());
+      // A statement the chip keeps: the chip stays.
+      fireEvent.click(
+        screen.getByRole("button", { name: /Was ging schon schief/ }),
+      );
+      act(() => {
+        window.history.pushState({}, "", "/projects/PAY#description/p1");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+      expect(
+        screen.getByRole("button", { name: /Was ging schon schief/ }),
+      ).toHaveAttribute("aria-pressed", "true");
+      // A click on the tab open already is no switch: the chip stays.
+      fireEvent.click(screen.getByRole("tab", { name: /Nachschlagen/ }));
+      expect(
+        screen.getByRole("button", { name: /Was ging schon schief/ }),
+      ).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("lays a summary that opens on a heading under the step, one level down", async () => {
+      serve({
+        "projects/PAY": {
+          ...many,
+          description: {
+            ...many.description!,
+            summary: "#### Zweck\n\nDer Kern.\n\n#### Rollen\n\n- a",
+          },
+        },
+      });
+      render(<ProjectPage projectKey="PAY" />);
+      const start = await screen.findByRole("tabpanel", {
+        name: S.tabs.start,
+      });
+      expect(within(start).getByText("Zweck").tagName).toBe("H4");
+      expect(within(start).getByText("Rollen").tagName).toBe("H4");
+      // Problem areas only with problems: no empty table in this step.
+      expect(within(start).queryByText(S.project.noProblems)).toBeNull();
+      expect(within(start).queryByText(S.project.problems)).toBeNull();
+    });
+
+    it("opens the history from the quiet line", async () => {
+      serve({ "projects/PAY": project });
+      render(<ProjectPage projectKey="PAY" />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Stand:/ }));
+      expect(
+        screen.getByRole("tabpanel", { name: S.tabs.history }),
+      ).toBeInTheDocument();
+      expect(window.location.hash).toBe("#history");
+    });
+
+    it("shows no chips for a collection, whose page holds a summary alone", async () => {
+      serve({
+        "projects/PAY": {
+          ...project,
+          shape: "collection",
+          description: { ...project.description!, statements: [] },
+        },
+      });
+      render(<ProjectPage projectKey="PAY" />);
+      expect(
+        await screen.findByRole("heading", {
+          level: 3,
+          name: S.path.step(1, S.path.collectionWhat),
+        }),
+      ).toBeInTheDocument();
+      await openTab(/Nachschlagen/);
+      expect(screen.queryByRole("group", { name: S.ask.label })).toBeNull();
+    });
   });
 });
 
@@ -2443,6 +2760,88 @@ describe("DescriptionView areas", () => {
       ["summary", S.rail.summary, undefined, undefined],
       ["area-2", "Entwicklung und Deployment", 1, true],
     ]);
+  });
+
+  it("reads an area named as the summary as no area: one Überblick in the rail", () => {
+    const named = {
+      ...description,
+      statements: [
+        st("o1", "entity", "Auftrag", "Überblick"),
+        st("o2", "flow", "Ablauf", " überblick "),
+        st("a1", "rule", "Regel", "Abfrage"),
+      ],
+    };
+    const labels = descriptionRail(named, "", "description").items.map(
+      (i) => i.label,
+    );
+    expect(labels.filter((l) => l === S.rail.summary)).toHaveLength(1);
+    expect(labels).toEqual([S.rail.summary, S.areas.otherArea, "Abfrage"]);
+    render(<DescriptionView description={named} emptyHint="" pageRepo="svc" />);
+    expect(chapters()).toEqual([
+      [S.areas.otherArea, ["Auftrag", "Ablauf"]],
+      ["Abfrage", ["Regel"]],
+    ]);
+  });
+
+  it("shows only the kinds asked, in their chapters, the search on top", () => {
+    const rules: readonly Statement["kind"][] = ["rule", "invariant"];
+    expect(
+      shownStatements(description.statements, "", rules).map((s) => s.id),
+    ).toEqual(["s4"]);
+    expect(shownStatements(description.statements, "Gradle", rules)).toEqual(
+      [],
+    );
+    expect(
+      shownStatements(description.statements, "Alt").map((s) => s.id),
+    ).toEqual(["s2"]);
+    const { rerender } = render(
+      <DescriptionView
+        description={description}
+        emptyHint=""
+        pageRepo="svc"
+        kinds={rules}
+        tail={<p>Fakten</p>}
+      />,
+    );
+    expect(chapters()).toEqual([["Abfrage", ["Regel"]]]);
+    // The summary stays, the tail comes after the chapters.
+    expect(screen.getByText("Ein Dienst.")).toBeInTheDocument();
+    expect(screen.getByText("Fakten")).toBeInTheDocument();
+    // Asked for kinds the page has none of: said, as a search with none.
+    rerender(
+      <DescriptionView
+        description={description}
+        emptyHint=""
+        pageRepo="svc"
+        kinds={["pitfall"]}
+        tail={<p>Fakten</p>}
+      />,
+    );
+    expect(chapters()).toEqual([]);
+    expect(screen.getByText(S.rail.noHits)).toBeInTheDocument();
+    // The rail counts what the kinds keep, as hits.
+    expect(
+      descriptionRail(description, "", "description", [], [], rules).items.map(
+        (c) => [c.label, c.count, c.hit],
+      ),
+    ).toEqual([
+      [S.rail.summary, undefined, undefined],
+      ["Abfrage", 1, true],
+    ]);
+    // The search's line counts what the chip keeps of the hits.
+    expect(
+      descriptionRail(description, "Regel", "description", [], [], rules)
+        .hitLine,
+    ).toBe("1 von 1 Eintrag · 1 Kapitel");
+    expect(
+      descriptionRail(description, "Gradle", "description", [], [], rules)
+        .hitLine,
+    ).toBe(S.rail.noHits);
+    // No description: the tail still stands.
+    rerender(
+      <DescriptionView description={null} emptyHint="" tail={<p>Fakten</p>} />,
+    );
+    expect(screen.getByText("Fakten")).toBeInTheDocument();
   });
 });
 

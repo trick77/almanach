@@ -45,7 +45,14 @@ export const areaId = (i: number) => `area-${i}`;
  *  meets. */
 export const statementId = (id: string) => id;
 
-const areaOf = (s: Statement) => s.area ?? "";
+/** areaOf is a statement's area, "" for none. An area named as the
+ *  summary (any case, trimmed) reads as none: the rail would name
+ *  Überblick twice, the summary and the chapter. A rule here, not in the
+ *  prompt, as it holds for every stored page at once. */
+const areaOf = (s: Statement) => {
+  const area = s.area ?? "";
+  return area.trim().toLowerCase() === S.rail.summary.toLowerCase() ? "" : area;
+};
 
 /** areaNames is a page's areas, each once, in the page's order, the one
  *  of statements in no area ("") among them: every statement stands in a
@@ -80,29 +87,45 @@ export function statementMatches(s: Statement, query: string): boolean {
   return matchesQuery(query, s.name, plainOf(s), s.area ?? "", ...s.files);
 }
 
+/** shownStatements is what a description shows of all: what the search
+ *  matches and, with kinds (a question chip), only those kinds. */
+export function shownStatements(
+  all: Statement[],
+  query: string,
+  kinds?: readonly Kind[],
+): Statement[] {
+  return all.filter(
+    (s) =>
+      statementMatches(s, query) &&
+      (kinds === undefined || kinds.includes(s.kind)),
+  );
+}
+
 /** descriptionRail is the rail's part of a description: the summary and
- *  each area with its count, the search's hit count while one runs, and
- *  the line under the search. lead is the sections before the summary (a
- *  map), extra the ones after it (problem areas, dependencies). An area
- *  the search leaves without a hit has no chapter to point at and is left
- *  out. */
+ *  each area with its count, the shown statements' count while a search
+ *  or a chip (kinds) narrows them, and the search's line under it. lead
+ *  is the sections before the summary (a map), extra the ones after it
+ *  (problem areas, dependencies). An area left without a shown statement
+ *  has no chapter to point at and is left out. */
 export function descriptionRail(
   description: Description | null,
   query: string,
   tab: string,
   lead: RailItem[] = [],
   extra: RailItem[] = [],
+  kinds?: readonly Kind[],
 ): { items: RailItem[]; hitLine: string } {
   const statements = description?.statements ?? [];
   const searching = query.trim() !== "";
-  const hits = statements.filter((s) => statementMatches(s, query));
+  const narrowed = searching || kinds !== undefined;
+  const shown = shownStatements(statements, query, kinds);
   const names = areaNames(statements);
   const items: RailItem[] = [
     ...lead,
     { id: summaryId, label: S.rail.summary, tab },
     ...extra,
     ...names.flatMap((area, i): RailItem[] => {
-      const n = hits.filter((s) => areaOf(s) === area).length;
+      const n = shown.filter((s) => areaOf(s) === area).length;
       return n === 0
         ? []
         : [
@@ -111,20 +134,19 @@ export function descriptionRail(
               label: plain(areaTitle(area, names)),
               tab,
               count: n,
-              hit: searching,
+              hit: narrowed,
             },
           ];
     }),
   ];
+  // The search's line, counting what the page shows: a chip pressed
+  // narrows the hits and what they are out of.
+  const pool = shownStatements(statements, "", kinds).length;
   const hitLine = !searching
     ? ""
-    : hits.length === 0
+    : shown.length === 0
       ? S.rail.noHits
-      : S.rail.hits(
-          hits.length,
-          statements.length,
-          new Set(hits.map(areaOf)).size,
-        );
+      : S.rail.hits(shown.length, pool, new Set(shown.map(areaOf)).size);
   return { items, hitLine };
 }
 
@@ -138,8 +160,10 @@ export function descriptionRail(
  *  citation chips. pageRepo is the repository a repository page shows,
  *  whose slug its chips leave out; without it the page is a project's.
  *  query keeps the statements it matches and sets the matches off; the
- *  summary stays, marked. lead comes first (a map), afterSummary under
- *  the summary (a repository's problem areas). tab is the tab the view
+ *  summary stays, marked. kinds (a question chip) keeps those kinds
+ *  alone, the search on top. lead comes first (a map), afterSummary
+ *  under the summary (a repository's problem areas), tail after the
+ *  chapters (the facts read from the code). tab is the tab the view
  *  stands on, for each statement's own address (anchorHash); target the
  *  statement the address names, set off; onTarget makes one the target,
  *  the page writing its address. */
@@ -148,8 +172,10 @@ export function DescriptionView({
   emptyHint,
   pageRepo,
   query = "",
+  kinds,
   lead,
   afterSummary,
+  tail,
   tab,
   target = "",
   onTarget,
@@ -158,8 +184,10 @@ export function DescriptionView({
   emptyHint: string;
   pageRepo?: string;
   query?: string;
+  kinds?: readonly Kind[];
   lead?: ReactNode;
   afterSummary?: ReactNode;
+  tail?: ReactNode;
   tab?: string;
   target?: string;
   onTarget?: (id: string) => void;
@@ -175,12 +203,14 @@ export function DescriptionView({
           </Empty>
         </section>
         {afterSummary}
+        {tail}
       </>
     );
   }
   const all = description.statements;
-  const shown = all.filter((s) => statementMatches(s, query));
+  const shown = shownStatements(all, query, kinds);
   const names = areaNames(all);
+  const narrowed = query.trim() !== "" || kinds !== undefined;
   return (
     <>
       {lead}
@@ -192,8 +222,7 @@ export function DescriptionView({
       {all.length === 0 ? (
         <Empty>{S.areas.none}</Empty>
       ) : (
-        query.trim() !== "" &&
-        shown.length === 0 && <Empty>{S.rail.noHits}</Empty>
+        narrowed && shown.length === 0 && <Empty>{S.rail.noHits}</Empty>
       )}
       {areaGroups(all, shown).map((g) => (
         <section
@@ -218,6 +247,7 @@ export function DescriptionView({
           ))}
         </section>
       ))}
+      {tail}
     </>
   );
 }
@@ -259,8 +289,8 @@ function AnchorLink({
 }
 
 /** areaHeading is an area's chapter title: under the page's h2, over its
- *  statements' h4 names. */
-const areaHeading =
+ *  statements' h4 names; a reading path's step title too. */
+export const areaHeading =
   "mt-9 mb-1 font-serif text-[21px] font-medium leading-tight tracking-tight text-ink";
 
 /** areaGroups is the shown statements in their areas, each area once,

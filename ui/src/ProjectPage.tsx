@@ -1,6 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectDetail, SharedRepo } from "./api";
-import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { ProjectDetail, Repo, SharedRepo } from "./api";
+import {
+  DESCRIPTION,
+  DescriptionView,
+  descriptionRail,
+  summaryId,
+} from "./Description";
+import {
+  AskChips,
+  EntryPath,
+  EntryStatement,
+  NextCard,
+  StandLine,
+  askKinds,
+  ofKinds,
+  pick,
+  type Ask,
+  type Step,
+} from "./Entry";
 import { CompactMap } from "./CompactMap";
 import { titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
@@ -15,12 +32,14 @@ import {
   Rail,
   RailPage,
   Tabs,
+  anchorHash,
   stickyCrumbs,
   useHashTab,
   useJumpTo,
   type RailGroup,
+  type RailItem,
 } from "./Rail";
-import { day, refName } from "./format";
+import { day, leadOf, refName } from "./format";
 import { projectExportHref, projectPath, repoPath } from "./routing";
 import { S } from "./strings";
 import { useCanonical } from "./useCanonical";
@@ -33,6 +52,7 @@ import {
   Link,
   Sep,
   Skeleton,
+  Summary,
   column,
   eyebrow,
   h2,
@@ -51,23 +71,35 @@ import {
   teaserLines,
 } from "./ui";
 
-/** The project page's tabs by their hash: the overview first, the hub's
- *  job; the description second. */
-const OVERVIEW = "overview";
-const TABS = [OVERVIEW, DESCRIPTION];
-const tabLabel = (t: string) =>
-  t === OVERVIEW ? S.tabs.overview : S.tabs.description;
+/** The project page's tabs by their hash: the start tab first, a reading
+ *  path; the reference second (DESCRIPTION, the hash statement links
+ *  carry); the history third. */
+const START = "start";
+const HISTORY = "history";
+const TABS = [START, DESCRIPTION, HISTORY];
+const tabLabels: Record<string, string> = {
+  [START]: S.tabs.start,
+  [DESCRIPTION]: S.tabs.reference,
+  [HISTORY]: S.tabs.history,
+};
 
-/** The overview's section ids, the rail's anchors. */
+/** The sections' ids, the rail's anchors: the path's steps, the facts
+ *  on the reference tab, the history's tables. */
 const ids = {
-  map: "map",
+  what: "what",
+  how: "map",
   repos: "repositories",
+  guard: "guard",
+  hurt: "hurt",
   interfaces: "interfaces",
   messages: "messages",
-  problems: "problems",
+  repoStats: "repo-stats",
   notes: "notes",
   revisions: "revisions",
 };
+
+/** perStep is how many statements a step of the path shows. */
+const perStep = 3;
 
 export function ProjectPage({ projectKey }: { projectKey: string }) {
   const { data, failed } = useFetch<ProjectDetail>(
@@ -106,12 +138,43 @@ function ProjectCrumbs({ projectKey }: { projectKey: string }) {
 
 function Body({ data }: { data: ProjectDetail }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const { tab, setTab, target, setTarget, landing } = useHashTab(
-    TABS,
-    OVERVIEW,
-  );
-  useJumpTo(landing, tab === DESCRIPTION && data.description !== null);
+  const { tab, setTab, target, setTarget, landing } = useHashTab(TABS, START);
   const [query, setQuery] = useState("");
+  const statements = data.description?.statements ?? [];
+  // The question chip pressed on the reference tab, page state alone: a
+  // tab switch by the tab bar lets it go, a path's "Alle n" presses one.
+  const [pressed, setAsk] = useState<Ask>("all");
+  // A chip whose kinds a reload left without a statement shows no chip
+  // to let go of: it reads as all.
+  const ask =
+    pressed !== "all" &&
+    statements.some((s) => askKinds[pressed].includes(s.kind))
+      ? pressed
+      : "all";
+  // A statement an address followed lands on that the chip hides: the
+  // chip lets go and the jump goes there again. Heard on the address
+  // itself, not on landing: the same link followed again names the same
+  // target, which landing would not see change.
+  const [rejump, setRejump] = useState(0);
+  useEffect(() => {
+    if (ask === "all") return;
+    const onAddress = () => {
+      const [t, id] = window.location.hash.slice(1).split("/");
+      if (t !== DESCRIPTION || !id) return;
+      const s = data.description?.statements.find((x) => x.id === id);
+      if (!s || askKinds[ask].includes(s.kind)) return;
+      setAsk("all");
+      setRejump((n) => n + 1);
+    };
+    window.addEventListener("popstate", onAddress);
+    window.addEventListener("hashchange", onAddress);
+    return () => {
+      window.removeEventListener("popstate", onAddress);
+      window.removeEventListener("hashchange", onAddress);
+    };
+  }, [ask, data.description]);
+  const kinds = ask === "all" ? undefined : askKinds[ask];
+  useJumpTo(landing, tab === DESCRIPTION && data.description !== null, rejump);
   const notes = data.repos.reduce((n, r) => n + r.notes, 0);
   // By instant, not by string: an RFC 3339 stamp with an offset does not
   // sort chronologically as text.
@@ -126,73 +189,103 @@ function Body({ data }: { data: ProjectDetail }) {
   const showMap =
     data.map !== null || (data.map_expected && !data.map_declined);
 
-  // A new tab starts at its top, not where the last one was left.
+  // A new tab starts at its top, not where the last one was left; a
+  // switch by the tab bar lets the question chip go. The tab open already
+  // goes to its top and keeps its chip: no switch.
   function openTab(t: string) {
-    setTab(t);
+    if (t !== tab) {
+      setTab(t);
+      setAsk("all");
+    }
     if (scroller.current) scroller.current.scrollTop = 0;
   }
 
-  // A search is over the description: typing on the overview goes there.
+  // A path's "Alle n": the reference tab, at its top, the chip pressed.
+  function openAsk(a: Ask) {
+    setAsk(a);
+    setTab(DESCRIPTION);
+    if (scroller.current) scroller.current.scrollTop = 0;
+  }
+
+  // A search is over the description: typing elsewhere goes there.
   function onQuery(q: string) {
     setQuery(q);
     if (q.trim() !== "" && tab !== DESCRIPTION) openTab(DESCRIPTION);
   }
 
-  const desc = descriptionRail(data.description, query, DESCRIPTION);
+  // Once for the map's boxes and the repositories' table both.
+  const teasers = useMemo(
+    () => new Map(data.repos.map((r) => [r.slug, teaserLines(r.summary)])),
+    [data.repos],
+  );
+  // Not on every keystroke of a search: the path is the data's alone.
+  const steps = useMemo(
+    () => entrySteps(data, showMap, teasers),
+    [data, showMap, teasers],
+  );
+  const desc = descriptionRail(
+    data.description,
+    query,
+    DESCRIPTION,
+    [],
+    [],
+    kinds,
+  );
+  const facts: RailItem[] = [
+    ...(data.interfaces.length > 0
+      ? [
+          {
+            id: ids.interfaces,
+            label: S.ifc.title,
+            tab: DESCRIPTION,
+            count: data.interfaces.length,
+          },
+        ]
+      : []),
+    ...(data.topics.length > 0
+      ? [
+          {
+            id: ids.messages,
+            label: S.msg.title,
+            tab: DESCRIPTION,
+            count: data.topics.length,
+          },
+        ]
+      : []),
+  ];
   const groups: RailGroup[] = [
     {
-      title: S.tabs.overview,
+      title: S.path.label,
+      items: steps.map((s, i) => ({
+        id: s.id,
+        label: S.path.step(i + 1, s.title),
+        tab: START,
+      })),
+    },
+    { title: S.tabs.reference, items: [...desc.items, ...facts] },
+    {
+      title: S.tabs.history,
       items: [
-        ...(showMap
-          ? [{ id: ids.map, label: S.project.map, tab: OVERVIEW }]
-          : []),
         {
-          id: ids.repos,
+          id: ids.repoStats,
           label: S.project.repos,
-          tab: OVERVIEW,
+          tab: HISTORY,
           count: data.repos.length,
-        },
-        ...(data.interfaces.length > 0
-          ? [
-              {
-                id: ids.interfaces,
-                label: S.ifc.title,
-                tab: OVERVIEW,
-                count: data.interfaces.length,
-              },
-            ]
-          : []),
-        ...(data.topics.length > 0
-          ? [
-              {
-                id: ids.messages,
-                label: S.msg.title,
-                tab: OVERVIEW,
-                count: data.topics.length,
-              },
-            ]
-          : []),
-        {
-          id: ids.problems,
-          label: S.project.problems,
-          tab: OVERVIEW,
-          count: data.problems.length,
         },
         {
           id: ids.notes,
           label: S.project.recentNotes,
-          tab: OVERVIEW,
+          tab: HISTORY,
           count: data.recent_notes.length,
         },
         {
           id: ids.revisions,
           label: S.revision.list,
-          tab: OVERVIEW,
+          tab: HISTORY,
           count: data.revisions.length,
         },
       ],
     },
-    { title: S.tabs.description, items: desc.items },
   ];
 
   return (
@@ -234,156 +327,307 @@ function Body({ data }: { data: ProjectDetail }) {
           </>
         )}
         {S.projects.repos(data.repos.length)}
-        <Sep />
-        {S.projects.notes(notes)}
-        <Sep />
-        {data.description
-          ? S.project.descriptionRevision(data.description.revision)
-          : S.projects.noDescription}
-        <Sep />
-        {S.projects.lastMerge}{" "}
-        {lastMerge === undefined ? S.common.never : day(lastMerge)}
       </p>
-      <StaleHint stale={data.stale} scope="project" projectKey={data.key} />
+      <StandLine
+        revision={data.description?.revision ?? null}
+        notes={notes}
+        lastMerge={lastMerge ?? null}
+        onHistory={() => openTab(HISTORY)}
+      />
       <ExportLine href={projectExportHref(data.key)} />
+      <StaleHint stale={data.stale} scope="project" projectKey={data.key} />
 
       <Tabs
         tabs={[
-          { id: OVERVIEW, label: S.tabs.overview },
+          { id: START, label: S.tabs.start },
           {
             id: DESCRIPTION,
-            label: S.tabs.description,
+            label: S.tabs.reference,
             count: data.description?.statements.length,
           },
+          { id: HISTORY, label: S.tabs.history },
         ]}
         value={tab}
         onChange={openTab}
       />
 
-      <div role="tabpanel" aria-label={tabLabel(tab)}>
-        {tab === OVERVIEW ? (
-          <Overview data={data} showMap={showMap} />
-        ) : (
-          <DescriptionView
-            description={data.description}
-            emptyHint={S.project.noDescriptionHint}
-            query={query}
-            tab={DESCRIPTION}
-            target={target}
-            onTarget={setTarget}
-          />
+      <div role="tabpanel" aria-label={tabLabels[tab]}>
+        {tab === START && (
+          <>
+            <EntryPath steps={steps} onAsk={openAsk} />
+            {data.repos[0] && (
+              <NextCard
+                to={repoPath(data.key, data.repos[0].slug)}
+                slug={data.repos[0].slug}
+                teaser={teasers.get(data.repos[0].slug) ?? []}
+              />
+            )}
+          </>
         )}
+        {tab === DESCRIPTION && (
+          <>
+            <AskChips statements={statements} value={ask} onChange={setAsk} />
+            <DescriptionView
+              description={data.description}
+              emptyHint={S.project.noDescriptionHint}
+              query={query}
+              kinds={kinds}
+              tab={DESCRIPTION}
+              target={target}
+              onTarget={setTarget}
+              tail={<Facts data={data} />}
+            />
+          </>
+        )}
+        {tab === HISTORY && <History data={data} />}
       </div>
     </RailPage>
   );
 }
 
-/** Overview is the hub: the map, the repositories, where it broke lately,
- *  what merged lately. */
-function Overview({
+/** entrySteps is the start tab's reading path, each step there only when
+ *  it has something to show: what the project is, how its parts connect,
+ *  its repositories, what must not break, where it hurt; a step with more
+ *  of its kind than it shows names the question that shows them all. */
+function entrySteps(
+  data: ProjectDetail,
+  showMap: boolean,
+  teasers: Map<string, string[]>,
+): Step[] {
+  const statements = data.description?.statements ?? [];
+  const at = (id: string) =>
+    projectPath(data.key) + anchorHash(DESCRIPTION, id);
+  const shown = (picked: typeof statements) =>
+    picked.map((s) => (
+      <EntryStatement key={s.id} statement={s} to={at(s.id)} project />
+    ));
+  const steps: Step[] = [];
+
+  const d = data.description;
+  const lead = d === null ? "" : leadOf(d.summary);
+  steps.push({
+    id: ids.what,
+    title:
+      data.shape === "collection" ? S.path.collectionWhat : S.path.projectWhat,
+    body:
+      d === null ? (
+        <Empty>
+          {S.project.noDescription} {S.project.noDescriptionHint}
+        </Empty>
+      ) : (
+        <>
+          <Summary text={lead} layout heading="h4" />
+          {lead !== d.summary && (
+            <Link
+              to={at(summaryId)}
+              className="mt-2 inline-block text-[14px] text-accent-strong hover:text-ink"
+            >
+              {S.path.wholeSummary} <span aria-hidden>→</span>
+            </Link>
+          )}
+        </>
+      ),
+  });
+
+  if (showMap)
+    steps.push({
+      id: ids.how,
+      title: S.path.how,
+      body:
+        data.map === null ? (
+          <Empty>{S.project.noMap}</Empty>
+        ) : (
+          <SystemMap
+            map={data.map}
+            projectKey={data.key}
+            slugs={data.repos.map((r) => r.slug)}
+            teasers={teasers}
+            shared={data.shared}
+          />
+        ),
+    });
+
+  steps.push({
+    id: ids.repos,
+    title: S.path.repos,
+    body: <RepoTable data={data} teasers={teasers} />,
+  });
+
+  const guards = ofKinds(statements, askKinds.guard);
+  if (guards.length > 0)
+    steps.push({
+      id: ids.guard,
+      title: S.path.guard,
+      body: shown(pick(statements, askKinds.guard, perStep)),
+      more:
+        guards.length > perStep
+          ? { label: S.path.allGuards(guards.length), ask: "guard" }
+          : undefined,
+    });
+
+  const pitfalls = ofKinds(statements, askKinds.hurt);
+  if (data.problems.length > 0 || pitfalls.length > 0)
+    steps.push({
+      id: ids.hurt,
+      title: S.path.hurt,
+      body: (
+        <>
+          {data.problems.length > 0 && (
+            <>
+              <div className={eyebrow + " mt-0"}>
+                {S.project.problems}
+                <span className="ml-2 font-normal tracking-normal normal-case text-faint">
+                  {S.project.problemsWindow(data.problem_window_days)}
+                </span>
+              </div>
+              <Problems problems={data.problems} />
+            </>
+          )}
+          <div className="mt-3">
+            {shown(pick(statements, askKinds.hurt, perStep))}
+          </div>
+        </>
+      ),
+      more:
+        pitfalls.length > perStep
+          ? { label: S.path.allPitfalls(pitfalls.length), ask: "hurt" }
+          : undefined,
+    });
+  return steps;
+}
+
+/** RepoRows is the project's repositories as a table, each row opening
+ *  its page by its slug under first, the other columns heads and cells;
+ *  noRepos when it has none. The path's table and the history's. */
+function RepoRows({
   data,
-  showMap,
+  first,
+  heads,
+  cells,
 }: {
   data: ProjectDetail;
-  showMap: boolean;
+  first: string;
+  heads: ReactNode;
+  cells: (r: Repo) => ReactNode;
 }) {
-  const [hRepo, hDesc, hNotes, hMerge] = S.project.repoHeaders;
-  // Once for the map's boxes and the list both.
-  const teasers = useMemo(
-    () => new Map(data.repos.map((r) => [r.slug, teaserLines(r.summary)])),
-    [data.repos],
+  if (data.repos.length === 0) return <Empty>{S.project.noRepos}</Empty>;
+  return (
+    <div className={tableBox}>
+      <table className={table}>
+        <thead>
+          <tr>
+            <th className={th}>{first}</th>
+            {heads}
+          </tr>
+        </thead>
+        <tbody>
+          {data.repos.map((r) => {
+            const to = repoPath(data.key, r.slug);
+            return (
+              <tr key={r.slug} {...rowOpens(to)}>
+                <td className={tdMono}>
+                  <Link to={to} className={rowLink}>
+                    {r.slug}
+                  </Link>
+                </td>
+                {cells(r)}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
+}
+
+/** RepoTable is the path's repositories, each with its summary's teaser. */
+function RepoTable({
+  data,
+  teasers,
+}: {
+  data: ProjectDetail;
+  teasers: Map<string, string[]>;
+}) {
+  const [hRepo, hDesc] = S.project.repoHeaders;
+  return (
+    <RepoRows
+      data={data}
+      first={hRepo}
+      heads={<th className={th}>{hDesc}</th>}
+      cells={(r) => {
+        const teaser = teasers.get(r.slug) ?? [];
+        return (
+          <td className={td}>
+            {teaser.length === 0 ? (
+              <span className="text-faint">{S.project.noDescription}</span>
+            ) : (
+              <Teaser lines={teaser} />
+            )}
+          </td>
+        );
+      }}
+    />
+  );
+}
+
+/** Facts is what the code tells of the project, after its description on
+ *  the reference tab: the interfaces it offers, the topics it touches;
+ *  not there without either. */
+function Facts({ data }: { data: ProjectDetail }) {
+  if (data.interfaces.length === 0 && data.topics.length === 0) return null;
   return (
     <>
-      {showMap && (
-        <section id={ids.map} className="scroll-mt-16">
-          <div className={eyebrow}>{S.project.map}</div>
-          {data.map === null ? (
-            <Empty>{S.project.noMap}</Empty>
-          ) : (
-            <SystemMap
-              map={data.map}
-              projectKey={data.key}
-              slugs={data.repos.map((r) => r.slug)}
-              teasers={teasers}
-              shared={data.shared}
-            />
-          )}
-        </section>
-      )}
-
-      <section id={ids.repos} className="scroll-mt-16">
-        <div className={eyebrow}>{S.project.repos}</div>
-        {data.repos.length === 0 ? (
-          <Empty>{S.project.noRepos}</Empty>
-        ) : (
-          <div className={tableBox}>
-            <table className={table}>
-              <thead>
-                <tr>
-                  <th className={th}>{hRepo}</th>
-                  <th className={th}>{hDesc}</th>
-                  <th className={thNum}>{hNotes}</th>
-                  <th className={th}>{hMerge}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.repos.map((r) => {
-                  const to = repoPath(data.key, r.slug);
-                  const teaser = teasers.get(r.slug) ?? [];
-                  return (
-                    <tr key={r.slug} {...rowOpens(to)}>
-                      <td className={tdMono}>
-                        <Link to={to} className={rowLink}>
-                          {r.slug}
-                        </Link>
-                      </td>
-                      <td className={td}>
-                        {teaser.length === 0 ? (
-                          <span className="text-faint">
-                            {S.project.noDescription}
-                          </span>
-                        ) : (
-                          <Teaser lines={teaser} />
-                        )}
-                      </td>
-                      <td className={tdNum}>{r.notes}</td>
-                      <td className={td + " whitespace-nowrap"}>
-                        {r.last_merge === null
-                          ? S.common.never
-                          : day(r.last_merge)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
+      <div className={eyebrow + " mt-10"}>{S.facts.title}</div>
       {data.interfaces.length > 0 && (
         <section id={ids.interfaces} className="scroll-mt-16">
           <div className={eyebrow}>{S.ifc.title}</div>
           <ProjectInterfaces apis={data.interfaces} />
         </section>
       )}
-
       {data.topics.length > 0 && (
         <section id={ids.messages} className="scroll-mt-16">
           <div className={eyebrow}>{S.msg.title}</div>
           <ProjectMessages project={data.key} flows={data.topics} />
         </section>
       )}
+    </>
+  );
+}
 
-      <section id={ids.problems} className="scroll-mt-16">
-        <div className={eyebrow}>
-          {S.project.problems}
-          <span className="ml-2 font-normal tracking-normal normal-case text-faint">
-            {S.project.problemsWindow(data.problem_window_days)}
-          </span>
-        </div>
-        <Problems problems={data.problems} />
+/** History is what changed: each repository's figures, the latest notes,
+ *  the project page's revisions. */
+function History({ data }: { data: ProjectDetail }) {
+  const [hRepo, hRev, hNotes, hMerge] = S.project.repoStatHeaders;
+  return (
+    <>
+      <section id={ids.repoStats} className="scroll-mt-16">
+        <div className={eyebrow}>{S.project.repos}</div>
+        <RepoRows
+          data={data}
+          first={hRepo}
+          heads={
+            <>
+              <th className={thNum}>{hRev}</th>
+              <th className={thNum}>{hNotes}</th>
+              <th className={th}>{hMerge}</th>
+            </>
+          }
+          cells={(r) => (
+            <>
+              <td className={tdNum}>
+                {r.revision === 0 ? (
+                  <span className="text-faint">{S.projects.noDescription}</span>
+                ) : (
+                  r.revision
+                )}
+              </td>
+              <td className={tdNum}>{r.notes}</td>
+              <td className={td + " whitespace-nowrap"}>
+                {r.last_merge === null ? S.common.never : day(r.last_merge)}
+              </td>
+            </>
+          )}
+        />
       </section>
 
       <section id={ids.notes} className="scroll-mt-16">
