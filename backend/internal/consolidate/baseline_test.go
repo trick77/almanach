@@ -1160,6 +1160,41 @@ func TestRun_BusyDatabaseHoldsThenResumes(t *testing.T) {
 	}
 }
 
+// A failed call's skip code names its outcome; any other failure stays
+// "failed".
+func TestSkipFor(t *testing.T) {
+	for o, want := range map[inference.Outcome]baseline.Skip{
+		inference.OutcomeTooLong:     baseline.SkipTooLong,
+		inference.OutcomeUnparseable: baseline.SkipUnparseable,
+		inference.OutcomeError:       baseline.SkipFailed,
+	} {
+		if got := skipFor(o); got != want {
+			t.Errorf("skipFor(%s) = %q, want %q", o, got, want)
+		}
+	}
+}
+
+// A project step cut too long is skipped as such, not as a failed call.
+func TestRun_ProjectStepSkipNamesOutcome(t *testing.T) {
+	x := newWorld(t, 16)
+	x.queue(store.RunFull, "")
+	x.models.catalogue = []inference.CatalogueResult{{Call: called, Catalogue: inference.Catalogue{Subjects: []inference.Subject{
+		{Name: "A", Purpose: "p", Paths: []string{"auth/"}},
+	}}}}
+	x.models.patches = []inference.PatchResult{
+		{Call: called, Patch: inference.Patch{Summary: ref("Ein Service."), Statements: []inference.Statement{}}},
+		{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}},
+	}
+	x.models.project = inference.DescriptionResult{Call: inference.Call{Outcome: inference.OutcomeTooLong}}
+	x.w.drain(context.Background())
+	if r := x.run(); r.State != store.RunDone || r.Skipped != 1 {
+		t.Fatalf("run = %+v", r)
+	}
+	if p := x.plan(t); p.Steps[baseline.PartProject] != baseline.SkipTooLong {
+		t.Errorf("steps = %v, want the project skipped too_long", p.Steps)
+	}
+}
+
 // A part the model fails is skipped and named in the plan for the next
 // reconcile, the parts after it still read. A patch of any size is taken
 // whole: a page has no ceiling (user, 2026-11-01).
@@ -1187,8 +1222,8 @@ func TestRun_SkipsAndNoCeiling(t *testing.T) {
 	if r.State != store.RunDone || r.Skipped != 1 || r.Calls != 7 {
 		t.Fatalf("run = %+v", r)
 	}
-	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A"}) || p.Why["A"] != baseline.SkipFailed {
-		t.Errorf("skipped = %v, why = %v, want A alone, failed", p.Skipped, p.Why)
+	if p := x.plan(t); !reflect.DeepEqual(p.Skipped, []string{"A"}) || p.Why["A"] != baseline.SkipUnparseable {
+		t.Errorf("skipped = %v, why = %v, want A alone, unparseable", p.Skipped, p.Why)
 	}
 	if page := x.st.pages[pageKey(store.ScopeRepository, "tools", "svc")]; len(page.Statements) != 51 || page.Statements[50].Name != "Kurz" {
 		t.Errorf("page has %d statements, want B's 50 of 2000 runes and C's one", len(page.Statements))
@@ -1315,7 +1350,7 @@ func TestRun_SubjectNamedLikeAStep(t *testing.T) {
 		t.Errorf("second step's prompt does not read the subject:\n%s", x.models.prompts[2])
 	}
 	p := x.plan(t)
-	if !reflect.DeepEqual(p.Skipped, []string{"the overview"}) || p.Why["the overview"] != baseline.SkipFailed || len(p.Steps) != 0 {
+	if !reflect.DeepEqual(p.Skipped, []string{"the overview"}) || p.Why["the overview"] != baseline.SkipUnparseable || len(p.Steps) != 0 {
 		t.Errorf("skipped = %v, why = %v, steps = %v; want the subject alone", p.Skipped, p.Why, p.Steps)
 	}
 }
