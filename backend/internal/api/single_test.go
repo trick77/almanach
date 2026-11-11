@@ -86,7 +86,8 @@ func TestSources_AddRepoSlugFromURL(t *testing.T) {
 // the wire, and exports as its repository.
 func TestProjects_Single(t *testing.T) {
 	st := newFakeStore()
-	st.projects = []store.ProjectRow{{Key: "acme", Repos: 2, Summary: "Ein System."}, {Key: "loom", Repos: 1, Summary: "Von früher."}}
+	st.projects = []store.ProjectRow{{Key: "acme", Repos: 2, Summary: "Ein System.", Shape: store.ShapeSystem},
+		{Key: "loom", Repos: 1, Summary: "Von früher.", Shape: store.ShapeCollection}}
 	st.teams["loom"], st.teams["acme"] = "", ""
 	st.repos["loom"] = []store.RepoRow{{Slug: "loom", Revision: 3, Summary: "Ein Agent."}}
 	st.repos["acme"] = []store.RepoRow{{Slug: "core"}, {Slug: "portal"}}
@@ -97,8 +98,9 @@ func TestProjects_Single(t *testing.T) {
 
 	_, body := do(t, h, http.MethodGet, "/api/projects", "", "", nil)
 	var list []struct {
-		Key     string `json:"key"`
-		Summary string `json:"summary"`
+		Key     string  `json:"key"`
+		Summary string  `json:"summary"`
+		Shape   *string `json:"shape"`
 		Repo    *struct {
 			Slug    string `json:"slug"`
 			Summary string `json:"summary"`
@@ -114,6 +116,10 @@ func TestProjects_Single(t *testing.T) {
 	// from when it had more.
 	if list[0].Summary != "Ein System." || list[1].Summary != "Ein Agent." {
 		t.Errorf("summaries = %q, %q, want the project's and loom's repository's", list[0].Summary, list[1].Summary)
+	}
+	// Nor a shape judged then: a project of one has none.
+	if list[0].Shape == nil || *list[0].Shape != store.ShapeSystem || list[1].Shape != nil {
+		t.Errorf("shapes = %v, %v, want system and none", list[0].Shape, list[1].Shape)
 	}
 
 	code, body := do(t, h, http.MethodGet, "/api/projects/loom", "", "", nil)

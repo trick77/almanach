@@ -51,7 +51,8 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 		       (SELECT COUNT(*) FROM `+reposFrom(sourced)+` r WHERE r.project_id = p.id),
 		       (SELECT COUNT(*) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
 		       COALESCE(rv.revision, 0), COALESCE(rv.summary, ''),
-		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id)
+		       (SELECT MAX(n.merged_at) FROM notes n JOIN repos nr ON nr.id = n.repo_id WHERE nr.project_id = p.id),
+		       COALESCE(rv.shape, '')
 		  FROM `+projectsFrom(sourced)+` p
 		  LEFT JOIN pages pg ON pg.scope = 'project' AND pg.project_id = p.id AND pg.repo_id = 0
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id
@@ -63,7 +64,7 @@ func (s *Store) Projects(ctx context.Context, sourced bool) ([]ProjectRow, error
 	out := []ProjectRow{}
 	for rows.Next() {
 		var r ProjectRow
-		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, &r.Summary, timeOrNil(&r.LastMerge)); err != nil {
+		if err := rows.Scan(&r.Key, &r.Team, &r.Repos, &r.Notes, &r.Revision, &r.Summary, timeOrNil(&r.LastMerge), &r.Shape); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

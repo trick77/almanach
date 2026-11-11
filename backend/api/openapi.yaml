@@ -2357,7 +2357,7 @@ components:
 
     Project:
       type: object
-      required: [key, team, repos, notes, revision, summary, last_merge, repo]
+      required: [key, team, repos, notes, revision, summary, last_merge, shape, repo]
       properties:
         key:
           type: string
@@ -2378,6 +2378,14 @@ components:
         last_merge:
           type: [string, "null"]
           format: date-time
+        shape:
+          type: [string, "null"]
+          enum: [system, collection, null]
+          description: >-
+            What the last project step judged the project to be, as on its
+            page: one system its repositories make together, or a collection
+            of repositories that each stand on their own. Null before a step
+            judged it, and for a project of one.
         repo:
           description: >-
             The repository of a project of one (a source with one

@@ -529,7 +529,7 @@ func TestProjects(t *testing.T) {
 		t.Errorf("empty: %d %s", code, body["projects"])
 	}
 	last := mergedAt
-	st.projects = []store.ProjectRow{{Key: "PLAT", Team: "platform", Repos: 2, Notes: 5, Revision: 3, Summary: "#### Zweck\n\nDie Plattform. Sie trägt alles.\n\n- Punkt", LastMerge: &last},
+	st.projects = []store.ProjectRow{{Key: "PLAT", Team: "platform", Repos: 2, Notes: 5, Revision: 3, Summary: "#### Zweck\n\nDie Plattform. Sie trägt alles.\n\n- Punkt", LastMerge: &last, Shape: store.ShapeSystem},
 		{Key: "ZED", Team: "billing"}}
 	code, body = do(t, h, "GET", "/api/projects", "", "", nil)
 	var rows []map[string]any
@@ -542,6 +542,13 @@ func TestProjects(t *testing.T) {
 	}
 	if rows[1]["last_merge"] != nil || rows[1]["summary"] != "" {
 		t.Errorf("ZED last_merge = %v, summary = %v, want null and \"\"", rows[1]["last_merge"], rows[1]["summary"])
+	}
+	// The judged shape, null before a judgment.
+	if rows[0]["shape"] != "system" || rows[1]["shape"] != nil {
+		t.Errorf("shapes = %v, %v; want system and null", rows[0]["shape"], rows[1]["shape"])
+	}
+	if _, ok := rows[1]["shape"]; !ok {
+		t.Errorf("ZED has no shape key: %v", rows[1])
 	}
 }
 

@@ -201,7 +201,11 @@ export const S = {
   // own data, no model call.
   path: {
     label: "Lesepfad",
-    step: (n: number, title: string) => `${n} · ${title}`,
+    // En spaces round the dot (a code: the linter refuses the character):
+    // a plain space leaves it cramped, in the serif heading most; a string
+    // cannot carry Sep's margin.
+    step: (n: number, title: string) =>
+      [n, "·", title].join(String.fromCharCode(0x2002)),
     projectWhat: "Was das System tut",
     collectionWhat: "Was die Sammlung enthält",
     how: "Wie es zusammenhängt",
@@ -237,14 +241,30 @@ export const S = {
   },
   projects: {
     title: "Projekte",
-    lede: "Was Almanach über jedes Projekt weiss: pro Repository und pro Projekt eine Beschreibung, aus dem Code gelesen und mit den Notizen gemergter Pull Requests fortgeschrieben, nie von Hand.",
+    lede: "Lies ein System von vorn: jede Seite ist aus dem Code gelesen und mit den Notizen gemergter Pull Requests fortgeschrieben, nie von Hand.",
+    // Systems first, the rest compact under them; a table for the figures.
+    systems: "Systeme",
+    others: "Weitere Projekte",
+    oneRepo: "ein Repository",
+    view: "Ansicht",
+    tiles: "Kacheln",
+    table: "Tabelle",
+    // The table's columns, by what each sorts by, in their order.
+    headers: {
+      key: "Projekt",
+      kind: "Art",
+      team: "Team",
+      repos: "Repositories",
+      notes: "Notizen",
+      revision: "Revision",
+      merge: "Letzter Merge",
+    },
     failed: "Die Projekte konnten nicht geladen werden.",
     empty:
       "Noch kein Projekt: die erste Notiz kommt mit dem ersten gemergten Pull Request eines Teams mit almanach-Block.",
     team: "Team",
     repos: (n: number) => (n === 1 ? "1 Repository" : `${n} Repositories`),
     notes: (n: number) => (n === 1 ? "1 Notiz" : `${n} Notizen`),
-    revision: (n: number) => `Revision ${n}`,
     noDescription: "noch keine Beschreibung",
     firstDescription:
       "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Clone bereit ist, oder der nächste gemergte Pull Request.",
