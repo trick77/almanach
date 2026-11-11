@@ -113,8 +113,14 @@ const (
 	// SkipTokens is when the part's prompt would take the run over its
 	// input token budget.
 	SkipTokens Skip = "tokens"
-	// SkipFailed is when the model call failed.
+	// SkipFailed is when the model call failed otherwise, and every failed
+	// call of a run stored before the outcome was told apart.
 	SkipFailed Skip = "failed"
+	// SkipTooLong is when the call was cut: its answer or its reasoning
+	// repeated itself or ran to the cap.
+	SkipTooLong Skip = "too_long"
+	// SkipUnparseable is when the answer was no answer to the schema.
+	SkipUnparseable Skip = "unparseable"
 	// SkipRefused is when the answer broke a fold rule and was thrown away.
 	SkipRefused Skip = "refused"
 	// SkipNoPage is when the model asked no change of a project that has no

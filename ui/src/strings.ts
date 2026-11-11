@@ -868,6 +868,8 @@ export const S = {
       bytes: "Lesebudget des Runs überschritten",
       tokens: "Token-Budget des Runs überschritten",
       failed: "Fehler: Modellaufruf fehlgeschlagen",
+      too_long: "Fehler: Modell lief zu lang oder in Schleife, abgebrochen",
+      unparseable: "Fehler: Antwort unlesbar",
       refused: "Fehler: Antwort regelwidrig, verworfen",
       no_page: "Projekt ohne Seite",
       "": "Grund nicht erfasst",

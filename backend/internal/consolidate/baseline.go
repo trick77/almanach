@@ -1255,7 +1255,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 	r.Bytes += size
 	plan.Tokens += taken(res.Call, prompt)
 	if !ok {
-		return w.skipPart(ctx, r, &plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
+		return w.skipPart(ctx, r, &plan, skipFor(res.Outcome), "the call failed: "+res.Outcome.String())
 	}
 	if overview {
 		plan.Docs = read
@@ -1596,6 +1596,21 @@ func (w *Worker) skipPart(ctx context.Context, r *store.BaselineRun, plan *runPl
 	return w.save(ctx, *r)
 }
 
+// skipFor is a failed call's skip code: a loop the guard cut and an answer
+// off the schema each read apart on the page, where "failed" alone named
+// neither (2026-11-11: a loop shown as a failed call). A timeout never
+// skips: it holds the worker as the gateway's (gatewayClass).
+func skipFor(o inference.Outcome) baseline.Skip {
+	switch o {
+	case inference.OutcomeTooLong:
+		return baseline.SkipTooLong
+	case inference.OutcomeUnparseable:
+		return baseline.SkipUnparseable
+	default:
+		return baseline.SkipFailed
+	}
+}
+
 // endReading stops the reading steps: every part not read yet is skipped,
 // and the run goes on to its project step.
 func (w *Worker) endReading(ctx context.Context, r *store.BaselineRun, plan *runPlan, code baseline.Skip, why string) error {
@@ -1840,7 +1855,7 @@ func (w *Worker) projectStep(ctx context.Context, r *store.BaselineRun) error {
 		return err
 	}
 	if !okCall {
-		return w.skipProject(ctx, r, plan, baseline.SkipFailed, "the call failed: "+res.Outcome.String())
+		return w.skipProject(ctx, r, plan, skipFor(res.Outcome), "the call failed: "+res.Outcome.String())
 	}
 	// The call answered with the departed in its prompt: a departure still
 	// due (its run's call failed) is taken out here. A retried write asks

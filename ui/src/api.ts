@@ -623,7 +623,16 @@ export type RunState =
 
 /** Why a run left a part out; "" for a run from before it was kept. */
 export type SkipReason =
-  "" | "gone" | "calls" | "bytes" | "tokens" | "failed" | "refused" | "no_page";
+  | ""
+  | "gone"
+  | "calls"
+  | "bytes"
+  | "tokens"
+  | "failed"
+  | "too_long"
+  | "unparseable"
+  | "refused"
+  | "no_page";
 
 /** One part a run left out: a subject by name, or the overview or the
  *  project step. */
