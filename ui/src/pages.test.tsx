@@ -417,7 +417,10 @@ describe("ProjectsPage", () => {
   };
 
   it("puts the systems first, the rest compact under them", async () => {
-    serve({ projects: home });
+    // A project of one whose repository has its key, but for the case.
+    const tools = home.projects[2]!;
+    const cli = { ...tools, key: "CLI", repo: { ...tools.repo!, slug: "cli" } };
+    serve({ projects: { projects: [...home.projects, cli] } });
     render(<ProjectsPage />);
     const systems = (await screen.findByText(S.projects.systems)).closest(
       "section",
@@ -435,11 +438,24 @@ describe("ProjectsPage", () => {
     const others = screen.getByText(S.projects.others).closest("section")!;
     const row = (key: string) =>
       within(others).getByText(key, { exact: true }).closest("a")!;
-    // Form and size on the right: a collection, a project of one with its
-    // repository, the rest their count.
+    // Form and size on the right: a collection, the rest their count. A
+    // project of one neither: its repository only where the slug is no
+    // repeat of the key.
     expect(row("CORE")).toHaveTextContent("Sammlung·6 Repositories");
     expect(row("CORE").getAttribute("href")).toBe("/projects/CORE");
-    expect(row("TOOLS")).toHaveTextContent(`${S.projects.oneRepo}·tools-cli`);
+    expect(row("TOOLS")).toHaveTextContent(/tools-cli$/);
+    expect(row("TOOLS").textContent).not.toContain(S.projects.oneRepo);
+    // A slug keeps its case: no capital for it.
+    expect(
+      within(row("TOOLS")).getByText("tools-cli").parentElement,
+    ).not.toHaveClass("first-letter:uppercase");
+    expect(
+      within(row("CORE"))
+        .getByText(/Sammlung/)
+        .closest("span"),
+    ).toHaveClass("first-letter:uppercase");
+    expect(row("CLI").textContent).not.toContain(S.projects.oneRepo);
+    expect(within(row("CLI")).queryByText("cli")).toBeNull();
     expect(row("MOB")).toHaveTextContent("1 Repository");
     expect(row("MOB").textContent).not.toMatch(/Sammlung|System/);
     // A row's teaser on one line.
