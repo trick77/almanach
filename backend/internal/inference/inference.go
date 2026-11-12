@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,6 +101,9 @@ type Client struct {
 	// contextTokens is the gateway's max_input_tokens for the alias, read
 	// off the listing at Startup; 0 unknown.
 	contextTokens int
+	// outputTokens is the gateway's max_output_tokens for the alias, read
+	// likewise; 0 unknown (maxOutput).
+	outputTokens int64
 }
 
 // New builds the client from llmwire's environment (LLMWIRE_LITELLM_*).
@@ -152,6 +156,27 @@ func (c *Client) Startup(ctx context.Context) (warning string, err error) {
 	for _, e := range entries {
 		if e.ID == p.WireModelID {
 			c.contextTokens = int(llmwire.Tokens(e.MaxInputTokens))
+			c.outputTokens = llmwire.Tokens(e.MaxOutputTokens)
+			// Which output limit holds is told once: a gateway's below the
+			// profile's shrinks every answer and the restyle's parts.
+			if c.outputTokens > 0 {
+				c.log.Info("inference: output limit", "model", c.model, "gateway", c.outputTokens, "profile", p.Limits.MaxOutput,
+					"held", c.maxOutput(p))
+			}
+			// A field of the alias's row llmwire could not read (a limit as
+			// a string) leaves the profile's: said, never silent. Another
+			// alias's row on a shared gateway is not this one's concern.
+			own := slices.DeleteFunc(slices.Clone(warnings), func(w llmwire.Warning) bool {
+				return !strings.Contains(w.Details, strconv.Quote(e.ID))
+			})
+			if len(own) > 0 {
+				return "the gateway's model listing" + aliasWarnings(own), nil
+			}
+			// A limit that leaves a long answer no room beside llmwire's
+			// allowance makes every call a cut one.
+			if left := int(c.maxOutput(p)) - c.allowance(p.Reasoning); c.maxOutput(p) > 0 && left < capRestyleLo {
+				return fmt.Sprintf("the output limit %d leaves %d tokens beside llmwire's reasoning allowance: long answers will be cut", c.maxOutput(p), left), nil
+			}
 			return "", nil
 		}
 		ids = append(ids, e.ID)
@@ -199,6 +224,18 @@ func (c *Client) Model() string { return c.model }
 // read at Startup; 0 when it lists none or did not answer. An input cap,
 // held as the whole window, the answer's reserve within it: never too much.
 func (c *Client) ContextTokens() int { return c.contextTokens }
+
+// maxOutput is the model's output limit: its profile's, or the gateway's
+// listing for the alias (LiteLLM's max_output_tokens, read at Startup) where
+// that is lower, as a gateway may cap an alias below the vendor's; 0 when
+// neither gives one.
+func (c *Client) maxOutput(p *llmwire.Profile) int64 {
+	limit := p.Limits.MaxOutput
+	if gw := c.outputTokens; gw > 0 && (limit <= 0 || gw < limit) {
+		limit = gw
+	}
+	return limit
+}
 
 // EffortOff switches a model's reasoning off where its profile allows it.
 // Measured on a baseline subject step (2026-10-31): of 22k output tokens,
@@ -394,17 +431,16 @@ type callOpts struct {
 
 // callWith is call with its options.
 func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.ResponseFormat, maxAnswer int, opt callOpts) (string, Call) {
-	// The answer within what the model's output limit leaves beside the
-	// reasoning: a cap and room past the limit go out held to it, the
-	// reasoning, sharing the wire cap, then left too little.
-	if ceiling := c.answerCeiling(opt.room); ceiling > 0 && maxAnswer > ceiling {
-		maxAnswer = ceiling
-	}
-	budget := cutBudget{Cap: maxAnswer, PageChars: opt.page, PromptTokens: PromptTokens(prompt)}
+	// The answer and the reasoning's room within the model's output limit
+	// (fit): a cap and room past it would go out held to it, the reasoning,
+	// sharing the wire cap, left too little.
+	room := 0
 	if c.effort != EffortOff {
-		maxAnswer += opt.room
-		budget.Room = opt.room
+		room = opt.room
 	}
+	maxAnswer, room = c.fit(maxAnswer, room)
+	budget := cutBudget{Cap: maxAnswer, Room: room, PageChars: opt.page, PromptTokens: PromptTokens(prompt)}
+	maxAnswer += room
 	budget.WireCap, budget.MaxOutput = c.wireCap(maxAnswer)
 	// The loop guards cancel a stream whose answer or reasoning repeats
 	// itself, long before the cap: a call of its own context, so a cut is
@@ -596,10 +632,16 @@ type RestyleLimits struct {
 	PartChars, OneCallMax int
 }
 
+// restylePartMin is the least a part holds, a statement or two.
+const restylePartMin = 3000
+
 func restyleLimits(hi int) RestyleLimits {
 	// restyleCap counts whole tokens of 3 chars: the part rounded up to one.
-	part := ((hi-2000)*2 + 2) / 3 * 3
-	return RestyleLimits{PartChars: part, OneCallMax: hi * 3 * 10 / 7}
+	// A ceiling near restyleCap's 2000 on top (a gateway listing a few
+	// thousand tokens) still cuts parts of some statements, never none.
+	part := max(((hi-2000)*2+2)/3*3, restylePartMin)
+	// Never under a part: one past it would refuse every part unasked.
+	return RestyleLimits{PartChars: part, OneCallMax: max(hi*3*10/7, part)}
 }
 
 // DefaultRestyleLimits is a model whose output limit leaves capRestyleHi
@@ -611,14 +653,15 @@ var DefaultRestyleLimits = restyleLimits(capRestyleHi)
 func (c *Client) RestyleLimits() RestyleLimits { return restyleLimits(c.restyleHi()) }
 
 // restyleHi is a restyle's answer ceiling: capRestyleHi, held under what the
-// model's output limit leaves beside the reasoning's room (answerCeiling),
-// never under capRestyleLo.
+// model's output limit leaves beside the reasoning's room (restyleCeiling),
+// even below capRestyleLo: parts sized above what a call may answer would
+// each be cut at it.
 func (c *Client) restyleHi() int {
 	hi := capRestyleHi
-	if ceiling := c.answerCeiling(restyleRoom); ceiling > 0 {
+	if ceiling := c.restyleCeiling(); ceiling > 0 {
 		hi = min(hi, ceiling)
 	}
-	return max(hi, capRestyleLo)
+	return hi
 }
 
 // logCut leaves a cut stream in the log, credentials redacted, one line per

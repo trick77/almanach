@@ -14,9 +14,10 @@ import (
 // room from an honest answer past the cap or a runaway once the log was gone.
 //
 // Cap is the answer's own, Room the reasoning's on top (none with thinking
-// off). WireCap is the max_tokens sent: llmwire adds its reasoning allowance
-// for the level to Cap+Room and holds the sum to the model's MaxOutput,
-// silently (wireCap; a 32k cap with its room on a 32k model goes out as 32k).
+// off), both as fit held them to the output limit. WireCap is the
+// max_tokens sent: Cap+Room and llmwire's reasoning allowance for the level,
+// within MaxOutput (the profile's, or the gateway's where lower) as fit
+// leaves them.
 // Warnings are llmwire's on the request, a cap above the model's limit among
 // them. PageChars is the restyled page's, PromptTokens the prompt's estimate
 // (PromptTokens). The token counts are the gateway's, nil when it reported
@@ -90,8 +91,9 @@ func (b cutBudget) LogValue() slog.Value {
 // wireCap is the max_tokens llmwire sends for an answer budget of asked
 // (cap and room) and the model's output limit, 0 unknown: asked plus the
 // reasoning allowance of the level this client resolves to, held to the
-// limit, as llmwire's checkAnswerBudget reckons it. A profile not found
-// names neither.
+// limit (maxOutput: the profile's, or the gateway's where lower), as
+// llmwire's checkAnswerBudget reckons it. A profile not found names
+// neither.
 func (c *Client) wireCap(asked int) (int, int64) {
 	if c.wire == nil {
 		return 0, 0
@@ -100,29 +102,58 @@ func (c *Client) wireCap(asked int) (int, int64) {
 	if err != nil {
 		return 0, 0
 	}
+	limit := c.maxOutput(p)
 	wire := int64(asked) + int64(c.allowance(p.Reasoning))
-	if limit := p.Limits.MaxOutput; limit > 0 {
+	if limit > 0 {
 		wire = min(wire, limit)
 	}
-	return int(wire), p.Limits.MaxOutput
+	return int(wire), limit
 }
 
-// answerCeiling is the most an answer may take of the model's output limit,
-// as llmwire's profile gives it, beside room (the call's reasoning room,
-// none with thinking off) and llmwire's allowance for the level; 0 when
-// llmwire knows no limit for the model.
-func (c *Client) answerCeiling(room int) int {
+// fit holds a call's answer cap and reasoning room to the model's output
+// limit (maxOutput: llmwire's profile, or the gateway's listing where
+// lower), less llmwire's allowance for the level: both as asked while they
+// fit; else the room what the answer leaves, at least a quarter of what the
+// limit leaves, the answer the rest. A fixed room under a low limit would
+// leave the answer nothing (a gateway's 16k beside patch's 16k room left it
+// 1 token), a squeezed room still lets the model think. No limit known:
+// both as asked. A limit at or under the allowance leaves nothing to fit:
+// Startup warns of it.
+func (c *Client) fit(answer, room int) (int, int) {
 	if c.wire == nil {
-		return 0
+		return answer, room
 	}
 	p, err := c.wire.Registry().Lookup(c.model)
-	if err != nil || p.Limits.MaxOutput <= 0 {
-		return 0
+	if err != nil {
+		return answer, room
 	}
+	limit := c.maxOutput(p)
+	if limit <= 0 {
+		return answer, room
+	}
+	left := int(limit) - c.allowance(p.Reasoning)
+	if answer+room <= left {
+		return answer, room
+	}
+	left = max(left, 0)
+	room = min(room, max(left-answer, left/4))
+	return max(min(answer, left-room), 1), room
+}
+
+// restyleCeiling is the most a restyle's answer may take beside its
+// reasoning room (restyleRoom, none with thinking off), as fit holds them;
+// 0 when no limit is known.
+func (c *Client) restyleCeiling() int {
+	room := restyleRoom
 	if c.effort == EffortOff {
 		room = 0
 	}
-	return max(int(p.Limits.MaxOutput)-room-c.allowance(p.Reasoning), 1)
+	const unbounded = 1 << 30
+	answer, _ := c.fit(unbounded, room)
+	if answer == unbounded {
+		return 0
+	}
+	return answer
 }
 
 // allowance is the reasoning tokens llmwire adds to an answer budget for
