@@ -373,7 +373,9 @@ describe("ProjectsPage", () => {
     expect(within(tile).queryByText(/Zweck/)).toBeNull();
     // Its repository has a description: none missing in the meta line.
     expect(within(tile).queryByText("noch keine Beschreibung")).toBeNull();
-    expect(within(tile).getByText("llmwire")).toBeInTheDocument();
+    // The uses come with the dependencies, a fetch of their own that may
+    // answer after the tile is drawn.
+    expect(await within(tile).findByText("llmwire")).toBeInTheDocument();
     // A test use is no use of the project's.
     expect(within(tile).queryByText("testkit")).toBeNull();
     // No headings splitting projects: one grid.
