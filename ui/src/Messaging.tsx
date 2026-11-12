@@ -9,7 +9,6 @@ import { Diagram, titledZones } from "./Diagram";
 import { fits, type FlowIR, type FlowNodeIR } from "./diagramIR";
 import { refName } from "./format";
 import { factPath } from "./repoFacts";
-import { repoPath } from "./routing";
 import { S } from "./strings";
 import { Link, mono, table, tableBox, td, tdMono, th } from "./ui";
 
@@ -20,10 +19,10 @@ import { Link, mono, table, tableBox, td, tdMono, th } from "./ui";
 const repoId = (side: string, r: RepoRef) => `${side}:${r.project}/${r.slug}`;
 
 /** repoLink is the page a node of a messages diagram links to: a
- *  repository's, none for a topic. */
+ *  repository's messages, none for a topic. */
 function repoLink(id: string): string | null {
   const m = /^(?:from|to|repo):([^/]+)\/(.+)$/.exec(id);
-  return m ? repoPath(m[1], m[2]) : null;
+  return m ? factPath(m[1], m[2], "messages") : null;
 }
 
 /** topicGraph is a repository's messages left to right: the repositories
@@ -133,23 +132,23 @@ const note = "my-2 text-[13.5px] text-faint";
 const stack = "grid grid-cols-[minmax(0,1fr)] gap-y-4";
 
 /** Drawing is a messages diagram, or why there is none. */
-function Drawing({ ir }: { ir: FlowIR }) {
+function Drawing({ ir, self }: { ir: FlowIR; self?: string }) {
   if (ir.edges.length === 0) return null;
   if (!fits(ir))
     return <p className={note}>{S.msg.tooLarge(ir.nodes.length)}</p>;
-  return <Diagram ir={ir} title={S.msg.title} links={repoLink} />;
+  // A repository's own node links nowhere: its messages are on screen.
+  const links = (id: string) => (id === self ? null : repoLink(id));
+  return <Diagram ir={ir} title={S.msg.title} links={links} />;
 }
 
-/** Peers is a list of repositories, each linked to its page; with toFacts,
- *  to its messages there (a project's table: the start tab shows none). */
+/** Peers is a list of repositories, each linked to its messages (its start
+ *  tab shows none). */
 function Peers({
   refs,
   name,
-  toFacts = false,
 }: {
   refs: RepoRef[];
   name: (r: RepoRef) => string;
-  toFacts?: boolean;
 }) {
   if (refs.length === 0)
     return <span className="text-faint">{S.msg.noPeer}</span>;
@@ -159,11 +158,7 @@ function Peers({
         <span key={`${r.project}/${r.slug}`}>
           {i > 0 && ", "}
           <Link
-            to={
-              toFacts
-                ? factPath(r.project, r.slug, "messages")
-                : repoPath(r.project, r.slug)
-            }
+            to={factPath(r.project, r.slug, "messages")}
             className={mono + " text-ink-dim hover:text-ink"}
           >
             {name(r)}
@@ -193,7 +188,10 @@ export function RepoMessages({
   return (
     <div className={stack}>
       <p className={note}>{S.msg.hint}</p>
-      <Drawing ir={topicGraph(self, data.topics, name)} />
+      <Drawing
+        ir={topicGraph(self, data.topics, name)}
+        self={repoId("repo", self)}
+      />
       {data.topics.length > 0 && (
         <div className={tableBox}>
           <table className={table}>
@@ -280,10 +278,10 @@ export function ProjectMessages({
               <tr key={f.name}>
                 <td className={tdMono}>{f.name}</td>
                 <td className={td}>
-                  <Peers refs={f.producers} name={name} toFacts />
+                  <Peers refs={f.producers} name={name} />
                 </td>
                 <td className={td}>
-                  <Peers refs={f.consumers} name={name} toFacts />
+                  <Peers refs={f.consumers} name={name} />
                   {f.declared.length > 0 && (
                     <span className="ml-2 text-[12.5px] text-faint">
                       {S.msg.declared} {f.declared.map(name).join(", ")}

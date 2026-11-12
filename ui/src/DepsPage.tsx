@@ -3,7 +3,6 @@ import type { Dependencies, RepoRef, Sources } from "./api";
 import { Diagram, titledZones } from "./Diagram";
 import { fits, type FlowIR } from "./diagramIR";
 import { factPath } from "./repoFacts";
-import { repoPath } from "./routing";
 import { refName } from "./format";
 import { S } from "./strings";
 import { useFetch } from "./useFetch";
@@ -163,7 +162,7 @@ function DepsBody({ data }: { data: Dependencies }) {
                 title={S.deps.title}
                 links={(id) => {
                   const r = data.repos.find((x) => refId(x) === id);
-                  return r ? repoPath(r.project, r.slug) : null;
+                  return r ? factPath(r.project, r.slug, "deps") : null;
                 }}
               />
               {mainOnly ? (
