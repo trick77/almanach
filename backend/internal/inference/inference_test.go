@@ -338,14 +338,17 @@ func TestMergeSendsMessagesAndSchema(t *testing.T) {
 func TestMergeUnparseable(t *testing.T) {
 	srv := llmwiretest.NewServer(t)
 	srv.SetReply("not json at all")
-	res := testClient(srv.Client()).Merge(context.Background(), MergeRequest{Prompt: "p"})
+	c := testClient(srv.Client())
+	res := c.Merge(context.Background(), MergeRequest{Prompt: "p"})
 	if res.Outcome != OutcomeUnparseable {
 		t.Fatalf("Outcome = %s", res.Outcome)
 	}
 	if !res.Cost.Answered {
 		t.Error("an unparseable answer still cost tokens: Answered = false")
 	}
-	if want := fmt.Sprintf("(answer %d, reasoning room %d", capMerge, reasoningRoom); !strings.Contains(res.Err.Error(), want) {
+	// The test profile's 16k limit holds the merge's answer under it.
+	answer := min(capMerge, c.answerCeiling(reasoningRoom))
+	if want := fmt.Sprintf("(answer %d, reasoning room %d", answer, reasoningRoom); !strings.Contains(res.Err.Error(), want) {
 		t.Errorf("err %v names no budget", res.Err)
 	}
 }

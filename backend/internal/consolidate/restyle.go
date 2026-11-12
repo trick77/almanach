@@ -2,6 +2,7 @@ package consolidate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -19,7 +20,8 @@ import (
 // without reading code: a full run re-reads up to every part of a
 // repository to apply a rule of layout, kind or area, where the page alone
 // holds all the run needs (user, 2026-11-04: "that's pretty expensive to
-// redescribe"). One call for the repository's page, one for its project's
+// redescribe"). One call for the repository's page (a page too large for
+// one answer one a part, restyleCut), one for its project's
 // when that is due, then the map step as in any run, which draws only when
 // the text moved. It learns nothing, so it neither credits nor checks: an
 // edit keeps its sources, its files and its last check; a statement split
@@ -40,6 +42,26 @@ var epochs = store.Epochs{Repo: prompts.RepoEpoch, Project: prompts.ProjectEpoch
 type restylePlan struct {
 	Repo   bool `json:"repo,omitempty"`
 	Manual bool `json:"manual,omitempty"`
+	// Parts is a repository page's restyle in parts so far, nil for one in
+	// one call.
+	Parts *restyleParts `json:"parts,omitempty"`
+}
+
+// restyleParts is a restyle in parts under way: the revision its parts
+// were cut from, each part's statement ids, and the answers of those done,
+// kept with the run so a restart, a gateway's hold or the next try after a
+// failed part pays no part twice (one call a step, the page written once
+// all are answered).
+type restyleParts struct {
+	Revision int64           `json:"revision"`
+	Cut      [][]string      `json:"cut"`
+	Answers  []restyleAnswer `json:"answers"`
+}
+
+// restyleAnswer is one part's answer as the merge takes it.
+type restyleAnswer struct {
+	Patch   inference.Patch         `json:"patch"`
+	Outline []inference.OutlineArea `json:"outline,omitempty"`
 }
 
 // startRestyle starts a restyle run: no clone, no head pinned, at the
@@ -106,6 +128,10 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 	if !ok {
 		w.log.InfoContext(ctx, at+": no repository page yet, nothing to restyle")
 	} else {
+		parts, shown := restyleCut(page, w.base.Describer.RestyleLimits().PartChars)
+		if parts != nil {
+			return w.restylePart(ctx, r, plan, page, parts)
+		}
 		// A run's first call: none left is a cap below one call, never a
 		// spent run. Failed, not skipped: a skip would leave the page due
 		// and the poller queue the same run every cycle; a failure counts
@@ -113,7 +139,9 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 		if r.Calls >= w.base.Limits.MaxCalls {
 			return fmt.Errorf("no call left for the restyle")
 		}
-		shown := describeTaught(page)
+		if err := w.tooLarge(plan, "the repository page", len(shown)); err != nil {
+			return err
+		}
 		res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, shown, w.limits, nil), len(shown), false)
 		okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 		if err != nil {
@@ -149,6 +177,10 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		w.log.WarnContext(ctx, at+" skipped: the run's calls are spent, still due")
 		return w.restyleMap(ctx, r, plan)
 	}
+	shown := describeTaught(page)
+	if err := w.tooLarge(plan, "the project page", len(shown)); err != nil {
+		return err
+	}
 	// The active source repositories, every one of them: the run's own is
 	// one among the others here, its page not in the prompt.
 	repos, err := w.repoSummaries(ctx, r)
@@ -160,7 +192,6 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		return err
 	}
 	ctxt := &projectContext{repos: otherRepos(repos, ""), contracts: otherContracts(repos, ""), inner: inner, slugs: slugs(repos)}
-	shown := describeTaught(page)
 	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, shown, w.limits, ctxt), len(shown), true)
 	okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 	if err != nil {
@@ -176,6 +207,18 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 	}
 	plan.ProjectDone, r.Step = true, store.RestyleMapStep
 	return w.writeRestyle(ctx, r, plan, store.ScopeProject, out)
+}
+
+// tooLarge refuses, for the poller's restyle, a call no answer can hold
+// (inference.RestyleLimits' OneCallMax, by the model): it is cut at its cap
+// on every try, paid each time. A button's restyle asks all the same.
+// Failed, it counts against the page's tries like any.
+func (w *Worker) tooLarge(plan runPlan, what string, chars int) error {
+	most := w.base.Describer.RestyleLimits().OneCallMax
+	if plan.Restyle.Manual || chars <= most {
+		return nil
+	}
+	return fmt.Errorf("%s is too large to restyle in one call (%d chars shown, at most %d), not asked for", what, chars, most)
 }
 
 // logRestyledPage says, beside a failed restyle call, what page it was
@@ -386,6 +429,10 @@ func (w *Worker) restyled(ctx context.Context, at string, r store.BaselineRun, s
 	return store.Restyled{Revision: rev}, nil
 }
 
+// isSummaryRef reports whether an id in a new statement's from names the
+// summary, in any case or spacing the model wrote it.
+func isSummaryRef(id string) bool { return strings.EqualFold(strings.TrimSpace(id), "summary") }
+
 // splitOff holds a restyle's new statements to what they came from: the
 // statements named in from (ids the page has) and the summary. Files are
 // only those the statements named carry, any the page carries when it came
@@ -403,7 +450,7 @@ func splitOff(page store.Page, proposed []inference.Statement, valid func(infere
 	leave := func(st inference.Statement, why string) {
 		leftOut = append(leftOut, st.Name+" ("+why+")")
 		for _, id := range st.From {
-			if strings.EqualFold(strings.TrimSpace(id), "summary") {
+			if isSummaryRef(id) {
 				id = "summary"
 			}
 			kept[id] = true
@@ -426,7 +473,7 @@ func splitOff(page store.Page, proposed []inference.Statement, valid func(infere
 		var from []store.Statement
 		summary := false
 		for _, id := range st.From {
-			if strings.EqualFold(strings.TrimSpace(id), "summary") {
+			if isSummaryRef(id) {
 				summary = true
 				continue
 			}
@@ -491,10 +538,7 @@ type projectContext struct {
 // shape by.
 func renderRestyle(r store.BaselineRun, page store.Page, shown string, l config.Limits, project *projectContext) string {
 	if project == nil {
-		return strings.NewReplacer(
-			"{repo}", r.Slug, "{project}", r.ProjectKey, "{repo_description}", shown,
-			"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
-		).Replace(prompts.Restyle)
+		return renderRestylePart(r, shown, "", l)
 	}
 	return strings.NewReplacer(
 		"{project}", r.ProjectKey, "{repo_slugs}", backticked(project.slugs), "{project_description}", shown,
@@ -502,4 +546,322 @@ func renderRestyle(r store.BaselineRun, page store.Page, shown string, l config.
 		"{other_repos}", project.repos, "{other_contracts}", project.contracts,
 		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
 	).Replace(prompts.ProjectRestyle)
+}
+
+// renderRestylePart is the repository page's restyle prompt: shown the
+// page or a part of it, part what RestylePart tells a part, "" for the
+// whole page in one call.
+func renderRestylePart(r store.BaselineRun, shown, part string, l config.Limits) string {
+	return strings.NewReplacer(
+		"{repo}", r.Slug, "{project}", r.ProjectKey, "{repo_description}", shown, "{restyle_part}", part,
+		"{diagram_rules}", diagramRules(l), "{diagram_field}", diagramField(l),
+	).Replace(prompts.Restyle)
+}
+
+// restylePiece is one part of a restyle in parts: its statements, shown in
+// full to its call, and the summary with the first.
+type restylePiece struct {
+	statements []store.Statement
+	summary    bool
+	// chars is the part as shown, about: its statements' and the summary's.
+	chars int
+}
+
+// restyleCut is a repository page too large for one restyle answer in
+// parts of at most budget chars as shown (inference.RestyleLimits'
+// PartChars, by the model), nil for a page that fits one call; shown is
+// then the whole page as describeTaught shows it, for that one call, and ""
+// with parts. Statements keep the page's order, an area's together
+// while they fit (the page stands in its areas' order, baseline.Arrange):
+// one area too large is split by its statements, one statement too large
+// is a part of its own. The summary goes with the first statements, never
+// a part alone (a part with no statements is told every one is new). A
+// page from before areas is cut the same, its statements without one a run
+// of their own: each part lays its own out.
+func restyleCut(page store.Page, budget int) (parts []restylePiece, shown string) {
+	// Sized by statement, the whole page rendered only for the one call: a
+	// restyle in parts cuts the page again on every part's step.
+	sizes := make([]int, len(page.Statements))
+	total := len(page.Summary)
+	for i, s := range page.Statements {
+		var b strings.Builder
+		describeStatement(&b, s, pageView{prs: prTaught})
+		sizes[i] = b.Len()
+		total += sizes[i]
+	}
+	if total <= budget {
+		return nil, describeTaught(page)
+	}
+	cur := restylePiece{summary: true, chars: len(page.Summary)}
+	flush := func() {
+		if len(cur.statements) > 0 {
+			parts = append(parts, cur)
+			cur = restylePiece{}
+		}
+	}
+	for i := 0; i < len(page.Statements); {
+		j, run := i, 0
+		for ; j < len(page.Statements) && page.Statements[j].Area == page.Statements[i].Area; j++ {
+			run += sizes[j]
+		}
+		if cur.chars+run > budget && run <= budget {
+			flush()
+		}
+		for k := i; k < j; k++ {
+			if cur.chars+sizes[k] > budget {
+				flush()
+			}
+			cur.statements = append(cur.statements, page.Statements[k])
+			cur.chars += sizes[k]
+		}
+		i = j
+	}
+	flush()
+	if len(parts) < 2 {
+		// One statement alone too large: one call, a part being no less.
+		return nil, describeTaught(page)
+	}
+	return parts, ""
+}
+
+// cutIDs is the parts' statement ids, what a restyle in parts keeps with
+// its answers: answers fit only the cut they were asked for.
+func cutIDs(parts []restylePiece) [][]string {
+	out := make([][]string, len(parts))
+	for i, p := range parts {
+		for _, s := range p.statements {
+			out[i] = append(out[i], s.ID)
+		}
+	}
+	return out
+}
+
+// restylePrompt is a part's prompt: its statements in full, the summary
+// with the first, every other statement of the page by id, kind, name and
+// area; and its cap's size, the part as shown without that list.
+func restylePrompt(r store.BaselineRun, page store.Page, parts []restylePiece, i int, l config.Limits) (string, int) {
+	p := parts[i]
+	shown := describeTaught(p.page(page))
+	mine := map[string]bool{}
+	for _, s := range p.statements {
+		mine[s.ID] = true
+	}
+	var others strings.Builder
+	for _, s := range page.Statements {
+		if mine[s.ID] {
+			continue
+		}
+		fmt.Fprintf(&others, "- [%s] %s: %s", s.ID, s.Kind, s.Name)
+		if s.Area != "" {
+			fmt.Fprintf(&others, " (%s)", s.Area)
+		}
+		others.WriteString("\n")
+	}
+	part := fmt.Sprintf(prompts.RestylePart, i+1, len(parts))
+	if !p.summary {
+		part += prompts.RestyleLaterPart
+	}
+	return renderRestylePart(r, shown+"\n## Other parts of the description\n\n"+others.String(), part, l), len(shown)
+}
+
+// restylePart is a step of a restyle in parts: the next part's call, its
+// answer kept with the run; once all are answered, the answers as one
+// (mergeParts) applied and written as a restyle in one call is. Answers
+// fit only the cut they were asked for: kept from another revision or
+// another cut, they start over. A run's first part takes the answers the
+// newest failed try paid for (store.FailedRestylePlan), so a part that
+// failed is asked again, never those before it.
+func (w *Worker) restylePart(ctx context.Context, r *store.BaselineRun, plan runPlan, page store.Page, parts []restylePiece) error {
+	at := "baseline: restyle"
+	cut := cutIDs(parts)
+	done := plan.Restyle.Parts
+	if done == nil {
+		done = w.failedParts(ctx, r)
+	}
+	if done != nil && (done.Revision != page.RevisionID || !slices.EqualFunc(done.Cut, cut, slices.Equal)) {
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: the answers kept were asked for revision %d's %s, the page is revision %d in %s: its parts start over",
+			at, done.Revision, plural(len(done.Cut), "part"), page.RevisionID, plural(len(cut), "part")))
+		done = nil
+	}
+	carried := false
+	if done == nil {
+		done = &restyleParts{Revision: page.RevisionID, Cut: cut}
+	} else if plan.Restyle.Parts == nil && len(done.Answers) > 0 {
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: %s of %d taken from the failed try", at, plural(len(done.Answers), "part"), len(parts)))
+		carried = true
+	}
+	plan.Restyle.Parts = done
+	if carried {
+		// Kept with this run at once: should its next part fail too, the
+		// try after it takes them from here.
+		if err := encodeInto(r, plan); err != nil {
+			return err
+		}
+	}
+	if i := len(done.Answers); i < len(parts) {
+		label := fmt.Sprintf("part %d of %d", i+1, len(parts))
+		for k := i; k < len(parts); k++ {
+			if err := w.tooLarge(plan, fmt.Sprintf("part %d of %d", k+1, len(parts)), parts[k].chars); err != nil {
+				return err
+			}
+		}
+		// The run's calls spent: failed with the answers so far kept, so
+		// the next try goes on from here (a page of more parts than one
+		// run's calls takes several tries).
+		if r.Calls >= w.base.Limits.MaxCalls {
+			return fmt.Errorf("the run's calls are spent after %d of %s, the next try goes on", i, plural(len(parts), "part"))
+		}
+		prompt, chars := restylePrompt(*r, page, parts, i, w.limits)
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: %s, %d chars as shown", at, label, chars))
+		res := w.base.Describer.Restyle(ctx, prompt, chars, false)
+		okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
+		if err != nil {
+			return err
+		}
+		if !okCall {
+			w.logRestyledPage(ctx, at+" ("+label+")", parts[i].page(page), chars, res.Outcome)
+			return callFailed("the restyle call ("+label+")", res.Call)
+		}
+		// Kept before anything else: a hold or a refused write after it
+		// never asks this part again.
+		done.Answers = append(done.Answers, restyleAnswer{Patch: res.Patch, Outline: res.Outline})
+		if err := encodeInto(r, plan); err != nil {
+			return err
+		}
+		return w.save(ctx, *r)
+	}
+	merged, err := w.mergeParts(ctx, at, parts, done.Answers)
+	var out store.Restyled
+	if err == nil {
+		out, err = w.restyled(ctx, at, *r, store.ScopeRepository, page, merged)
+	}
+	if err != nil && !errors.Is(err, errStop) {
+		// Refused for what they say: the answers go with the failure, so
+		// the next try asks again rather than refusing the same ones for
+		// free until its tries are spent.
+		plan.Restyle.Parts = nil
+		if encErr := encodeInto(r, plan); encErr != nil {
+			return encErr
+		}
+	}
+	if err != nil {
+		return err
+	}
+	plan.Restyle.Parts = nil
+	plan.Restyle.Repo, r.Step = true, store.RestyleProjectStep
+	return w.writeRestyle(ctx, r, plan, store.ScopeRepository, out)
+}
+
+// page is a part as a page: what a failed part's log line counts.
+func (p restylePiece) page(whole store.Page) store.Page {
+	out := store.Page{RevisionID: whole.RevisionID, Statements: p.statements}
+	if p.summary {
+		out.Summary = whole.Summary
+	}
+	return out
+}
+
+// failedParts is the parts the newest failed restyle of the run's
+// repository at its epoch kept, nil for none or a plan that does not read:
+// a read that fails only costs those parts again.
+func (w *Worker) failedParts(ctx context.Context, r *store.BaselineRun) *restyleParts {
+	raw, err := w.base.Store.FailedRestylePlan(ctx, r.ProjectKey, r.Slug, r.Epoch)
+	if err != nil {
+		w.log.WarnContext(ctx, "baseline: restyle: the failed try's parts not read, asked again", logging.Err(err))
+		return nil
+	}
+	if raw == nil {
+		return nil
+	}
+	failed, err := decodePlan(raw)
+	if err != nil || failed.Restyle == nil {
+		return nil
+	}
+	return failed.Restyle.Parts
+}
+
+// mergeParts is the parts' answers as one restyle answer: each part's edits,
+// new statements and outline of its own statements, what one names of
+// another's left out and logged; the summary the first part's. A part that
+// keeps its layout (outline null) stands as laid out, its statements' areas
+// in its outline, so the parts' chapters keep the page's order; one that
+// does with statements lacking an area is refused, as one call's is.
+func (w *Worker) mergeParts(ctx context.Context, at string, parts []restylePiece, answers []restyleAnswer) (inference.RestyleResult, error) {
+	var out inference.RestyleResult
+	if len(answers) != len(parts) {
+		return out, fmt.Errorf("restyle refused: %d answers for %s", len(answers), plural(len(parts), "part"))
+	}
+	out.Patch.Statements = []inference.Statement{}
+	var foreign []string
+	for i, a := range answers {
+		if a.Outline == nil {
+			for _, s := range parts[i].statements {
+				switch {
+				case s.Area == "":
+					return out, fmt.Errorf("restyle refused: part %d of %d gave no outline, and its statements lack an area", i+1, len(parts))
+				case len(out.Outline) > 0 && out.Outline[len(out.Outline)-1].Area == s.Area:
+					last := &out.Outline[len(out.Outline)-1]
+					last.IDs = append(last.IDs, s.ID)
+				default:
+					out.Outline = append(out.Outline, inference.OutlineArea{Area: s.Area, IDs: []string{s.ID}})
+				}
+			}
+		}
+		mine := map[string]bool{}
+		for _, s := range parts[i].statements {
+			mine[s.ID] = true
+		}
+		if parts[i].summary {
+			out.Patch.Summary = a.Patch.Summary
+		} else if a.Patch.Summary != nil {
+			foreign = append(foreign, fmt.Sprintf("summary (part %d)", i+1))
+		}
+		// A new statement taken partly from another part's statement is
+		// left out, and what it came from here kept as stored (as splitOff
+		// keeps it): that other statement was not shortened, so its text
+		// would stand twice.
+		kept := map[string]bool{}
+		for _, s := range a.Patch.Added {
+			own := func(id string) bool { return mine[id] || (parts[i].summary && isSummaryRef(id)) }
+			if slices.ContainsFunc(s.From, func(id string) bool { return !own(id) }) {
+				foreign = append(foreign, fmt.Sprintf("new %q taken from another part's (part %d)", s.Name, i+1))
+				for _, id := range s.From {
+					if isSummaryRef(id) {
+						id = "summary"
+					}
+					kept[id] = true
+				}
+				continue
+			}
+			out.Patch.Added = append(out.Patch.Added, s)
+		}
+		if kept["summary"] && parts[i].summary {
+			out.Patch.Summary = nil
+		}
+		for _, s := range a.Patch.Statements {
+			if s.ID != nil && !mine[*s.ID] {
+				foreign = append(foreign, fmt.Sprintf("%s (part %d)", *s.ID, i+1))
+				continue
+			}
+			if s.ID != nil && kept[*s.ID] {
+				continue
+			}
+			out.Patch.Statements = append(out.Patch.Statements, s)
+		}
+		for _, area := range a.Outline {
+			ids := slices.DeleteFunc(slices.Clone(area.IDs), func(id string) bool {
+				if !mine[id] {
+					foreign = append(foreign, fmt.Sprintf("%s in the outline (part %d)", id, i+1))
+				}
+				return !mine[id]
+			})
+			if len(ids) > 0 {
+				out.Outline = append(out.Outline, inference.OutlineArea{Area: area.Area, IDs: ids})
+			}
+		}
+	}
+	if len(foreign) > 0 {
+		w.log.WarnContext(ctx, at+": another part's left out: "+strings.Join(foreign, ", "))
+	}
+	return out, nil
 }

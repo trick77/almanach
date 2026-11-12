@@ -394,6 +394,12 @@ type callOpts struct {
 
 // callWith is call with its options.
 func (c *Client) callWith(ctx context.Context, prompt string, format llmwire.ResponseFormat, maxAnswer int, opt callOpts) (string, Call) {
+	// The answer within what the model's output limit leaves beside the
+	// reasoning: a cap and room past the limit go out held to it, the
+	// reasoning, sharing the wire cap, then left too little.
+	if ceiling := c.answerCeiling(opt.room); ceiling > 0 && maxAnswer > ceiling {
+		maxAnswer = ceiling
+	}
 	budget := cutBudget{Cap: maxAnswer, PageChars: opt.page, PromptTokens: PromptTokens(prompt)}
 	if c.effort != EffortOff {
 		maxAnswer += opt.room
@@ -567,8 +573,52 @@ func PromptTokens(prompt string) int {
 // again, held between capRestyleLo and capRestyleHi. The page, not the
 // prompt: the rules and a project's context are no part of the answer.
 // Honest answers ran to 0.7-1.1 times the page's tokens (2026-11-10).
-func restyleCap(pageChars int) int {
-	return min(max(pageChars/3*3/2+2000, capRestyleLo), capRestyleHi)
+// hi is the ceiling: capRestyleHi, or less where the model's output limit
+// leaves less (restyleHi).
+func restyleCap(pageChars, hi int) int {
+	return min(max(pageChars/3*3/2+2000, capRestyleLo), hi)
+}
+
+// RestyleLimits is how much of a page, as shown, one restyle call takes.
+//
+// PartChars is the most a part of a restyle in parts holds: where
+// restyleCap reaches the ceiling, so a part's cap still follows its size. A
+// larger repository page goes in parts (2026-11-12: pages of 164k to 521k
+// chars cut at 32k answer tokens every try; the patch of a rule that touches
+// most statements, the Jargon epoch's, runs near the page's own size).
+//
+// OneCallMax is the page or part past which one answer cannot fit even at
+// the lowest measured, 0.7 times the page's tokens: the poller's restyle of
+// one that large fails without the call, counted against its tries. A
+// ceiling above capRestyleHi does not help: CallTimeout at ~95 tokens a
+// second ends a call near 50k answer tokens.
+type RestyleLimits struct {
+	PartChars, OneCallMax int
+}
+
+func restyleLimits(hi int) RestyleLimits {
+	// restyleCap counts whole tokens of 3 chars: the part rounded up to one.
+	part := ((hi-2000)*2 + 2) / 3 * 3
+	return RestyleLimits{PartChars: part, OneCallMax: hi * 3 * 10 / 7}
+}
+
+// DefaultRestyleLimits is a model whose output limit leaves capRestyleHi
+// beside the reasoning's room, every profile llmwire holds today (128k and
+// more), or one llmwire does not know.
+var DefaultRestyleLimits = restyleLimits(capRestyleHi)
+
+// RestyleLimits is this client's, by its model's output limit.
+func (c *Client) RestyleLimits() RestyleLimits { return restyleLimits(c.restyleHi()) }
+
+// restyleHi is a restyle's answer ceiling: capRestyleHi, held under what the
+// model's output limit leaves beside the reasoning's room (answerCeiling),
+// never under capRestyleLo.
+func (c *Client) restyleHi() int {
+	hi := capRestyleHi
+	if ceiling := c.answerCeiling(restyleRoom); ceiling > 0 {
+		hi = min(hi, ceiling)
+	}
+	return max(hi, capRestyleLo)
 }
 
 // logCut leaves a cut stream in the log, credentials redacted, one line per

@@ -47,7 +47,7 @@ Respond with a single JSON object: `{"outline": [{"area": "<area>", "ids": ["<id
 
 ## This call
 
-Repository `{repo}` in project `{project}`.
+Repository `{repo}` in project `{project}`.{restyle_part}
 
 ## Untrusted input
 

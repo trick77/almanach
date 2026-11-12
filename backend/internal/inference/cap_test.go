@@ -35,14 +35,70 @@ func TestCallSendsAnOutputCap(t *testing.T) {
 // A restyle's cap follows the page it rewrites, never the prompt, within
 // its bounds.
 func TestRestyleCapFollowsThePage(t *testing.T) {
-	if got := restyleCap(5); got != capRestyleLo {
+	if got := restyleCap(5, capRestyleHi); got != capRestyleLo {
 		t.Errorf("short page: cap %d, want the floor %d", got, capRestyleLo)
 	}
-	if got := restyleCap(30_000); got != 17_000 {
+	if got := restyleCap(30_000, capRestyleHi); got != 17_000 {
 		t.Errorf("30k-char page: cap %d, want 10k tokens and half again, 2k on top", got)
 	}
-	if got := restyleCap(1_000_000); got != capRestyleHi {
+	if got := restyleCap(1_000_000, capRestyleHi); got != capRestyleHi {
 		t.Errorf("huge page: cap %d, want the ceiling %d", got, capRestyleHi)
+	}
+}
+
+// A part of a restyle in parts is as large as one call's cap still follows:
+// at PartChars the cap reaches the ceiling, below it not yet. One call past
+// OneCallMax cannot fit even at the lowest measured answer, 0.7 times the
+// page's tokens.
+func TestRestyleBounds(t *testing.T) {
+	for _, hi := range []int{capRestyleHi, 12_000} {
+		l := restyleLimits(hi)
+		if got := restyleCap(l.PartChars, hi); got != hi {
+			t.Errorf("ceiling %d, part budget %d: cap %d, want the ceiling", hi, l.PartChars, got)
+		}
+		if got := restyleCap(l.PartChars-2, hi); got >= hi {
+			t.Errorf("ceiling %d, below the part budget: cap %d, want under it", hi, got)
+		}
+		if lowest := l.OneCallMax / 3 * 7 / 10; lowest < hi-10 || lowest > hi {
+			t.Errorf("ceiling %d, one call's limit %d: its lowest answer %d tokens", hi, l.OneCallMax, lowest)
+		}
+	}
+	if DefaultRestyleLimits != restyleLimits(capRestyleHi) {
+		t.Errorf("default limits %+v, want capRestyleHi's", DefaultRestyleLimits)
+	}
+}
+
+// An answer's cap is held under the model's output limit as llmwire knows
+// it, less the reasoning's room and llmwire's allowance: a cap and a room
+// that together pass the limit would leave the reasoning nothing. The
+// restyle's ceiling and its parts follow the same model limit.
+func TestAnswerHeldUnderTheModelLimit(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(`{"outline": null, "summary": null, "statements": [], "added": []}`)
+	c := testClient(srv.Client())
+	// The test profile's max_output is 16384.
+	ceiling := c.answerCeiling(restyleRoom)
+	if ceiling <= 0 || ceiling > 16_384-restyleRoom {
+		t.Fatalf("answer ceiling %d, want under 16384 less the room %d", ceiling, restyleRoom)
+	}
+	res := c.Restyle(context.Background(), "p", 900_000, false)
+	if res.Outcome != OutcomeOK {
+		t.Fatalf("Outcome = %s (%v)", res.Outcome, res.Err)
+	}
+	body := srv.Last().Body
+	got := body["max_tokens"]
+	if got == nil {
+		got = body["max_completion_tokens"]
+	}
+	if n, _ := got.(float64); int(n) > 16_384 || int(n) < ceiling+restyleRoom {
+		t.Errorf("wire cap %v, want the answer held to %d with the room on top, within 16384", got, ceiling)
+	}
+	if l := c.RestyleLimits(); l != restyleLimits(ceiling) || l.PartChars >= DefaultRestyleLimits.PartChars {
+		t.Errorf("restyle limits %+v, want those of the held ceiling %d", l, ceiling)
+	}
+	// Unknown to llmwire: no hold, the defaults.
+	if got := (&Client{model: "nope"}).RestyleLimits(); got != DefaultRestyleLimits {
+		t.Errorf("no wire: limits %+v, want the defaults", got)
 	}
 }
 
@@ -59,7 +115,7 @@ func TestRestyleReasoningRoom(t *testing.T) {
 		got = body["max_completion_tokens"]
 	}
 	n, _ := got.(float64)
-	if want := restyleCap(5) + restyleRoom; int(n) < want || int(n) > want+llmwire.DefaultReasoningOverhead {
+	if want := restyleCap(5, capRestyleHi) + restyleRoom; int(n) < want || int(n) > want+llmwire.DefaultReasoningOverhead {
 		t.Errorf("wire cap %v, want %d plus llmwire's overhead at most", got, want)
 	}
 }
@@ -182,9 +238,9 @@ func TestLengthFinishNamesTheBudget(t *testing.T) {
 	if res.Outcome != OutcomeTooLong {
 		t.Fatalf("Outcome = %s, want too long", res.Outcome)
 	}
-	wire, limit := c.wireCap(restyleCap(900) + restyleRoom)
+	wire, limit := c.wireCap(restyleCap(900, capRestyleHi) + restyleRoom)
 	want := fmt.Sprintf("output limit (17000 tokens out, 9800 of them reasoning; cap %d (answer %d, reasoning room %d, model limit %d), page 900 chars)",
-		wire, restyleCap(900), restyleRoom, limit)
+		wire, restyleCap(900, capRestyleHi), restyleRoom, limit)
 	if res.Err == nil || !strings.Contains(res.Err.Error(), want) {
 		t.Errorf("err %v, want it to name %q", res.Err, want)
 	}
@@ -193,7 +249,7 @@ func TestLengthFinishNamesTheBudget(t *testing.T) {
 	}
 	var f cutFile
 	readCut(t, c.cutDir, &f)
-	if f.Cap != restyleCap(900) || f.Room != restyleRoom || f.WireCap != wire || f.MaxOutput != limit || f.PageChars != 900 || f.PromptTokens == 0 ||
+	if f.Cap != restyleCap(900, capRestyleHi) || f.Room != restyleRoom || f.WireCap != wire || f.MaxOutput != limit || f.PageChars != 900 || f.PromptTokens == 0 ||
 		f.OutTokens == nil || *f.OutTokens != 17000 || f.ReasoningTokens == nil || *f.ReasoningTokens != 9800 {
 		t.Errorf("cut file budget %+v", f.cutBudget)
 	}

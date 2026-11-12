@@ -38,9 +38,11 @@ type runStore struct {
 	departureErr error
 	saveErr      error
 	applyErr     error
-	repos        []store.SourceRepo
-	documented   *store.BaselineRun
-	sources      map[string]bool
+	// failedPlan is the newest failed restyle's plan, nil for none.
+	failedPlan []byte
+	repos      []store.SourceRepo
+	documented *store.BaselineRun
+	sources    map[string]bool
 	// others is the project's source repositories with their summaries;
 	// othersErr fails every read of them after the first othersOK.
 	others     []store.RepoSummary
@@ -108,6 +110,11 @@ func (s *runStore) RestyleState(_ context.Context, key, _ string, e store.Epochs
 func (s *runStore) RestyleDue(ctx context.Context, key, slug string, e store.Epochs) (store.RestyleState, error) {
 	s.manualDue++
 	return s.RestyleState(ctx, key, slug, e, time.Time{})
+}
+
+// FailedRestylePlan is the plan set as the newest failed restyle's.
+func (s *runStore) FailedRestylePlan(context.Context, string, string, int) ([]byte, error) {
+	return s.failedPlan, nil
 }
 
 // InnerEdges is the project's own build dependencies, as set.
@@ -424,16 +431,28 @@ type fakeModels struct {
 	// which of them asked for the project's page.
 	restyles        []inference.RestyleResult
 	restyledProject []bool
-	prompts         []string
+	// restyleChars is each restyle call's page size, what its cap is sized on.
+	restyleChars []int
+	// restyleLimits stands in for a model's, nil the defaults.
+	restyleLimits *inference.RestyleLimits
+	prompts       []string
 	// contextTokens is the context the gateway lists, 0 none.
 	contextTokens int
 }
 
 func (m *fakeModels) ContextTokens() int { return m.contextTokens }
 
-func (m *fakeModels) Restyle(_ context.Context, prompt string, _ int, project bool) inference.RestyleResult {
+func (m *fakeModels) RestyleLimits() inference.RestyleLimits {
+	if m.restyleLimits != nil {
+		return *m.restyleLimits
+	}
+	return inference.DefaultRestyleLimits
+}
+
+func (m *fakeModels) Restyle(_ context.Context, prompt string, pageChars int, project bool) inference.RestyleResult {
 	m.prompts = append(m.prompts, prompt)
 	m.restyledProject = append(m.restyledProject, project)
+	m.restyleChars = append(m.restyleChars, pageChars)
 	if len(m.restyles) == 0 {
 		return inference.RestyleResult{Call: called, Patch: inference.Patch{Statements: []inference.Statement{}}}
 	}

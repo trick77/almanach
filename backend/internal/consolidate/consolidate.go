@@ -2037,39 +2037,44 @@ func describePage(p store.Page, v pageView) string {
 	// with paragraphs of its own, so a bullet per statement would leave
 	// every second paragraph outside any id.
 	for _, s := range p.Statements {
-		fmt.Fprintf(&b, "\n### [%s] %s: %s\n\n%s\n", s.ID, s.Kind, s.Name, s.Text)
-		// A statement the step must leave alone is not asked for: its edit
-		// would be struck.
-		if !v.read && v.newer[s.ID] == "" && markup.LayoutLost(s.Text) {
-			b.WriteString(lostText)
-		}
-		if s.Area != "" {
-			fmt.Fprintf(&b, "\nArea: %s\n", s.Area)
-		}
-		if len(s.Files) > 0 {
-			fmt.Fprintf(&b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
-		}
-		if !v.noDiagrams {
-			b.WriteString(diagramLine(s.Diagram))
-		}
-		if v.prs != prNone {
-			var prs []string
-			for _, src := range s.Sources {
-				if !src.IsBaseline() {
-					prs = append(prs, src.PRKey)
-				}
-			}
-			switch {
-			case len(prs) == 0:
-			case v.prs == prKeys:
-				fmt.Fprintf(&b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
-			default:
-				b.WriteString("\nLearned from pull requests.\n")
-			}
-		}
-		b.WriteString(leftAloneNote(v.newer[s.ID]))
+		describeStatement(&b, s, v)
 	}
 	return b.String()
+}
+
+// describeStatement is one statement of describePage.
+func describeStatement(b *strings.Builder, s store.Statement, v pageView) {
+	fmt.Fprintf(b, "\n### [%s] %s: %s\n\n%s\n", s.ID, s.Kind, s.Name, s.Text)
+	// A statement the step must leave alone is not asked for: its edit
+	// would be struck.
+	if !v.read && v.newer[s.ID] == "" && markup.LayoutLost(s.Text) {
+		b.WriteString(lostText)
+	}
+	if s.Area != "" {
+		fmt.Fprintf(b, "\nArea: %s\n", s.Area)
+	}
+	if len(s.Files) > 0 {
+		fmt.Fprintf(b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
+	}
+	if !v.noDiagrams {
+		b.WriteString(diagramLine(s.Diagram))
+	}
+	if v.prs != prNone {
+		var prs []string
+		for _, src := range s.Sources {
+			if !src.IsBaseline() {
+				prs = append(prs, src.PRKey)
+			}
+		}
+		switch {
+		case len(prs) == 0:
+		case v.prs == prKeys:
+			fmt.Fprintf(b, "\nLearned from pull requests: %s\n", strings.Join(prs, ", "))
+		default:
+			b.WriteString("\nLearned from pull requests.\n")
+		}
+	}
+	b.WriteString(leftAloneNote(v.newer[s.ID]))
 }
 
 // diagramLine shows a statement's diagram as the JSON it is, for the model
