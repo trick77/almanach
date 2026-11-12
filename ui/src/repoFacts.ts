@@ -15,8 +15,8 @@ export const factIds = {
 export type Fact = keyof typeof factIds;
 
 /** factPath is a repository's page on its reference tab at one kind of its
- *  facts: where a fact table's repository link lands. A page without the
- *  section opens on the tab alone. */
+ *  facts: where a fact table's or drawing's repository link lands. A page
+ *  without the section opens on the tab alone. */
 export function factPath(key: string, slug: string, fact: Fact): string {
   return repoPath(key, slug) + anchorHash(DESCRIPTION, factIds[fact]);
 }

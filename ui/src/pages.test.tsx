@@ -2592,6 +2592,46 @@ describe("App", () => {
     );
   });
 
+  it("follows a repository's dependency to that one's dependencies", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    serve({
+      me: anonymous,
+      projects,
+      "projects/PAY": project,
+      "projects/PAY/repos/pay-clearing": {
+        ...repo,
+        uses: [{ project: "PAY", slug: "pay-api", also: [] }],
+      },
+      "projects/PAY/repos/pay-api": {
+        ...repo,
+        slug: "pay-api",
+        used_by: [{ project: "PAY", slug: "pay-clearing" }],
+      },
+    });
+    window.history.replaceState({}, "", "/projects/PAY/repos/pay-clearing");
+    render(<App />);
+    await openTab(/Nachschlagen/);
+    const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
+    within(desc).getByRole("link", { name: "pay-api" }).click();
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/projects/PAY/repos/pay-api"),
+    );
+    expect(window.location.hash).toBe("#description/dependencies");
+    await waitFor(() =>
+      expect(
+        within(
+          screen.getByRole("tabpanel", { name: "Nachschlagen" }),
+        ).getByRole("link", { name: "pay-clearing" }),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(scrolled.mock.contexts).toContain(
+        document.getElementById("dependencies"),
+      ),
+    );
+  });
+
   it("searches the wiki from the header, the phrase in the address", async () => {
     serve({
       me: anonymous,

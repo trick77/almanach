@@ -191,6 +191,22 @@ describe("DepsPage", () => {
     expect(screen.getByText(/von zwei Quellen geclont/)).toBeInTheDocument();
   });
 
+  it("links each repository of the drawing to its dependencies", async () => {
+    serve({
+      dependencies: graph,
+      sources: { enabled: true, sources: [], default_host: "", max_calls: 16 },
+    });
+    render(<DepsPage />);
+    const node = await screen.findByRole(
+      "link",
+      { name: "Repository loom öffnen" },
+      { timeout: 5000 },
+    );
+    expect(node.getAttribute("href")).toBe(
+      "/projects/tools/repos/loom#description/dependencies",
+    );
+  });
+
   it("says what a dashed edge is, and the scope beside its user", async () => {
     const withTest: Dependencies = {
       ...graph,
@@ -253,12 +269,17 @@ describe("RepoPage dependencies", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
     const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
     const link = within(desc).getByRole("link", { name: "llmwire" });
-    expect(link.getAttribute("href")).toBe("/projects/tools/repos/llmwire");
+    // Each to its own dependencies: its start tab shows none.
+    expect(link.getAttribute("href")).toBe(
+      "/projects/tools/repos/llmwire#description/dependencies",
+    );
     const row = link.closest("tr")!;
     expect(within(row).getByText("auch loom")).toBeInTheDocument();
     expect(within(row).getAllByRole("cell")).toHaveLength(1);
     const chat = within(desc).getByRole("link", { name: "apps/chat" });
-    expect(chat.getAttribute("href")).toBe("/projects/apps/repos/chat");
+    expect(chat.getAttribute("href")).toBe(
+      "/projects/apps/repos/chat#description/dependencies",
+    );
     // The rail points at the section, uses · used by; it lists none.
     const rail = screen.getByRole("navigation", { name: "Inhalt" });
     const entry = within(rail).getByText("Abhängigkeiten").closest("a")!;

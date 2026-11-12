@@ -36,7 +36,7 @@ import {
   type RailItem,
 } from "./Rail";
 import { RepoSwitcher } from "./RepoSwitcher";
-import { factIds } from "./repoFacts";
+import { factIds, factPath } from "./repoFacts";
 import { StaleHint } from "./StaleHint";
 import { refName } from "./format";
 import {
@@ -584,7 +584,7 @@ function DepTable({
             <tr key={`${end.project}/${end.slug}`}>
               <td className={td}>
                 <Link
-                  to={repoPath(end.project, end.slug)}
+                  to={factPath(end.project, end.slug, "deps")}
                   className={mono + " text-ink-dim hover:text-ink"}
                 >
                   {name(end)}

@@ -148,14 +148,15 @@ describe("RepoPage messages", () => {
     const desc = screen.getByRole("tabpanel", { name: "Nachschlagen" });
     const sent = within(desc).getByText("order.placed").closest("tr")!;
     expect(within(sent).getByText("Producer")).toBeInTheDocument();
+    // Each peer to its own messages: its start tab shows none.
     expect(
       within(sent).getByRole("link", { name: "billing" }).getAttribute("href"),
-    ).toBe("/projects/shop/repos/billing");
+    ).toBe("/projects/shop/repos/billing#description/messages");
     expect(
       within(sent)
         .getByRole("link", { name: "ops/audit" })
         .getAttribute("href"),
-    ).toBe("/projects/ops/repos/audit");
+    ).toBe("/projects/ops/repos/audit#description/messages");
     expect(within(sent).getByText("order.placed").getAttribute("title")).toBe(
       "a",
     );
@@ -196,6 +197,34 @@ describe("RepoPage messages", () => {
     render(<RepoPage projectKey="shop" slug="orders" />);
     fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
     expect(screen.queryByText("Messaging")).toBeNull();
+  });
+
+  it("links each repository of its drawing to its messages", async () => {
+    serve({ "projects/shop/repos/orders": repo });
+    render(<RepoPage projectKey="shop" slug="orders" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Nachschlagen/ }));
+    const node = (slug: string) =>
+      screen.findByRole(
+        "link",
+        { name: `Repository ${slug} öffnen` },
+        { timeout: 5000 },
+      );
+    expect((await node("ops/audit")).getAttribute("href")).toBe(
+      "/projects/ops/repos/audit#description/messages",
+    );
+    // billing both sends and receives: two nodes, one target.
+    expect(
+      screen
+        .getAllByRole("link", { name: "Repository billing öffnen" })
+        .map((a) => a.getAttribute("href")),
+    ).toEqual([
+      "/projects/shop/repos/billing#description/messages",
+      "/projects/shop/repos/billing#description/messages",
+    ]);
+    // Its own node: the section it is in, no link.
+    expect(
+      screen.queryByRole("link", { name: "Repository orders öffnen" }),
+    ).toBeNull();
   });
 
   it("opens on its messages from a link to them, without a description", async () => {
@@ -251,5 +280,29 @@ describe("ProjectMessages", () => {
     expect(
       screen.getByRole("link", { name: "ops/audit" }).getAttribute("href"),
     ).toBe("/projects/ops/repos/audit#description/messages");
+  });
+
+  it("links each repository of its drawing to its messages", async () => {
+    const flows: TopicFlow[] = [
+      {
+        name: "order.placed",
+        producers: [ref("shop", "orders")],
+        consumers: [ref("ops", "audit")],
+        declared: [],
+      },
+    ];
+    render(<ProjectMessages project="shop" flows={flows} />);
+    const node = (slug: string) =>
+      screen.findByRole(
+        "link",
+        { name: `Repository ${slug} öffnen` },
+        { timeout: 5000 },
+      );
+    expect((await node("orders")).getAttribute("href")).toBe(
+      "/projects/shop/repos/orders#description/messages",
+    );
+    expect((await node("ops/audit")).getAttribute("href")).toBe(
+      "/projects/ops/repos/audit#description/messages",
+    );
   });
 });
