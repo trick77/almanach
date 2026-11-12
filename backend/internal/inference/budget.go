@@ -107,6 +107,24 @@ func (c *Client) wireCap(asked int) (int, int64) {
 	return int(wire), p.Limits.MaxOutput
 }
 
+// answerCeiling is the most an answer may take of the model's output limit,
+// as llmwire's profile gives it, beside room (the call's reasoning room,
+// none with thinking off) and llmwire's allowance for the level; 0 when
+// llmwire knows no limit for the model.
+func (c *Client) answerCeiling(room int) int {
+	if c.wire == nil {
+		return 0
+	}
+	p, err := c.wire.Registry().Lookup(c.model)
+	if err != nil || p.Limits.MaxOutput <= 0 {
+		return 0
+	}
+	if c.effort == EffortOff {
+		room = 0
+	}
+	return max(int(p.Limits.MaxOutput)-room-c.allowance(p.Reasoning), 1)
+}
+
 // allowance is the reasoning tokens llmwire adds to an answer budget for
 // this client's level (llmwire's reasoningOverhead): the profile's measured
 // overhead for the level, else llmwire's default; none where the model

@@ -160,6 +160,8 @@ func (m evalModels) ProjectMap(ctx context.Context, prompt string) inference.Rep
 	return m.llm.ProjectMap(ctx, prompt)
 }
 
+func (m evalModels) RestyleLimits() inference.RestyleLimits { return m.llm.RestyleLimits() }
+
 func (m evalModels) Restyle(ctx context.Context, prompt string, pageChars int, project bool) inference.RestyleResult {
 	m.keep("restyle", prompt)
 	return m.llm.Restyle(ctx, prompt, pageChars, project)

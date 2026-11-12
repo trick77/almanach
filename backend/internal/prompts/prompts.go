@@ -131,6 +131,17 @@ const Redacted = "`<redacted>` in what you read marks a credential the code remo
 // which an old page without areas otherwise returned whole for.
 const RestyleEdits = "- `statements`: every statement whose kind, name or text the rules here make you change, by its `id` exactly as shown, with its full new `name`, `text`, `files` and `area`. Only ids shown there, never one of your own. As few as the rules need: a text is rewritten only where it breaks a rule here (its layout, a flow or an interface it tells that is another statement's, its kind, a software term translated word by word), never to polish its wording, and a statement the rules accept as it stands is not returned, whatever you would word differently. An area alone is the outline's: a statement whose only change is its area is not returned; the outline places it."
 
+// RestylePart is what a restyle in parts tells each call, in Restyle's
+// {restyle_part}, with the part's number and the parts': a repository page
+// too large for one answer goes one part a call, the others listed by name
+// so a part can tell what is another's and use the page's areas. Shapes no
+// stored page: no epoch.
+const RestylePart = "\n\nThe description is too large for one answer, so it comes in parts, one call each: this is part %d of %d. Only the statements shown in full below are this call's: `statements`, the `from` of `added` and the `outline` name their ids alone, never one listed under \"Other parts of the description\", which are there only so you know what they cover and which areas the page has. The outline lays out this part's statements; the other parts lay out theirs."
+
+// RestyleLaterPart is RestylePart's last sentence for every part but the
+// first, which holds the summary.
+const RestyleLaterPart = " The summary is another part's: `summary` is `null`."
+
 // Layout is the text layout rule every prompt that writes statement text
 // or a summary states, word for word: structure where it helps a human
 // reader, prose by default, carried by the schema's blocks (Block), never

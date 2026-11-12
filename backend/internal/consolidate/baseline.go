@@ -57,6 +57,7 @@ type RunStore interface {
 	SettleDepartures(ctx context.Context, key string, slugs []string) error
 	RestyleState(ctx context.Context, key, slug string, e store.Epochs, failedBefore time.Time) (store.RestyleState, error)
 	RestyleDue(ctx context.Context, key, slug string, e store.Epochs) (store.RestyleState, error)
+	FailedRestylePlan(ctx context.Context, key, slug string, epoch int) ([]byte, error)
 	ApplyRestyle(ctx context.Context, r store.BaselineRun, scope string, epoch int, w store.Restyled) (int, bool, error)
 	MarkProjectRestyled(ctx context.Context, runID int64, epoch int) error
 }
@@ -93,6 +94,9 @@ type Describer interface {
 	RepoMap(ctx context.Context, prompt string) inference.RepoMapResult
 	ProjectMap(ctx context.Context, prompt string) inference.RepoMapResult
 	Restyle(ctx context.Context, prompt string, pageChars int, project bool) inference.RestyleResult
+	// RestyleLimits is how much one restyle call takes, by the model's
+	// output limit beside the reasoning's room.
+	RestyleLimits() inference.RestyleLimits
 }
 
 // Baseline is the runs' part of the worker; without it (the sources off)

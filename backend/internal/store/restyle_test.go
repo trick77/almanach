@@ -42,6 +42,44 @@ func restyleDue(t *testing.T, s *Store, slug string, epoch int, before time.Time
 	return st.Queue()
 }
 
+// The newest failed restyle of a repository at an epoch hands its plan to
+// the next try; another epoch's, a done run's, one a done run followed or
+// none is nil.
+func TestFailedRestylePlan(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "tools", "svc")
+	plan := func(epoch int) string {
+		t.Helper()
+		p, err := s.FailedRestylePlan(ctx, "tools", "svc", epoch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(p)
+	}
+	if got := plan(3); got != "" {
+		t.Fatalf("no run yet: plan %q", got)
+	}
+	run := func(state, plan string) {
+		t.Helper()
+		r := restyleRun(t, s, "tools", "svc", 3)
+		r.Plan = []byte(plan)
+		finish(t, s, r, state)
+	}
+	run(RunFailed, `{"restyle":{"parts":{"revision":5}}}`)
+	run(RunFailed, `{"restyle":{"parts":{"revision":6}}}`)
+	if got := plan(3); got != `{"restyle":{"parts":{"revision":6}}}` {
+		t.Errorf("plan = %q, want the newest failed run's", got)
+	}
+	if got := plan(4); got != "" {
+		t.Errorf("another epoch: plan %q", got)
+	}
+	run(RunDone, `{"restyle":{"repo":true}}`)
+	if got := plan(3); got != "" {
+		t.Errorf("after a done run: plan %q, want none", got)
+	}
+}
+
 // A restyle is queued at the page's commit with its epoch and the plan
 // that says what it is; one open run per repository holds for it too.
 func TestEnqueueRestyle(t *testing.T) {

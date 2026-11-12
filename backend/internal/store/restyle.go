@@ -45,6 +45,28 @@ func (s *Store) EnqueueRestyle(ctx context.Context, key, slug, commit string, ep
 	return id, uniqueAsExists(err)
 }
 
+// FailedRestylePlan is the plan of the newest failed restyle of a
+// repository at epoch, nil for none: a restyle in parts takes the parts it
+// paid for from it, so a try after a failed part pays only from there. One
+// a later run of the repository, any mode, ended done is none: that run
+// may have laid the page out in place, under the same revision.
+func (s *Store) FailedRestylePlan(ctx context.Context, key, slug string, epoch int) ([]byte, error) {
+	rid, ok, err := repoID(ctx, s.db, key, slug)
+	if err != nil || !ok {
+		return nil, err
+	}
+	var plan []byte
+	err = s.db.QueryRowContext(ctx, `
+		SELECT f.plan FROM baseline_runs f
+		 WHERE f.repo_id = ?1 AND f.mode = 'restyle' AND f.state = 'failed' AND f.epoch = ?2
+		   AND NOT EXISTS (SELECT 1 FROM baseline_runs d WHERE d.repo_id = ?1 AND d.state = 'done' AND d.id > f.id)
+		 ORDER BY f.id DESC LIMIT 1`, rid, epoch).Scan(&plan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return plan, err
+}
+
 // RestyleTries is how many restyles of one page may fail at one epoch: the
 // first and three retries, as the poller's reading runs. The project page's
 // are counted over the project, whichever repository's run made them, so a

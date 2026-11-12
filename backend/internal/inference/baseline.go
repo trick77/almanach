@@ -169,7 +169,7 @@ func routeFormat() llmwire.ResponseFormat {
 // project's, whose kinds it takes, with its drops and its shape. pageChars
 // is the page as the prompt shows it, what the answer's cap is sized on.
 func (c *Client) Restyle(ctx context.Context, prompt string, pageChars int, project bool) RestyleResult {
-	content, call := c.callWith(ctx, prompt, restyleFormat(c.diagrams, project), restyleCap(pageChars), callOpts{room: restyleRoom, lists: true, page: pageChars})
+	content, call := c.callWith(ctx, prompt, restyleFormat(c.diagrams, project), restyleCap(pageChars, c.restyleHi()), callOpts{room: restyleRoom, lists: true, page: pageChars})
 	out := RestyleResult{Call: call}
 	if call.Outcome != OutcomeOK {
 		return out
