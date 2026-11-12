@@ -346,9 +346,9 @@ func TestMergeUnparseable(t *testing.T) {
 	if !res.Cost.Answered {
 		t.Error("an unparseable answer still cost tokens: Answered = false")
 	}
-	// The test profile's 16k limit holds the merge's answer under it.
-	answer := min(capMerge, c.answerCeiling(reasoningRoom))
-	if want := fmt.Sprintf("(answer %d, reasoning room %d", answer, reasoningRoom); !strings.Contains(res.Err.Error(), want) {
+	// The test profile's 16k limit holds the merge's answer and room (fit).
+	answer, room := c.fit(capMerge, reasoningRoom)
+	if want := fmt.Sprintf("(answer %d, reasoning room %d", answer, room); !strings.Contains(res.Err.Error(), want) {
 		t.Errorf("err %v names no budget", res.Err)
 	}
 }
@@ -455,6 +455,80 @@ func TestStartupContextTokens(t *testing.T) {
 	} {
 		if got := listing(row).ContextTokens(); got != want {
 			t.Errorf("%s: ContextTokens = %d, want %d", row, got, want)
+		}
+	}
+}
+
+// The listing's max_output_tokens holds the calls when the gateway caps the
+// alias below its profile: the smaller of the two. Every call's answer and
+// room then fit it with llmwire's allowance, the room squeezed before the
+// answer starves (a 6k limit beside patch's 16k room), and the restyle's
+// parts are sized for what a call may answer. One above the profile, none,
+// or one llmwire cannot read (said in a warning) leaves the profile's.
+func TestStartupOutputTokens(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	prof, err := llmwiretest.Registry().Lookup(llmwiretest.ChatModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := int(prof.Limits.MaxOutput)
+	listing := func(row string) (*Client, string) {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// Another alias's row llmwire cannot read is no warning of this one.
+			_, _ = io.WriteString(w, `{"data":[{"id":"other","max_output_tokens":"1000"},`+row+`]}`)
+		}))
+		t.Cleanup(s.Close)
+		c := testClient(llmwire.New(llmwire.Config{BaseURL: s.URL, APIKey: "k", Registry: llmwiretest.Registry(), CallTimeout: time.Second, Logger: quiet}))
+		warning, err := c.Startup(context.Background())
+		if err != nil {
+			t.Fatalf("Startup: %v", err)
+		}
+		return c, warning
+	}
+	row := func(limit string) string {
+		r := `{"id":"` + llmwiretest.ChatModel + `"`
+		if limit != "" {
+			r += `,"max_output_tokens":` + limit
+		}
+		return r + "}"
+	}
+	for _, c := range []struct {
+		limit   string
+		want    int
+		warning bool
+	}{
+		{"12000", 12_000, false},
+		// Too low for a long answer: said at startup.
+		{"6000", 6_000, true},
+		{fmt.Sprint(profile * 4), profile, false},
+		{"", profile, false},
+		{`"12000"`, profile, true},
+	} {
+		cl, warning := listing(row(c.limit))
+		if (warning != "") != c.warning {
+			t.Errorf("limit %s: warning %q", c.limit, warning)
+		}
+		allowance := cl.allowance(prof.Reasoning)
+		for _, call := range []struct{ answer, room int }{{capPatch, reasoningRoom}, {capRestyleHi, restyleRoom}, {capBrief, reasoningRoom}} {
+			answer, room := cl.fit(call.answer, call.room)
+			if answer+room+allowance > c.want || answer < 1 || room < 0 || room > call.room {
+				t.Errorf("limit %s: answer %d, room %d of %d asked, allowance %d: want within %d", c.limit, answer, room, call.answer, allowance, c.want)
+			}
+			// Squeezed, the answer keeps what it asked or three quarters of
+			// what the limit leaves, the room what is over.
+			if left := c.want - allowance; answer < min(call.answer, left-left/4) {
+				t.Errorf("limit %s: answer %d of %d asked, want at least three quarters of %d", c.limit, answer, call.answer, left)
+			}
+			if wire, limit := cl.wireCap(answer + room); wire > c.want || limit != int64(c.want) {
+				t.Errorf("limit %s: wire cap %d, limit %d, want within %d", c.limit, wire, limit, c.want)
+			}
+		}
+		// A full part's honest answer, at the lowest measured 0.7 times its
+		// tokens, fits the ceiling; no part is past what one call may hold.
+		l := cl.RestyleLimits()
+		if l.PartChars/3*7/10 > cl.restyleHi() || l.PartChars > l.OneCallMax {
+			t.Errorf("limit %s: parts of %d chars, one call at most %d, for a ceiling of %d", c.limit, l.PartChars, l.OneCallMax, cl.restyleHi())
 		}
 	}
 }

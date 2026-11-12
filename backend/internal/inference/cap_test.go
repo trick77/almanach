@@ -69,17 +69,24 @@ func TestRestyleBounds(t *testing.T) {
 }
 
 // An answer's cap is held under the model's output limit as llmwire knows
-// it, less the reasoning's room and llmwire's allowance: a cap and a room
-// that together pass the limit would leave the reasoning nothing. The
-// restyle's ceiling and its parts follow the same model limit.
+// it, beside a reasoning room (fit): a cap and a room that together pass the
+// limit would leave the reasoning nothing. The restyle's ceiling and its
+// parts follow the same model limit.
 func TestAnswerHeldUnderTheModelLimit(t *testing.T) {
 	srv := llmwiretest.NewServer(t)
 	srv.SetReply(`{"outline": null, "summary": null, "statements": [], "added": []}`)
 	c := testClient(srv.Client())
-	// The test profile's max_output is 16384.
-	ceiling := c.answerCeiling(restyleRoom)
-	if ceiling <= 0 || ceiling > 16_384-restyleRoom {
-		t.Fatalf("answer ceiling %d, want under 16384 less the room %d", ceiling, restyleRoom)
+	// The test profile's max_output is 16384: a restyle's 32k and its room
+	// do not fit, the room squeezed, the answer the rest.
+	p, err := llmwiretest.Registry().Lookup(llmwiretest.ChatModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowance := c.allowance(p.Reasoning)
+	ceiling := c.restyleCeiling()
+	_, room := c.fit(capRestyleHi, restyleRoom)
+	if ceiling <= 0 || ceiling >= capRestyleHi || room <= 0 || room >= restyleRoom || ceiling+room+allowance > 16_384 {
+		t.Fatalf("answer ceiling %d beside a room of %d and the allowance %d, want all within 16384", ceiling, room, allowance)
 	}
 	res := c.Restyle(context.Background(), "p", 900_000, false)
 	if res.Outcome != OutcomeOK {
@@ -90,8 +97,8 @@ func TestAnswerHeldUnderTheModelLimit(t *testing.T) {
 	if got == nil {
 		got = body["max_completion_tokens"]
 	}
-	if n, _ := got.(float64); int(n) > 16_384 || int(n) < ceiling+restyleRoom {
-		t.Errorf("wire cap %v, want the answer held to %d with the room on top, within 16384", got, ceiling)
+	if n, _ := got.(float64); int(n) > 16_384 || int(n) < ceiling+room {
+		t.Errorf("wire cap %v, want the answer held to %d with the room %d on top, within 16384", got, ceiling, room)
 	}
 	if l := c.RestyleLimits(); l != restyleLimits(ceiling) || l.PartChars >= DefaultRestyleLimits.PartChars {
 		t.Errorf("restyle limits %+v, want those of the held ceiling %d", l, ceiling)
