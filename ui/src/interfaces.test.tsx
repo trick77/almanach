@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint, Interface, RepoDetail } from "./api";
 import { ProjectInterfaces } from "./Interfaces";
 import { RepoPage } from "./RepoPage";
+import { atPath } from "./test/atPath";
 
 function serve(table: Record<string, unknown>) {
   vi.stubGlobal(
@@ -17,6 +18,7 @@ function serve(table: Record<string, unknown>) {
   );
 }
 
+atPath("/projects/shop/repos/orders");
 afterEach(() => {
   vi.unstubAllGlobals();
 });

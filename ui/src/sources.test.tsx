@@ -1,4 +1,5 @@
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -10,6 +11,7 @@ import App from "./App";
 import { SourcePage, readShare } from "./SourcePage";
 import { SourcesPage } from "./SourcesPage";
 import type { Me, SourceDetail, Sources } from "./api";
+import { atPath } from "./test/atPath";
 import { dayTime } from "./format";
 import { S } from "./strings";
 
@@ -71,6 +73,8 @@ function serve(
 }
 
 afterEach(() => {
+  // Unmounted before the reset (test/atPath.ts).
+  cleanup();
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
 });
@@ -438,6 +442,8 @@ describe("readShare", () => {
 });
 
 describe("SourcePage baseline", () => {
+  atPath("/sources/werkzeuge");
+
   it("shows a repository's description state and queues runs", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
@@ -961,6 +967,8 @@ describe("SourcePage baseline", () => {
 });
 
 describe("SourcePage", () => {
+  atPath("/sources/werkzeuge");
+
   it("shows the repos with states, the error line and the add form's rejection", async () => {
     const writes = serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
@@ -1100,6 +1108,7 @@ describe("SourcePage", () => {
       repos: [],
     };
     serve({ "sources/SHOP": bb });
+    window.history.replaceState({}, "", "/sources/SHOP");
     render(<SourcePage projectKey="SHOP" />);
     const link = await screen.findByRole("link", {
       name: "https://forge.example.invalid/bitbucket/projects/SHOP",

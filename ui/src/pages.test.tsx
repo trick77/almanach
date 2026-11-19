@@ -1,5 +1,6 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -40,6 +41,7 @@ import type {
 } from "./api";
 import type { FlowIR } from "./diagramIR";
 import * as diagram from "./Diagram";
+import { atPath } from "./test/atPath";
 
 // The map's drawing, made to throw where a test asks: no stored map does.
 const drawing = vi.hoisted(() => ({ throws: false }));
@@ -70,6 +72,9 @@ function serve(table: Record<string, unknown>) {
 }
 
 afterEach(() => {
+  // Unmounted before the path is reset: a canonical replace still pending
+  // would otherwise carry this test's path into the next.
+  cleanup();
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
   // jsdom has no scrollIntoView; a test that stubs one leaves none.
@@ -545,6 +550,18 @@ describe("ProjectsPage", () => {
 });
 
 describe("ProjectPage", () => {
+  atPath("/projects/PAY");
+
+  // The canonical replace itself, since the tests start where it lands: a
+  // page opened under an old key shows the current one, its tab kept.
+  it("moves the address to the project's current key, the tab kept", async () => {
+    window.history.replaceState({}, "", "/projects/pay-old#description");
+    serve({ "projects/pay-old": project });
+    render(<ProjectPage projectKey="pay-old" />);
+    await waitFor(() => expect(window.location.pathname).toBe("/projects/PAY"));
+    expect(window.location.hash).toBe("#description");
+  });
+
   it("opens on the start tab: the reading path in order, the tables a tab away", async () => {
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
@@ -1004,7 +1021,6 @@ describe("ProjectPage", () => {
   it("opens a statement's link followed while the page is open", async () => {
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
-    window.history.replaceState({}, "", "/projects/PAY");
     serve({ "projects/PAY": project });
     render(<ProjectPage projectKey="PAY" />);
     await screen.findByRole("tab", { name: /Einstieg/ });
@@ -1761,6 +1777,31 @@ describe("ProjectPage", () => {
 });
 
 describe("RepoPage", () => {
+  // A late canonical replace would undo a step to the next repository.
+  atPath("/projects/PAY/repos/pay-clearing");
+
+  // The canonical replace itself: a repository opened under an old slug
+  // shows the current one.
+  it("moves the address to the repository's current slug", async () => {
+    window.history.replaceState({}, "", "/projects/PAY/repos/clearing-old");
+    serve({ "projects/PAY/repos/clearing-old": repo });
+    render(<RepoPage projectKey="PAY" slug="clearing-old" />);
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/projects/PAY/repos/pay-clearing"),
+    );
+  });
+
+  // A project of one: its repository's page lives at the project's path,
+  // once the project detail says so.
+  it("moves a project of one's repository to the project's path", async () => {
+    serve({
+      "projects/PAY/repos/pay-clearing": repo,
+      "projects/PAY": { ...project, single: true },
+    });
+    render(<RepoPage projectKey="PAY" slug="pay-clearing" />);
+    await waitFor(() => expect(window.location.pathname).toBe("/projects/PAY"));
+  });
+
   it("lists revisions with the current one marked", async () => {
     serve({
       "projects/PAY/repos/pay-clearing": {
@@ -2379,6 +2420,25 @@ describe("RepoPage", () => {
 });
 
 describe("NotePage", () => {
+  atPath("/projects/PAY/repos/pay-api/notes/231");
+
+  // The canonical replace itself: a note opened under its repository's old
+  // slug shows the current one.
+  it("moves the address to the repository's current slug", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/projects/PAY/repos/api-old/notes/231",
+    );
+    serve({ "projects/PAY/repos/api-old/notes/231": note });
+    render(<NotePage projectKey="PAY" slug="api-old" pr={231} />);
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(
+        "/projects/PAY/repos/pay-api/notes/231",
+      ),
+    );
+  });
+
   it("shows the bugfix, the items as paragraphs and the call tiles", async () => {
     serve({ "projects/PAY/repos/pay-api/notes/231": note });
     render(<NotePage projectKey="PAY" slug="pay-api" pr={231} />);
