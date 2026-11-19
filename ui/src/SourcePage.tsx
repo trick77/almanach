@@ -592,7 +592,10 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
       )}
       {!isStatic && <Empty>{S.sources.listedOnly}</Empty>}
       {briefOf !== null && (
+        // Keyed: another repository's brief is a new dialog, nothing of
+        // the last one's text, failure or copy kept.
         <BriefDialog
+          key={briefOf}
           path={`${repoPath(briefOf)}/brief`}
           onClose={() => setBriefOf(null)}
         />
