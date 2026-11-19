@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -45,7 +46,7 @@ func (s *Store) Respell(ctx context.Context, f Respeller) (int, error) {
 		}
 		ids = append(ids, id)
 	}
-	if err := rows.Close(); err != nil {
+	if err := cmp.Or(rows.Close(), rows.Err()); err != nil {
 		return 0, err
 	}
 	n := 0
