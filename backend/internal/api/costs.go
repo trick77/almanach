@@ -28,6 +28,23 @@ type costMonthBody struct {
 	CostUSD  string            `json:"cost_usd,omitempty"`
 	Calls    int               `json:"calls"`
 	Projects []costProjectBody `json:"projects"`
+	// Purposes is the same calls by what they were for, dearest first.
+	Purposes []costPurposeBody `json:"purposes"`
+}
+
+// costPurposeBody is a month's calls of one purpose across projects and
+// where their tokens went.
+type costPurposeBody struct {
+	Purpose string `json:"purpose"`
+	costSumBody
+	InputTokens  int64 `json:"input_tokens"`
+	CachedTokens int64 `json:"cached_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	// ReasoningTokens, a part of OutputTokens, is omitted when no call
+	// reported any; ReasonedOutputTokens is the output of the calls that
+	// did, the base of its share.
+	ReasoningTokens      *int64 `json:"reasoning_tokens,omitempty"`
+	ReasonedOutputTokens int64  `json:"reasoned_output_tokens"`
 }
 
 type costProjectBody struct {
@@ -50,20 +67,23 @@ type costSumBody struct {
 func (d Deps) costs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
-	rows, err := d.Store.Costs(ctx, d.now())
+	// One clock for the window and the day: a read across midnight UTC
+	// counts both by the same date.
+	now := d.now()
+	ledger, err := d.Store.Costs(ctx, now)
 	if err != nil {
 		httpx.ServerError(w, r, err, "costs")
 		return
 	}
 	out := costsBody{Months: []costMonthBody{}}
 	var monthTotal *int64
-	for _, row := range rows {
+	for _, row := range ledger.Projects {
 		if n := len(out.Months); n == 0 || out.Months[n-1].Month != row.Month {
 			if n > 0 {
 				out.Months[n-1].CostUSD = usd(monthTotal)
 			}
 			monthTotal = nil
-			out.Months = append(out.Months, costMonthBody{Month: row.Month, Projects: []costProjectBody{}})
+			out.Months = append(out.Months, costMonthBody{Month: row.Month, Projects: []costProjectBody{}, Purposes: []costPurposeBody{}})
 		}
 		m := &out.Months[len(out.Months)-1]
 		total := addNano(addNano(row.Merges.NanoUSD, row.Runs.NanoUSD), row.Briefs.NanoUSD)
@@ -76,7 +96,20 @@ func (d Deps) costs(w http.ResponseWriter, r *http.Request) {
 	if n := len(out.Months); n > 0 {
 		out.Months[n-1].CostUSD = usd(monthTotal)
 	}
-	spent, err := d.Store.Spent(ctx, store.DayStart(d.now()))
+	// The same rows grouped twice (store.Costs): every purpose row's month
+	// is a month above.
+	months := make(map[string]*costMonthBody, len(out.Months))
+	for i := range out.Months {
+		months[out.Months[i].Month] = &out.Months[i]
+	}
+	for _, p := range ledger.Purposes {
+		if m := months[p.Month]; m != nil {
+			m.Purposes = append(m.Purposes, costPurposeBody{Purpose: p.Purpose, costSumBody: sumBody(p.CostSum),
+				InputTokens: p.InputTokens, CachedTokens: p.CachedTokens, OutputTokens: p.OutputTokens,
+				ReasoningTokens: p.ReasoningTokens, ReasonedOutputTokens: p.ReasonedOutputTokens})
+		}
+	}
+	spent, err := d.Store.Spent(ctx, store.DayStart(now))
 	if err != nil {
 		httpx.ServerError(w, r, err, "costs today")
 		return

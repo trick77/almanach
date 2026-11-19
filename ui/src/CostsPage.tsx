@@ -1,8 +1,8 @@
 import { Fragment, useEffect } from "react";
-import type { CostMonth, CostSum, Costs } from "./api";
-import { money } from "./format";
+import type { CostMonth, CostPurpose, CostSum, Costs } from "./api";
+import { money, share } from "./format";
 import { projectPath } from "./routing";
-import { S } from "./strings";
+import { S, fmtInt } from "./strings";
 import {
   Empty,
   Failed,
@@ -159,7 +159,91 @@ function Month({ m }: { m: CostMonth }) {
           </tbody>
         </table>
       </div>
+      {m.purposes.length > 0 && <Purposes ps={m.purposes} />}
     </section>
+  );
+}
+
+/** Purposes is the month's calls by what they were for, dearest first,
+ *  with the cached share of their input and the reasoning share of their
+ *  output: where the money goes and what is left to save. */
+function Purposes({ ps }: { ps: CostPurpose[] }) {
+  const [hPurpose, hCalls, hIn, hCached, hOut, hReasoning, hCost] =
+    S.costs.purposeHeaders;
+  return (
+    <>
+      <div className="mt-5 text-[13px] font-medium text-ink">
+        {S.costs.byPurpose}
+      </div>
+      <p className="mt-1 text-[12.5px] text-faint">{S.costs.purposeHint}</p>
+      <div className={tableBox}>
+        <table className={table}>
+          <thead>
+            <tr>
+              <th className={th}>{hPurpose}</th>
+              <th className={thNum}>{hCalls}</th>
+              <th className={thNum}>{hIn}</th>
+              <th className={thNum}>{hCached}</th>
+              <th className={thNum}>{hOut}</th>
+              <th className={thNum}>{hReasoning}</th>
+              <th className={thNum}>{hCost}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ps.map((p) => (
+              <tr key={p.purpose} data-testid={`purpose-${p.purpose}`}>
+                <td className={td}>
+                  {
+                    // A purpose newer than this bundle: its key, never a
+                    // blank cell.
+                    (S.costs.purpose as Record<string, string | undefined>)[
+                      p.purpose
+                    ] ?? p.purpose
+                  }
+                </td>
+                <td className={tdNum}>
+                  {p.calls}
+                  {p.unpriced > 0 && (
+                    <span className="block text-[12px] text-faint">
+                      {S.costs.unpriced(p.unpriced)}
+                    </span>
+                  )}
+                </td>
+                <td className={tdNum}>{fmtInt(p.input_tokens)}</td>
+                <td className={tdNum}>
+                  <Part n={p.cached_tokens} of={p.input_tokens} />
+                </td>
+                <td className={tdNum}>{fmtInt(p.output_tokens)}</td>
+                <td className={tdNum}>
+                  {p.reasoning_tokens === undefined ? (
+                    <span className="text-faint">{S.common.none}</span>
+                  ) : (
+                    <Part
+                      n={p.reasoning_tokens}
+                      of={p.reasoned_output_tokens}
+                    />
+                  )}
+                </td>
+                <td className={tdNum}>
+                  {p.cost_usd ? money(p.cost_usd) : S.queue.idle}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+/** Part is a share of a token count, the count below it. */
+function Part({ n, of }: { n: number; of: number }) {
+  const pct = share(n, of);
+  return (
+    <Fragment>
+      {pct === null ? S.common.none : `${pct} %`}
+      <span className="block text-[12px] text-faint">{fmtInt(n)}</span>
+    </Fragment>
   );
 }
 

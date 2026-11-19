@@ -75,6 +75,8 @@ type fakeStore struct {
 	libs map[string][]store.SharedRepo
 	// costs is the ledger by month and project.
 	costs []store.CostRow
+	// purposes is the ledger by month and purpose.
+	purposes []store.PurposeCost
 	// messages is what Messaging answers, by repository; graphErr fails it.
 	messages map[store.RepoRef]messaging.Read
 	// interfaces is what Interfaces answers, by repository; graphErr fails it.
@@ -126,7 +128,9 @@ func (f *fakeStore) Dependencies(_ context.Context, all bool) (store.Graph, erro
 	return g, nil
 }
 
-func (f *fakeStore) Costs(context.Context, time.Time) ([]store.CostRow, error) { return f.costs, nil }
+func (f *fakeStore) Costs(context.Context, time.Time) (store.CostLedger, error) {
+	return store.CostLedger{Projects: f.costs, Purposes: f.purposes}, nil
+}
 func (f *fakeStore) Spent(context.Context, time.Time) (store.Spend, error) {
 	n := int64(1_284_000_000)
 	return store.Spend{NanoUSD: &n, Calls: 23}, nil

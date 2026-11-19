@@ -25,7 +25,8 @@ func TestCostsByMonthAndProject(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rows, err := s.Costs(ctx, time.Now())
+	ledger, err := s.Costs(ctx, time.Now())
+	rows := ledger.Projects
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("Costs = %+v, %v", rows, err)
 	}
@@ -45,8 +46,13 @@ func TestCostsByMonthAndProject(t *testing.T) {
 		t.Errorf("ZED = %+v", zed)
 	}
 	// Only the last CostsMonths: a clock far ahead sees none of the rows.
-	if later, err := s.Costs(ctx, time.Now().AddDate(0, CostsMonths+1, 0)); err != nil || len(later) != 0 {
+	if later, err := s.Costs(ctx, time.Now().AddDate(0, CostsMonths+1, 0)); err != nil || len(later.Projects) != 0 || len(later.Purposes) != 0 {
 		t.Errorf("Costs a year on = %+v, %v; want none", later, err)
+	}
+	// An empty ledger: both lists empty, not nil.
+	if empty, err := testStore(t).Costs(ctx, time.Now()); err != nil || empty.Projects == nil || empty.Purposes == nil ||
+		len(empty.Projects)+len(empty.Purposes) != 0 {
+		t.Errorf("Costs of an empty ledger = %+v, %v", empty, err)
 	}
 	// Money as the API prints it, on the integer; the UTC day's start.
 	for nano, want := range map[int64]string{1_030_000_000: "1.030", 1_234_567_500: "1.235", -5_000: "-0.000", 999_500_000: "1.000"} {
@@ -57,6 +63,55 @@ func TestCostsByMonthAndProject(t *testing.T) {
 	at := time.Date(2026, 11, 5, 23, 30, 0, 0, time.FixedZone("CET", 3600))
 	if got := DayStart(at); !got.Equal(time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("DayStart(%v) = %v", at, got)
+	}
+}
+
+// The ledger by month and purpose across projects, dearest first, with
+// where the tokens went; reasoning absent where no call reported any.
+func TestCostsByPurpose(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ingest(t, s, noteFor("PRJ", "svc", 1))
+	ingest(t, s, noteFor("ZED", "web", 2))
+	for _, c := range []LLMCall{
+		{ProjectKey: "PRJ", RepoSlug: "svc", SourcePR: "PRJ/svc#1", Outcome: "ok", CostNanoUSD: i64(30_000_000),
+			InputTokens: 1000, CachedTokens: 200, OutputTokens: 300},
+		{ProjectKey: "PRJ", RepoSlug: "svc", SourceKind: FromBaseline, SourceCommit: "c0ffee", Purpose: PurposeSubject, Outcome: "ok",
+			CostNanoUSD: i64(600_000_000), InputTokens: 50_000, CachedTokens: 10_000, OutputTokens: 20_000, ReasoningTokens: i64(18_000)},
+		{ProjectKey: "ZED", RepoSlug: "web", SourceKind: FromBaseline, SourceCommit: "beef", Purpose: PurposeSubject, Outcome: "too_long",
+			InputTokens: 40_000, OutputTokens: 5_000, ReasoningTokens: i64(4_000)},
+		{ProjectKey: "ZED", RepoSlug: "web", SourceKind: FromBaseline, SourceCommit: "beef", Purpose: PurposeSubject, Outcome: "ok",
+			CostNanoUSD: i64(400_000_000), InputTokens: 30_000, OutputTokens: 9_000},
+		// Reasoning without an output total: out of both sides of the share,
+		// which it would push past 100 %.
+		{ProjectKey: "ZED", RepoSlug: "web", SourceKind: FromBaseline, SourceCommit: "beef", Purpose: PurposeSubject, Outcome: "ok",
+			InputTokens: 10_000, ReasoningTokens: i64(800)},
+	} {
+		if _, err := s.InsertLLMCall(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ledger, err := s.Costs(ctx, time.Now())
+	rows := ledger.Purposes
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("Costs purposes = %+v, %v", rows, err)
+	}
+	sub, merge := rows[0], rows[1]
+	if sub.Purpose != PurposeSubject || sub.Calls != 4 || sub.Unpriced != 2 || sub.NanoUSD == nil || *sub.NanoUSD != 1_000_000_000 ||
+		sub.InputTokens != 130_000 || sub.CachedTokens != 10_000 || sub.OutputTokens != 34_000 ||
+		sub.ReasoningTokens == nil || *sub.ReasoningTokens != 22_000 || sub.ReasonedOutputTokens != 25_000 {
+		t.Errorf("subject = %+v", sub)
+	}
+	if merge.Purpose != PurposeMerge || merge.Calls != 1 || merge.CachedTokens != 200 || merge.ReasoningTokens != nil || merge.ReasonedOutputTokens != 0 {
+		t.Errorf("merge = %+v, want no reasoning reported", merge)
+	}
+	// Both groupings count the same calls.
+	projectCalls := 0
+	for _, r := range ledger.Projects {
+		projectCalls += r.Merges.Calls + r.Runs.Calls + r.Briefs.Calls
+	}
+	if projectCalls != sub.Calls+merge.Calls {
+		t.Errorf("projects count %d calls, purposes %d", projectCalls, sub.Calls+merge.Calls)
 	}
 }
 

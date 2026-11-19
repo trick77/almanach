@@ -347,6 +347,9 @@ type CallCost struct {
 	InputTokens  int64
 	CachedTokens int64
 	OutputTokens int64
+	// ReasoningTokens is the part of OutputTokens the model spent thinking,
+	// nil when the gateway reported none.
+	ReasoningTokens *int64
 	// NanoUSD is nil when the call was unpriced: neither the gateway nor
 	// llmwire's table priced it.
 	NanoUSD  *int64
@@ -360,9 +363,25 @@ type CallCost struct {
 func (c CallCost) LogLine() string {
 	cost := "unpriced"
 	if c.NanoUSD != nil {
-		cost = fmt.Sprintf("$%.3f", float64(*c.NanoUSD)/1e9)
+		cost = "$" + milliUSD(*c.NanoUSD)
 	}
-	return fmt.Sprintf("model=%s in=%d cached=%d out=%d cost=%s call-id=%s", c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, cost, c.CallID)
+	reasoning := "-"
+	if c.ReasoningTokens != nil {
+		reasoning = strconv.FormatInt(*c.ReasoningTokens, 10)
+	}
+	return fmt.Sprintf("model=%s in=%d cached=%d out=%d reasoning=%s cost=%s call-id=%s", c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, reasoning, cost, c.CallID)
+}
+
+// milliUSD is nano-USD at three decimals, rounded half up on the integer,
+// never through a float: the log's figure is the costs page's (store.USD,
+// which this package does not import).
+func milliUSD(nano int64) string {
+	sign := ""
+	if nano < 0 {
+		sign, nano = "-", -nano
+	}
+	milli := (nano + 500_000) / 1_000_000
+	return fmt.Sprintf("%s%d.%03d", sign, milli/1000, milli%1000)
 }
 
 // MergeResult is one merge call.
@@ -967,6 +986,12 @@ func (c *Client) costFrom(res llmwire.StreamResult) CallCost {
 	out := CallCost{Model: c.model, CallID: res.Gateway.CallID,
 		InputTokens: deref(u.Input.Total), CachedTokens: deref(u.Input.CacheRead), OutputTokens: deref(u.Output.Total),
 		Streamed: res.Content != "" || res.Reasoning != ""}
+	// Reasoning is a part of the output: without the output's total there
+	// is nothing it is a part of, and the costs page's share would pass
+	// 100 %.
+	if u.Output.Total != nil {
+		out.ReasoningTokens = u.Output.Reasoning
+	}
 	// Reported is the gateway's charge, on a stream only with LiteLLM's
 	// include_cost_in_streaming_usage; FromTable is llmwire's list rate, the
 	// only figure a direct-route call has. Unpriced alone is unknown.

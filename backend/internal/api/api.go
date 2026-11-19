@@ -67,7 +67,7 @@ type Store interface {
 	Interfaces(ctx context.Context) (store.Interfaces, error)
 	// Costs is Almanach's own ledger by month and project, the costs page;
 	// Spent the calls since a time, the page's "today".
-	Costs(ctx context.Context, now time.Time) ([]store.CostRow, error)
+	Costs(ctx context.Context, now time.Time) (store.CostLedger, error)
 	Spent(ctx context.Context, since time.Time) (store.Spend, error)
 	// RepoStale and ProjectStale are a page below its scope's epoch, the
 	// wiki's hint.

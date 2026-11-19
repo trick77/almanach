@@ -8,6 +8,7 @@
 import type {
   BriefState,
   Kind,
+  Purpose,
   QueueItem,
   QueueRun,
   SkippedPart,
@@ -68,6 +69,32 @@ export const S = {
     },
     headers: ["Projekt", "Notizen", "Runs", "PROJECT.md", "Aufrufe", "Kosten"],
     monthTotal: "Summe",
+    byPurpose: "Nach Aufrufart",
+    purposeHeaders: [
+      "Aufrufart",
+      "Aufrufe",
+      "Input",
+      "Aus Cache",
+      "Output",
+      "Reasoning",
+      "Kosten",
+    ],
+    // Reasoning is a part of the output: its share is of the output of the
+    // calls that reported it. The cache share is of all input: a call whose
+    // gateway reports no cache counts as none cached.
+    purposeHint:
+      "Tokens aller Projekte. «Aus Cache» ist der Anteil des ganzen Inputs, den das Gateway aus dem Cache las (ein Aufruf ohne Cache-Angabe zählt als nicht gecacht); «Reasoning» der Anteil des Outputs, den das Modell zum Nachdenken brauchte, unter den Aufrufen, die ihn meldeten.",
+    purpose: {
+      merge: "Notizen",
+      catalogue: "Katalog",
+      overview: "Überblick",
+      subject: "Teile lesen",
+      project: "Projektseite",
+      repo_map: "Aufbau",
+      project_map: "Systemkarte",
+      restyle: "Neu gliedern",
+      brief: "PROJECT.md",
+    } satisfies Record<Purpose, string>,
     unpriced: (n: number) =>
       n === 1 ? "1 Aufruf ohne Preis" : `${n} Aufrufe ohne Preis`,
     calls: (n: number) => (n === 1 ? "1 Aufruf" : `${n} Aufrufe`),

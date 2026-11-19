@@ -258,6 +258,27 @@ type CostSum struct {
 	NanoUSD  *int64
 }
 
+// PurposeCost is one month of every project's calls of one purpose (merge,
+// catalogue, subject, restyle, ...): what they cost and where their tokens
+// went, the input read from the gateway's cache and the output spent
+// thinking. The figures to rank what to make cheaper by.
+//
+// Table: -
+type PurposeCost struct {
+	// Month is YYYY-MM, UTC.
+	Month   string
+	Purpose string
+	CostSum
+	InputTokens  int64
+	CachedTokens int64
+	OutputTokens int64
+	// ReasoningTokens is nil when no call of the group reported any;
+	// ReasonedOutputTokens the output of the calls that did, the share's
+	// base: a cut call with no usage would dilute it.
+	ReasoningTokens      *int64
+	ReasonedOutputTokens int64
+}
+
 // Spend is what Almanach's own model calls since a time cost.
 //
 // Table: -
