@@ -346,11 +346,16 @@ type fakeNudger struct{ nudges int }
 func (n *fakeNudger) Nudge() { n.nudges++ }
 
 // fakeCheckouts names folders by ids, as the poller does.
-// fakeCheckouts records the folders removed; removeErr fails a repository's.
+// fakeCheckouts records the folders removed; removeErr fails a repository's,
+// failAfter (0: never) every removal after that many went through.
 type fakeCheckouts struct {
 	removed   []string
 	removeErr error
+	failAfter int
 }
+
+// failing reports whether the next removal fails by failAfter.
+func (c *fakeCheckouts) failing() bool { return c.failAfter > 0 && len(c.removed) >= c.failAfter }
 
 func (c *fakeCheckouts) Dir(projectID, repoID int64) (string, error) {
 	return fmt.Sprintf("/base/p%d/r%d", projectID, repoID), nil
@@ -362,10 +367,16 @@ func (c *fakeCheckouts) Remove(projectID, repoID int64) error {
 	if c.removeErr != nil {
 		return c.removeErr
 	}
+	if c.failing() {
+		return errors.New("folder busy")
+	}
 	c.removed = append(c.removed, fmt.Sprintf("p%d/r%d", projectID, repoID))
 	return nil
 }
 func (c *fakeCheckouts) RemoveProject(projectID int64) error {
+	if c.failing() {
+		return errors.New("folder busy")
+	}
 	c.removed = append(c.removed, fmt.Sprintf("p%d", projectID))
 	return nil
 }
@@ -605,6 +616,30 @@ func TestSources_TokenNeedsKey(t *testing.T) {
 	}
 }
 
+// The removal after the row write is a backstop: refused, the delete still
+// went through (the rows are gone), logged, not a 500.
+func TestSources_DeleteKeepsGoingWhenTheSecondRemovalFails(t *testing.T) {
+	fs := newFakeSources()
+	h, _, checkouts := sourcesHandler(t, fs, true)
+	if code, _ := do(t, h, http.MethodPost, "/api/sources", "", `{"project_key":"tools","kind":"static"}`, jsonHdr); code != 201 {
+		t.Fatal("create")
+	}
+	if code, _ := do(t, h, http.MethodPost, "/api/sources/tools/repos", "", `{"slug":"cli","clone_url":"https://github.com/acme/cli.git"}`, jsonHdr); code != 201 {
+		t.Fatal("add repo")
+	}
+	checkouts.failAfter = 1
+	if code, _ := do(t, h, http.MethodDelete, "/api/sources/tools/repos/cli", "", "", nil); code != 204 {
+		t.Fatalf("delete repo with the second removal refused: %d, want 204", code)
+	}
+	checkouts.removed, checkouts.failAfter = nil, 1
+	if code, _ := do(t, h, http.MethodDelete, "/api/sources/tools", "", "", nil); code != 204 {
+		t.Fatalf("delete source with the second removal refused: %d, want 204", code)
+	}
+	if len(checkouts.removed) != 1 {
+		t.Fatalf("removed = %v, want the first removal alone", checkouts.removed)
+	}
+}
+
 func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	fs := newFakeSources()
 	h, nudger, checkouts := sourcesHandler(t, fs, true)
@@ -709,8 +744,10 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 	if code, _ := do(t, h, http.MethodGet, "/api/sources/tools", "", "", nil); code != 404 {
 		t.Fatal("deleted source still served")
 	}
-	// Folders by ids: the repository's, then the project's.
-	if want := fmt.Sprintf("p%d/r%d,p%d", fs.id("tools"), fs.id("tools/cli"), fs.id("tools")); strings.Join(checkouts.removed, ",") != want {
+	// Folders by ids: the repository's, then the project's, each before the
+	// row and once more after it (a cycle between the two cloned it back).
+	repo, project := fmt.Sprintf("p%d/r%d", fs.id("tools"), fs.id("tools/cli")), fmt.Sprintf("p%d", fs.id("tools"))
+	if want := strings.Join([]string{repo, repo, project, project}, ","); strings.Join(checkouts.removed, ",") != want {
 		t.Fatalf("checkouts removed = %v", checkouts.removed)
 	}
 }
