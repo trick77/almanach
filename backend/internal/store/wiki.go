@@ -585,6 +585,10 @@ type LLMCall struct {
 	// BatchPRKeys is every pull request a merge folded together, in merge
 	// order, SourcePR the first; stored for two or more (batchKeys).
 	BatchPRKeys []string
+	// PaidAt is when the call was paid, its created_at; zero: now. A row
+	// the store refused and the worker wrote later keeps its own day, so
+	// the day's spend is the day's.
+	PaidAt time.Time
 }
 
 // batchKeys is a fold's PR keys as stored: a JSON array for two or more,
@@ -606,6 +610,10 @@ func (s *Store) InsertLLMCall(ctx context.Context, c LLMCall) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	at := nowStamp()
+	if !c.PaidAt.IsZero() {
+		at = stamp(c.PaidAt)
+	}
 	var id int64
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		pid, err := ensureProject(ctx, tx, c.ProjectKey)
@@ -623,7 +631,7 @@ func (s *Store) InsertLLMCall(ctx context.Context, c LLMCall) (int64, error) {
 			VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)
 			RETURNING id`,
 			rid, fromKind(c.SourceKind), c.SourcePR, c.SourceCommit, purpose, c.BaselineRunID, c.Step,
-			c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, nowStamp(), batch,
+			c.Outcome, c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, c.CostNanoUSD, c.CallID, at, batch,
 			c.Streamed, c.ReasoningTokens).Scan(&id)
 	})
 	return id, err

@@ -160,14 +160,12 @@ func (w *Worker) writeBrief(ctx context.Context, j store.BriefJob) briefStep {
 		"{dependencies}", deps, "{repo_description}", describeBrief(page),
 	).Replace(prompts.Brief)
 	res := bs.Model.Brief(ctx, prompt)
-	if _, err := w.store.InsertLLMCall(ctx, store.LLMCall{
+	w.ledger(ctx, store.LLMCall{
 		ProjectKey: j.ProjectKey, RepoSlug: j.Slug, SourceKind: store.FromPage, Purpose: store.PurposeBrief, Outcome: res.Outcome.String(),
 		Model: res.Cost.Model, InputTokens: res.Cost.InputTokens, CachedTokens: res.Cost.CachedTokens,
 		OutputTokens: res.Cost.OutputTokens, ReasoningTokens: res.Cost.ReasoningTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
 		Streamed: res.Cost.Streamed,
-	}); err != nil {
-		w.log.WarnContext(ctx, "brief: call row failed", logging.Err(err))
-	}
+	})
 	w.log.InfoContext(ctx, fmt.Sprintf("brief: call %s (%s)", res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res.Call); gateway {
 		w.hold(ctx, gatewayCause(res.Call), retryAfter)

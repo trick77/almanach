@@ -96,6 +96,10 @@ type Worker struct {
 	// marked first at the next drain, never folded again. In memory: a
 	// restart folds them again, as a refused mark of one note always did.
 	unmarked []store.QueuedNote
+	// unledgered is paid calls whose ledger row the store refused: written
+	// at the next drain item before anything else, so the day's budget
+	// (Spent) counts every call paid. In memory, as unmarked.
+	unledgered []store.LLMCall
 	// quit asks the loop to end after the fold in flight; cancel cuts that
 	// fold off when the grace runs out; done closes when the loop ended.
 	quit   chan struct{}
@@ -431,6 +435,11 @@ func (w *Worker) drain(ctx context.Context) {
 	briefsWait := false
 	for ctx.Err() == nil && !w.stopping() && !w.holding() {
 		notes, run, brief = nil, nil, nil
+		// A paid call's row first: the budget read before the next run must
+		// count it.
+		if len(w.unledgered) > 0 && !w.writeLedger(ctx) {
+			return
+		}
 		// A folded note's mark is a store write, no call: taken paused too,
 		// or a redeploy during the pause would lose it and pay the fold
 		// again.
@@ -789,17 +798,12 @@ func (w *Worker) fold(ctx context.Context, batch []store.QueuedNote, counted int
 	}
 	prompt := renderBatch(prompts.Merge, batch, repoPage, projectDescription, w.batchProblems(ctx, batch), w.limits)
 	res := w.llm.Merge(ctx, inference.MergeRequest{Prompt: prompt})
-	callID, err := w.store.InsertLLMCall(ctx, store.LLMCall{
+	callID := w.ledger(ctx, store.LLMCall{
 		ProjectKey: q.ProjectKey, RepoSlug: q.RepoSlug, SourcePR: q.PRKey, Outcome: res.Outcome.String(),
 		Model: res.Cost.Model, InputTokens: res.Cost.InputTokens, CachedTokens: res.Cost.CachedTokens,
 		OutputTokens: res.Cost.OutputTokens, ReasoningTokens: res.Cost.ReasoningTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
 		Streamed: res.Cost.Streamed, BatchPRKeys: foldKeys(batch),
 	})
-	if err != nil {
-		// No hold here: the gateway's answer below would clear it. On a
-		// full disk the page write or the mark after it holds.
-		w.log.ErrorContext(ctx, "consolidate: call row failed", logging.Err(err))
-	}
 	w.log.InfoContext(ctx, fmt.Sprintf("consolidate: merge call %s (%s)", res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res.Call); gateway {
 		cause := gatewayCause(res.Call)
@@ -918,6 +922,38 @@ func (w *Worker) splitFold(ctx context.Context, batch []store.QueuedNote, counte
 		if !w.fold(ctx, part, c) {
 			return false
 		}
+	}
+	return true
+}
+
+// ledger records a paid call's row and returns its id; 0 when the store
+// refused it, the row kept for writeLedger. No hold here: the gateway's
+// answer after the call would clear it; the drain's next item holds
+// instead, before any other call.
+func (w *Worker) ledger(ctx context.Context, c store.LLMCall) int64 {
+	id, err := w.store.InsertLLMCall(ctx, c)
+	if err != nil {
+		w.log.ErrorContext(ctx, "consolidate: call row refused, kept for the next item", logging.Err(err))
+		// Kept with the time it was paid: written after midnight, it still
+		// counts for its own day.
+		c.PaidAt = w.now()
+		w.unledgered = append(w.unledgered, c)
+		return 0
+	}
+	return id
+}
+
+// writeLedger writes the kept call rows, oldest first; false with the
+// worker held when the store refuses one, which stays kept.
+func (w *Worker) writeLedger(ctx context.Context) bool {
+	for len(w.unledgered) > 0 {
+		if _, err := w.store.InsertLLMCall(ctx, w.unledgered[0]); err != nil {
+			w.log.WarnContext(ctx, "consolidate: kept call row refused again, drain paused", logging.Err(err))
+			w.holdStore(ctx, err)
+			return false
+		}
+		w.unledgered = w.unledgered[1:]
+		w.writeOK()
 	}
 	return true
 }

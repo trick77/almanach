@@ -520,16 +520,12 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 		i := r.Step
 		step = &i
 	}
-	if _, err := w.store.InsertLLMCall(ctx, store.LLMCall{
+	w.ledger(ctx, store.LLMCall{
 		ProjectKey: r.ProjectKey, RepoSlug: r.Slug, SourceKind: store.FromBaseline, SourceCommit: r.Commit, Purpose: purpose,
 		BaselineRunID: &runID, Step: step, Outcome: res.Outcome.String(), Model: res.Cost.Model, InputTokens: res.Cost.InputTokens,
 		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, ReasoningTokens: res.Cost.ReasoningTokens,
 		CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, Streamed: res.Cost.Streamed,
-	}); err != nil {
-		// No hold here: the gateway's answer below would clear it. On a
-		// full disk the step's write or the save after it holds.
-		w.log.ErrorContext(ctx, "baseline: call row failed", logging.Err(err))
-	}
+	})
 	w.log.InfoContext(ctx, fmt.Sprintf("baseline: %s call %s (%s)", purpose, res.Outcome, res.Cost.LogLine()))
 	if gateway, retryAfter := gatewayClass(res); gateway {
 		w.hold(ctx, gatewayCause(res), retryAfter)
