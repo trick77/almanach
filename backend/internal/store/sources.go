@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -319,7 +320,9 @@ func oneHostIn(ctx context.Context, tx *sql.Tx, pid, except int64, cloneURL stri
 		}
 		have = append(have, h)
 	}
-	if err := rows.Close(); err != nil {
+	// Err too: an iteration cut short would judge the host by part of the
+	// rows, and Close does not report it.
+	if err := cmp.Or(rows.Close(), rows.Err()); err != nil {
 		return err
 	}
 	return OneHost(have, cloneURL)
