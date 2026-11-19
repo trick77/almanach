@@ -609,11 +609,25 @@ func (w *Worker) keptCalls(ctx context.Context, r *store.BaselineRun, plan runPl
 	return min(kept, max(w.base.Limits.MaxCalls-2, 0)), nil
 }
 
+// runTree is the tree of the run's commit, listed once for the run (tree).
+// A failed listing is not kept.
+func (w *Worker) runTree(ctx context.Context, r *store.BaselineRun) ([]gitrepo.Entry, error) {
+	if w.treeRun == r.ID && w.treeAt == r.Commit && w.tree != nil {
+		return w.tree, nil
+	}
+	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, r.Commit)
+	if err != nil {
+		return nil, err
+	}
+	w.treeRun, w.treeAt, w.tree = r.ID, r.Commit, tree
+	return tree, nil
+}
+
 // catalogue is a run's catalogue step: one call to the catalogue model for
 // a full run, or for a reconcile with files no subject holds; none for a
 // reconcile whose changes all fall in known subjects.
 func (w *Worker) catalogue(ctx context.Context, r *store.BaselineRun) error {
-	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, r.Commit)
+	tree, err := w.runTree(ctx, r)
 	if err != nil {
 		return readErr(err)
 	}
@@ -1132,7 +1146,7 @@ func (w *Worker) describeStep(ctx context.Context, r *store.BaselineRun) error {
 		r.State = store.RunProject
 		return w.save(ctx, *r)
 	}
-	tree, err := w.base.Code.Tree(ctx, r.ProjectKey, r.Slug, r.Commit)
+	tree, err := w.runTree(ctx, r)
 	if err != nil {
 		return readErr(err)
 	}
