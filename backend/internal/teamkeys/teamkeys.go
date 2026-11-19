@@ -16,7 +16,6 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -159,6 +158,3 @@ func (k *Keys) reload() error {
 	k.byToken, k.teams, k.projects, k.mod = byToken, teams, projects, st.ModTime()
 	return nil
 }
-
-// ErrUnknown is a bearer no team owns.
-var ErrUnknown = errors.New("unknown token")

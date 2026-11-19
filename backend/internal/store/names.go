@@ -187,11 +187,6 @@ func (s *Store) RepoIDs(ctx context.Context, key, slug string) (projectID, repoI
 	return scopeIDs(ctx, s.db, key, slug)
 }
 
-// ProjectIDOf resolves a project by any of its keys; ok false when none.
-func (s *Store) ProjectIDOf(ctx context.Context, key string) (int64, bool, error) {
-	return projectID(ctx, s.db, key)
-}
-
 // ProjectKeyOf is the current key of the project any key names; ok false
 // when none.
 func (s *Store) ProjectKeyOf(ctx context.Context, key string) (string, bool, error) {
