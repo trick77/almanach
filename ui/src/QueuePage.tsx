@@ -767,7 +767,7 @@ function stepSub(s: RunStep, now: number, takenAt?: string): string {
   if (s.failed > 0) parts.push(S.queue.callsFailed(s.failed));
   if (s.state === "current" && takenAt)
     parts.push(S.queue.callRunning(since(takenAt, now)));
-  return parts.join(" · ");
+  return parts.join(` ${S.common.sep} `);
 }
 
 /** Rest is what is left of a started run further down the timeline. */

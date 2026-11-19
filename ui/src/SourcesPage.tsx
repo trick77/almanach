@@ -359,7 +359,7 @@ function NewSourceForm({
                   setUrl(e.target.value);
                   if (!slugTyped) setSlug(slugFromURL(e.target.value));
                 }}
-                placeholder="https://github.com/acme/acme-api.git"
+                placeholder={f.cloneURLPlaceholder}
               />
               <span className={fieldHint}>{f.firstRepoHint}</span>
             </label>
@@ -372,7 +372,7 @@ function NewSourceForm({
                   setSlug(e.target.value);
                   setSlugTyped(e.target.value !== "");
                 }}
-                placeholder="acme-api"
+                placeholder={f.slugPlaceholder}
               />
               <span className={fieldHint}>{f.slugFromURL}</span>
             </label>
@@ -411,8 +411,8 @@ function NewSourceForm({
               onChange={setAuth}
               options={[
                 // GitHub's left, Bitbucket's right, as the kinds.
-                { value: "basic", label: "Basic" },
-                { value: "bearer", label: "Bearer" },
+                { value: "basic", label: f.tokenAuthBasic },
+                { value: "bearer", label: f.tokenAuthBearer },
               ]}
             />
             <span className={fieldHint}>
@@ -427,7 +427,7 @@ function NewSourceForm({
               className={input}
               value={user}
               onChange={(e) => setUser(e.target.value)}
-              placeholder="x-access-token"
+              placeholder={f.tokenUserPlaceholder}
             />
             <span className={fieldHint}>{f.userHint}</span>
           </label>

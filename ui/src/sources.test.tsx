@@ -294,10 +294,12 @@ describe("SourcesPage", () => {
     render(<SourcesPage />);
     fireEvent.click(await screen.findByText("Neue Quelle"));
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      screen.getByPlaceholderText(S.sources.form.cloneURLPlaceholder),
       { target: { value: "https://forge.example.invalid/x/shop-api.git" } },
     );
-    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop-api");
+    expect(
+      screen.getByPlaceholderText(S.sources.form.slugPlaceholder),
+    ).toHaveValue("shop-api");
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     const project = screen.getByPlaceholderText(projectPlaceholder);
     expect(project).toHaveValue("");
@@ -311,18 +313,22 @@ describe("SourcesPage", () => {
     );
     // Back to the single repository: its slug as it was, typed by hand too.
     fireEvent.click(screen.getByText(/^Einzelnes Repository/));
-    const slug = screen.getByPlaceholderText("acme-api");
+    const slug = screen.getByPlaceholderText(S.sources.form.slugPlaceholder);
     expect(slug).toHaveValue("shop-api");
     fireEvent.change(slug, { target: { value: "shop" } });
     fireEvent.click(screen.getByText(/^Ganzes Projekt/));
     fireEvent.click(screen.getByText(/^Einzelnes Repository/));
-    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
+    expect(
+      screen.getByPlaceholderText(S.sources.form.slugPlaceholder),
+    ).toHaveValue("shop");
     // Typed by hand, the slug stays when the URL changes after the trip.
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      screen.getByPlaceholderText(S.sources.form.cloneURLPlaceholder),
       { target: { value: "https://forge.example.invalid/x/other.git" } },
     );
-    expect(screen.getByPlaceholderText("acme-api")).toHaveValue("shop");
+    expect(
+      screen.getByPlaceholderText(S.sources.form.slugPlaceholder),
+    ).toHaveValue("shop");
   });
 
   it("refuses a URL that names no Bitbucket project", async () => {
@@ -389,15 +395,17 @@ describe("SourcesPage", () => {
     const create = screen.getByText("Anlegen und syncen");
     expect(create).toBeDisabled();
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      screen.getByPlaceholderText(S.sources.form.cloneURLPlaceholder),
       { target: { value: "https://github.com/acme/acme-gateway.git" } },
     );
-    const slug = screen.getByPlaceholderText("acme-api") as HTMLInputElement;
+    const slug = screen.getByPlaceholderText(
+      S.sources.form.slugPlaceholder,
+    ) as HTMLInputElement;
     expect(slug.value).toBe("acme-gateway");
     // Typed by hand, the slug stays when the URL changes.
     fireEvent.change(slug, { target: { value: "gateway" } });
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/acme/acme-api.git"),
+      screen.getByPlaceholderText(S.sources.form.cloneURLPlaceholder),
       { target: { value: "https://github.com/acme/acme-gateway" } },
     );
     expect(slug.value).toBe("gateway");
@@ -968,17 +976,24 @@ describe("SourcePage", () => {
     fireEvent.click(screen.getByText("Repository hinzufügen"));
     // The slug follows the URL until typed by hand.
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/acme/acme-cli.git"),
+      screen.getByPlaceholderText(S.sources.form.cloneURLPlaceholder),
       { target: { value: "https://github.com/acme/tool.git" } },
     );
     expect(
-      (screen.getByPlaceholderText("acme-cli") as HTMLInputElement).value,
+      (
+        screen.getByPlaceholderText(
+          S.sources.form.slugPlaceholder,
+        ) as HTMLInputElement
+      ).value,
     ).toBe("tool");
-    fireEvent.change(screen.getByPlaceholderText("acme-cli"), {
-      target: { value: "neu" },
-    });
     fireEvent.change(
-      screen.getByPlaceholderText("https://github.com/acme/acme-cli.git"),
+      screen.getByPlaceholderText(S.sources.form.slugPlaceholder),
+      {
+        target: { value: "neu" },
+      },
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText(S.sources.form.cloneURLPlaceholder),
       { target: { value: "http://x" } },
     );
     fireEvent.click(screen.getByText("Hinzufügen und clonen"));
