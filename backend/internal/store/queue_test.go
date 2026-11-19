@@ -206,12 +206,16 @@ func TestRunsCallsAndSpend(t *testing.T) {
 	if n, err := s.QueueCount(ctx, false); err != nil || n != 0 {
 		t.Errorf("QueueCount without runs = %d, %v", n, err)
 	}
+	// c carries a plan, which the finished list never reads.
+	if _, err := s.db.ExecContext(ctx, `UPDATE baseline_runs SET plan = '{"subjects":[]}' WHERE id = ?`, c.ID); err != nil {
+		t.Fatal(err)
+	}
 	if none, err := s.FinishedRuns(ctx, before, 0); err != nil || len(none) != 0 {
 		t.Errorf("FinishedRuns limited to 0 = %+v, %v", none, err)
 	}
 	done, err := s.FinishedRuns(ctx, before, 50)
-	if err != nil || len(done) != 1 || done[0].ID != c.ID || !done[0].Latest || done[0].FailedInRow != 1 {
-		t.Fatalf("FinishedRuns = %+v, %v; want c, the latest, 1 failed in a row", done, err)
+	if err != nil || len(done) != 1 || done[0].ID != c.ID || !done[0].Latest || done[0].FailedInRow != 1 || done[0].Plan != nil {
+		t.Fatalf("FinishedRuns = %+v, %v; want c, the latest, 1 failed in a row, no plan read", done, err)
 	}
 	// A newer run of c's repository: c is no longer the latest.
 	enqueue(t, s, "PRJ", "c")

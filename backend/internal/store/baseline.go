@@ -58,11 +58,22 @@ const runsFrom = `baseline_runs b JOIN repos r ON r.id = b.repo_id JOIN projects
 
 // runColumns are a run's columns over runsFrom, named as scanRun reads
 // them. "commit" is quoted: a keyword in SQLite, a column name here.
-const runColumns = `b.id AS id, p.key AS project_key, r.slug AS slug, b.mode AS mode, b.trigger AS trigger,
+const runColumns = runColumnsHead + `b.plan AS plan, ` + runColumnsTail
+
+// finishedColumns is runColumns with no plan: the queue's list of finished
+// runs reads none, and a plan is every subject's file list, read on each
+// poll of an open queue page.
+const finishedColumns = runColumnsHead + `NULL AS plan, ` + runColumnsTail
+
+// runColumnsHead and runColumnsTail are runColumns around the plan.
+const (
+	runColumnsHead = `b.id AS id, p.key AS project_key, r.slug AS slug, b.mode AS mode, b.trigger AS trigger,
 	b.base_commit AS base_commit, b."commit" AS "commit", b.state AS state, b.step AS step, b.steps AS steps,
-	b.plan AS plan, b.attempts AS attempts, b.calls AS calls, b.bytes AS bytes, b.readable_bytes AS readable_bytes,
+	`
+	runColumnsTail = `b.attempts AS attempts, b.calls AS calls, b.bytes AS bytes, b.readable_bytes AS readable_bytes,
 	b.read_bytes AS read_bytes, b.skipped AS skipped, b.error AS error, b.queued_at AS queued_at, b.started_at AS started_at,
 	b.finished_at AS finished_at, b.epoch AS epoch, b.repo_id AS repo_id, r.project_id AS project_id, b.reason AS reason`
+)
 
 // lColumns is runColumns of a subquery aliased l, in the same order.
 const lColumns = `l.id, l.project_key, l.slug, l.mode, l.trigger, l.base_commit, l."commit", l.state, l.step, l.steps, l.plan,
