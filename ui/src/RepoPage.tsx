@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DependencyEnd, Problem, ProjectDetail, RepoDetail } from "./api";
+import type { Problem, ProjectDetail, RepoDetail, RepoRef } from "./api";
 import { DESCRIPTION, DescriptionView, descriptionRail } from "./Description";
 import {
   AskChips,
@@ -540,7 +540,7 @@ function entrySteps(
  *  page's sections. Another project's repository is named with its
  *  project. */
 function Dependencies({ data }: { data: RepoDetail }) {
-  const name = (d: DependencyEnd) =>
+  const name = (d: RepoRef) =>
     d.project === data.project_key ? d.slug : refName(d.project, d.slug);
   return (
     <div className="grid gap-y-4">
@@ -571,8 +571,8 @@ function DepTable({
   rows,
 }: {
   title: string;
-  name: (d: DependencyEnd) => string;
-  rows: { end: DependencyEnd; also?: string }[];
+  name: (d: RepoRef) => string;
+  rows: { end: RepoRef; also?: string }[];
 }) {
   if (rows.length === 0) return null;
   return (

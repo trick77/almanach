@@ -312,7 +312,7 @@ export interface RepoDetail {
   /** The source repositories this one uses, by its manifests. */
   uses: Use[];
   /** The source repositories that use this one. */
-  used_by: DependencyEnd[];
+  used_by: RepoRef[];
   /** The parts inside it that use one another, by its builds. */
   parts: Parts;
   /** The topics and schemas its code names, read by the poller. */
@@ -400,25 +400,18 @@ export interface TopicFlow {
   declared: RepoRef[];
 }
 
-/** One end of a dependency. */
-export interface DependencyEnd {
-  project: string;
-  slug: string;
-}
-
-/** A repository another one depends on, with its other users. */
-export interface Use extends DependencyEnd {
-  also: DependencyEnd[];
-}
-
+/** A repository by project and slug: one end of a dependency, a peer. */
 export interface RepoRef {
   project: string;
   slug: string;
 }
 
-export interface SharedRepo {
-  project: string;
-  slug: string;
+/** A repository another one depends on, with its other users. */
+export interface Use extends RepoRef {
+  also: RepoRef[];
+}
+
+export interface SharedRepo extends RepoRef {
   used_by: RepoRef[];
 }
 
