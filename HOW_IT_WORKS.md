@@ -417,8 +417,10 @@ themselves go oldest first, one to its end before the next begins.
   page as Markdown, for a coding agent (below).
 - `/api/sources` and below: the clones, read and written (section 4a).
 - `/api/costs`: Almanach's own ledger (`llm_calls`), the page Kosten: by
-  UTC month and project, the merges apart from the runs, with the calls no
-  one priced counted apart (their cost is unknown, not zero); beside it
+  UTC month and project, the merges apart from the runs and the briefs,
+  with the calls no one priced counted apart (their cost is unknown, not
+  zero); the same month by purpose with its input, cached, output and
+  reasoning tokens, dearest first, both of one set of rows; beside it
   the day's spend and the daily budget (`BACKEND_DAILY_BUDGET_USD`). Never
   noergler's figures (`note_calls`), which a note page shows for its own
   call.
@@ -448,9 +450,19 @@ paragraph; a later part's heading names what it says there, never the
 order's name for it ("Zweck und Abgrenzung" over text that drew no
 boundary was the result), and a part with nothing to say is left out.
 An agent jumps to the end, a newcomer reads from the top. Statements are
-of eight kinds:
+of nine kinds:
 
-- `component`, `entity`: the parts and the things the code works with.
+- `component`, `entity`: the parts and the things the code works with. A
+  component is a repository's alone: the project page holds none (its
+  kinds have no `component`), how a repository works inside stays on its
+  own page.
+- `flow`: a flow from its trigger (a request, an event, a schedule, a
+  command) to its end, across components or through one: its steps in
+  order and the component that takes each, what it reads and writes, what
+  happens when a step fails. The summary names the key flows; each is told
+  in full here, and a summary or component that still told one is
+  shortened to name it. On the project page a flow crosses repositories;
+  one inside a repository is that repository's page's.
 - `interface`: a public interface a component offers others (an HTTP API,
   events, a library's exported API, a CLI), never the component itself:
   who offers it, what it holds, its contract file where there is one, who
@@ -491,7 +503,7 @@ An agent reads files, not JSON. `GET /api/projects/{key}.md` and
 `## Überblick`, the project's architecture overview as a fenced `json` block,
 then the statements
 grouped by kind in the order invariants, interfaces, rules, decisions,
-pitfalls, extensions, components, entities (a kind without statements has no
+pitfalls, extensions, components, flows, entities (a kind without statements has no
 heading; one spanning areas has an `###` heading per area, its statements a
 level down), each with its files, its PR keys and its diagram as a fenced
 `json` block. Markdown is the frame; a statement's text and the summary
@@ -1697,7 +1709,7 @@ one.
 | Package | Role | Depends on |
 | --- | --- | --- |
 | `cmd/almanach` | The binary: `serve`, `migrate`, `version`, the two probes. Loads config, runs the startup checks, wires store, worker and routes, handles signals. | everything below |
-| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, `/metrics`, and `/` handed to `web`; which log class a request is. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | auth, baseline, clone, config, consolidate, diagram, gitrepo, httpapi, ingest, markup, secret, store, teamkeys, web |
+| `internal/api` | The routes: `/auth/ping`, `/webhooks/noergler`, `/api/...`, `/metrics`, and `/` handed to `web`; which log class a request is. Request decoding, response structs, the one `webhook_processed` log line. Declares the `Store` and `Waker` interfaces it needs. | auth, baseline, clone, config, consolidate, diagram, endpoints, gitrepo, httpapi, imports, ingest, manifest, markup, messaging, prompts, secret, store, teamkeys, web |
 | `internal/auth` | The oidc sign-in: kit's OIDC flow with discovery retried in the background, kit's signed session cookie, the gate in front of `/api`. | authroute, urlorigin, kit/auth |
 | `internal/authroute` | The sign-in's route names, a leaf so `config` checks the redirect URL without pulling in the OIDC client. | nothing |
 | `internal/urlorigin` | A URL's origin, the one normaliser wherever two are compared: the auth gate's browser check, the host a source's token is bound to. | nothing |
@@ -1706,15 +1718,20 @@ one.
 | `internal/heartbeat` | A loop's last sign of life, stamped by the worker's and the poller's goroutines, read by `/metrics`. | nothing |
 | `internal/ingest` | `Parse`: the strict reading of one noergler payload into store rows, and `commonDir` for the bugfix area. Pure, no I/O. | store (types only) |
 | `internal/teamkeys` | The bearer table: file load, mtime hot reload, constant-time lookup. | nothing |
-| `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | diagram, manifest, redact, urlorigin, ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |
-| `internal/consolidate` | The worker: loop, hold, the notes' calls, the baseline runs' steps, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | baseline, config, diagram, gitrepo, heartbeat, inference, lang, markup, prompts, store, llmwire (error classes) |
+| `internal/store` | SQLite: the database file, embedded migrations, every query. `ingest.go` writes a delivery, `wiki.go` serves the worker, `read.go` serves the read routes, `values.go` holds how times and JSON are stored. | diagram, endpoints, imports, manifest, messaging, redact, urlorigin, ncruces/go-sqlite3 (database/sql), kit/sqlitex, kit/migrate |
+| `internal/consolidate` | The worker: loop, hold, the notes' calls, the baseline runs' steps, the rules (`attach`, `check`), prompt rendering. Declares the `Store` and `Merger` interfaces it needs. | baseline, config, diagram, endpoints, gitrepo, heartbeat, inference, lang, markup, messaging, prompts, redact, store, llmwire (error classes) |
 | `internal/baseline` | What a baseline run decides without I/O: the files worth reading, the docs, the catalogue's plan within budget, what a reconcile reads again, how a step's patch applies to a page without erasing what the PRs taught, the diagram validation. | diagram, gitrepo, inference, lang, store (types) |
-| `internal/inference` | The llmwire clients, one per profile: startup checks, one streamed call per merge or baseline step with its strict schema, answer parsing, cost extraction. | diagram, markup, llmwire |
-| `internal/prompts` | Every model prompt (`almanach_*.txt`: merge, catalogue, describe, project, repository map, restyle, departure, diagrams), compiled in with `go:embed`. Never configurable. | nothing |
+| `internal/inference` | The llmwire clients, one per profile: startup checks, one streamed call per merge or baseline step with its strict schema, answer parsing, cost extraction. | diagram, markup, redact, llmwire |
+| `internal/prompts` | Every model prompt (`almanach_*.txt`: merge, router, catalogue, describe, project, repository map, restyle and project restyle, departure, brief, diagrams), compiled in with `go:embed`. Never configurable. | nothing |
 | `internal/gitrepo` | The git binary: clone, default branch, fetch, head, origin check, removal with the path guard, credential redaction. | urlorigin |
 | `internal/bitbucket` | The Bitbucket Server repository listing, paged, net/http only, trusting `BACKEND_GIT_CA_FILE` like git. | gitrepo (Access), store (types only) |
-| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it, the code reads of a baseline step. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | baseline, consolidate, gitrepo, heartbeat, manifest, prompts, redact, secret, store, urlorigin |
-| `internal/manifest` | `Parse`: a repository's go.mod, pom.xml, package.json and Gradle build as the coordinates it provides and requires. Pure, no I/O. | redact |
+| `internal/clone` | The sync poller: cycles, nudge, listing, per-repository sync with the failure recorded on the row, the manifests read after it, the code reads of a baseline step. Declares the `Store`, `Git`, `Lister` and `ManifestStore` interfaces it needs. | baseline, consolidate, endpoints, gitrepo, heartbeat, imports, manifest, messaging, prompts, redact, secret, store, urlorigin |
+| `internal/manifest` | `Parse`: a repository's go.mod, pom.xml, package.json, Gradle build, pyproject.toml and requirements files and Cargo.toml, with a monorepo's declared workspaces, as the coordinates it provides and requires. Pure, no I/O. | redact |
+| `internal/coderead` | What the code readers share: resolving an expression to a string (a literal, a constant, a property, their concatenation) and scanning calls, annotations and config files. Line- and regex-based; one it cannot resolve is left out, never guessed. | nothing |
+| `internal/messaging` | Which topics a repository produces to and consumes from, and which message schemas it defines (Kafka, Spring Cloud Stream, kafkajs, AsyncAPI, Avro, Protobuf). Pure, bytes in, facts out. | coderead |
+| `internal/endpoints` | Which interfaces a repository offers others: OpenAPI and Swagger specs, the routes its code declares (Spring, JAX-RS, NestJS, Express, Go), gRPC (.proto) and SOAP (WSDL). A spec or WSDL counts as offered only on its code's evidence, else as declared (often a client's copy). Pure, bytes in, facts out. | coderead |
+| `internal/imports` | Which packages inside a repository import which (Go by import path against its own go.mod modules, Python by its own distributions), folded to their top level: the Parts graph. Pure. | manifest |
+| `internal/evalrun` | Runs today's baseline pipeline over a folder of repositories and scores the pages against hand-made labels. Never in the gate: every run pays for model calls. | baseline, clone, config, consolidate, endpoints, gitrepo, inference, markup, messaging, redact, store, llmwire |
 | `internal/secret` | AES-GCM for the sources' tokens, key from the environment. | nothing |
 | `internal/redact` | Credential values out before anything leaves the machine: `File` for code a step shows the model, `Text` and `JSON` for prose and notes. By regex, never by prompt. | nothing |
 | `internal/markup` | The one layout a statement's text and a summary may carry: paragraphs, flat lists, bold, code spans, one sub-heading level. | nothing |
@@ -1850,12 +1867,17 @@ baseline run's commit, exactly one of `source_pr_key` and `source_commit`
 set; a call of several notes the first PR, and every PR in
 `batch_pr_keys`, as its call's row) and the call behind it. A statement's source carries the same kind;
 a source stored before baselines has none and is a PR. The
-check `(scope = 'project') = (repo_slug IS NULL)` keeps the two scopes
+check `(scope = 'project') = (repo_id IS NULL)` keeps the two scopes
 honest. `pages` is the current pointer per page: one row, one
 `current_revision_id`. Repointing it is a rollback; history is never
 rewritten. `llm_calls` is Almanach's own ledger, one row per model call
 with its `purpose` (`merge`, `catalogue`, `overview`, `subject`,
-`project`) and, for a run's, the run's id; never summed with `note_calls`.
+`project`, `repo_map`, `project_map`, `restyle`, `brief`), its tokens
+(input, cached, output, and the reasoning part of the output where the
+gateway reports it) and, for a run's, the run's id; never summed with
+`note_calls`. The router's call is a `catalogue`, a departure's a
+`project`. The Kosten page groups it by UTC month, then by project and by
+purpose.
 
 What is derived and what is kept: `deliveries` and `notes` are kept as
 they arrived. `bugfix_area`, the statements' `sources` and ids, the
@@ -2312,9 +2334,10 @@ baseline step's patch never is: its bad items are left out one by one (see
   webhook and the ping never pass the sign-in.
 - The Markdown exports take a team bearer in oidc mode, GET only; a
   bearer opens no other route. A statement's text is never rewritten into
-  Markdown; the export's order is the UI's (invariants, interfaces,
-  rules, decisions, pitfalls, extensions, components, entities), held to
-  it by a test.
+  Markdown; the export goes by kind (invariants, interfaces, rules,
+  decisions, pitfalls, extensions, components, flows, entities) where the
+  page goes by area, its headings the UI's kind names, held to them by a
+  test.
 
 ### The sources
 

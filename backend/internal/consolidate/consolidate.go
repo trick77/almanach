@@ -194,9 +194,9 @@ func (w *Worker) WithBaseline(b Baseline) *Worker {
 }
 
 // WithFoldDelay folds a repository's notes together once its oldest has
-// waited d (BACKEND_FOLD_DELAY): one call for a day of pull requests, its
-// page and the prompt read once. Zero, the default, folds each note on its
-// own as it comes. Before Start.
+// waited d (BACKEND_FOLD_DELAY, a day unless set): one call for a day of
+// pull requests, its page and the prompt read once. Zero folds each note
+// on its own as it comes. Before Start.
 func (w *Worker) WithFoldDelay(d time.Duration) *Worker {
 	w.foldDelay = d
 	return w
