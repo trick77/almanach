@@ -843,7 +843,13 @@ paths:
     delete:
       tags: [sources]
       summary: Remove one repository and its clone
-      description: The clone goes first, then the row. A listed repository returns with the next listing.
+      description: >-
+        The clone goes first, then the row. A listed repository returns with the
+        next listing. Refused (409, clone kept) for one the project page has
+        known (a page of its own on a project with a page), active or
+        deactivated: its row is what keeps it off the project page. Deactivate
+        it instead; that removes the clone and takes it out of the wiki, and its
+        departure run out of the project page.
       operationId: deleteSourceRepo
       parameters:
         - $ref: "#/components/parameters/projectKey"
@@ -857,6 +863,12 @@ paths:
           $ref: "#/components/responses/CrossSite"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The project page has known the repository; deactivate it instead.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/sources/{key}/repos/{slug}/sync:
     post:

@@ -781,6 +781,13 @@ export const S = {
     confirmRemoveRepo: (slug: string, dir: string) =>
       `Repository ${slug} entfernen? Löscht den Eintrag und den Clone unter ${dir}. Der Eintrag kann jederzeit neu angelegt werden; der Clone wird dann neu geholt.`,
     yesRemove: "Ja, entfernen",
+    // A removal the server refuses: the project page has known the
+    // repository, and its row is what keeps it off that page. Active, the
+    // way out is a deactivation; deactivated, there is nothing to do.
+    deactivateInstead:
+      "Die Projektseite kennt dieses Repository: deaktivieren statt entfernen. Deaktivieren löscht den Clone und nimmt es aus dem Wiki; ein Run nimmt es aus der Projektseite.",
+    keptDeactivated:
+      "Bleibt als deaktivierter Eintrag: Er hält das Repository von der Projektseite fern.",
     // Instant: clone gone, notes ignored, page out of the wiki. The project
     // page is the queue's: the departure run (one model call).
     confirmDeactivateRepo: (slug: string) =>

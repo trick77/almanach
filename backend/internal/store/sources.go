@@ -423,10 +423,50 @@ func claimSlug(ctx context.Context, tx *sql.Tx, pid int64, slug string) (int64, 
 	return self, false, err
 }
 
+// ErrDeactivateInstead refuses removing a repository the project page has
+// known: its row is what keeps it off that page. Deactivated, the row
+// stays, DepartedRepos names it to every project call ("write nothing
+// about these"), and its departure run takes its statements out; removed,
+// nothing would, and the next project step could write it back from
+// another repository's summary that still names it. Deactivation is its
+// removal: the clone goes, its page leaves the wiki (user, 2026-11-19).
+var ErrDeactivateInstead = errors.New("the project page has known this repository: deactivate it instead")
+
+// namedOnPage reports whether the source repository is one the project
+// page has known (ErrDeactivateInstead's case): a page of its own on a
+// project with a page. q is the database or a transaction's QueryRowContext.
+func namedOnPage(ctx context.Context, q func(context.Context, string, ...any) *sql.Row, key, slug string) (bool, error) {
+	var named bool
+	err := q(ctx, `
+		SELECT EXISTS (SELECT 1 FROM source_repos sr WHERE sr.repo_id = `+repoByName+`
+		   AND EXISTS (SELECT 1 FROM pages WHERE scope = 'repository' AND project_id = sr.project_id AND repo_id = sr.repo_id)
+		   AND EXISTS (SELECT 1 FROM pages WHERE scope = 'project' AND project_id = sr.project_id AND repo_id = 0))`,
+		key, slug).Scan(&named)
+	return named, err
+}
+
+// NamedOnPage is namedOnPage, asked before a removal's clone goes, so a
+// refused removal keeps it.
+func (s *Store) NamedOnPage(ctx context.Context, key, slug string) (bool, error) {
+	return namedOnPage(ctx, s.db.QueryRowContext, key, slug)
+}
+
 // DeleteSourceRepo removes one repo row; the repository and its pages stay.
-// Reports whether there was one.
+// Reports whether there was one. ErrDeactivateInstead, nothing removed, for
+// one the project page has known.
 func (s *Store) DeleteSourceRepo(ctx context.Context, key, slug string) (bool, error) {
-	n, err := affected(s.db.ExecContext(ctx, `DELETE FROM source_repos WHERE repo_id = `+repoByName, key, slug))
+	var n int64
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		named, err := namedOnPage(ctx, tx.QueryRowContext, key, slug)
+		if err != nil {
+			return err
+		}
+		if named {
+			return ErrDeactivateInstead
+		}
+		n, err = affected(tx.ExecContext(ctx, `DELETE FROM source_repos WHERE repo_id = `+repoByName, key, slug))
+		return err
+	})
 	return n == 1, err
 }
 

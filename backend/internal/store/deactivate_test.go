@@ -107,6 +107,62 @@ func TestDeactivateSourceRepo_NoSourceAnywhere(t *testing.T) {
 	}
 }
 
+// A repository the project page has known (a page of its own on a project
+// with one) is never removed, active or deactivated, its departure settled
+// or not: its row keeps it on DepartedRepos. One without a page of its
+// own, or on a project without a page, is.
+func TestDeleteSourceRepo_DeactivateInstead(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	sourceRepo(t, s, "tools", "svc")
+	sourceRepo(t, s, "tools", "web")
+	sourceRepo(t, s, "tools", "cli")
+	sourceRepo(t, s, "solo", "app")
+	projectPage(t, s, "tools")
+	repoPage(t, s, "tools", "svc")
+	repoPage(t, s, "solo", "app")
+	refused := func(slug string) {
+		t.Helper()
+		if named, err := s.NamedOnPage(ctx, "tools", slug); err != nil || !named {
+			t.Errorf("NamedOnPage(%s) = %v, %v; want true", slug, named, err)
+		}
+		if ok, err := s.DeleteSourceRepo(ctx, "tools", slug); ok || !errors.Is(err, ErrDeactivateInstead) {
+			t.Errorf("DeleteSourceRepo(%s) = %v, %v; want ErrDeactivateInstead", slug, ok, err)
+		}
+		var rows int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_repos WHERE repo_id = `+repoByName, "tools", slug).Scan(&rows); err != nil || rows != 1 {
+			t.Errorf("a refused removal took %s's row out: %d rows, %v", slug, rows, err)
+		}
+	}
+	refused("svc")
+	// No page of its own: nothing on the project page rests on it.
+	if named, _ := s.NamedOnPage(ctx, "tools", "cli"); named {
+		t.Error("cli, never described, is named")
+	}
+	if ok, err := s.DeleteSourceRepo(ctx, "tools", "cli"); err != nil || !ok {
+		t.Errorf("DeleteSourceRepo(cli) = %v, %v", ok, err)
+	}
+	// A project without a page (a project of one): nothing to keep it off.
+	if ok, err := s.DeleteSourceRepo(ctx, "solo", "app"); err != nil || !ok {
+		t.Errorf("DeleteSourceRepo(solo/app) = %v, %v", ok, err)
+	}
+	if err := s.MarkRepoReady(ctx, "tools", "svc", "main", "aaa"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeactivateSourceRepo(ctx, "tools", "svc"); err != nil {
+		t.Fatal(err)
+	}
+	refused("svc")
+	// Settled, the row is still what keeps it off the page.
+	if err := s.SettleDepartures(ctx, "tools", []string{"svc"}); err != nil {
+		t.Fatal(err)
+	}
+	refused("svc")
+	if departed, _ := s.DepartedRepos(ctx, "tools"); !reflect.DeepEqual(departed, []string{"svc"}) {
+		t.Errorf("DepartedRepos = %v, want svc kept", departed)
+	}
+}
+
 // With a project page, a deactivation queues the departure run at the head
 // the repository had; a started run refuses it, the clone being read. The
 // departure run documents nothing, and an activation drops it while queued.

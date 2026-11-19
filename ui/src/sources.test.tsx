@@ -1152,6 +1152,40 @@ describe("SourcePage", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("says to deactivate instead when the project page knows it", async () => {
+    const refused = {
+      "sources/werkzeuge/repos/acme-cli":
+        "the project page has known this repository: deactivate it instead",
+    };
+    serve({ "sources/werkzeuge": detail }, refused);
+    const { unmount } = render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.remove)[0]);
+    fireEvent.click(screen.getByText(S.sources.yesRemove));
+    const alert = await screen.findByRole("alert");
+    // In the UI's words, never the server's English.
+    expect(alert).toHaveTextContent(`acme-cli: ${S.sources.deactivateInstead}`);
+    expect(alert).not.toHaveTextContent("has known");
+    unmount();
+
+    // Deactivated already: its row stays, nothing left to do.
+    const off: SourceDetail = {
+      ...detail,
+      repos: [
+        { ...detail.repos[0], deactivated_at: when, state: "missing" },
+        detail.repos[1],
+      ],
+    };
+    serve({ "sources/werkzeuge": off }, refused);
+    render(<SourcePage projectKey="werkzeuge" />);
+    await screen.findByText("acme-cli");
+    fireEvent.click(screen.getAllByText(S.sources.repoActions.removeClone)[0]);
+    fireEvent.click(screen.getByText(S.sources.yesRemove));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      `acme-cli: ${S.sources.keptDeactivated}`,
+    );
+  });
+
   it("opens a failed repository's confirm above its failure line", async () => {
     serve({ "sources/werkzeuge": detail });
     render(<SourcePage projectKey="werkzeuge" />);
