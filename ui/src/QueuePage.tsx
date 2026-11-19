@@ -81,6 +81,11 @@ export function QueuePage() {
       <div className={column}>
         <h2 className={h2}>{S.queue.title}</h2>
         {failed && !data && <Failed message={S.queue.failed} />}
+        {failed && data && (
+          <div className="mb-4">
+            <Failed message={S.common.refreshFailed} />
+          </div>
+        )}
         {!failed && !data && <Skeleton />}
         {data && <PauseBar q={data} reload={reload} />}
         {data && <Body q={data} />}
