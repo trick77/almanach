@@ -276,6 +276,7 @@ func assemble(specs []spec, routes []route, services []service, gens []gen, impl
 		eps[k] = &e
 	}
 	matched := make([]bool, len(routes))
+	serving := routeIndex(routes)
 	for _, s := range specs {
 		// Offered when a server generator the build runs reads it, or the
 		// code serves at least half its operations: one shared /health
@@ -284,35 +285,31 @@ func assemble(specs []spec, routes []route, services []service, gens []gen, impl
 		if serverGenerated(gens, s.file, files) {
 			dir = Offers
 		}
+		// The routes serving each operation, by index, in the routes' order.
+		served := make([][]int, len(s.ops))
 		hits := 0
-		for _, op := range s.ops {
-			for _, rt := range routes {
-				if rt.matches(op, s.basePath) {
-					hits++
-					break
-				}
+		for i, op := range s.ops {
+			served[i] = serving(op, s.basePath)
+			if len(served[i]) > 0 {
+				hits++
 			}
 		}
 		if len(s.ops) > 0 && 2*hits >= len(s.ops) {
 			dir = Offers
 		}
 		if dir == Offers {
-			for _, op := range s.ops {
-				for i, rt := range routes {
-					if rt.matches(op, s.basePath) {
-						matched[i] = true
-					}
+			for _, idx := range served {
+				for _, i := range idx {
+					matched[i] = true
 				}
 			}
 		}
 		addAPI(API{Kind: HTTP, Name: s.name, Version: s.version, BasePath: s.basePath, Direction: dir, Files: []string{s.file}})
-		for _, op := range s.ops {
+		for oi, op := range s.ops {
 			files := []string{s.file}
 			if dir == Offers {
-				for _, rt := range routes {
-					if rt.matches(op, s.basePath) {
-						files = append(files, rt.file)
-					}
+				for _, i := range served[oi] {
+					files = append(files, routes[i].file)
 				}
 			}
 			addEndpoint(Endpoint{Kind: HTTP, API: s.name, Method: op.method, Path: joinPath(s.basePath, op.path),
