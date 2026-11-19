@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RepoDetail, RepoTopic, TopicFlow } from "./api";
 import { ProjectMessages, flowGraph, topicGraph } from "./Messaging";
 import { RepoPage } from "./RepoPage";
+import { atPath } from "./test/atPath";
 
 function serve(table: Record<string, unknown>) {
   vi.stubGlobal(
@@ -23,9 +24,9 @@ function serve(table: Record<string, unknown>) {
   );
 }
 
+atPath("/projects/shop/repos/orders");
 afterEach(() => {
   vi.unstubAllGlobals();
-  window.history.replaceState({}, "", "/");
   // jsdom has no scrollIntoView; a test that stubs one leaves none.
   delete (Element.prototype as Partial<Element>).scrollIntoView;
 });

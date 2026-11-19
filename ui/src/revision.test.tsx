@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RevisionDetail } from "./api";
 import { RevisionPage } from "./RevisionPage";
@@ -18,6 +18,9 @@ function serve(table: Record<string, unknown>) {
 }
 
 afterEach(() => {
+  // Unmounted before the reset: a canonical replace still pending carries
+  // no path into the next test (test/atPath.ts).
+  cleanup();
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
 });

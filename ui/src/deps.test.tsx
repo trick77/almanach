@@ -9,6 +9,7 @@ import {
   repoNamer,
 } from "./DepsPage";
 import { RepoPage } from "./RepoPage";
+import { atPath } from "./test/atPath";
 
 function serve(table: Record<string, unknown>) {
   vi.stubGlobal(
@@ -23,6 +24,7 @@ function serve(table: Record<string, unknown>) {
   );
 }
 
+atPath("/projects/tools/repos/rongo");
 afterEach(() => {
   vi.unstubAllGlobals();
 });
