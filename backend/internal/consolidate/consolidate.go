@@ -22,6 +22,7 @@ import (
 	"github.com/trick77/almanach/internal/baseline"
 	"github.com/trick77/almanach/internal/config"
 	"github.com/trick77/almanach/internal/diagram"
+	"github.com/trick77/almanach/internal/gitrepo"
 	"github.com/trick77/almanach/internal/heartbeat"
 	"github.com/trick77/almanach/internal/inference"
 	"github.com/trick77/almanach/internal/lang"
@@ -156,6 +157,12 @@ type Worker struct {
 	libsRun  int64
 	libs     string
 	siblings string
+	// tree is run treeRun's tree at its commit treeAt, listed once for the
+	// run's steps: the commit is pinned, so its listing never changes, and
+	// a step listed the whole clone again each time.
+	treeRun int64
+	treeAt  string
+	tree    []gitrepo.Entry
 	// ask is run askRun's router prompt with its stage 0, built once for
 	// the catalogue step: a step a hold or a busy clone repeats does not
 	// read the whole tree again. Cleared once the plan is stored.

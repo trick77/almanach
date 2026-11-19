@@ -786,6 +786,17 @@ func TestRun_FullRunEndToEnd(t *testing.T) {
 	if !reflect.DeepEqual(purposes, []string{"catalogue", "overview", "subject", "subject", "project", "repo_map"}) {
 		t.Errorf("ledger = %v", purposes)
 	}
+	// The pinned commit's tree, listed once for the catalogue and the
+	// three describe steps.
+	listed := 0
+	for _, at := range x.code.treesAt {
+		if at == head {
+			listed++
+		}
+	}
+	if listed != 1 {
+		t.Errorf("the run's tree listed %d times, want once: %v", listed, x.code.treesAt)
+	}
 	if len(x.st.revisions) != 4 {
 		t.Fatalf("revisions = %d, want three repository steps and the project; the map takes none", len(x.st.revisions))
 	}
