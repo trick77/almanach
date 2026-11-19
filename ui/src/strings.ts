@@ -178,7 +178,6 @@ export const S = {
     consumes: "Consumer",
     declares: "Genannt",
     noPeer: "Keine unter den Quellen",
-    schemas: "Schemas",
     schema: "Schema",
     kind: "Art",
     file: "Datei",
@@ -635,7 +634,6 @@ export const S = {
     allRoundsNote: (calls: number, tokens: number) =>
       `${calls} ${calls === 1 ? "Aufruf" : "Aufrufe"} ${S.common.sep} ${fmtInt(tokens)} Tokens`,
     unpriced: "nicht bepreist",
-    files: "Dateien",
   },
   sources: {
     title: "Quellen",
@@ -705,6 +703,13 @@ export const S = {
         "Füllt sich beim Einfügen der URL mit dem Namen des Repositories; von Hand geändert, bleibt er. Leer: der Name aus der URL.",
       branch: "Branch",
       branchPlaceholder: "Default-Branch des Remotes",
+      // The clone URL and slug of a new hand-filled repository, by example.
+      cloneURLPlaceholder: "https://github.com/acme/acme-api.git",
+      slugPlaceholder: "acme-api",
+      // How the token goes out: the HTTP scheme's names.
+      tokenAuthBasic: "Basic",
+      tokenAuthBearer: "Bearer",
+      tokenUserPlaceholder: "x-access-token",
       host: "Bitbucket-Host",
       hostHint:
         "Aus der URL. Die Clone-URLs der gelisteten Repositories müssen auf diesen Host zeigen: über einen anderen Namen erreicht, scheitert jeder Sync.",

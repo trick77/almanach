@@ -1382,8 +1382,8 @@ function AccessForm({
             onChange={setAuth}
             options={[
               // GitHub's left, Bitbucket's right, as the kinds.
-              { value: "basic", label: "Basic" },
-              { value: "bearer", label: "Bearer" },
+              { value: "basic", label: S.sources.form.tokenAuthBasic },
+              { value: "bearer", label: S.sources.form.tokenAuthBearer },
             ]}
           />
           <span className={fieldHint}>
@@ -1397,7 +1397,7 @@ function AccessForm({
               className={input}
               value={user}
               onChange={(e) => setUser(e.target.value)}
-              placeholder="x-access-token"
+              placeholder={S.sources.form.tokenUserPlaceholder}
             />
             <span className={fieldHint}>{f.userHint}</span>
           </label>
@@ -1682,7 +1682,7 @@ function AddRepoForm({
               setUrl(e.target.value);
               if (!slugTyped) setSlug(slugFromURL(e.target.value));
             }}
-            placeholder="https://github.com/acme/acme-cli.git"
+            placeholder={S.sources.form.cloneURLPlaceholder}
           />
           <span className={fieldHint}>{f.urlHint}</span>
         </label>
@@ -1695,7 +1695,7 @@ function AddRepoForm({
               setSlug(e.target.value);
               setSlugTyped(e.target.value !== "");
             }}
-            placeholder="acme-cli"
+            placeholder={S.sources.form.slugPlaceholder}
           />
           <span className={fieldHint}>{S.sources.form.slugFromURL}</span>
         </label>
