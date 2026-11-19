@@ -389,6 +389,21 @@ func TestSourceRuns_LastDocumentedAndCost(t *testing.T) {
 
 // A note's merge call keeps its old shape; a baseline call carries its
 // commit and purpose and never a PR key.
+// A row written late keeps the time it was paid, its day's spend.
+func TestInsertLLMCall_PaidAt(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	paid := time.Date(2026, 11, 1, 23, 59, 0, 0, time.UTC)
+	id, err := s.InsertLLMCall(ctx, LLMCall{ProjectKey: "PRJ", RepoSlug: "svc", SourcePR: "PRJ/svc#1", Outcome: "ok", Model: "m", PaidAt: paid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var at string
+	if err := s.db.QueryRowContext(ctx, `SELECT created_at FROM llm_calls WHERE id = ?`, id).Scan(&at); err != nil || at != stamp(paid) {
+		t.Fatalf("created_at = %q, %v; want the time paid, %q", at, err, stamp(paid))
+	}
+}
+
 func TestInsertLLMCall_KindsAndPurposes(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

@@ -1663,6 +1663,46 @@ func TestNewStatementIDNeverReusesADroppedOne(t *testing.T) {
 	}
 }
 
+// A paid call's ledger row the store refused is kept, never dropped: the
+// next item writes it before any call, held while the store refuses, so
+// the day's budget counts every call paid.
+func TestDrainWritesAKeptCallRowFirst(t *testing.T) {
+	st := newFakeStore()
+	st.queue = []store.QueuedNote{queued("PLAT/files#1")}
+	st.callErr = store.ErrFull
+	m := &fakeMerger{result: okResult(nil, nil)}
+	w := newWorker(st, m)
+	clock := mergedAt
+	w.now = func() time.Time { return clock }
+	w.drain(context.Background())
+	if len(m.prompts) != 1 || len(w.unledgered) != 1 || len(st.marked) != 1 {
+		t.Fatalf("after the refused row: calls %d kept %d marked %v, want the fold done, its row kept", len(m.prompts), len(w.unledgered), st.marked)
+	}
+	// Still refused: the next item holds before its call.
+	next := queued("PLAT/files#2")
+	next.PRID = 43
+	st.queue = []store.QueuedNote{next}
+	w.drain(context.Background())
+	if len(m.prompts) != 1 || !w.holding() || w.Status().HoldCause != HoldWrite || len(w.unledgered) != 1 {
+		t.Fatalf("row refused again: calls %d holding %v cause %q kept %d, want no call, a write hold", len(m.prompts), w.holding(),
+			w.Status().HoldCause, len(w.unledgered))
+	}
+	// The store back: the kept row first, then the next fold's.
+	clock, st.callErr = w.retryAt, nil
+	w.drain(context.Background())
+	if len(m.prompts) != 2 || len(w.unledgered) != 0 || w.writeBackoff != 0 {
+		t.Fatalf("store back: calls %d kept %d backoff %s, want the second fold, nothing kept", len(m.prompts), len(w.unledgered), w.writeBackoff)
+	}
+	n := len(st.calls)
+	if n < 2 || st.calls[n-2].SourcePR != "PLAT/files#1" || st.calls[n-1].SourcePR != "PLAT/files#2" {
+		t.Fatalf("rows written = %+v, want #1's kept row, then #2's", st.calls)
+	}
+	// The kept row carries when it was paid, not when it was written.
+	if !st.calls[n-2].PaidAt.Equal(mergedAt) {
+		t.Errorf("kept row paid at %v, want %v", st.calls[n-2].PaidAt, mergedAt)
+	}
+}
+
 // A mark the store refuses for a reason that is not its lock (a full disk)
 // pauses the drain and holds the worker, longer each time; the folded
 // note's mark is retried, its paid fold never made again; a write that
@@ -1672,8 +1712,8 @@ func TestDrainPausesWhenTheMarkFails(t *testing.T) {
 	st := newFakeStore()
 	st.queue = []store.QueuedNote{queued("PLAT/files#1"), queued("PLAT/files#2")}
 	st.markErr = store.ErrFull
-	// The call row refused too: logged, no hold of its own, so one fold
-	// raises the backoff once, not twice.
+	// The call row refused too: kept, no hold of its own, so one fold
+	// raises the backoff once, not twice (TestDrainWritesAKeptCallRowFirst).
 	st.callErr = store.ErrFull
 	m := &fakeMerger{result: okResult(nil, nil)}
 	w := newWorker(st, m)
