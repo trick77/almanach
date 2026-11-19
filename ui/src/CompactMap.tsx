@@ -65,7 +65,16 @@ export function CompactMap({
     [ir],
   );
   const lit = useMemo(() => (hot === null ? null : ways(ir, hot)), [ir, hot]);
-  const full = useMemo(() => (open ? tryDraw(ir) : null), [open, ir]);
+  // The drawing the open checked, kept for the open map: laid out once,
+  // not again on the render the open causes.
+  const [opened, setOpened] = useState<{
+    ir: FlowIR;
+    d: NonNullable<ReturnType<typeof tryDraw>>;
+  } | null>(null);
+  const full = useMemo(
+    () => (!open ? null : opened?.ir === ir ? opened.d : tryDraw(ir)),
+    [open, ir, opened],
+  );
   const broken = failedFor === ir || (open && full === null);
   // One set of handlers per map, so a light changing re-renders only the
   // nodes whose look changes.
@@ -135,8 +144,11 @@ export function CompactMap({
     else setFailedFor(ir);
   }
   function openFull() {
-    if (tryDraw(ir)) setOpen(true);
-    else setFailedFor(ir);
+    const d = tryDraw(ir);
+    if (d) {
+      setOpened({ ir, d });
+      setOpen(true);
+    } else setFailedFor(ir);
   }
 
   const said =
@@ -194,7 +206,7 @@ export function CompactMap({
                     <Node
                       box={boxes}
                       label={names.get(id) ?? id}
-                      teaser={boxes ? (teasers.get(id) ?? []) : []}
+                      teaser={boxes ? (teasers.get(id) ?? noTeaser) : noTeaser}
                       to={links(id)}
                       state={
                         lit === null
@@ -382,6 +394,10 @@ const Node = memo(function Node({
     </Link>
   );
 });
+
+/** noTeaser is the one empty teaser: a new array each render would undo
+ *  Node's memo, and every node re-render on each hover. */
+const noTeaser: string[] = [];
 
 /** tryDraw is the map's drawing, or null where its layout throws: the
  *  full view and the file are lost then, never the page. */
