@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -199,8 +200,12 @@ func Parse(raw []byte) (Parsed, error) {
 	}
 	call.Rounds, call.RoundsInputTokens, call.RoundsOutputTokens, call.RoundsCost = p.Rounds.Count, p.Rounds.InputTokens, p.Rounds.OutputTokens, p.Rounds.CostNanoUSD
 
+	// The delivery id from the fields the note is filed under, never the
+	// free pr_key: a sender's pr_key naming another team's pull request
+	// would take its id, and the real note would be answered deduped. The
+	// same id as pr_key's for every pr_key noergler writes (PROJ/repo#42).
 	return Parsed{
-		DeliveryID: EventType + "#" + strings.ToLower(p.PRKey) + "#" + n.SourceCommit,
+		DeliveryID: EventType + "#" + strings.ToLower(p.ProjectKey+"/"+p.RepoSlug) + "#" + strconv.Itoa(p.PRID) + "#" + n.SourceCommit,
 		EventType:  EventType,
 		Note:       n,
 		Call:       call,

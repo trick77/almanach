@@ -77,6 +77,25 @@ func marshal(t *testing.T, p Payload) []byte {
 	return b
 }
 
+// The delivery id is the note's project, repository and PR, whatever pr_key
+// says: a pr_key naming another project's PR takes none of its ids.
+func TestParse_DeliveryIDByWhereTheNoteIsFiled(t *testing.T) {
+	own := fullPayload()
+	other := fullPayload()
+	other.ProjectKey, other.RepoSlug, other.PRID = "MINE", "tool", 7
+	a, err := Parse(marshal(t, own))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Parse(marshal(t, other))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.DeliveryID == a.DeliveryID || b.DeliveryID != "pr_merged_note#mine/tool#7#abcdef1234567890" {
+		t.Fatalf("delivery ids = %q, %q; want the second by its own project, repository and PR", a.DeliveryID, b.DeliveryID)
+	}
+}
+
 func TestParseFullPayload(t *testing.T) {
 	got, err := Parse(marshal(t, fullPayload()))
 	if err != nil {
