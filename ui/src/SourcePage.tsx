@@ -548,7 +548,24 @@ function Body({ data, reload }: { data: SourceDetail; reload: () => void }) {
           }
           onRemove={(slug) =>
             rowAct(slug, async () => {
-              await send("DELETE", repoPath(slug));
+              try {
+                await send("DELETE", repoPath(slug));
+              } catch (e) {
+                // The project page has known it: the removal's one 409, said
+                // in the UI's words, by what the row can still do.
+                if (e instanceof ApiError && e.status === 409) {
+                  const off =
+                    data.repos.find((r) => r.slug === slug)?.deactivated_at !=
+                    null;
+                  throw new ApiError(
+                    409,
+                    off
+                      ? S.sources.keptDeactivated
+                      : S.sources.deactivateInstead,
+                  );
+                }
+                throw e;
+              }
               setRemoving((cur) => (cur === slug ? null : cur));
             })
           }

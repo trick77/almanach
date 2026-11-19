@@ -38,6 +38,7 @@ type SourceStore interface {
 	SourceRepos(ctx context.Context, key string) ([]store.SourceRepo, error)
 	AddSourceRepo(ctx context.Context, r store.SourceRepo) error
 	DeleteSourceRepo(ctx context.Context, key, slug string) (bool, error)
+	NamedOnPage(ctx context.Context, key, slug string) (bool, error)
 	RequestSync(ctx context.Context, key, slug string) (int, error)
 	ProjectSpelledOtherwise(ctx context.Context, key string) (string, bool, error)
 	SourceRuns(ctx context.Context, key string) (map[string]store.RepoRuns, error)
@@ -956,12 +957,32 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Asked before the clone goes: a refused removal keeps it. The store
+	// asks again with the row's removal, in one transaction. deleteRepo's
+	// one 409: the UI words it.
+	named, err := d.Sources.Store.NamedOnPage(ctx, src.ProjectKey, rp.Slug)
+	if err != nil {
+		httpx.ServerError(w, r, err, "page check")
+		return
+	}
+	if named {
+		httpx.WriteError(w, http.StatusConflict, store.ErrDeactivateInstead.Error())
+		return
+	}
 	// The clone first, then the row (deleteSource's reason).
 	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
 		httpx.ServerError(w, r, err, "remove clone")
 		return
 	}
-	if _, err := d.Sources.Store.DeleteSourceRepo(ctx, src.ProjectKey, rp.Slug); err != nil {
+	switch _, err := d.Sources.Store.DeleteSourceRepo(ctx, src.ProjectKey, rp.Slug); {
+	case errors.Is(err, store.ErrDeactivateInstead):
+		// Its first page written while Remove waited for the clone's lock
+		// (a run ending): the clone is gone, the next cycle clones it again.
+		d.Log.WarnContext(ctx, "source_repo_delete_refused_late: its page was written meanwhile, the clone is cloned again",
+			"project", src.ProjectKey, "repo", rp.Slug)
+		httpx.WriteError(w, http.StatusConflict, store.ErrDeactivateInstead.Error())
+		return
+	case err != nil:
 		httpx.ServerError(w, r, err, "delete repo")
 		return
 	}

@@ -44,6 +44,9 @@ type fakeSources struct {
 	cloned map[string]*store.ClonedElsewhereError
 	// activeErr fails a deactivation or an activation.
 	activeErr error
+	// named are the "key/slug" repositories the project page has known:
+	// their removal is refused (ErrDeactivateInstead).
+	named map[string]bool
 	// briefs is each repository's brief by id; requested every request.
 	briefs    map[int64]store.Brief
 	requested []int64
@@ -225,7 +228,13 @@ func (f *fakeSources) AddSourceRepo(_ context.Context, r store.SourceRepo) error
 	f.repos[r.ProjectKey] = append(f.repos[r.ProjectKey], r)
 	return nil
 }
+func (f *fakeSources) NamedOnPage(_ context.Context, key, slug string) (bool, error) {
+	return f.named[key+"/"+slug], nil
+}
 func (f *fakeSources) DeleteSourceRepo(_ context.Context, key, slug string) (bool, error) {
+	if f.named[key+"/"+slug] {
+		return false, store.ErrDeactivateInstead
+	}
 	kept := f.repos[key][:0]
 	found := false
 	for _, r := range f.repos[key] {
@@ -679,6 +688,14 @@ func TestSources_UpdateReposSyncDelete(t *testing.T) {
 		t.Fatalf("detail: %d %v", code, body)
 	}
 
+	// One the project page has known is refused before its clone goes:
+	// deactivated instead, its row keeps it off the page.
+	fs.named = map[string]bool{"tools/cli": true}
+	if code, body := do(t, h, http.MethodDelete, "/api/sources/tools/repos/cli", "", "", nil); code != 409 ||
+		!strings.Contains(field(t, body, "error"), "deactivate it instead") || len(checkouts.removed) != 0 {
+		t.Fatalf("delete of a named repo: %d %v, clones removed %v; want 409, the clone kept", code, body, checkouts.removed)
+	}
+	fs.named = nil
 	// Deletes remove the checkout, then the row; unknown is 404.
 	if code, _ := do(t, h, http.MethodDelete, "/api/sources/tools/repos/cli", "", "", nil); code != 204 {
 		t.Fatal("delete repo")
