@@ -480,6 +480,27 @@ func Properties(body []byte, out map[string]string) {
 	}
 }
 
+// NamedIn reports whether text names a file by its base name, standing on
+// its own: CustomerOrder.wsdl names no Order.wsdl.
+func NamedIn(text, name string) bool {
+	for i := 0; ; {
+		j := strings.Index(text[i:], name)
+		if j < 0 {
+			return false
+		}
+		at := i + j
+		if at == 0 || !nameByte(text[at-1]) {
+			return true
+		}
+		i = at + 1
+	}
+}
+
+// nameByte is a byte a file name continues with.
+func nameByte(b byte) bool {
+	return b == '_' || b == '-' || b == '.' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
 // SortedKeys is a map's keys, sorted.
 func SortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))

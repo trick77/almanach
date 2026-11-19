@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/trick77/almanach/internal/coderead"
 )
 
 // What a run must read is code's to decide where code can tell, never the
@@ -396,27 +398,6 @@ func HasSchemas(files []File) bool {
 	return false
 }
 
-// namedIn reports whether text names a file by its base name, standing on
-// its own: CustomerOrder.wsdl names no Order.wsdl.
-func namedIn(text, name string) bool {
-	for i := 0; ; {
-		j := strings.Index(text[i:], name)
-		if j < 0 {
-			return false
-		}
-		at := i + j
-		if at == 0 || !nameByte(text[at-1]) {
-			return true
-		}
-		i = at + 1
-	}
-}
-
-// nameByte is a byte a file name continues with.
-func nameByte(b byte) bool {
-	return b == '_' || b == '-' || b == '.' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
-}
-
 // BuildFile is a build file Schemas reads to learn which schemas the build
 // generates code from.
 func BuildFile(p string) bool {
@@ -445,7 +426,7 @@ func Schemas(files []File, builds map[string][]byte) (kept []File, contracts map
 	all := strings.ToLower(text.String())
 	named := map[string]bool{}
 	for _, f := range files {
-		if wsdlLike(f.Path) && namedIn(all, strings.ToLower(path.Base(f.Path))) {
+		if wsdlLike(f.Path) && coderead.NamedIn(all, strings.ToLower(path.Base(f.Path))) {
 			named[f.Path] = true
 		}
 	}
