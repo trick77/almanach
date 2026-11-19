@@ -68,6 +68,11 @@ func statementNamed(t *testing.T, page store.Page, name string) store.Statement 
 // epoch, three calls in the ledger, the restyle's by step.
 func TestRestyle_SplitsAndCreditsNothing(t *testing.T) {
 	x := restyleWorld(t)
+	pkey := pageKey(store.ScopeProject, "tools", "")
+	before := x.st.pages[pkey]
+	before.Statements = append(before.Statements, store.Statement{ID: "s9", Kind: "flow", Name: "Durchlauf", Text: "Von svc zu web.",
+		Diagram: drawnMap("svc"), Area: "Ablauf"})
+	x.st.pages[pkey] = before
 	x.models.restyles = []inference.RestyleResult{
 		{Call: called, Patch: inference.Patch{Summary: ref("svc rechnet ab, siehe «Abrechnung»."),
 			Statements: []inference.Statement{{ID: ref("s1"), Kind: "component", Name: "Kern", Text: "Der Kern; sein Ablauf ist «Abrechnung».",
@@ -104,8 +109,14 @@ func TestRestyle_SplitsAndCreditsNothing(t *testing.T) {
 		!strings.Contains(p, "Learned from pull requests.") || strings.Contains(p, "tools/svc#7") {
 		t.Errorf("repository restyle prompt:\n%s", p)
 	}
-	if p := x.models.prompts[1]; !strings.Contains(p, "Werkzeuge.") || !strings.Contains(p, "`svc`, `web`") {
+	if p := x.models.prompts[1]; !strings.Contains(p, "Werkzeuge.") || !strings.Contains(p, "`svc`, `web`") ||
+		strings.Count(p, diagramKept) != 1 || strings.Contains(p, "Diagram: {") {
 		t.Errorf("project restyle prompt:\n%s", p)
+	}
+	// The cap sized on the page with its diagram's JSON, as the caps were
+	// measured, though the prompt leaves it out.
+	if got, want := x.models.restyleChars[1], len(describePage(before, restyleSized)); got != want || want <= len(describePage(before, restyleView)) {
+		t.Errorf("project restyle sized %d chars, want %d (with the diagram's JSON)", got, want)
 	}
 
 	page := x.repoPage()
@@ -164,6 +175,12 @@ func TestRestyle_KeepsWhatItWouldLose(t *testing.T) {
 	}
 	if rule := statementNamed(t, page, "Anmeldung"); rule.Text != "Nur wer angemeldet ist." || rule.Diagram == nil {
 		t.Errorf("s2 = %+v, want the rewording with its diagram", rule)
+	}
+	// The prompt says the diagram is kept and carries none of its JSON: a
+	// restyle keeps it whatever it returns, the JSON would be paid for
+	// nothing.
+	if p := x.models.prompts[0]; strings.Count(p, diagramKept) != 1 || strings.Contains(p, "Diagram: {") {
+		t.Errorf("repository restyle prompt shows the diagram as:\n%s", p)
 	}
 	if r := x.run(); r.Step != store.RestyleMapStep {
 		t.Errorf("run step = %d at the map, want %d", r.Step, store.RestyleMapStep)

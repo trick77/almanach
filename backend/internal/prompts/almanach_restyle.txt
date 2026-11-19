@@ -35,7 +35,7 @@ A statement changes its kind only where it plainly is another (a `rule` that sta
 
 {diagram_rules}
 
-A statement's stored diagram is shown as JSON and stays as it is, whatever you return for it: `diagram` is `null` there. A diagram only for a statement you add, where the diagram rules allow one.
+A statement marked `Diagram: kept` has a stored diagram that stays as it is, whatever you return and whatever its text becomes: `diagram` is `null` there, never redrawn, never `none`; the diagram rules' returning a diagram to keep it does not apply here. A diagram only for a statement you add, where the diagram rules allow one.
 
 ## The layout
 

@@ -128,7 +128,7 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 	if !ok {
 		w.log.InfoContext(ctx, at+": no repository page yet, nothing to restyle")
 	} else {
-		parts, shown := restyleCut(page, w.base.Describer.RestyleLimits().PartChars)
+		parts, sized := restyleCut(page, w.base.Describer.RestyleLimits().PartChars)
 		if parts != nil {
 			return w.restylePart(ctx, r, plan, page, parts)
 		}
@@ -139,16 +139,16 @@ func (w *Worker) restyleRepo(ctx context.Context, r *store.BaselineRun, plan run
 		if r.Calls >= w.base.Limits.MaxCalls {
 			return fmt.Errorf("no call left for the restyle")
 		}
-		if err := w.tooLarge(plan, "the repository page", len(shown)); err != nil {
+		if err := w.tooLarge(plan, "the repository page", sized); err != nil {
 			return err
 		}
-		res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, shown, w.limits, nil), len(shown), false)
+		res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, describePage(page, restyleView), w.limits, nil), sized, false)
 		okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 		if err != nil {
 			return err
 		}
 		if !okCall {
-			w.logRestyledPage(ctx, at, page, len(shown), res.Outcome)
+			w.logRestyledPage(ctx, at, page, sized, res.Outcome)
 			return callFailed("the restyle call", res.Call)
 		}
 		if out, err = w.restyled(ctx, at, *r, store.ScopeRepository, page, res); err != nil {
@@ -177,8 +177,8 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		w.log.WarnContext(ctx, at+" skipped: the run's calls are spent, still due")
 		return w.restyleMap(ctx, r, plan)
 	}
-	shown := describeTaught(page)
-	if err := w.tooLarge(plan, "the project page", len(shown)); err != nil {
+	sized := len(describePage(page, restyleSized))
+	if err := w.tooLarge(plan, "the project page", sized); err != nil {
 		return err
 	}
 	// The active source repositories, every one of them: the run's own is
@@ -192,13 +192,13 @@ func (w *Worker) restyleProject(ctx context.Context, r *store.BaselineRun, plan 
 		return err
 	}
 	ctxt := &projectContext{repos: otherRepos(repos, ""), contracts: otherContracts(repos, ""), inner: inner, slugs: slugs(repos)}
-	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, shown, w.limits, ctxt), len(shown), true)
+	res := w.base.Describer.Restyle(ctx, renderRestyle(*r, page, describePage(page, restyleView), w.limits, ctxt), sized, true)
 	okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 	if err != nil {
 		return err
 	}
 	if !okCall {
-		w.logRestyledPage(ctx, at, page, len(shown), res.Outcome)
+		w.logRestyledPage(ctx, at, page, sized, res.Outcome)
 		return callFailed("the project restyle call", res.Call)
 	}
 	out, err := w.restyled(ctx, at, *r, store.ScopeProject, page, res)
@@ -226,7 +226,7 @@ func (w *Worker) tooLarge(plan runPlan, what string, chars int) error {
 // answer is held against (a runaway of 2026-11-10 wrote 49k tokens for an
 // 18k-token prompt). Only for an answer cut or off its schema: a gateway's
 // day or a shutdown says nothing of the page.
-func (w *Worker) logRestyledPage(ctx context.Context, at string, page store.Page, shown int, outcome inference.Outcome) {
+func (w *Worker) logRestyledPage(ctx context.Context, at string, page store.Page, sized int, outcome inference.Outcome) {
 	if outcome != inference.OutcomeTooLong && outcome != inference.OutcomeUnparseable {
 		return
 	}
@@ -236,8 +236,8 @@ func (w *Worker) logRestyledPage(ctx context.Context, at string, page store.Page
 			flows++
 		}
 	}
-	w.log.WarnContext(ctx, fmt.Sprintf("%s: the call failed on a page of %s (%s), %d chars of prose, %d chars as shown",
-		at, plural(len(page.Statements), "statement"), plural(flows, "flow"), prose(page.Summary, page.Statements), shown))
+	w.log.WarnContext(ctx, fmt.Sprintf("%s: the call failed on a page of %s (%s), %d chars of prose, %d chars as sized",
+		at, plural(len(page.Statements), "statement"), plural(flows, "flow"), prose(page.Summary, page.Statements), sized))
 }
 
 // writeRestyle writes a restyle step with the run's progress and the page's
@@ -532,10 +532,10 @@ type projectContext struct {
 	slugs            []string
 }
 
-// renderRestyle is a restyle call's prompt: the page as the steps show it
-// (shown, describeTaught's: which statements pull requests taught, without
-// their keys); with project, the project page's, with what it judges the
-// shape by.
+// renderRestyle is a restyle call's prompt: the page as restyleView shows
+// it (shown: which statements pull requests taught, without their keys,
+// and only that a diagram is stored); with project, the project page's,
+// with what it judges the shape by.
 func renderRestyle(r store.BaselineRun, page store.Page, shown string, l config.Limits, project *projectContext) string {
 	if project == nil {
 		return renderRestylePart(r, shown, "", l)
@@ -563,34 +563,35 @@ func renderRestylePart(r store.BaselineRun, shown, part string, l config.Limits)
 type restylePiece struct {
 	statements []store.Statement
 	summary    bool
-	// chars is the part as shown, about: its statements' and the summary's.
+	// chars is the part as sized (restyleSized), about: its statements' and
+	// the summary's.
 	chars int
 }
 
 // restyleCut is a repository page too large for one restyle answer in
-// parts of at most budget chars as shown (inference.RestyleLimits'
-// PartChars, by the model), nil for a page that fits one call; shown is
-// then the whole page as describeTaught shows it, for that one call, and ""
-// with parts. Statements keep the page's order, an area's together
+// parts of at most budget chars as sized (restyleSized; inference.
+// RestyleLimits' PartChars, by the model), nil for a page that fits one
+// call; sized is then the whole page's size, for that one call's cap, and
+// 0 with parts. Statements keep the page's order, an area's together
 // while they fit (the page stands in its areas' order, baseline.Arrange):
 // one area too large is split by its statements, one statement too large
 // is a part of its own. The summary goes with the first statements, never
 // a part alone (a part with no statements is told every one is new). A
 // page from before areas is cut the same, its statements without one a run
 // of their own: each part lays its own out.
-func restyleCut(page store.Page, budget int) (parts []restylePiece, shown string) {
+func restyleCut(page store.Page, budget int) (parts []restylePiece, sized int) {
 	// Sized by statement, the whole page rendered only for the one call: a
 	// restyle in parts cuts the page again on every part's step.
 	sizes := make([]int, len(page.Statements))
 	total := len(page.Summary)
 	for i, s := range page.Statements {
 		var b strings.Builder
-		describeStatement(&b, s, pageView{prs: prTaught})
+		describeStatement(&b, s, restyleSized)
 		sizes[i] = b.Len()
 		total += sizes[i]
 	}
 	if total <= budget {
-		return nil, describeTaught(page)
+		return nil, len(describePage(page, restyleSized))
 	}
 	cur := restylePiece{summary: true, chars: len(page.Summary)}
 	flush := func() {
@@ -619,9 +620,9 @@ func restyleCut(page store.Page, budget int) (parts []restylePiece, shown string
 	flush()
 	if len(parts) < 2 {
 		// One statement alone too large: one call, a part being no less.
-		return nil, describeTaught(page)
+		return nil, len(describePage(page, restyleSized))
 	}
-	return parts, ""
+	return parts, 0
 }
 
 // cutIDs is the parts' statement ids, what a restyle in parts keeps with
@@ -638,10 +639,12 @@ func cutIDs(parts []restylePiece) [][]string {
 
 // restylePrompt is a part's prompt: its statements in full, the summary
 // with the first, every other statement of the page by id, kind, name and
-// area; and its cap's size, the part as shown without that list.
+// area; and its cap's size, the part as sized (restyleSized) without that
+// list.
 func restylePrompt(r store.BaselineRun, page store.Page, parts []restylePiece, i int, l config.Limits) (string, int) {
 	p := parts[i]
-	shown := describeTaught(p.page(page))
+	shown := describePage(p.page(page), restyleView)
+	sized := len(describePage(p.page(page), restyleSized))
 	mine := map[string]bool{}
 	for _, s := range p.statements {
 		mine[s.ID] = true
@@ -661,7 +664,7 @@ func restylePrompt(r store.BaselineRun, page store.Page, parts []restylePiece, i
 	if !p.summary {
 		part += prompts.RestyleLaterPart
 	}
-	return renderRestylePart(r, shown+"\n## Other parts of the description\n\n"+others.String(), part, l), len(shown)
+	return renderRestylePart(r, shown+"\n## Other parts of the description\n\n"+others.String(), part, l), sized
 }
 
 // restylePart is a step of a restyle in parts: the next part's call, its
@@ -712,7 +715,7 @@ func (w *Worker) restylePart(ctx context.Context, r *store.BaselineRun, plan run
 			return fmt.Errorf("the run's calls are spent after %d of %s, the next try goes on", i, plural(len(parts), "part"))
 		}
 		prompt, chars := restylePrompt(*r, page, parts, i, w.limits)
-		w.log.InfoContext(ctx, fmt.Sprintf("%s: %s, %d chars as shown", at, label, chars))
+		w.log.InfoContext(ctx, fmt.Sprintf("%s: %s, %d chars as sized", at, label, chars))
 		res := w.base.Describer.Restyle(ctx, prompt, chars, false)
 		okCall, err := w.call(ctx, r, store.PurposeRestyle, res.Call)
 		if err != nil {

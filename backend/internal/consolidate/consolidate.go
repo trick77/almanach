@@ -2003,7 +2003,25 @@ type pageView struct {
 	// noDiagrams leaves the statements' diagrams out: a reader that writes
 	// none (a brief) pays for no JSON it ignores.
 	noDiagrams bool
+	// keptDiagrams shows a stored diagram only as kept (diagramKept): a
+	// restyle keeps every one whatever it returns (restyled), so its JSON
+	// would be input paid for nothing.
+	keptDiagrams bool
 }
+
+// restyleView is how a restyle's prompt shows a page: which statements
+// pull requests taught, and only that a diagram is stored.
+var restyleView = pageView{prs: prTaught, keptDiagrams: true}
+
+// restyleSized is how a restyle sizes a page: its cap, its parts
+// (restyleCut) and the one-call ceiling (tooLarge). The diagrams' JSON
+// included, though the prompt leaves it out: the answer-to-page ratio the
+// caps rest on was measured on pages shown with it (2026-11-10), and a cut
+// that stays the same keeps the answers a restyle in parts already paid.
+var restyleSized = pageView{prs: prTaught}
+
+// diagramKept marks a statement whose stored diagram a restyle keeps.
+const diagramKept = "\nDiagram: kept\n"
 
 // prShown is how a statement's pull requests are shown: not at all, by key,
 // or only that some taught it.
@@ -2057,7 +2075,13 @@ func describeStatement(b *strings.Builder, s store.Statement, v pageView) {
 	if len(s.Files) > 0 {
 		fmt.Fprintf(b, "\nFiles: %s\n", strings.Join(s.Files, ", "))
 	}
-	if !v.noDiagrams {
+	switch {
+	case v.noDiagrams:
+	case v.keptDiagrams:
+		if s.Diagram != nil && !diagram.IsSentinel(s.Diagram) {
+			b.WriteString(diagramKept)
+		}
+	default:
 		b.WriteString(diagramLine(s.Diagram))
 	}
 	if v.prs != prNone {

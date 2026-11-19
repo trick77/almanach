@@ -113,6 +113,32 @@ func TestRestyle_LargePageInParts(t *testing.T) {
 	}
 }
 
+// A part's prompt says a stored diagram is kept and carries none of its
+// JSON; the cut and each part's cap are sized with it, as the caps were
+// measured, so a cut stays what it was.
+func TestRestyle_PartsSizedWithDiagrams(t *testing.T) {
+	x := bigWorld(t)
+	key := pageKey(store.ScopeRepository, "tools", "svc")
+	page := x.st.pages[key]
+	page.Statements[3].Diagram = drawnMap("svc")
+	x.st.pages[key] = page
+	x.models.restyles = []inference.RestyleResult{part1, part2}
+	x.w.drain(context.Background())
+
+	parts, _ := restyleCut(page, inference.DefaultRestyleLimits.PartChars)
+	if got := cutIDs(parts); !slices.EqualFunc(got, bigCut, slices.Equal[[]string]) {
+		t.Fatalf("cut = %v, want %v", got, bigCut)
+	}
+	second := x.models.prompts[1]
+	if strings.Count(second, diagramKept) != 1 || strings.Contains(second, "Diagram: {") {
+		t.Errorf("second part's prompt shows the diagram's JSON, or not that it is kept")
+	}
+	sized, shown := len(describePage(parts[1].page(page), restyleSized)), len(describePage(parts[1].page(page), restyleView))
+	if got := x.models.restyleChars[1]; got != sized || sized <= shown {
+		t.Errorf("second part sized %d chars, want %d with the diagram's JSON (%d without)", got, sized, shown)
+	}
+}
+
 // bigCut is bigWorld's parts.
 var bigCut = [][]string{{"s1", "s2"}, {"s3", "s4"}}
 
