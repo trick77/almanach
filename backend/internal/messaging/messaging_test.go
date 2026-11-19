@@ -98,6 +98,23 @@ func TestParseFilesAndOnce(t *testing.T) {
 	}
 }
 
+// A Spring properties file reads as Java reads it: `key value` and a
+// continued line are properties too (the old line reader dropped the one
+// and cut the other).
+func TestParseSpringPropertiesAsJava(t *testing.T) {
+	files := map[string][]byte{
+		"c/application.properties": []byte("orders.topic t.one \nother.topic=t.\\\n  two\n"),
+	}
+	r := Parse(files)
+	var got []string
+	for _, tp := range r.Topics {
+		got = append(got, tp.Name)
+	}
+	if !reflect.DeepEqual(got, []string{"t.one", "t.two"}) {
+		t.Errorf("topics = %v, want t.one and t.two", got)
+	}
+}
+
 // A base class sends to a getter each subclass overrides: every override's
 // topic is produced.
 func TestParseGetterOverrides(t *testing.T) {

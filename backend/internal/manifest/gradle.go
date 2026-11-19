@@ -227,7 +227,7 @@ func gradle(files map[string][]byte) gradleRead {
 		}
 		switch b := path.Base(p); {
 		case b == "gradle.properties":
-			dir(d).props = plainValues(properties(body))
+			dir(d).props = plainValues(Properties(body))
 		case gradleBuild(b):
 			// Groovy's first, as Gradle looks for it first.
 			if b == "build.gradle.kts" && has(path.Join(d, "build.gradle")) {

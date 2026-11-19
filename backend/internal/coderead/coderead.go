@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/trick77/almanach/internal/manifest"
 )
 
 // Resolver turns an expression in code into a string: a literal, a
@@ -104,10 +106,19 @@ func (r *Resolver) learn(p string, body []byte) {
 		if r.config[mod] == nil {
 			r.config[mod] = map[string]string{}
 		}
-		one := map[string]string{}
+		// The one properties reader the build files use too: `key value`,
+		// a continued line and the escapes read as Spring reads them.
+		var one map[string]string
 		if strings.HasSuffix(p, ".properties") {
-			Properties(body, one)
+			one = manifest.Properties(body)
+			// Trailing blanks off, as the old line reader took them: a stray
+			// space after a topic name would part it from the same name
+			// in YAML or code.
+			for k, v := range one {
+				one[k] = strings.TrimRight(v, " \t\f")
+			}
 		} else {
+			one = map[string]string{}
 			FlatYAML(body, one)
 		}
 		for k, v := range one {
@@ -459,23 +470,6 @@ func flatten(prefix string, v any, out map[string]string) {
 		}
 		if len(parts) > 0 {
 			out[prefix] = strings.Join(parts, ",")
-		}
-	}
-}
-
-// Properties reads key=value lines of a .properties file.
-func Properties(body []byte, out map[string]string) {
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line[0] == '#' || line[0] == '!' {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			k, v, ok = strings.Cut(line, ":")
-		}
-		if ok {
-			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 	}
 }
