@@ -360,7 +360,13 @@ type CallCost struct {
 func (c CallCost) LogLine() string {
 	cost := "unpriced"
 	if c.NanoUSD != nil {
-		cost = fmt.Sprintf("$%.3f", float64(*c.NanoUSD)/1e9)
+		// Integer to the mill, as store.USD: money never passes a float.
+		sign, nano := "", *c.NanoUSD
+		if nano < 0 {
+			sign, nano = "-", -nano
+		}
+		milli := (nano + 500_000) / 1_000_000
+		cost = fmt.Sprintf("%s$%d.%03d", sign, milli/1000, milli%1000)
 	}
 	return fmt.Sprintf("model=%s in=%d cached=%d out=%d cost=%s call-id=%s", c.Model, c.InputTokens, c.CachedTokens, c.OutputTokens, cost, c.CallID)
 }

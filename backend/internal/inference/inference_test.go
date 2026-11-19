@@ -593,3 +593,24 @@ func TestMergeExpiredContext(t *testing.T) {
 		t.Fatalf("Outcome = %s, err %v", res.Outcome, res.Err)
 	}
 }
+
+// The cost goes to the log to the mill, rounded, never through a float: a
+// float64 holds no nano-USD sum past 2^53 exactly.
+func TestCallCost_LogLineCost(t *testing.T) {
+	for nano, want := range map[int64]string{
+		0:                     "cost=$0.000 ",
+		499_999:               "cost=$0.000 ",
+		500_000:               "cost=$0.001 ",
+		1_234_567_890:         "cost=$1.235 ",
+		9_007_199_254_500_001: "cost=$9007199.255 ",
+		-2_500_000:            "cost=-$0.003 ",
+	} {
+		n := nano
+		if got := (CallCost{NanoUSD: &n}).LogLine(); !strings.Contains(got, want) {
+			t.Errorf("%d: %q, want %q in it", nano, got, want)
+		}
+	}
+	if got := (CallCost{}).LogLine(); !strings.Contains(got, "cost=unpriced ") {
+		t.Errorf("unpriced: %q", got)
+	}
+}
