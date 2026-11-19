@@ -137,13 +137,6 @@
   font-display: swap;
 }
 @font-face {
-  font-family: "Anthropic Serif";
-  src: url("./fonts/SerifWebVariable-TextRegularItalic.woff2") format("woff2");
-  font-weight: 300 800;
-  font-style: italic;
-  font-display: swap;
-}
-@font-face {
   font-family: "Anthropic Mono";
   src: url("./fonts/MonoVariableVariable-Regular.woff2") format("woff2");
   font-weight: 400;
