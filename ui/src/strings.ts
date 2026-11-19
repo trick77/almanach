@@ -209,7 +209,8 @@ export const S = {
       declares > 0 ? `${offers} · ${declares}` : `${offers}`,
   },
   common: {
-    loading: "Lädt …",
+    // The breadcrumb's name for screen readers.
+    crumbs: "Pfad",
     none: "keine",
     never: "nie",
     sep: "·",
@@ -302,12 +303,6 @@ export const S = {
       "Die erste Beschreibung schreibt Almanach aus dem Code, sobald der Clone bereit ist, oder der nächste gemergte Pull Request.",
     lastMerge: "letzter Merge",
     usedBy: (n: number) => `Verwendet von ${n}`,
-    problems: (n: number) =>
-      n === 0
-        ? "keine Problemzonen"
-        : n === 1
-          ? "1 Problemzone"
-          : `${n} Problemzonen`,
   },
   project: {
     failed: "Das Projekt konnte nicht geladen werden.",
@@ -454,6 +449,9 @@ export const S = {
   },
   repo: {
     failed: "Das Repository konnte nicht geladen werden.",
+    // The API sends the newest notes only; the tab counts them all.
+    notesCut: (shown: number, total: number) =>
+      `Die neusten ${shown} von ${total} Notizen.`,
     project: "Projekt",
     single: "Projekt aus einem Repository",
     map: "Aufbau",

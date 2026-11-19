@@ -387,6 +387,8 @@ function entrySteps(
           <ProblemsSection
             problems={data.problems}
             windowDays={data.problem_window_days}
+            projectKey={data.key}
+            linkable={new Set(data.repos.map((r) => r.slug))}
             first
           />
           <div className="mt-3">{hurt.body}</div>
