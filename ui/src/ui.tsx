@@ -640,7 +640,7 @@ export function Skeleton() {
 /** Crumbs is the breadcrumb: links, then the current name. */
 export function Crumbs({ items }: { items: { label: string; to?: string }[] }) {
   return (
-    <nav aria-label="Pfad" className="mb-2.5 text-[13px] text-faint">
+    <nav aria-label={S.common.crumbs} className="mb-2.5 text-[13px] text-faint">
       {items.map((it, i) => (
         <span key={i}>
           {i > 0 && <span className="mx-1.5">/</span>}

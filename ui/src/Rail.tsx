@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -306,7 +307,9 @@ function useActiveSection(
   return active;
 }
 
-/** Tabs is the page's views, under its header. */
+/** Tabs is the page's views, under its header. The keys a tablist takes:
+ *  the arrows step to the next or previous tab (wrapping), Home and End go
+ *  to the first and the last; only the selected tab is in the tab order. */
 export function Tabs({
   tabs,
   value,
@@ -316,11 +319,38 @@ export function Tabs({
   value: string;
   onChange: (id: string) => void;
 }) {
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    // A modifier is the browser's (Alt+ArrowLeft goes back), a held key
+    // acts once (each step mounts a whole panel).
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.repeat) return;
+    if (tabs.length === 0) return;
+    const at = Math.max(
+      0,
+      tabs.findIndex((t) => t.id === value),
+    );
+    const to =
+      e.key === "ArrowRight"
+        ? (at + 1) % tabs.length
+        : e.key === "ArrowLeft"
+          ? (at - 1 + tabs.length) % tabs.length
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? tabs.length - 1
+              : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    onChange(tabs[to].id);
+    e.currentTarget
+      .querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      [to]?.focus();
+  };
   return (
     <div
       role="tablist"
       aria-label={S.tabs.label}
       className="mt-5 flex gap-0.5 border-b border-border"
+      onKeyDown={onKeyDown}
     >
       {tabs.map((t) => (
         <button
@@ -328,6 +358,7 @@ export function Tabs({
           type="button"
           role="tab"
           aria-selected={t.id === value}
+          tabIndex={t.id === value ? 0 : -1}
           onClick={() => onChange(t.id)}
           className={
             "-mb-px border-b-2 px-3 py-[7px] text-[14px] " +

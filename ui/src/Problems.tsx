@@ -1,10 +1,11 @@
 import type { Problem } from "./api";
 import { causeLabel, problemTone, shortDay } from "./format";
-import { notePathFor } from "./routing";
+import { notePathFor, repoPath } from "./routing";
 import { S } from "./strings";
 import {
   Chip,
   Empty,
+  Link,
   Pill,
   eyebrowBase,
   mono,
@@ -25,11 +26,15 @@ export function ProblemsSection({
   windowDays,
   repoColumn = true,
   first = false,
+  projectKey,
+  linkable,
 }: {
   problems: Problem[];
   windowDays: number;
   repoColumn?: boolean;
   first?: boolean;
+  projectKey?: string;
+  linkable?: ReadonlySet<string>;
 }) {
   if (problems.length === 0) return null;
   return (
@@ -40,20 +45,31 @@ export function ProblemsSection({
           {S.project.problemsWindow(windowDays)}
         </span>
       </div>
-      <Problems problems={problems} repoColumn={repoColumn} />
+      <Problems
+        problems={problems}
+        repoColumn={repoColumn}
+        projectKey={projectKey}
+        linkable={linkable}
+      />
     </>
   );
 }
 
 /** Problems is the problem areas, bugfixes per shared directory: the
  *  project page's for every repository, a repository page's for its own,
- *  without the repository column. */
+ *  without the repository column. With projectKey, a repository in
+ *  linkable (the ones the wiki shows) names its page by a link; one that
+ *  left (deactivated, its bugfixes still counted) stays plain text. */
 export function Problems({
   problems,
   repoColumn = true,
+  projectKey,
+  linkable,
 }: {
   problems: Problem[];
   repoColumn?: boolean;
+  projectKey?: string;
+  linkable?: ReadonlySet<string>;
 }) {
   if (problems.length === 0) return <Empty>{S.project.noProblems}</Empty>;
   const [hRepo, hArea, hComp, hFixes, hCause, hPosted, hLast] =
@@ -75,7 +91,17 @@ export function Problems({
         <tbody>
           {problems.map((p) => (
             <tr key={p.repo_slug + "|" + p.area}>
-              {repoColumn && <td className={tdMono}>{p.repo_slug}</td>}
+              {repoColumn && (
+                <td className={tdMono}>
+                  {projectKey && linkable?.has(p.repo_slug) ? (
+                    <Link to={repoPath(projectKey, p.repo_slug)}>
+                      {p.repo_slug}
+                    </Link>
+                  ) : (
+                    p.repo_slug
+                  )}
+                </td>
+              )}
               <td className={tdMono}>
                 {p.area === "" ? S.project.rootArea : p.area}
               </td>

@@ -71,6 +71,10 @@ import {
 /** The sections' ids, the rail's anchors: the path's steps, the facts on
  *  the reference tab (fact tables elsewhere link to them), the history's
  *  lists. */
+/** NOTES_SHOWN is how many notes the repository route sends, the newest
+ *  (backend/internal/api/api.go, Store.Notes' limit). */
+const NOTES_SHOWN = 100;
+
 const ids = {
   what: "what",
   map: "structure",
@@ -620,6 +624,15 @@ function History({ data, current }: { data: RepoDetail; current: number }) {
     <>
       <section id={ids.notes} className="scroll-mt-16">
         <div className={eyebrow}>{S.repo.notes}</div>
+        {/* Above the table: under a hundred rows it would go unseen. Only
+            at the API's cap: the count is a query of its own, a note
+            stored between the two is no cut. */}
+        {data.notes.length >= NOTES_SHOWN &&
+          data.notes.length < data.notes_total && (
+            <p className="mb-2 text-[12.5px] text-muted">
+              {S.repo.notesCut(data.notes.length, data.notes_total)}
+            </p>
+          )}
         <NotesTable projectKey={data.project_key} notes={data.notes} />
       </section>
 
