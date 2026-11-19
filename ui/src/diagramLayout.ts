@@ -238,10 +238,15 @@ export function labelBox(text: string): {
 
 // ---- dispatch ----
 
-/** layoutFlow places a flowchart. */
-export async function layoutFlow(ir: FlowIR, elk: Elk): Promise<FlowLayout> {
+/** layoutFlow places a flowchart. The engine is asked for only when the
+ *  flow needs it: a mapping and a spine are laid out by code, and the
+ *  engine's chunk is large. */
+export async function layoutFlow(
+  ir: FlowIR,
+  elk: () => Promise<Elk>,
+): Promise<FlowLayout> {
   if (isMapping(ir)) return layoutMapping(ir);
-  return layoutSpine(ir) ?? layoutElk(ir, elk);
+  return layoutSpine(ir) ?? layoutElk(ir, await elk());
 }
 
 // ---- the spine ----
