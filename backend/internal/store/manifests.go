@@ -298,8 +298,9 @@ func (s *Store) InnerEdges(ctx context.Context, key string) ([]Edge, error) {
 
 // sourceSummaries is the current summaries of the source repositories
 // named, in one query, "" before a first description. By the names the
-// graph read a moment before: a rename between the two reads leaves one
-// summary out of one prompt, the next step reads it again.
+// graph read a moment before, resolved through the names a project and a
+// repository ever had: a rename between the two reads still finds the
+// repository, keyed by the name asked for.
 func (s *Store) sourceSummaries(ctx context.Context, refs []RepoRef) (map[RepoRef]string, error) {
 	pairs := make([][2]string, len(refs))
 	for i, r := range refs {
@@ -310,12 +311,12 @@ func (s *Store) sourceSummaries(ctx context.Context, refs []RepoRef) (map[RepoRe
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.key, r.slug, COALESCE(rv.summary, '')
+		SELECT j.value ->> 0, j.value ->> 1, COALESCE(rv.summary, '')
 		  FROM json_each(?) j
-		  JOIN projects p ON p.key = j.value ->> 0
-		  JOIN repos r ON r.project_id = p.id AND r.slug = j.value ->> 1
-		  JOIN source_repos sr ON sr.repo_id = r.id
-		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = r.project_id AND pg.repo_id = r.id
+		  JOIN project_names pn ON pn.key = j.value ->> 0
+		  JOIN repo_names rn ON rn.project_id = pn.project_id AND rn.slug = j.value ->> 1
+		  JOIN source_repos sr ON sr.repo_id = rn.repo_id
+		  LEFT JOIN pages pg ON pg.scope = 'repository' AND pg.project_id = rn.project_id AND pg.repo_id = rn.repo_id
 		  LEFT JOIN revisions rv ON rv.id = pg.current_revision_id`, named)
 	if err != nil {
 		return nil, err

@@ -191,7 +191,8 @@ func (s *Store) DepartureDue(ctx context.Context, key string) (bool, error) {
 
 // SettleDepartures records that a call with these deactivated repositories
 // in its prompt answered: the page is taken to name them no more. Only the
-// ones named: one deactivated during the call is still due.
+// ones named: one deactivated during the call is still due. By any slug
+// they had: one renamed during the call is settled all the same.
 func (s *Store) SettleDepartures(ctx context.Context, key string, slugs []string) error {
 	named, err := jsonOf(slugs)
 	if err != nil {
@@ -200,6 +201,7 @@ func (s *Store) SettleDepartures(ctx context.Context, key string, slugs []string
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE source_repos SET departure_due = 0
 		 WHERE deactivated_at IS NOT NULL AND project_id = `+projectByName+`
-		   AND repo_id IN (SELECT r.id FROM repos r WHERE r.slug IN (SELECT value FROM json_each(?)))`, key, named)
+		   AND repo_id IN (SELECT rn.repo_id FROM repo_names rn
+		                    WHERE rn.project_id = source_repos.project_id AND rn.slug IN (SELECT value FROM json_each(?)))`, key, named)
 	return err
 }
