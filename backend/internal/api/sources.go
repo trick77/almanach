@@ -770,9 +770,10 @@ func (d Deps) writeSource(w http.ResponseWriter, r *http.Request, key string, st
 	httpx.WriteJSON(w, status, out)
 }
 
-// deleteSource removes the folder first, then the rows: a folder left
-// behind by a failed row delete is re-cloned by the next cycle, which is
-// harmless; rows gone with the folder still there would be an orphan.
+// deleteSource removes the folder first, then the rows, then the folder
+// again: a folder left behind by a failed row delete is re-cloned by the
+// next cycle, which is harmless; rows gone with the folder still there
+// would be an orphan.
 func (d Deps) deleteSource(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.reader(r)
@@ -790,6 +791,12 @@ func (d Deps) deleteSource(w http.ResponseWriter, r *http.Request) {
 	if _, err := d.Sources.Store.DeleteSource(ctx, src.ProjectKey); err != nil {
 		httpx.ServerError(w, r, err, "delete source")
 		return
+	}
+	// Once more after the rows, as deactivateRepo: a cycle that read the
+	// rows before they went cloned the folders back, with no row left to
+	// remove them.
+	if err := d.Sources.Git.RemoveProject(src.ProjectID); err != nil {
+		d.Log.WarnContext(ctx, "source_deleted: clones not removed again", "project", src.ProjectKey, "err", err.Error())
 	}
 	d.Log.InfoContext(ctx, "source_deleted", "project", src.ProjectKey, "user", d.user(r))
 	w.WriteHeader(http.StatusNoContent)
@@ -985,6 +992,10 @@ func (d Deps) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		httpx.ServerError(w, r, err, "delete repo")
 		return
+	}
+	// Once more after the row (deleteSource's reason).
+	if err := d.Sources.Git.Remove(rp.ProjectID, rp.RepoID); err != nil {
+		d.Log.WarnContext(ctx, "source_repo_deleted: clone not removed again", "project", src.ProjectKey, "repo", rp.Slug, "err", err.Error())
 	}
 	d.Log.InfoContext(ctx, "source_repo_deleted", "project", src.ProjectKey, "repo", rp.Slug, "user", d.user(r))
 	w.WriteHeader(http.StatusNoContent)
