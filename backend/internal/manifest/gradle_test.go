@@ -216,7 +216,7 @@ func TestStripComments(t *testing.T) {
 }
 
 func TestProperties(t *testing.T) {
-	got := properties([]byte("# comment\n! also\n  group = com.acme\nname:x\nspaced value here\nlong = a\\\n    b\nesc=\\u0041\\=\\\\\nempty\ngroup=last\n"))
+	got := Properties([]byte("# comment\n! also\n  group = com.acme\nname:x\nspaced value here\nlong = a\\\n    b\nesc=\\u0041\\=\\\\\nempty\ngroup=last\n"))
 	want := map[string]string{"group": "last", "name": "x", "spaced": "value here", "long": "ab", "esc": `A=\`, "empty": ""}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("properties = %#v\nwant %#v", got, want)

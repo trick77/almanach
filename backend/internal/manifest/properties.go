@@ -2,11 +2,11 @@ package manifest
 
 import "strings"
 
-// properties reads a Java properties file (gradle.properties): `key=value`,
-// `key: value` or `key value`, `#` and `!` comments, a trailing backslash
-// joining the next line, `\uXXXX` and the usual escapes. A key twice: the
-// last one counts.
-func properties(body []byte) map[string]string {
+// Properties reads a Java properties file (gradle.properties, Spring's
+// application.properties): `key=value`, `key: value` or `key value`, `#`
+// and `!` comments, a trailing backslash joining the next line, `\uXXXX`
+// and the usual escapes. A key twice: the last one counts.
+func Properties(body []byte) map[string]string {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(body), "\r\n", "\n"), "\r", "\n")
 	out := map[string]string{}
 	var logical strings.Builder
