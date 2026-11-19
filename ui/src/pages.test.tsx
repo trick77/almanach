@@ -2853,8 +2853,8 @@ function answer(
 
 /** stubLocation swaps window.location for a plain object, so a test can
  *  see where the gate sends the browser; jsdom does not navigate. */
-function stubLocation(search = "", pathname = "/") {
-  const loc = { href: "/", pathname, search, hash: "", reload: vi.fn() };
+function stubLocation(search = "", pathname = "/", hash = "") {
+  const loc = { href: "/", pathname, search, hash, reload: vi.fn() };
   vi.stubGlobal("location", loc);
   return loc;
 }
@@ -2921,11 +2921,12 @@ describe("session gate", () => {
     ["none mode", anonymous],
     ["a session", { mode: "oidc", user: "jan" }],
   ])("ignores and strips the markers with %s", async (_, me) => {
-    window.history.replaceState({}, "", "/?signed_out=1&x=2");
+    window.history.replaceState({}, "", "/?signed_out=1&x=2#top");
     answer({ status: 200, body: me });
     render(<App />);
     expect(await screen.findByText("PAY")).toBeInTheDocument();
     expect(window.location.search).toBe("?x=2");
+    expect(window.location.hash).toBe("#top");
   });
 
   it("halts with a retry when /api/me answers no JSON", async () => {
@@ -2990,14 +2991,18 @@ describe("session gate", () => {
     expect(loc.reload).toHaveBeenCalled();
   });
 
-  it("takes the deep link along to the login", async () => {
-    const loc = stubLocation("?x=1&signed_in=no", "/projects/PAY");
+  it("takes the deep link along to the login, its hash too", async () => {
+    const loc = stubLocation(
+      "?x=1&signed_in=no",
+      "/projects/PAY",
+      "#description/s12",
+    );
     answer({ status: 401 });
     render(<App />);
     await waitFor(() =>
       expect(loc.href).toBe(
         "/api/auth/login?next=" +
-          encodeURIComponent("/projects/PAY?x=1&signed_in=no"),
+          encodeURIComponent("/projects/PAY?x=1&signed_in=no#description/s12"),
       ),
     );
   });
