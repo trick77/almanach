@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
-	"sort"
 
 	"github.com/trick77/almanach/internal/diagram"
 	"github.com/trick77/toolkit/llmwire"
@@ -346,14 +346,7 @@ func strict(name string, properties map[string]any) llmwire.ResponseFormat {
 
 // sortedKeys keeps the required list in one order on the wire, call after
 // call: the gateway's prefix cache keys on the bytes.
-func sortedKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
+func sortedKeys(m map[string]any) []string { return slices.Sorted(maps.Keys(m)) }
 
 func catalogueFormat() llmwire.ResponseFormat {
 	return strict(CatalogueSchemaName, map[string]any{
