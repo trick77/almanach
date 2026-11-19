@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path"
 	"regexp"
 	"runtime/debug"
@@ -896,7 +897,7 @@ func (w *Worker) readableAt(ctx context.Context, r *store.BaselineRun, commit st
 }
 
 // kib is a byte count as the log shows it.
-func kib(n int64) string { return fmt.Sprintf("%d kB", (n+512)/1024) }
+func kib(n int64) string { return fmt.Sprintf("%d kB", baseline.KiB(n)) }
 
 // reconcilePlan is a reconcile's catalogue: the documented run's plan, the
 // changes since its commit mapped onto it, new files placed by a catalogue
@@ -1702,17 +1703,8 @@ func (p *runPlan) skipAt(i int, code baseline.Skip) {
 // then is like any other.
 // TRANSITIONAL(cut-files): Remove when every documented plan carries Cuts.
 func newlyReadable(old runPlan, merged baseline.Plan, files, already []baseline.File) []baseline.File {
-	known := map[string]bool{}
-	for _, s := range old.Subjects {
-		for _, f := range s.Files {
-			known[f.Path] = true
-		}
-	}
-	for _, s := range merged.Subjects {
-		for _, f := range s.Files {
-			known[f.Path] = true
-		}
-	}
+	known := old.Held()
+	maps.Copy(known, merged.Held())
 	for _, p := range old.Unplaced {
 		known[p] = true
 	}
@@ -1731,12 +1723,7 @@ func newlyReadable(old runPlan, merged baseline.Plan, files, already []baseline.
 // evicted is the readable files the old plan held and the merged one no
 // longer does.
 func evicted(old, merged baseline.Plan, files []baseline.File) []baseline.File {
-	held := map[string]bool{}
-	for _, s := range merged.Subjects {
-		for _, f := range s.Files {
-			held[f.Path] = true
-		}
-	}
+	held := merged.Held()
 	readable := map[string]baseline.File{}
 	for _, f := range files {
 		readable[f.Path] = f

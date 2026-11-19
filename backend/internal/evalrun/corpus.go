@@ -7,10 +7,11 @@ package evalrun
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -292,11 +293,4 @@ func globRegexp(g string) *regexp.Regexp {
 	return regexp.MustCompile(b.String())
 }
 
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
+func sortedKeys(m map[string]bool) []string { return slices.Sorted(maps.Keys(m)) }
