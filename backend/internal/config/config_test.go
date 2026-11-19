@@ -107,8 +107,8 @@ func TestLoadDefaults(t *testing.T) {
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
-	if app.ProblemWindow != 90 || app.LogLevel != "INFO" {
-		t.Errorf("problem window / log level = %d %q", app.ProblemWindow, app.LogLevel)
+	if app.ProblemWindow != 90 {
+		t.Errorf("problem window = %d", app.ProblemWindow)
 	}
 }
 
@@ -120,7 +120,6 @@ func TestLoadOverrides(t *testing.T) {
 	env["BACKEND_DIAGRAM_MAX_NODES"] = "16"
 	env["BACKEND_DIAGRAM_MAX_EDGES"] = "8"
 	env["BACKEND_DIAGRAM_MAX_PER_PAGE"] = "0"
-	env["BACKEND_LOG_LEVEL"] = "DEBUG"
 	app, err := Load(lookup(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -132,8 +131,8 @@ func TestLoadOverrides(t *testing.T) {
 	if app.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", app.Limits, want)
 	}
-	if app.ProblemWindow != 30 || app.LogLevel != "DEBUG" {
-		t.Errorf("problem window / log level = %d %q", app.ProblemWindow, app.LogLevel)
+	if app.ProblemWindow != 30 {
+		t.Errorf("problem window = %d", app.ProblemWindow)
 	}
 }
 

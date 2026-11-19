@@ -247,7 +247,6 @@ type App struct {
 	ProblemWindow int
 	Sources       Sources
 	Baseline      Baseline
-	LogLevel      string
 	// MetricsToken is BACKEND_METRICS_TOKEN: a bearer that opens /metrics
 	// from anywhere; "" leaves it to a loopback caller. No team's bearer
 	// opens it: the metrics carry every project's spend.
@@ -290,7 +289,6 @@ func Load(lookup func(string) string) (*App, error) {
 			Router:         r.Bool("BACKEND_BASELINE_ROUTER", true),
 			Reconcile:      r.Duration("BACKEND_BASELINE_RECONCILE", 720*time.Hour),
 		},
-		LogLevel:     r.String("BACKEND_LOG_LEVEL", "INFO"),
 		MetricsToken: r.String("BACKEND_METRICS_TOKEN", ""),
 	}
 	// A bearer that opens every project's spend from anywhere: the session
