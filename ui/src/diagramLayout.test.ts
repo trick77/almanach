@@ -263,6 +263,31 @@ describe("zones and loops", () => {
   });
 });
 
+describe("layoutFlow", () => {
+  // The engine's chunk is large: a flow code lays out never asks for it.
+  it("asks for the engine only for a flow code cannot lay out", async () => {
+    let asked = 0;
+    const engine = async () => {
+      asked++;
+      return new ELK();
+    };
+    await layoutFlow(mapping, engine);
+    await layoutFlow(
+      flow([n("a"), n("b"), n("c")], [e("a", "b"), e("b", "c")]),
+      engine,
+    );
+    expect(asked).toBe(0);
+    await layoutFlow(
+      flow(
+        [n("a"), n("b"), n("c"), n("x")],
+        [e("a", "b"), e("b", "c"), e("a", "x"), e("x", "c")],
+      ),
+      engine,
+    );
+    expect(asked).toBe(1);
+  });
+});
+
 describe("layoutMapping", () => {
   it("knows a mapping from any other left-to-right flow", () => {
     expect(isMapping(mapping)).toBe(true);
@@ -298,7 +323,7 @@ describe("layoutElk", () => {
       [e("a", "b", "yes"), e("b", "c"), e("a", "x", "no"), e("x", "c")],
     );
     expect(layoutSpine(ir)).toBeNull();
-    const l = await layoutFlow(ir, new ELK());
+    const l = await layoutFlow(ir, async () => new ELK());
     expect(l.nodes).toHaveLength(4);
     expect(l.edges.every((r) => r.points.length >= 2)).toBe(true);
     expect(check(l)).toEqual([]);
@@ -599,7 +624,7 @@ describe("a state diagram's dots and choices", () => {
         ],
         [e("a", "c"), e("c", "b", "found"), e("c", "f", "missing")],
       ),
-      new ELK(),
+      async () => new ELK(),
     );
     const c = box(l, "c");
     expect([c.kind, c.w, c.h]).toEqual(["decision", 28, 28]);

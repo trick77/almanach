@@ -27,8 +27,9 @@ import { S } from "./strings";
 
 type Drawn = { svg: string; layout: FlowLayout | null };
 
-/** The layout engine is its own chunk, loaded on the first flow or entity
- * model: it is large, and a sequence never uses it. */
+/** The layout engine is its own chunk, loaded on the first entity model or
+ * flow that needs it: it is large, and a sequence, a map, a mapping and a
+ * spine never use it. */
 let elk: Promise<Elk> | null = null;
 function engine(): Promise<Elk> {
   elk ??= import("elkjs/lib/elk.bundled.js").then(
@@ -66,10 +67,12 @@ export async function drawIR(
       layout: null,
     };
   if (ir.kind === "flow" && map) return drawMap(ir, ids);
-  const e = await engine();
   if (ir.kind === "er")
-    return { svg: drawER(await layoutER(ir, e), palette()), layout: null };
-  const layout = await layoutFlow(ir, e);
+    return {
+      svg: drawER(await layoutER(ir, await engine()), palette()),
+      layout: null,
+    };
+  const layout = await layoutFlow(ir, engine);
   return { svg: drawFlow(layout, palette(), ids), layout };
 }
 
