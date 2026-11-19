@@ -798,7 +798,8 @@ export const S = {
     yesDeactivate: "Ja, deaktivieren",
     repos: "Repositories",
     reposNote: {
-      bitbucket: "Reihenfolge der API, archivierte übersprungen",
+      // The table sorts by slug whatever the kind.
+      bitbucket: "alphabetisch, archivierte übersprungen",
       static: "alphabetisch",
     } as Record<string, string>,
     polling: "Seite aktualisiert alle 3 s, solange etwas läuft",
