@@ -3,6 +3,7 @@ package endpoints
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/trick77/almanach/internal/coderead"
@@ -15,22 +16,36 @@ type route struct {
 	method, path, local, handler, file string
 }
 
-// matches reports whether the route serves a spec's operation: the same
-// method (or any) and path, the spec's base path and the application's
-// prefix on either side or neither.
-func (rt route) matches(o op, base string) bool {
-	if rt.method != AnyMethod && rt.method != o.method {
-		return false
-	}
-	spec := []string{Template(joinPath(base, o.path)), Template(o.path)}
-	for _, c := range []string{Template(rt.path), Template(rt.local)} {
-		for _, s := range spec {
-			if c == s {
-				return true
-			}
+// routeIndex is which routes serve a spec's operation, by index in the
+// routes' order: the same method (or any) and path, the spec's base path
+// and the application's prefix on either side or neither. The routes'
+// templates are worked out once, not for every operation against every
+// route: a spec of hundreds of operations met as many routes.
+func routeIndex(routes []route) func(o op, base string) []int {
+	byTemplate := map[string][]int{}
+	for i, rt := range routes {
+		whole, local := Template(rt.path), Template(rt.local)
+		byTemplate[whole] = append(byTemplate[whole], i)
+		if local != whole {
+			byTemplate[local] = append(byTemplate[local], i)
 		}
 	}
-	return false
+	return func(o op, base string) []int {
+		joined := Template(joinPath(base, o.path))
+		cands := byTemplate[joined]
+		if bare := Template(o.path); bare != joined {
+			cands = append(slices.Clone(cands), byTemplate[bare]...)
+			slices.Sort(cands)
+			cands = slices.Compact(cands)
+		}
+		var out []int
+		for _, i := range cands {
+			if routes[i].method == AnyMethod || routes[i].method == o.method {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
 }
 
 // facts are what the routes of one file rest on that other files hold:
