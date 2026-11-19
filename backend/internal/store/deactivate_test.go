@@ -221,6 +221,10 @@ func TestDeactivateSourceRepo_DepartureRun(t *testing.T) {
 	if due, _ := s.DepartureDue(ctx, "tools"); !due {
 		t.Error("a settle of another repository settled svc")
 	}
+	// Renamed while the call ran: the slug the prompt named still settles it.
+	if err := s.RenameRepo(ctx, "tools", "svc", "svc-api", ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.SettleDepartures(ctx, "tools", []string{"svc"}); err != nil {
 		t.Fatal(err)
 	}

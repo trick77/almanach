@@ -391,6 +391,15 @@ func TestLibraries(t *testing.T) {
 	if libs, err := s.Shared(ctx, "libs", "wire"); err != nil || len(libs) != 0 {
 		t.Fatalf("wire's libraries = %+v %v, want none", libs, err)
 	}
+	// Renamed between the graph's read and the summaries': the name the
+	// graph had still finds it.
+	if err := s.RenameRepo(ctx, "libs", "wire", "wire-go", ""); err != nil {
+		t.Fatal(err)
+	}
+	old := RepoRef{ProjectKey: "libs", Slug: "wire"}
+	if sums, err := s.sourceSummaries(ctx, []RepoRef{old}); err != nil || sums[old] != "Ein Client." {
+		t.Fatalf("summaries by the old name = %v %v, want wire's", sums, err)
+	}
 }
 
 // A repository's parts are stored with its manifests and read back by any
