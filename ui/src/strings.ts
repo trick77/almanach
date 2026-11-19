@@ -213,6 +213,9 @@ export const S = {
     none: "keine",
     never: "nie",
     sep: "·",
+    // A polled page whose refetch failed: what it shows may be old.
+    refreshFailed:
+      "Aktualisieren fehlgeschlagen, die Angaben sind womöglich veraltet.",
   },
   // The ways out of a page: its Markdown export for an agent, a
   // statement's own address for a colleague.

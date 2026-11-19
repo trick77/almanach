@@ -123,7 +123,14 @@ export function SourcePage({ projectKey }: { projectKey: string }) {
         ) : data === null ? (
           <Skeleton />
         ) : (
-          <Body data={data} reload={reload} />
+          <>
+            {failed && (
+              <div className="mb-4">
+                <Failed message={S.common.refreshFailed} />
+              </div>
+            )}
+            <Body data={data} reload={reload} />
+          </>
         )}
       </div>
     </div>

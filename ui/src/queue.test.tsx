@@ -165,6 +165,27 @@ const runItem = (r: QueueRun): QueueItem => ({
 });
 
 describe("QueuePage", () => {
+  // A poll that fails keeps the queue shown and says it may be old; the
+  // next answer takes the note away.
+  it("says a failed refresh, the queue kept", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      serve({
+        queue: queue({ current: { ...runItem(run()), since: iso(-1) } }),
+      });
+      render(<QueuePage />);
+      await screen.findAllByTestId("queue-item");
+      serve({});
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(
+        await screen.findByText(S.common.refreshFailed),
+      ).toBeInTheDocument();
+      expect(screen.getAllByTestId("queue-item")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows the run in flight with its steps, then the rest in order", async () => {
     serve({
       queue: queue({
