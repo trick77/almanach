@@ -57,7 +57,7 @@ function stripMarkers() {
   window.history.replaceState(
     window.history.state,
     "",
-    window.location.pathname + (q ? `?${q}` : ""),
+    window.location.pathname + (q ? `?${q}` : "") + window.location.hash,
   );
 }
 

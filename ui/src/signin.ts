@@ -44,12 +44,14 @@ export function signIn(): boolean {
 }
 
 /** loginHref is the login with the current page as ?next=, the markers
- *  dropped; bare when the page is the start page. */
+ *  dropped, its hash kept (a page's tab, a statement's anchor); bare when
+ *  the page is the start page. */
 export function loginHref(): string {
   const params = new URLSearchParams(window.location.search);
   for (const m of authMarkers) params.delete(m);
   const q = params.toString();
-  const next = window.location.pathname + (q ? `?${q}` : "");
+  const next =
+    window.location.pathname + (q ? `?${q}` : "") + window.location.hash;
   return next === "/"
     ? "/api/auth/login"
     : `/api/auth/login?next=${encodeURIComponent(next)}`;
