@@ -42,6 +42,7 @@ Foreign keys:
 
 Indexes:
 
+- `baseline_runs_finished_idx` (`finished_at`) where `finished_at IS NOT NULL`
 - `baseline_runs_open_idx` (`repo_id`) unique where `state NOT IN ('done', 'failed')`
 - `baseline_runs_repo_idx` (`repo_id`, `id DESC`)
 

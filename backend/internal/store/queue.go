@@ -56,9 +56,9 @@ func (s *Store) OpenRuns(ctx context.Context) ([]BaselineRun, error) {
 }
 
 // FinishedRuns is the runs that ended at or after since, newest first, at
-// most limit, in one query.
+// most limit, in one query. Plan is nil.
 func (s *Store) FinishedRuns(ctx context.Context, since time.Time, limit int) ([]FinishedRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+`,
+	rows, err := s.db.QueryContext(ctx, `SELECT `+finishedColumns+`,
 		       b.id = (SELECT MAX(x.id) FROM baseline_runs x WHERE x.repo_id = b.repo_id AND (x.mode = 'restyle') = (b.mode = 'restyle')),
 		       CASE WHEN b.mode = 'restyle' AND b.step = ?3
 		            THEN (SELECT COUNT(*) FROM baseline_runs f JOIN source_repos o ON o.repo_id = f.repo_id
