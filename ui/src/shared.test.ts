@@ -142,6 +142,37 @@ describe("withShared", () => {
     ).toHaveLength(1);
   });
 
+  // Two edges the model drew between one pair, one each way: both shown
+  // without a library, so both shown with one.
+  it("keeps the model's edges between nodes it keeps, both ways", () => {
+    const both: FlowIR = {
+      ...map,
+      edges: [
+        ...map.edges,
+        {
+          from: "loom",
+          to: "rongo",
+          label: "HTTP",
+          dashed: false,
+          head: "end",
+        },
+        {
+          from: "rongo",
+          to: "loom",
+          label: "Callback",
+          dashed: true,
+          head: "end",
+        },
+      ],
+    };
+    const ir = withShared(both, [llmwire]);
+    expect(
+      ir.edges
+        .filter((e) => [e.from, e.to].sort().join() === "loom,rongo")
+        .map((e) => e.label),
+    ).toEqual(["HTTP", "Callback"]);
+  });
+
   it("leaves out a library whose users the map does not show", () => {
     const ir = withShared(map, [
       { ...llmwire, used_by: [{ project: "apps", slug: "newer" }] },

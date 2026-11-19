@@ -652,15 +652,26 @@ function drawShared(
   const to = (id: string) => drawnAs.get(id) ?? id;
   const edges: FlowIR["edges"] = [];
   const seen = new Set<string>();
+  const pair = (e: FlowIR["edges"][number]) => [e.from, e.to].sort().join(">");
   // A pair once, whichever way the model drew it: a use the model drew
   // backwards is the use code draws.
   const add = (e: FlowIR["edges"][number]) => {
-    const k = [e.from, e.to].sort().join(">");
+    const k = pair(e);
     if (e.from === e.to || seen.has(k)) return;
     seen.add(k);
     edges.push(e);
   };
-  for (const e of map.edges) add({ ...e, from: to(e.from), to: to(e.to) });
+  // The model's edges between nodes the map keeps stay as drawn, both
+  // ways and labelled twice too, as on the map without shared repositories;
+  // only those moved onto a shared repository meet the code's.
+  for (const e of map.edges) {
+    if (drawnAs.has(e.from) || drawnAs.has(e.to)) {
+      add({ ...e, from: to(e.from), to: to(e.to) });
+      continue;
+    }
+    seen.add(pair(e));
+    edges.push(e);
+  }
   for (const r of repos)
     for (const u of r.used_by)
       if (own.has(u.slug))
