@@ -947,7 +947,7 @@ func (p *Poller) sync(ctx context.Context, j store.SyncJob, b binding) (string, 
 		return "", false, err
 	}
 	if origin != "" && origin != j.Repo.CloneURL {
-		p.Log.Info("clone points at a different remote; re-cloning", "project", key, "repo", slug, "clone_origin", gitrepo.Redact(origin), "configured", j.Repo.CloneURL)
+		p.Log.Info("clone points at a different remote; re-cloning", "project", key, "repo", slug, "clone_origin", gitrepo.Redact(origin), "configured", gitrepo.Redact(j.Repo.CloneURL))
 		if err := p.Git.Remove(pseg, rseg); err != nil {
 			return "", false, err
 		}
