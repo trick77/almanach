@@ -154,30 +154,12 @@ func WSDLNamed(wsdls []string, texts map[string][]byte) []string {
 	hay := all.String()
 	var out []string
 	for _, w := range wsdls {
-		if namedIn(hay, strings.ToLower(path.Base(w))) {
+		if coderead.NamedIn(hay, strings.ToLower(path.Base(w))) {
 			out = append(out, w)
 		}
 	}
 	return out
 }
-
-// namedIn reports whether text names a file by its base name, standing on
-// its own: CustomerOrder.wsdl names no Order.wsdl.
-func namedIn(text, name string) bool {
-	for i := 0; ; {
-		j := strings.Index(text[i:], name)
-		if j < 0 {
-			return false
-		}
-		at := i + j
-		if at == 0 || !nameByte(text[at-1]) {
-			return true
-		}
-		i = at + 1
-	}
-}
-
-func nameByte(b byte) bool { return isWord(b) || b == '-' || b == '.' }
 
 // Parse reads the facts out of files, path to body: specs, protos, WSDLs,
 // builds, application properties and sources together.
