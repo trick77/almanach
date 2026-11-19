@@ -566,6 +566,66 @@ describe("SourcePage baseline", () => {
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
+  // B's push refused while A's text is open: the dialog turns to B, none
+  // of A's state kept (A's failed load hid B's text before).
+  it("turns the open PROJECT.md to another repository's whole", async () => {
+    const refused = {
+      state: "push_failed" as const,
+      waiting: "" as const,
+      error: "git push: 403 not allowed",
+      has_text: true,
+      page_revision: 4,
+      written_at: when,
+      branch: "feature/repository-description-update",
+      pushed_commit: "",
+      push_at: when,
+    };
+    const a = { ...detail.repos[0], brief: refused };
+    const b = {
+      ...detail.repos[0],
+      slug: "acme-api",
+      dir: "/app/repos/p3/r13",
+      brief: null,
+    };
+    let current: SourceDetail = { ...detail, repos: [a, b] };
+    const table = {
+      get "sources/werkzeuge"() {
+        return structuredClone(current);
+      },
+      "sources/werkzeuge/repos/acme-api/brief": {
+        ...refused,
+        markdown: "## Projekt\n\nDie API.\n",
+        path: ".agents/PROJECT.md",
+      },
+    };
+    serve(table);
+    render(<SourcePage projectKey="werkzeuge" />);
+    // The rows by slug: acme-api (B) first.
+    const asks = await screen.findAllByText(S.brief.action);
+    fireEvent.click(asks[0]);
+    current = {
+      ...detail,
+      repos: [
+        a,
+        { ...b, brief: { ...refused, state: "requested", error: "" } },
+      ],
+    };
+    expect(
+      await screen.findByText(S.brief.state.requested, {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    // A's text cannot be read: its dialog says so.
+    fireEvent.click(screen.getAllByText(S.brief.show).at(-1)!);
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText(S.brief.failedLoad),
+    ).toBeInTheDocument();
+    current = { ...detail, repos: [a, { ...b, brief: refused }] };
+    expect(
+      await screen.findByText(/Die API\./, {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(S.brief.failedLoad)).not.toBeInTheDocument();
+  });
+
   it("says when the day's budget holds a PROJECT.md request", async () => {
     serve({
       "sources/werkzeuge": {
