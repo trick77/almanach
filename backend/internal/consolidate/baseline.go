@@ -523,7 +523,8 @@ func (w *Worker) call(ctx context.Context, r *store.BaselineRun, purpose string,
 	if _, err := w.store.InsertLLMCall(ctx, store.LLMCall{
 		ProjectKey: r.ProjectKey, RepoSlug: r.Slug, SourceKind: store.FromBaseline, SourceCommit: r.Commit, Purpose: purpose,
 		BaselineRunID: &runID, Step: step, Outcome: res.Outcome.String(), Model: res.Cost.Model, InputTokens: res.Cost.InputTokens,
-		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, Streamed: res.Cost.Streamed,
+		CachedTokens: res.Cost.CachedTokens, OutputTokens: res.Cost.OutputTokens, ReasoningTokens: res.Cost.ReasoningTokens,
+		CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, Streamed: res.Cost.Streamed,
 	}); err != nil {
 		// No hold here: the gateway's answer below would clear it. On a
 		// full disk the step's write or the save after it holds.

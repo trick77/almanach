@@ -792,7 +792,8 @@ func (w *Worker) fold(ctx context.Context, batch []store.QueuedNote, counted int
 	callID, err := w.store.InsertLLMCall(ctx, store.LLMCall{
 		ProjectKey: q.ProjectKey, RepoSlug: q.RepoSlug, SourcePR: q.PRKey, Outcome: res.Outcome.String(),
 		Model: res.Cost.Model, InputTokens: res.Cost.InputTokens, CachedTokens: res.Cost.CachedTokens,
-		OutputTokens: res.Cost.OutputTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID, Streamed: res.Cost.Streamed, BatchPRKeys: foldKeys(batch),
+		OutputTokens: res.Cost.OutputTokens, ReasoningTokens: res.Cost.ReasoningTokens, CostNanoUSD: res.Cost.NanoUSD, CallID: res.Cost.CallID,
+		Streamed: res.Cost.Streamed, BatchPRKeys: foldKeys(batch),
 	})
 	if err != nil {
 		// No hold here: the gateway's answer below would clear it. On a

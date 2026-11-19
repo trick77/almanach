@@ -108,6 +108,32 @@ func TestCostFromProvenance(t *testing.T) {
 	}
 }
 
+// Reasoning tokens go to the ledger as reported, nil when the usage has
+// none: an unreported count is unknown, not zero.
+func TestCostFromReasoning(t *testing.T) {
+	c := &Client{model: "m"}
+	res := llmwire.StreamResult{Usage: llmwire.Usage{Output: llmwire.OutputTokens{Total: new(int64(900)), Reasoning: new(int64(700))}}}
+	if got := c.costFrom(res); got.ReasoningTokens == nil || *got.ReasoningTokens != 700 || got.OutputTokens != 900 {
+		t.Errorf("costFrom = %+v, want 700 reasoning of 900 out", got)
+	}
+	if got := c.costFrom(llmwire.StreamResult{}); got.ReasoningTokens != nil {
+		t.Errorf("costFrom without usage: ReasoningTokens = %v, want nil", *got.ReasoningTokens)
+	}
+	noTotal := llmwire.StreamResult{Usage: llmwire.Usage{Output: llmwire.OutputTokens{Reasoning: new(int64(700))}}}
+	if got := c.costFrom(noTotal); got.ReasoningTokens != nil {
+		t.Errorf("costFrom without an output total: ReasoningTokens = %v, want nil", *got.ReasoningTokens)
+	}
+	if line := c.costFrom(res).LogLine(); !strings.Contains(line, "out=900 reasoning=700 ") {
+		t.Errorf("LogLine = %q", line)
+	}
+	// Money on the integer, half up, as the costs page prints it.
+	for nano, want := range map[int64]string{1_234_567_500: "$1.235", 999_500_000: "$1.000", 1_500_000: "$0.002", 0: "$0.000"} {
+		if line := (CallCost{NanoUSD: &nano}).LogLine(); !strings.Contains(line, " cost="+want+" ") {
+			t.Errorf("LogLine(%d) = %q, want cost=%s", nano, line, want)
+		}
+	}
+}
+
 // A gateway stream without a cost on its usage (LiteLLM without
 // include_cost_in_streaming_usage) leaves the call unpriced; llmwire says
 // why, and that reason is the only trace of it.

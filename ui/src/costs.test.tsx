@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CostsPage, monthName } from "./CostsPage";
-import type { Costs } from "./api";
+import type { Costs, Purpose } from "./api";
 import { S } from "./strings";
 
 function serve(table: Record<string, unknown>) {
@@ -44,6 +44,41 @@ const costs: Costs = {
           briefs: { calls: 0, unpriced: 0 },
         },
       ],
+      // Amounts apart from the project table's, so a match is one table's.
+      purposes: [
+        {
+          purpose: "subject",
+          calls: 9,
+          unpriced: 3,
+          cost_usd: "1.150",
+          input_tokens: 900000,
+          cached_tokens: 300000,
+          // A cut call without usage among them: the share is of the 190k
+          // the reporting calls wrote, not of all 200k.
+          output_tokens: 200000,
+          reasoning_tokens: 180000,
+          reasoned_output_tokens: 190000,
+        },
+        {
+          purpose: "merge",
+          calls: 4,
+          unpriced: 0,
+          cost_usd: "0.040",
+          input_tokens: 40000,
+          cached_tokens: 0,
+          output_tokens: 6000,
+          reasoned_output_tokens: 0,
+        },
+        {
+          purpose: "later" as Purpose,
+          calls: 1,
+          unpriced: 0,
+          input_tokens: 10,
+          cached_tokens: 0,
+          output_tokens: 5,
+          reasoned_output_tokens: 0,
+        },
+      ],
     },
     {
       month: "2026-10",
@@ -59,6 +94,7 @@ const costs: Costs = {
           briefs: { calls: 0, unpriced: 0 },
         },
       ],
+      purposes: [],
     },
   ],
   budget_usd: "5.000",
@@ -98,6 +134,41 @@ describe("CostsPage", () => {
     expect(
       screen.getByText(S.costs.tiles.budgetNote("$1.28", "$5.00")),
     ).toBeInTheDocument();
+  });
+
+  it("lists a month's calls by purpose with the cached and reasoning shares", async () => {
+    serve({ costs });
+    render(<CostsPage />);
+    const nov = await screen.findByTestId("month-2026-11");
+    expect(within(nov).getByText(S.costs.byPurpose)).toBeInTheDocument();
+    const subject = within(nov).getByTestId("purpose-subject");
+    expect(subject).toHaveTextContent(S.costs.purpose.subject);
+    // 300k of 900k input from the cache, 180k of the reporting calls' 190k
+    // output reasoning.
+    expect(subject).toHaveTextContent("33 %");
+    expect(subject).toHaveTextContent("95 %");
+    expect(subject).toHaveTextContent("$1.15");
+    expect(subject).toHaveTextContent(S.costs.unpriced(3));
+    // No reasoning reported: said as none, not as 0 %.
+    const merge = within(nov).getByTestId("purpose-merge");
+    expect(merge).toHaveTextContent(S.costs.purpose.merge);
+    expect(merge).toHaveTextContent("0 %");
+    expect(merge).toHaveTextContent(S.common.none);
+    // Dearest first, as the API sends them.
+    const rows = within(nov).getAllByTestId(/^purpose-/);
+    expect(rows.map((r) => r.dataset.testid)).toEqual([
+      "purpose-subject",
+      "purpose-merge",
+      "purpose-later",
+    ]);
+    // A purpose the bundle does not know yet: named by its key.
+    expect(within(nov).getByTestId("purpose-later")).toHaveTextContent("later");
+    // A month without purposes shows no such table.
+    expect(
+      within(screen.getByTestId("month-2026-10")).queryByText(
+        S.costs.byPurpose,
+      ),
+    ).toBeNull();
   });
 
   it("says when there is no call yet and no budget", async () => {

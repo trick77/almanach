@@ -1264,7 +1264,7 @@ components:
           description: The last twelve UTC months, newest first; a month without a call is absent.
           items:
             type: object
-            required: [month, calls, projects]
+            required: [month, calls, projects, purposes]
             properties:
               month:
                 type: string
@@ -1293,6 +1293,38 @@ components:
                     briefs:
                       description: The repositories' PROJECT.md calls.
                       $ref: "#/components/schemas/CostSum"
+              purposes:
+                type: array
+                description: The month's calls by purpose across projects, dearest first.
+                items:
+                  allOf:
+                    - $ref: "#/components/schemas/CostSum"
+                    - type: object
+                      required: [purpose, input_tokens, cached_tokens, output_tokens, reasoned_output_tokens]
+                      properties:
+                        purpose:
+                          type: string
+                          enum: [merge, catalogue, overview, subject, project, repo_map, project_map, restyle, brief]
+                        input_tokens:
+                          type: integer
+                          format: int64
+                        cached_tokens:
+                          type: integer
+                          format: int64
+                          description: Input tokens read from the gateway's cache.
+                        output_tokens:
+                          type: integer
+                          format: int64
+                        reasoning_tokens:
+                          type: integer
+                          format: int64
+                          description: Part of output_tokens spent thinking; omitted when no call reported any.
+                        reasoned_output_tokens:
+                          type: integer
+                          format: int64
+                          description: >-
+                            The output of the calls that reported reasoning, the base of
+                            its share: a call with no usage reported would dilute it.
         budget_usd:
           type: string
           description: BACKEND_DAILY_BUDGET_USD, 3 decimals; omitted when none is set.

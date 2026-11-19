@@ -125,6 +125,7 @@ Go types:
 | `created_at` | TEXT | no |  |  |
 | `batch_pr_keys` | TEXT | yes |  |  |
 | `streamed` | INTEGER | no | `0` |  |
+| `reasoning_tokens` | INTEGER | yes |  |  |
 
 Foreign keys:
 
@@ -143,6 +144,7 @@ Checks:
 - `CHECK (created_at GLOB '????-??-??T??:??:??.?????????Z')`
 - `CHECK (batch_pr_keys IS NULL OR (json_valid(batch_pr_keys) AND json_type(batch_pr_keys) = 'array'))`
 - `CHECK (streamed IN (0, 1))`
+- `CHECK (reasoning_tokens IS NULL OR reasoning_tokens >= 0)`
 - `CONSTRAINT llm_calls_source_pr CHECK ((source_kind = 'pr') = (source_pr_key IS NOT NULL))`
 - `CONSTRAINT llm_calls_source_commit CHECK ((source_kind = 'baseline') = (source_commit IS NOT NULL))`
 - `CONSTRAINT llm_calls_source_page CHECK ((source_kind = 'page') = (purpose = 'brief'))`
@@ -736,6 +738,21 @@ In `internal/store`. ProblemArea is one cluster of bugfixes: a repo and the dire
 | `LastFixPR` | `string` |  |
 | `LastFixAt` | `time.Time` |  |
 
+### store.PurposeCost
+
+In `internal/store`. PurposeCost is one month of every project's calls of one purpose (merge, catalogue, subject, restyle, ...): what they cost and where their tokens went, the input read from the gateway's cache and the output spent thinking. The figures to rank what to make cheaper by.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Month` | `string` | Month is YYYY-MM, UTC. |
+| `Purpose` | `string` |  |
+| `CostSum` (embedded) | `CostSum` |  |
+| `InputTokens` | `int64` |  |
+| `CachedTokens` | `int64` |  |
+| `OutputTokens` | `int64` |  |
+| `ReasoningTokens` | `*int64` | ReasoningTokens is nil when no call of the group reported any; ReasonedOutputTokens the output of the calls that did, the share's base: a cut call with no usage would dilute it. |
+| `ReasonedOutputTokens` | `int64` | see `ReasoningTokens` |
+
 ### store.RepoRuns
 
 In `internal/store`. RepoRuns is what the source page shows of one repository's runs: the newest run, what its priced calls cost (nil when none was priced), the commit last documented and how many of the newest runs in a row were the poller's retries (RunStreak.Retried).
@@ -868,6 +885,7 @@ erDiagram
         TEXT created_at
         TEXT batch_pr_keys
         INTEGER streamed
+        INTEGER reasoning_tokens
     }
     note_calls {
         INTEGER id PK

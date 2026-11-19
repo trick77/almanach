@@ -256,20 +256,86 @@ type CostRow struct {
 // page is read on every visit.
 const CostsMonths = 12
 
-// Costs is every project's calls by month over the last CostsMonths,
-// newest month first, then by key: the Kosten page. One query over the
-// ledger's tail (llm_calls_created_idx), grouped in SQL.
-func (s *Store) Costs(ctx context.Context, now time.Time) ([]CostRow, error) {
+// CostLedger is the Kosten page's calls twice: by month and project, and
+// by month and purpose. Both of one set of rows.
+type CostLedger struct {
+	Projects []CostRow
+	Purposes []PurposeCost
+}
+
+// Costs is the last CostsMonths' calls by month and project (newest month
+// first, then by key) and by month and purpose (the dearest purpose first
+// within a month): the Kosten page. Two queries over the ledger's tail
+// (llm_calls_created_idx), grouped in SQL, both held to the last id read
+// before them: a call the worker writes between the two is in neither,
+// never in one table and missing from the other.
+func (s *Store) Costs(ctx context.Context, now time.Time) (CostLedger, error) {
 	from := DayStart(now)
 	from = time.Date(from.Year(), from.Month()-CostsMonths+1, 1, 0, 0, 0, 0, time.UTC)
+	out := CostLedger{Projects: []CostRow{}, Purposes: []PurposeCost{}}
+	var upTo sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(id) FROM llm_calls`).Scan(&upTo); err != nil || !upTo.Valid {
+		return out, err
+	}
+	var err error
+	if out.Projects, err = s.costsByProject(ctx, from, upTo.Int64); err != nil {
+		return CostLedger{}, err
+	}
+	if out.Purposes, err = s.costsByPurpose(ctx, from, upTo.Int64); err != nil {
+		return CostLedger{}, err
+	}
+	return out, nil
+}
+
+// costsByPurpose is Costs by month and purpose. The reasoning share's
+// figures count only the calls that reported reasoning within their
+// output: one with reasoning but no output total (stored as 0) would put
+// the share past 100 %.
+func (s *Store) costsByPurpose(ctx context.Context, from time.Time, upTo int64) ([]PurposeCost, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT substr(created_at, 1, 7), purpose,
+		       COUNT(*), COUNT(*) - COUNT(cost_nano_usd), SUM(cost_nano_usd),
+		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(cached_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		       SUM(reasoning_tokens) FILTER (WHERE output_tokens >= reasoning_tokens),
+		       COALESCE(SUM(output_tokens) FILTER (WHERE output_tokens >= reasoning_tokens), 0)
+		  FROM llm_calls
+		 WHERE created_at >= ? AND id <= ?
+		 GROUP BY 1, 2
+		 ORDER BY 1 DESC, COALESCE(SUM(cost_nano_usd), 0) DESC, 2`, stamp(from), upTo)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []PurposeCost{}
+	for rows.Next() {
+		var p PurposeCost
+		var nano, reasoning sql.NullInt64
+		if err := rows.Scan(&p.Month, &p.Purpose, &p.Calls, &p.Unpriced, &nano,
+			&p.InputTokens, &p.CachedTokens, &p.OutputTokens, &reasoning, &p.ReasonedOutputTokens); err != nil {
+			return nil, err
+		}
+		if nano.Valid {
+			p.NanoUSD = &nano.Int64
+		}
+		if reasoning.Valid {
+			p.ReasoningTokens = &reasoning.Int64
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// costsByProject is Costs by month and project, merges, runs and briefs
+// apart.
+func (s *Store) costsByProject(ctx context.Context, from time.Time, upTo int64) ([]CostRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT substr(c.created_at, 1, 7), p.key,
 		       CASE c.purpose WHEN 'merge' THEN 'merge' WHEN 'brief' THEN 'brief' ELSE 'run' END,
 		       COUNT(*), COUNT(*) - COUNT(c.cost_nano_usd), SUM(c.cost_nano_usd)
 		  FROM llm_calls c JOIN repos r ON r.id = c.repo_id JOIN projects p ON p.id = r.project_id
-		 WHERE c.created_at >= ?
+		 WHERE c.created_at >= ? AND c.id <= ?
 		 GROUP BY 1, 2, 3
-		 ORDER BY 1 DESC, 2, 3`, stamp(from))
+		 ORDER BY 1 DESC, 2, 3`, stamp(from), upTo)
 	if err != nil {
 		return nil, err
 	}

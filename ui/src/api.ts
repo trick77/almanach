@@ -49,6 +49,32 @@ export interface CostMonth {
   cost_usd?: string;
   calls: number;
   projects: CostProject[];
+  /** The same calls by purpose across projects, dearest first. */
+  purposes: CostPurpose[];
+}
+
+export type Purpose =
+  | "merge"
+  | "catalogue"
+  | "overview"
+  | "subject"
+  | "project"
+  | "repo_map"
+  | "project_map"
+  | "restyle"
+  | "brief";
+
+/** One purpose's calls in a month and where their tokens went. */
+export interface CostPurpose extends CostSum {
+  purpose: Purpose;
+  input_tokens: number;
+  /** Input read from the gateway's cache. */
+  cached_tokens: number;
+  output_tokens: number;
+  /** Part of output_tokens spent thinking; absent when none reported. */
+  reasoning_tokens?: number;
+  /** Output of the calls that reported reasoning: its share's base. */
+  reasoned_output_tokens: number;
 }
 
 /** Almanach's own ledger by month and project, never noergler's. */
