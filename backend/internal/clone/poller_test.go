@@ -1,6 +1,7 @@
 package clone
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -387,7 +388,7 @@ func TestCycle_ReclonesOnOriginMismatch_AndRecordsFailures(t *testing.T) {
 	s, g, l, k := newFakeStore(), newFakeGit(), &fakeLister{}, testKey(t)
 	src := store.ProjectSource{Kind: store.SourceStatic, TokenAuth: store.TokenBasic}
 	s.jobs = []store.SyncJob{
-		job("tools", "moved", "https://x/new.git", "main", "old", src),
+		job("tools", "moved", "https://svc-user@x/new.git", "main", "old", src),
 		job("tools", "broken", "https://x/broken.git", "main", "", src),
 		job("tools", "gone", "https://x/gone.git", "develop", "", src),
 		job("tools", "fine", "https://x/fine.git", "main", "abc", src),
@@ -399,12 +400,18 @@ func TestCycle_ReclonesOnOriginMismatch_AndRecordsFailures(t *testing.T) {
 	g.origins[dirOf("tools", "fine")] = "https://x/fine.git"
 	g.heads[dirOf("tools", "fine")+"@main"] = "abc"
 
-	if err := poller(s, g, l, k).CycleOnce(context.Background()); err != nil {
+	var logged bytes.Buffer
+	p := New(Deps{Store: s, Git: g, Lister: l, Key: k, Log: slog.New(slog.NewTextHandler(&logged, nil))})
+	if err := p.CycleOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	calls := strings.Join(g.calls, ",")
 	if !strings.Contains(calls, "remove "+dirOf("tools", "moved")+",clone "+dirOf("tools", "moved")) {
 		t.Fatalf("mismatch did not re-clone: %s", calls)
+	}
+	// A listed clone URL may carry the forge's user: never in the log.
+	if strings.Contains(logged.String(), "svc-user") {
+		t.Fatalf("clone URL's user logged: %s", logged.String())
 	}
 	if s.states["moved"] != store.RepoReady || s.heads["moved"] != "new" {
 		t.Fatalf("moved: %s %s", s.states["moved"], s.heads["moved"])
