@@ -18,7 +18,7 @@ import {
   type Step,
 } from "./Entry";
 import { Diagram, titledZones } from "./Diagram";
-import type { FlowIR } from "./diagramIR";
+import type { FlowIR } from "@trick77/diagram";
 import { RepoInterfaces } from "./Interfaces";
 import { RepoMessages } from "./Messaging";
 import { NotesTable } from "./NotesTable";

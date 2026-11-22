@@ -1,8 +1,8 @@
 // Package diagram is the shape of a diagram as the model returns it, the
-// store keeps it and the UI draws it: rongo's intermediate form
-// (ui/src/diagramIR.ts), a flow, a sequence or an entity model. Data only;
-// baseline/diagram.go validates it, rongo's copied code draws it. No
-// diagram language anywhere: the JSON is the diagram.
+// store keeps it and the UI draws it: @trick77/diagram's intermediate form
+// (its src/ir.ts), a flow, a sequence or an entity model. Data only;
+// baseline/diagram.go validates it, the package draws it. No diagram
+// language anywhere: the JSON is the diagram.
 package diagram
 
 import (
@@ -21,8 +21,9 @@ const (
 	KindNone     = "none"
 )
 
-// The most rongo's drawing lays out (ui/src/diagramIR.ts fits, which names
-// these): the one place the backend keeps them. A statement's flow holds
+// The most the drawing lays out (@trick77/diagram's fits, whose defaults
+// these are; ui/src/diagramIR.ts hands it the map's): the one place the
+// backend keeps them. A statement's flow holds
 // DrawMaxNodes and DrawMaxEdges; a sequence and an entity model are wider
 // per item and stop sooner. A map, the system map or a repository's, holds
 // MapMaxNodes and MapMaxEdges: every external system it shows is its own

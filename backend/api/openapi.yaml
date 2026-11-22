@@ -2526,9 +2526,9 @@ components:
 
     Diagram:
       description: >-
-        A picture beside a statement's paragraphs, in rongo's intermediate
-        form (ui/src/diagramIR.ts), validated on the way in. Absent when the
-        statement has none.
+        A picture beside a statement's paragraphs, in @trick77/diagram's
+        intermediate form (its src/ir.ts), validated on the way in. Absent
+        when the statement has none.
       oneOf:
         - $ref: "#/components/schemas/FlowDiagram"
         - $ref: "#/components/schemas/SequenceDiagram"

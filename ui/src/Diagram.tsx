@@ -1,47 +1,61 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { DiagramIR, FlowIR } from "./diagramIR";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  drawER,
+  drawFlow,
+  drawSequence,
+  engine,
+  fileName,
+  layoutER,
+  layoutFlow,
+  layoutSequence,
+  palette,
+  type ERIR,
+  type FlowIR,
+  type FlowLayout,
+  type Rendered,
+  type SequenceIR,
+} from "@trick77/diagram";
+import {
+  DiagramCard,
+  DiagramView,
+  classes,
+  type Classes,
+  type Icons,
+} from "@trick77/diagram/react";
 import { fits } from "./diagramIR";
-import { layoutFlow, type Elk, type FlowLayout } from "./diagramLayout";
 import { layoutMap } from "./mapLayout";
-import { drawER, drawFlow, drawSequence } from "./diagramDraw";
-import { layoutER } from "./diagramER";
-import { layoutSequence } from "./diagramSequence";
-import { palette } from "./diagramTheme";
-import { download, fileName, toSvgFile } from "./diagramExport";
-import DiagramView, { DiagramSvg } from "./DiagramView";
+import OverlayShell from "./OverlayShell";
 import { DownloadIcon, ExpandIcon } from "./icons";
 import { Link } from "./ui";
 import { S } from "./strings";
 
 /**
- * One diagram on a page: the backend's validated IR drawn by rongo's code
- * (layout, drawing, theme), with rongo's two ways out of it, the full view
- * and the file. The glue is rongo's editorial() without the mermaid parse:
- * the IR arrives as JSON, there is nothing to parse.
+ * One diagram on a page: the backend's validated IR drawn by
+ * @trick77/diagram, with its two ways out, the full view and the file. The
+ * IR arrives as JSON, there is nothing to parse.
  *
  * links names the page a flow node opens, null for none: the system map's
  * repository nodes. The drawing is a string without ids on its nodes, so a
  * link is an anchor laid over the node's box from the layout, in percent of
- * the drawing, and the copied drawing stays as rongo wrote it.
+ * the drawing (the card's overlay).
  */
 
-type Drawn = { svg: string; layout: FlowLayout | null };
+/** The kinds the backend stores (internal/diagram): the package draws
+ * more, which almanach neither gets nor bundles. */
+export type DiagramIR = FlowIR | SequenceIR | ERIR;
 
-/** The layout engine is its own chunk, loaded on the first entity model or
- * flow that needs it: it is large, and a sequence, a map, a mapping and a
- * spine never use it. */
-let elk: Promise<Elk> | null = null;
-function engine(): Promise<Elk> {
-  elk ??= import("elkjs/lib/elk.bundled.js").then(
-    (m) => new m.default(),
-    (e: unknown) => {
-      // A chunk gone after a redeploy is tried again by the next diagram.
-      elk = null;
-      throw e;
-    },
-  );
-  return elk;
-}
+/** The app's name on a downloaded file: almanach-flowchart-diagram.svg. */
+export const app = "almanach";
+
+/** The card's and the full view's icons, almanach's own set. */
+export const icons: Icons = {
+  expand: <ExpandIcon />,
+  download: <DownloadIcon />,
+};
+
+/** The card's own box carries no spacing: the figure around it does, as a
+ * figure is what a page's picture is. */
+const cardClasses: Classes = { ...classes, card: "" };
 
 /** drawMap lays a map out in bands and writes it as SVG: synchronous, no
  * engine. It may throw on a map that breaks the layout's assumptions. */
@@ -55,24 +69,28 @@ export function drawMap(
 
 /** drawIR lays a diagram out and writes it as SVG. ids prefixes the marker
  * ids: two drawings on one page must not share one. A map is laid out in
- * bands by code (mapLayout.ts), without the engine. */
+ * bands by code (mapLayout.ts), without the engine. A tree-shaped flow
+ * stays the engine's: the package's org chart is for answers that ask for
+ * one, a statement's flow is a process. Its own dispatch over the three
+ * kinds rather than the package's drawIR, which brings every kind's layout
+ * into the bundle. */
 export async function drawIR(
   ir: DiagramIR,
   ids: string,
   map = false,
-): Promise<Drawn> {
+): Promise<Rendered> {
   if (ir.kind === "sequence")
     return {
       svg: drawSequence(layoutSequence(ir), palette(), ids),
       layout: null,
     };
-  if (ir.kind === "flow" && map) return drawMap(ir, ids);
   if (ir.kind === "er")
     return {
       svg: drawER(await layoutER(ir, await engine()), palette()),
       layout: null,
     };
-  const layout = await layoutFlow(ir, engine);
+  if (map) return drawMap(ir, ids);
+  const layout = await layoutFlow(ir, engine, { tree: false });
   return { svg: drawFlow(layout, palette(), ids), layout };
 }
 
@@ -90,7 +108,7 @@ export function titledZones(
 
 let seq = 0;
 
-type State = { key: string; drawn: Drawn | null; failed: boolean };
+type State = { key: string; drawn: Rendered | null; failed: boolean };
 
 export function Diagram({
   ir,
@@ -111,8 +129,6 @@ export function Diagram({
     drawn: null,
     failed: false,
   });
-  const [full, setFull] = useState(false);
-  const card = useRef<HTMLDivElement>(null);
   // Every diagram the backend stores fits: its caps are below these. One
   // that does not is a defect, said rather than drawn crowded.
   const ok = fits(ir, map);
@@ -138,78 +154,37 @@ export function Diagram({
     return <p className="my-2 text-[13.5px] text-faint">{S.diagram.pending}</p>;
   const { svg, layout } = state.drawn;
 
-  function save() {
-    download(fileName(ir.kind), toSvgFile({ svg }, card.current));
-  }
-
-  // The drawing brings its canvas, so the card is only a frame for the two
-  // buttons, as wide as the drawing and never wider than the column.
   return (
     <figure className="my-3">
-      <div ref={card} className="w-max max-w-full">
-        <DiagramTools
-          title={title}
-          onFull={() => setFull(true)}
-          onSave={save}
-        />
-        <div className="relative">
-          <DiagramSvg svg={svg} title={title} />
-          {layout !== null && links && (
-            <NodeLinks layout={layout} links={links} names={names} />
-          )}
-        </div>
-        {full && (
-          <FullDiagram
-            title={title}
-            kind={ir.kind}
-            drawn={state.drawn}
-            links={links}
-            names={names}
-            onClose={() => setFull(false)}
-          />
-        )}
-      </div>
+      <DiagramCard
+        svg={svg}
+        title={title}
+        fileName={fileName(ir.kind, app)}
+        own
+        shell={OverlayShell}
+        icons={icons}
+        strings={S.diagram}
+        classes={cardClasses}
+        overlay={
+          layout !== null && links
+            ? ({ full, close }) => (
+                <NodeLinks
+                  layout={layout}
+                  links={links}
+                  names={names}
+                  onFollow={full ? close : undefined}
+                />
+              )
+            : undefined
+        }
+      />
     </figure>
   );
 }
 
-/** DiagramTools are a diagram's two ways out, over its top right corner:
- *  the full view and the file. */
-export function DiagramTools({
-  title,
-  onFull,
-  onSave,
-}: {
-  title: string;
-  onFull: () => void;
-  onSave: () => void;
-}) {
-  return (
-    <div className="mb-1 flex items-center justify-end gap-0.5">
-      <button
-        type="button"
-        onClick={onFull}
-        title={S.diagram.full}
-        aria-label={S.diagram.fullOf(title)}
-        className="grid h-7 w-7 place-items-center rounded-ui-sm text-faint hover:bg-active hover:text-ink-dim"
-      >
-        <ExpandIcon />
-      </button>
-      <button
-        type="button"
-        onClick={onSave}
-        title={S.diagram.download}
-        aria-label={S.diagram.downloadOf(title)}
-        className="grid h-7 w-7 place-items-center rounded-ui-sm text-faint hover:bg-active hover:text-ink-dim"
-      >
-        <DownloadIcon />
-      </button>
-    </div>
-  );
-}
-
 /** FullDiagram is a drawing seen whole, its linked nodes linked there too;
- *  a followed link closes it. */
+ *  a followed link closes it. The compact map's full view: its card draws
+ *  no picture. */
 export function FullDiagram({
   title,
   kind,
@@ -220,17 +195,20 @@ export function FullDiagram({
 }: {
   title: string;
   kind: DiagramIR["kind"];
-  drawn: Drawn;
+  drawn: Rendered;
   links?: (id: string) => string | null;
   names: Map<string, string>;
   onClose: () => void;
 }) {
   return (
     <DiagramView
-      title={title}
-      kind={kind}
       svg={drawn.svg}
+      title={title}
+      fileName={fileName(kind, app)}
       onClose={onClose}
+      shell={OverlayShell}
+      icons={icons}
+      strings={S.diagram}
       overlay={
         drawn.layout !== null && links ? (
           <NodeLinks

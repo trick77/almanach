@@ -1,21 +1,63 @@
-import { describe, it, expect } from "vitest";
-import { fits, type ERIR, type FlowIR, type SequenceIR } from "./diagramIR";
+import { describe, it, expect, vi } from "vitest";
+import * as diagram from "@trick77/diagram";
+import type { ERIR, FlowIR, SequenceIR } from "@trick77/diagram";
+import { fits } from "./diagramIR";
 
-// rongo's diagramIR.test.ts reads the mermaid parse; only fits came along.
+// The package's own limits are tested there; these are the backend's
+// choices almanach hands it: every cap, frames counted, a map's larger
+// ones.
+
+vi.mock("@trick77/diagram", { spy: true });
 
 const node = (id: string) => ({ id, label: id, shape: "step" as const });
+const edge = (i: number) => ({
+  from: `n${i}`,
+  to: `n${i + 1}`,
+  label: "",
+  dashed: false,
+  head: "end" as const,
+});
+
+const flow = (n: number, e = 0): FlowIR => ({
+  kind: "flow",
+  direction: "TB",
+  nodes: Array.from({ length: n }, (_, i) => node(`n${i}`)),
+  edges: Array.from({ length: e }, (_, i) => edge(i)),
+  zones: [],
+});
 
 describe("fits", () => {
-  it("takes a flow up to rongo's ceiling, not past it", () => {
-    const flow = (n: number): FlowIR => ({
-      kind: "flow",
-      direction: "TB",
-      nodes: Array.from({ length: n }, (_, i) => node(`n${i}`)),
-      edges: [],
-      zones: [],
+  it("hands the package every backend cap, never leaning on its defaults", () => {
+    fits(flow(1));
+    expect(vi.mocked(diagram.fits)).toHaveBeenLastCalledWith(flow(1), {
+      nodes: 16,
+      edges: 24,
+      actors: 8,
+      rows: 20,
+      countFrames: true,
+      entities: 8,
+      rels: 12,
+      attrs: 12,
     });
+    fits(flow(1), true);
+    expect(vi.mocked(diagram.fits)).toHaveBeenLastCalledWith(
+      flow(1),
+      expect.objectContaining({ nodes: 22, edges: 33, actors: 8 }),
+    );
+  });
+
+  it("takes a flow up to the backend's DrawMax caps, not past them", () => {
     expect(fits(flow(16))).toBe(true);
     expect(fits(flow(17))).toBe(false);
+    expect(fits(flow(16, 24))).toBe(true);
+    expect(fits(flow(16, 25))).toBe(false);
+  });
+
+  it("takes a map up to the backend's MapMax caps, not past them", () => {
+    expect(fits(flow(22), true)).toBe(true);
+    expect(fits(flow(23), true)).toBe(false);
+    expect(fits(flow(22, 33), true)).toBe(true);
+    expect(fits(flow(22, 34), true)).toBe(false);
   });
 
   it("counts every row of a sequence, its frames included", () => {

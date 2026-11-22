@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* The diagram's card and full view (@trick77/diagram/react) are styled with
+   utilities on the tokens below; Tailwind skips node_modules unless told. */
+@source "../node_modules/@trick77/diagram/src";
 
 /* Warm Editorial, dark: the token set ../rongo, ../noergler, ../loom and
    ../peeq share, so the tools read as one family. Carried over, never
@@ -45,12 +48,12 @@
   --shadow-panel: 0 24px 60px -18px rgba(0, 0, 0, 0.6);
 }
 
-/* Copied from rongo (ui/src/index.css), kept in step by hand: the diagram
+/* rongo's values (ui/src/index.css), kept in step by hand: the diagram
    look. A diagram has a look of its own, not the chrome's: the IBM Plex
    pair, on a ground of the chrome's warm greys a step darker. Tokens outside
-   @theme, so they make no utilities; the drawing (diagramTheme.ts) reads
-   them and writes them into the SVG resolved, so a downloaded file carries
-   the same colours. */
+   @theme, so they make no utilities; the drawing (@trick77/diagram's theme)
+   reads them and writes them into the SVG resolved, so a downloaded file
+   carries the same colours. */
 :root {
   --diagram-surface: #151514;
   --diagram-fg: #ece8df;
@@ -110,16 +113,6 @@
     U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
     U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
     U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-
-/* The drawing carries a viewBox and its own width, so it scales down into a
-   narrow column and never past 1:1. Block, so the card holds no inline-box
-   gap under it. */
-.rongo-diagram svg {
-  display: block;
-  margin-inline: auto;
-  max-width: 100%;
-  height: auto;
 }
 
 @font-face {
