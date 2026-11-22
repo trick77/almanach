@@ -16,7 +16,6 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   first char letter ("Bereit", "7 bereit"); "Slug" (Bitbucket's "Projektschlüssel" only).
 - `/api/...` only. Wiki read-only; browser writes only Quellen (`/api/sources*`) and the queue pause
   (operations; user, 2026-11-07).
-- Maps by `mapLayout.ts`, banded, grow down (ELK holds no rows in zones).
 
 ## Everywhere
 
@@ -72,4 +71,5 @@ Public repo: no company/team names, hosts, project keys (docs, tests too).
   resolve left out, never guessed. Interfaces too (user, 2026-11-09): a spec/WSDL offers only on code's
   evidence, else declares (often a client's copy); contracts read whole, generated mark ignored (spec
   exports are big and marked).
-- Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice).
+- Both maps runtime+prod only, no build/CI/CD (user, 2026-11-02, twice); package bands, clean over
+  compact (user, 2026-11-22).

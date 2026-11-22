@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@trick77/diagram": "0.1.2",
+    "@trick77/diagram": "0.1.9",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

@@ -3,17 +3,22 @@ import {
   drawER,
   drawFlow,
   drawSequence,
+  drawSwimlane,
   engine,
   fileName,
   layoutER,
+  layoutBands,
   layoutFlow,
+  layoutFlowChecked,
   layoutSequence,
+  margin,
   palette,
   type ERIR,
   type FlowIR,
   type FlowLayout,
   type Rendered,
   type SequenceIR,
+  type SwimlaneLayout,
 } from "@trick77/diagram";
 import {
   DiagramCard,
@@ -22,8 +27,7 @@ import {
   type Classes,
   type Icons,
 } from "@trick77/diagram/react";
-import { fits } from "./diagramIR";
-import { layoutMap } from "./mapLayout";
+import { downward, fits } from "./diagramIR";
 import OverlayShell from "./OverlayShell";
 import { DownloadIcon, ExpandIcon } from "./icons";
 import { Link } from "./ui";
@@ -57,41 +61,80 @@ export const icons: Icons = {
  * figure is what a page's picture is. */
 const cardClasses: Classes = { ...classes, card: "" };
 
-/** drawMap lays a map out in bands and writes it as SVG: synchronous, no
- * engine. It may throw on a map that breaks the layout's assumptions. */
-export function drawMap(
-  ir: FlowIR,
-  ids: string,
-): { svg: string; layout: FlowLayout } {
-  const layout = layoutMap(ir);
-  return { svg: drawFlow(layout, palette(), ids), layout };
+/** A map's bands, top to bottom, by zone id: who calls, where it enters,
+ * the repositories or a repository's parts, the repositories of other
+ * projects, the stores, what is outside. A zone not named comes after
+ * them, as written. */
+export const bandOrder = [
+  "clients",
+  "entry",
+  "repositories",
+  "parts",
+  "shared",
+  "stores",
+  "external",
+];
+
+/** layoutMap lays a map, the system map or a repository's, out in the
+ * package's bands: its zones stacked down the page in bandOrder, the boxes
+ * of no zone in a last band. Always bands, never the zoned flow the
+ * package's lane reading falls back to for a map of one zone, of no arrow,
+ * or of arrows within one zone only: clean over compact, a wide map is
+ * scaled into the column and the full view shows it large (user,
+ * 2026-11-22). An arrow from a box to itself or to one the map does not
+ * hold says nothing and is left out (the backend drops them too); the
+ * bands refuse it. A map of no box is an empty canvas; one the bands
+ * cannot lay out at all is the engine's zoned flow. */
+export async function layoutMap(ir: FlowIR): Promise<FlowLayout> {
+  const down = downward(ir);
+  if (down.nodes.length === 0)
+    return {
+      width: 2 * margin,
+      height: 2 * margin,
+      nodes: [],
+      edges: [],
+      zones: [],
+    };
+  const held = new Set(down.nodes.map((n) => n.id));
+  const edges = down.edges.filter(
+    (e) => e.from !== e.to && held.has(e.from) && held.has(e.to),
+  );
+  const bands = await layoutBands(
+    { ...down, edges },
+    await engine(),
+    bandOrder,
+  );
+  return bands ?? layoutFlowChecked(down, engine, { tree: false });
 }
 
 /** drawIR lays a diagram out and writes it as SVG. ids prefixes the marker
  * ids: two drawings on one page must not share one. A map is laid out in
- * bands by code (mapLayout.ts), without the engine. A tree-shaped flow
- * stays the engine's: the package's org chart is for answers that ask for
- * one, a statement's flow is a process. Its own dispatch over the three
- * kinds rather than the package's drawIR, which brings every kind's layout
- * into the bundle. */
+ * bands (layoutMap). A tree-shaped flow stays the engine's: the package's
+ * org chart is for answers that ask for one, a statement's flow is a
+ * process. Its own dispatch over the three kinds rather than the package's
+ * drawIR, which brings every kind's layout into the bundle. */
 export async function drawIR(
   ir: DiagramIR,
   ids: string,
   map = false,
 ): Promise<Rendered> {
-  if (ir.kind === "sequence")
-    return {
-      svg: drawSequence(layoutSequence(ir), palette(), ids),
-      layout: null,
-    };
-  if (ir.kind === "er")
-    return {
-      svg: drawER(await layoutER(ir, await engine()), palette()),
-      layout: null,
-    };
-  if (map) return drawMap(ir, ids);
-  const layout = await layoutFlow(ir, engine, { tree: false });
-  return { svg: drawFlow(layout, palette(), ids), layout };
+  const pal = palette();
+  if (ir.kind === "sequence") {
+    const laid = layoutSequence(ir);
+    return { svg: drawSequence(laid, pal, ids), layout: null, laid };
+  }
+  if (ir.kind === "er") {
+    const laid = await layoutER(ir, await engine());
+    return { svg: drawER(laid, pal), layout: null, laid };
+  }
+  const layout = map
+    ? await layoutMap(ir)
+    : await layoutFlow(ir, engine, { tree: false });
+  const svg =
+    "lanes" in layout
+      ? drawSwimlane(layout as SwimlaneLayout, pal, ids)
+      : drawFlow(layout, pal, ids);
+  return { svg, layout, laid: layout };
 }
 
 /** titledZones is a map with its zones titled by id from strings.ts, not
@@ -195,7 +238,8 @@ export function FullDiagram({
 }: {
   title: string;
   kind: DiagramIR["kind"];
-  drawn: Rendered;
+  /** The drawing and, for links, the flow layout it was drawn from. */
+  drawn: Pick<Rendered, "svg" | "layout">;
   links?: (id: string) => string | null;
   names: Map<string, string>;
   onClose: () => void;

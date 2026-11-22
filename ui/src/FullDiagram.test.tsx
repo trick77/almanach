@@ -8,8 +8,8 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import type { FlowIR, SequenceIR } from "@trick77/diagram";
-import { Diagram, FullDiagram, drawMap } from "./Diagram";
+import { svgSize, type FlowIR, type SequenceIR } from "@trick77/diagram";
+import { Diagram, FullDiagram, drawIR } from "./Diagram";
 import { S } from "./strings";
 
 const svg =
@@ -168,13 +168,14 @@ describe("FullDiagram", () => {
     file.restore();
   });
 
-  it("links a map's nodes, and a followed link closes it", () => {
+  it("links a map's nodes over their boxes in the bands, and a followed link closes it", async () => {
     const onClose = vi.fn();
+    const drawn = await drawIR(map, "t", true);
     render(
       <FullDiagram
         title={S.diagram.titles.map}
         kind="flow"
-        drawn={drawMap(map, "t")}
+        drawn={drawn}
         links={shopApi}
         names={new Map([["shop-api", "shop-api"]])}
         onClose={onClose}
@@ -183,6 +184,17 @@ describe("FullDiagram", () => {
     const links = within(screen.getByRole("dialog")).getAllByRole("link");
     expect(links).toHaveLength(1);
     expect(links[0].getAttribute("href")).toBe("/projects/SHOP/repos/shop-api");
+    // Over the box the bands put the node in, in percent of the drawing,
+    // whose size is the layout's.
+    const l = drawn.layout!;
+    const box = l.nodes.find((n) => n.id === "shop-api")!;
+    const at = (v: string, n: number, of: number) =>
+      expect(parseFloat(v)).toBeCloseTo((n / of) * 100, 3);
+    at(links[0].style.left, box.x, l.width);
+    at(links[0].style.top, box.y, l.height);
+    at(links[0].style.width, box.w, l.width);
+    at(links[0].style.height, box.h, l.height);
+    expect(svgSize(drawn.svg)).toEqual({ w: l.width, h: l.height });
     fireEvent.click(links[0]);
     expect(onClose).toHaveBeenCalled();
     expect(window.location.pathname).toBe("/projects/SHOP/repos/shop-api");

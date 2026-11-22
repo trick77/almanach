@@ -28,9 +28,9 @@ const (
 // per item and stop sooner. A map, the system map or a repository's, holds
 // MapMaxNodes and MapMaxEdges: every external system it shows is its own
 // node, never merged into one (user, 2026-11-01), the system map's only
-// those at runtime, in production (user, 2026-11-02), and the UI lays a map out
-// in rows that grow downwards (ui/src/mapLayout.ts), not in ELK's layers.
-// The edges grow with the nodes, 24/16 of them.
+// those at runtime, in production (user, 2026-11-02), and the UI draws a map
+// in the package's bands, scaled into the column when wide. The edges grow
+// with the nodes, 24/16 of them.
 const (
 	DrawMaxNodes    = 16
 	DrawMaxEdges    = 24

@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -8,11 +9,17 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { download, fileName, toSvgFile, type FlowIR } from "@trick77/diagram";
+import {
+  bandsOf,
+  download,
+  fileName,
+  toSvgFile,
+  type FlowIR,
+  type Rendered,
+} from "@trick77/diagram";
 import { DiagramTools } from "@trick77/diagram/react";
-import { FullDiagram, app, drawMap, icons } from "./Diagram";
+import { FullDiagram, app, bandOrder, drawIR, icons } from "./Diagram";
 import { fits } from "./diagramIR";
-import { bandsOf } from "./mapLayout";
 import { S } from "./strings";
 import { Link, Teaser } from "./ui";
 
@@ -60,23 +67,65 @@ export function CompactMap({
   // screen has no pointing. A touch that turns into a scroll is forgotten.
   const touch = useRef<{ id: string; lit: boolean } | null>(null);
   const ok = useMemo(() => fits(ir, true), [ir]);
-  const bands = useMemo(() => bandsOf(ir), [ir]);
+  const bands = useMemo(() => bandsOf(ir, bandOrder), [ir]);
   const names = useMemo(
     () => new Map(ir.nodes.map((n) => [n.id, n.label])),
     [ir],
   );
   const lit = useMemo(() => (hot === null ? null : ways(ir, hot)), [ir, hot]);
-  // The drawing the open checked, kept for the open map: laid out once,
-  // not again on the render the open causes.
-  const [opened, setOpened] = useState<{
-    ir: FlowIR;
-    d: NonNullable<ReturnType<typeof tryDraw>>;
-  } | null>(null);
-  const full = useMemo(
-    () => (!open ? null : opened?.ir === ir ? opened.d : tryDraw(ir)),
-    [open, ir, opened],
+  // The map's drawing, made when the full view or the file first asks for
+  // it (several layout passes of the engine: a second or two on a full
+  // map) and kept for the map: the view and the file take it as it is.
+  // One drawing in flight per map; a click meanwhile waits for it, the
+  // buttons held and the wait said. A map that changes while the view is
+  // open is drawn anew, the old drawing shown until then; one whose
+  // drawing fails closes the view and says so.
+  const [drawn, setDrawn] = useState<{ ir: FlowIR; d: Rendered } | null>(null);
+  const drawnNow = useRef(drawn);
+  useEffect(() => {
+    drawnNow.current = drawn;
+  });
+  const inflight = useRef<{ ir: FlowIR; p: Promise<Rendered | null> } | null>(
+    null,
   );
-  const broken = failedFor === ir || (open && full === null);
+  const [drawing, setDrawing] = useState(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const draw = useCallback((of: FlowIR): Promise<Rendered | null> => {
+    if (drawnNow.current?.ir === of) return Promise.resolve(drawnNow.current.d);
+    if (inflight.current?.ir === of) return inflight.current.p;
+    setDrawing(true);
+    const p = tryDraw(of).then((d) => {
+      if (inflight.current?.p !== p) return d;
+      inflight.current = null;
+      if (mounted.current) {
+        setDrawing(false);
+        if (d) setDrawn({ ir: of, d });
+      }
+      return d;
+    });
+    inflight.current = { ir: of, p };
+    return p;
+  }, []);
+  useEffect(() => {
+    if (!open || drawn?.ir === ir) return;
+    let live = true;
+    void draw(ir).then((d) => {
+      if (!live || d) return;
+      setFailedFor(ir);
+      setOpen(false);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, ir, drawn, draw]);
+  const full = open ? (drawn?.d ?? null) : null;
+  const broken = failedFor === ir;
   // One set of handlers per map, so a light changing re-renders only the
   // nodes whose look changes.
   const points = useMemo(
@@ -139,17 +188,18 @@ export function CompactMap({
   if (!ok)
     return <p className="my-2 text-[13.5px] text-faint">{S.diagram.failed}</p>;
 
-  function save() {
-    const d = full ?? tryDraw(ir);
+  // A drawing arriving after the page went is no one's.
+  async function save() {
+    const d = await draw(ir);
+    if (!mounted.current) return;
     if (d) download(fileName("flow", app), toSvgFile(d, card.current));
     else setFailedFor(ir);
   }
-  function openFull() {
-    const d = tryDraw(ir);
-    if (d) {
-      setOpened({ ir, d });
-      setOpen(true);
-    } else setFailedFor(ir);
+  async function openFull() {
+    const d = await draw(ir);
+    if (!mounted.current) return;
+    if (d) setOpen(true);
+    else setFailedFor(ir);
   }
 
   const said =
@@ -165,29 +215,43 @@ export function CompactMap({
         );
 
   return (
-    <figure className="my-3" aria-label={title} ref={card}>
+    <figure
+      className="my-3"
+      aria-label={title}
+      aria-busy={drawing || undefined}
+      ref={card}
+    >
       {/* The card's buttons without the card: the drawing is made only
-          when the full view or the file asks for it. */}
-      <DiagramTools
-        title={title}
-        onFull={openFull}
-        onSave={save}
-        icons={icons}
-        strings={S.diagram}
-      />
+          when the full view or the file asks for it. Held while it is
+          drawn: a fieldset disables what it holds, contents keeps the
+          row's layout, role none keeps it out of the bands' groups. */}
+      <fieldset disabled={drawing} role="none" className="contents">
+        <DiagramTools
+          title={title}
+          onFull={() => void openFull()}
+          onSave={() => void save()}
+          icons={icons}
+          strings={S.diagram}
+        />
+      </fieldset>
+      {drawing && (
+        <p role="status" className="mb-2 text-[13.5px] text-faint">
+          {S.diagram.pending}
+        </p>
+      )}
       {broken && (
         <p className="mb-2 text-[13.5px] text-faint">{S.diagram.failed}</p>
       )}
       <div className="rounded-ui-sm border border-border bg-panel px-4 py-2">
         {bands.map((b) => {
-          const boxes = b.zone === "repositories";
+          const boxes = b.id === "repositories";
           // Every gap above a row of nodes keeps 8px or more, the room a lit
           // node's legend takes above its border (Node's wayMark): the
           // band's top padding, the gap under its title in one column (a
           // phone), the gaps between rows.
           return (
             <div
-              key={b.zone ?? ""}
+              key={b.id}
               role="group"
               aria-label={b.title || undefined}
               className={
@@ -210,7 +274,7 @@ export function CompactMap({
                     : "flex flex-wrap gap-x-1.5 gap-y-2"
                 }
               >
-                {b.ids.map((id) => (
+                {b.nodes.map((id) => (
                   <li key={id} className="contents">
                     <Node
                       box={boxes}
@@ -408,11 +472,11 @@ const Node = memo(function Node({
  *  Node's memo, and every node re-render on each hover. */
 const noTeaser: string[] = [];
 
-/** tryDraw is the map's drawing, or null where its layout throws: the
- *  full view and the file are lost then, never the page. */
-function tryDraw(ir: FlowIR): ReturnType<typeof drawMap> | null {
+/** tryDraw is the map's drawing, or null where its layout fails: the full
+ *  view and the file are lost then, never the page. */
+async function tryDraw(ir: FlowIR): Promise<Rendered | null> {
   try {
-    return drawMap(ir, "almanach-system-map");
+    return await drawIR(ir, "almanach-system-map", true);
   } catch {
     return null;
   }

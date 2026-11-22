@@ -1331,9 +1331,9 @@ carries the map forward unchanged. The API serves the sentinel as no map
 with `map_declined`, and the project page shows its placeholder only
 where `map_expected` holds and no map was declined. The UI draws both
 with `@trick77/diagram` (rongo's layout, drawing and theme, shared as a
-package), its core and card only, no Mermaid; a map is laid out in bands
-by almanach's own `mapLayout.ts` on the package's measures. The map's
-repository nodes link to their pages, in the full view too.
+package), its core and card only, no Mermaid; a map is laid out in the
+package's bands. The map's repository nodes link to their pages, in the
+full view too.
 Every repository page carries a map of its own, the repository map step's
 alone (`revisions.repo_map`, repository revisions only): the repository
 from inside, zones `entry`, `parts`, `stores`, `external`, an edge
@@ -1360,9 +1360,13 @@ no current map, and null records nothing, as for a page without one. A
 map that breaks a rule keeps the stored one, logged with
 its node labels by zone; declined with none stored, the API says
 `map_declined` and the page says why there is no map.
-Both maps are laid out by code, not ELK (`ui/src/mapLayout.ts`): the
-zones stacked as bands top to bottom, each band's boxes in rows no wider
-than the page column, so a map grows downwards and is never shrunk.
+Both maps are drawn in `@trick77/diagram`'s bands (`drawIR` with
+`lanes`): the zones stacked top to bottom in almanach's order (clients,
+entry, repositories or parts, shared, stores, external), the flow running
+down, handoffs turning in the gaps. Clean over compact (user,
+2026-11-22): a map wider than the column is scaled into it, and the full
+view shows it large. almanach's own layout before, rows no wider than the
+column grown downwards, read messy.
 The project page shows its map compact, as the Systemübersicht
 (`ui/src/CompactMap.tsx`): the same bands in the same order, each a line
 of names and the repositories a band of boxes with their teaser, no
