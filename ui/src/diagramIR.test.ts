@@ -39,10 +39,13 @@ describe("fits", () => {
       rels: 12,
       attrs: 12,
     });
+    // A map is drawn in bands: its zones count as lanes, seven at most
+    // (five the backend allows, the shared repositories, the loose steps).
     fits(flow(1), true);
     expect(vi.mocked(diagram.fits)).toHaveBeenLastCalledWith(
       flow(1),
-      expect.objectContaining({ nodes: 22, edges: 33, actors: 8 }),
+      expect.objectContaining({ nodes: 22, edges: 33, actors: 8, lanes: 7 }),
+      { lanes: true },
     );
   });
 

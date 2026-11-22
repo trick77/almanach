@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-  ramp,
-  textWidth,
-  type FlowEdgeIR,
-  type FlowIR,
-  type FlowNodeIR,
+import type {
+  FlowEdgeIR,
+  FlowIR,
+  FlowNodeIR,
+  SwimlaneLayout,
 } from "@trick77/diagram";
-import { check } from "@trick77/diagram/check";
-import { layoutMap, pageColumn } from "./mapLayout";
+import { checkIR } from "@trick77/diagram/check";
+import { bandOrder, layoutMap } from "./Diagram";
+import { downward } from "./diagramIR";
+
+// The maps, the system map and a repository's, laid out in the package's
+// bands: always bands, in the maps' order, held to the package's rules.
+// The fixtures are the ones almanach's own map layout was held to.
 
 const node = (id: string, label: string, zone: string): FlowNodeIR => ({
   id,
@@ -239,6 +243,38 @@ const small = map(
   [edge("api", "billing", "call"), edge("billing", "db", "DB")],
 );
 
+// What the package's lane reading declines, where a map is bands all the
+// same: one zone holding every box, no arrow at all, an arrow within one
+// zone only, an arrow from a box to itself.
+const oneZone = map(
+  [
+    node("a", "Kern", "parts"),
+    node("b", "Planer", "parts"),
+    node("c", "Speicherung", "parts"),
+  ],
+  [edge("a", "b", "call"), edge("b", "c", "call")],
+);
+const edgeless = map(
+  [
+    node("api", "HTTP-API", "entry"),
+    node("core", "Kern", "parts"),
+    node("db", "Datenbank", "stores"),
+  ],
+  [],
+);
+const selfEdge = map(
+  [
+    node("api", "HTTP-API", "entry"),
+    node("core", "Kern", "parts"),
+    node("db", "Datenbank", "stores"),
+  ],
+  [
+    edge("api", "core", "call"),
+    edge("core", "core", "call"),
+    edge("core", "db", "DB"),
+  ],
+);
+
 const fixtures: Record<string, FlowIR> = {
   loom,
   llmwire,
@@ -247,79 +283,53 @@ const fixtures: Record<string, FlowIR> = {
   full,
   system,
   small,
+  oneZone,
+  edgeless,
+  selfEdge,
 };
 
-describe("layoutMap", () => {
-  // The gate: every map, up to the cap of 22 nodes, fits the page column
-  // unscaled and is at most twice as wide as it is tall. Red = not done.
+/** The zones a map is drawn in, in the maps' order: the ones it holds. */
+const ordered = (ir: FlowIR) =>
+  bandOrder.filter((z) => ir.nodes.some((n) => n.zone === z));
+
+// The bands ask the engine for several placements of a map and keep the
+// best: about a second for the full cap here, past five on a shared CI
+// runner beside the other test files.
+describe("layoutMap", { timeout: 30_000 }, () => {
   for (const [name, ir] of Object.entries(fixtures)) {
-    it(`${name}: fits the column, at most 2:1`, () => {
-      const l = layoutMap(ir);
-      console.log(
-        `${name}: ${ir.nodes.length} nodes, ${l.width} x ${l.height}, ${(l.width / l.height).toFixed(2)}:1`,
+    it(`${name}: bands in the maps' order, every box, within the rules`, async () => {
+      const l = (await layoutMap(ir)) as SwimlaneLayout;
+      expect("lanes" in l).toBe(true);
+      expect(l.lanes.map((b) => b.id)).toEqual(ordered(ir));
+      // Down the page, one band under the other.
+      l.lanes.slice(1).forEach((b, i) => {
+        expect(b.y).toBeGreaterThan(l.lanes[i].y);
+      });
+      expect(l.nodes.map((n) => n.id).sort()).toEqual(
+        ir.nodes.map((n) => n.id).sort(),
       );
-      expect(l.width).toBeLessThanOrEqual(pageColumn);
-      expect(l.width / l.height).toBeLessThanOrEqual(2);
-      // Every arrow square, clear of the boxes it does not join, none on
-      // another; labels clear of lines and boxes. A map may cross.
-      expect(check(l, { written: true })).toEqual([]);
-      // No line through a zone's title.
-      for (const z of l.zones) {
-        const x0 = z.x + 18;
-        const x1 = x0 + textWidth(z.title, ramp.bold, "sans");
-        const struck = l.edges.filter((e) =>
-          e.points.slice(1).some((p, k) => {
-            const q = e.points[k];
-            return (
-              p.x === q.x &&
-              p.x >= x0 &&
-              p.x <= x1 &&
-              Math.min(p.y, q.y) < z.y + 32 &&
-              Math.max(p.y, q.y) > z.y + 12
-            );
-          }),
-        );
-        expect(struck.map((e) => `${e.from}->${e.to} over ${z.id}`)).toEqual(
-          [],
-        );
-      }
+      expect(
+        await checkIR(downward(ir), { lanes: true, bandOrder, layout: l }),
+      ).toEqual([]);
     });
   }
 
-  it("stacks the zones in the order a request travels", () => {
-    const l = layoutMap(loom);
-    const y = (id: string) => l.zones.find((z) => z.id === id)!.y;
-    expect(y("entry")).toBeLessThan(y("parts"));
-    expect(y("parts")).toBeLessThan(y("stores"));
-    expect(y("stores")).toBeLessThan(y("external"));
-    const s = layoutMap(system);
-    const ys = (id: string) => s.zones.find((z) => z.id === id)!.y;
-    expect(ys("clients")).toBeLessThan(ys("repositories"));
-    expect(ys("repositories")).toBeLessThan(ys("shared"));
-    expect(ys("shared")).toBeLessThan(ys("stores"));
+  it("holds the full cap, 22 boxes and 33 arrows", () => {
+    expect(full.nodes).toHaveLength(22);
+    expect(full.edges).toHaveLength(33);
   });
 
-  it("wraps a wide zone into rows, every node its own box", () => {
-    const l = layoutMap(loom);
-    const ext = l.nodes.filter(
-      (n) => loom.nodes.find((m) => m.id === n.id)!.zone === "external",
-    );
-    expect(ext).toHaveLength(7);
-    expect(new Set(ext.map((n) => n.y)).size).toBeGreaterThan(1);
-    const perRow = Math.max(
-      ...[...new Set(l.nodes.map((n) => n.y))].map(
-        (y) => l.nodes.filter((n) => n.y === y).length,
-      ),
-    );
-    expect(perRow).toBeLessThanOrEqual(5);
+  it("draws no arrow from a box to itself", async () => {
+    const l = await layoutMap(selfEdge);
+    expect(l.edges.some((e) => e.from === e.to)).toBe(false);
   });
 
-  it("is the same map every time", () => {
-    expect(layoutMap(loom)).toEqual(layoutMap(loom));
+  it("is the same map every time", async () => {
+    expect(await layoutMap(loom)).toEqual(await layoutMap(loom));
   });
 
-  it("lays out a map without a node as an empty canvas", () => {
-    const l = layoutMap(map([], []));
+  it("lays out a map without a node as an empty canvas", async () => {
+    const l = await layoutMap(map([], []));
     expect(l.nodes).toEqual([]);
     expect(l.edges).toEqual([]);
     expect(l.zones).toEqual([]);

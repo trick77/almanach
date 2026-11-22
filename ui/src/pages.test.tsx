@@ -49,9 +49,9 @@ vi.mock("./Diagram", async (actual) => {
   const real = await actual<typeof diagram>();
   return {
     ...real,
-    drawMap: (...a: Parameters<typeof real.drawMap>) => {
-      if (drawing.throws) throw new Error("layout");
-      return real.drawMap(...a);
+    drawIR: (...a: Parameters<typeof real.drawIR>) => {
+      if (drawing.throws) return Promise.reject(new Error("layout"));
+      return real.drawIR(...a);
     },
   };
 });
@@ -1247,6 +1247,8 @@ describe("ProjectPage", () => {
         name: "Systemübersicht: Vollansicht",
       }),
     );
+    // Drawn first, then shown.
+    await screen.findByRole("dialog");
     fireEvent.keyDown(document.body, { key: "/" });
     expect(document.activeElement).not.toBe(search);
   });
@@ -1445,10 +1447,10 @@ describe("ProjectPage", () => {
     } finally {
       drawing.throws = false;
     }
-    expect(screen.queryByRole("dialog")).toBeNull();
     expect(
-      screen.getByText("Das Diagramm konnte nicht gezeichnet werden."),
+      await screen.findByText("Das Diagramm konnte nicht gezeichnet werden."),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(
       screen.getByRole("link", { name: "Repository pay-api öffnen" }),
     ).toBeInTheDocument();
@@ -1462,7 +1464,7 @@ describe("ProjectPage", () => {
         name: "Systemübersicht: Vollansicht",
       }),
     );
-    const dialog = screen.getByRole("dialog");
+    const dialog = await screen.findByRole("dialog");
     expect(dialog.getAttribute("aria-label")).toBe("Systemübersicht");
     const link = within(dialog).getByRole("link", {
       name: "Repository pay-api öffnen",
@@ -1508,7 +1510,8 @@ describe("ProjectPage", () => {
     render(<ProjectPage projectKey="PAY" />);
     await openTab(/Nachschlagen/);
     const drawing = await screen.findByRole("img", { name: "Sequenzdiagramm" });
-    expect(drawing.textContent).toContain("Limit prüfen");
+    // A message's text is a note in capitals.
+    expect(drawing.textContent).toContain("LIMIT PRÜFEN");
     const text = screen.getByText("Der Mandant kommt aus der Kopfzeile.");
     expect(
       text.compareDocumentPosition(drawing) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -2035,9 +2038,13 @@ describe("RepoPage", () => {
         S.path.step(4, S.path.change),
         S.path.step(5, S.path.pitfalls),
       ]);
-      // The map: zones titled from strings.ts, parts not pages.
-      const drawing = within(start).getByRole("img", { name: "Aufbau" });
-      expect(drawing.textContent).toContain("Eingang");
+      // The map: zones titled from strings.ts, parts not pages. Drawn in
+      // bands by the layout engine, loaded for it.
+      const drawing = await within(start).findByRole("img", {
+        name: "Aufbau",
+      });
+      // A band's title is its eyebrow, in capitals.
+      expect(drawing.textContent).toContain("EINGANG");
       expect(within(drawing.parentElement!).queryByRole("link")).toBeNull();
       // The summary's opening, the whole of it a link away.
       expect(
