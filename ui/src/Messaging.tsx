@@ -6,7 +6,8 @@ import type {
   TopicFlow,
 } from "./api";
 import { Diagram, titledZones } from "./Diagram";
-import { fits, type FlowIR, type FlowNodeIR } from "./diagramIR";
+import type { FlowIR, FlowNodeIR } from "@trick77/diagram";
+import { fits } from "./diagramIR";
 import { refName } from "./format";
 import { factPath } from "./repoFacts";
 import { S } from "./strings";

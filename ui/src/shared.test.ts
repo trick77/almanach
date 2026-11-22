@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FlowIR } from "./diagramIR";
+import type { FlowIR } from "@trick77/diagram";
 import { withShared } from "./ProjectPage";
 
 const map: FlowIR = {

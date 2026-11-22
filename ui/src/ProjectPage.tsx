@@ -19,7 +19,8 @@ import {
 } from "./Entry";
 import { CompactMap } from "./CompactMap";
 import { titledZones } from "./Diagram";
-import { fits, type FlowIR } from "./diagramIR";
+import type { FlowIR } from "@trick77/diagram";
+import { fits } from "./diagramIR";
 import { ProjectInterfaces } from "./Interfaces";
 import { ProjectMessages } from "./Messaging";
 import { NotesTable } from "./NotesTable";

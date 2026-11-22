@@ -24,9 +24,9 @@ import (
 // statementDiagram); a map that fails is not drawn, the stored one
 // staying. One bad drawing never costs the text around it.
 //
-// The checks are the ones rongo's toIR made of a mermaid parse (ui/src/
-// diagramIR.ts): what passes here is what rongo's copied layout was written
-// for.
+// The checks are the ones rongo's toIR made of a mermaid parse
+// (@trick77/diagram): what passes here is what the package's layout was
+// written for.
 
 // DiagramCaps are the per-diagram ceilings from config.
 type DiagramCaps struct {

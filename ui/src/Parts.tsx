@@ -1,6 +1,7 @@
 import type { Part, Parts } from "./api";
 import { Diagram, titledZones } from "./Diagram";
-import { fits, type FlowIR } from "./diagramIR";
+import type { FlowIR } from "@trick77/diagram";
+import { fits } from "./diagramIR";
 import { S } from "./strings";
 import { eyebrow, mono, table, tableBox, td, th } from "./ui";
 

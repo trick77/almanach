@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { FlowEdgeIR, FlowIR, FlowNodeIR } from "./diagramIR";
+import {
+  ramp,
+  textWidth,
+  type FlowEdgeIR,
+  type FlowIR,
+  type FlowNodeIR,
+} from "@trick77/diagram";
+import { check } from "@trick77/diagram/check";
 import { layoutMap, pageColumn } from "./mapLayout";
-import { ramp, textWidth } from "./diagramTheme";
-import { check } from "./test/diagramCheck";
 
 const node = (id: string, label: string, zone: string): FlowNodeIR => ({
   id,

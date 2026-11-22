@@ -1330,7 +1330,9 @@ anyway asks again. A zone needs no title, the UI titles zones by id. A note's ca
 carries the map forward unchanged. The API serves the sentinel as no map
 with `map_declined`, and the project page shows its placeholder only
 where `map_expected` holds and no map was declined. The UI draws both
-with rongo's copied layout, drawing and theme, no Mermaid; the map's
+with `@trick77/diagram` (rongo's layout, drawing and theme, shared as a
+package), its core and card only, no Mermaid; a map is laid out in bands
+by almanach's own `mapLayout.ts` on the package's measures. The map's
 repository nodes link to their pages, in the full view too.
 Every repository page carries a map of its own, the repository map step's
 alone (`revisions.repo_map`, repository revisions only): the repository

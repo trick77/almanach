@@ -39,7 +39,7 @@ import type {
   RepoDetail,
   Statement,
 } from "./api";
-import type { FlowIR } from "./diagramIR";
+import type { FlowIR } from "@trick77/diagram";
 import * as diagram from "./Diagram";
 import { atPath } from "./test/atPath";
 

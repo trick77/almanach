@@ -1,7 +1,8 @@
 import { Fragment, useEffect } from "react";
 import type { Dependencies, RepoRef, Sources } from "./api";
 import { Diagram, titledZones } from "./Diagram";
-import { fits, type FlowIR } from "./diagramIR";
+import type { FlowIR } from "@trick77/diagram";
+import { fits } from "./diagramIR";
 import { factPath } from "./repoFacts";
 import { refName } from "./format";
 import { S } from "./strings";

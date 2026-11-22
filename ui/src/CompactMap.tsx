@@ -8,9 +8,10 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { DiagramTools, FullDiagram, drawMap } from "./Diagram";
-import { fits, type FlowIR } from "./diagramIR";
-import { download, fileName, toSvgFile } from "./diagramExport";
+import { download, fileName, toSvgFile, type FlowIR } from "@trick77/diagram";
+import { DiagramTools } from "@trick77/diagram/react";
+import { FullDiagram, app, drawMap, icons } from "./Diagram";
+import { fits } from "./diagramIR";
 import { bandsOf } from "./mapLayout";
 import { S } from "./strings";
 import { Link, Teaser } from "./ui";
@@ -140,7 +141,7 @@ export function CompactMap({
 
   function save() {
     const d = full ?? tryDraw(ir);
-    if (d) download(fileName("flow"), toSvgFile(d, card.current));
+    if (d) download(fileName("flow", app), toSvgFile(d, card.current));
     else setFailedFor(ir);
   }
   function openFull() {
@@ -165,7 +166,15 @@ export function CompactMap({
 
   return (
     <figure className="my-3" aria-label={title} ref={card}>
-      <DiagramTools title={title} onFull={openFull} onSave={save} />
+      {/* The card's buttons without the card: the drawing is made only
+          when the full view or the file asks for it. */}
+      <DiagramTools
+        title={title}
+        onFull={openFull}
+        onSave={save}
+        icons={icons}
+        strings={S.diagram}
+      />
       {broken && (
         <p className="mb-2 text-[13.5px] text-faint">{S.diagram.failed}</p>
       )}

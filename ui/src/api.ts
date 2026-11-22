@@ -4,7 +4,7 @@
 // handled rather than silently read as undefined. Fields the Go side marks
 // omitempty are optional here.
 
-import type { DiagramIR, FlowIR } from "./diagramIR";
+import type { ERIR, FlowIR, SequenceIR } from "@trick77/diagram";
 import { onUnauthorized } from "./signin";
 
 export interface Project {
@@ -139,9 +139,10 @@ export interface Statement {
    *  areas stand in the order of their first statement, "" (or absent)
    *  before the page was laid out. */
   area?: string;
-  /** A picture beside the paragraphs, rongo's IR as the backend validated
-   *  it; absent when the statement has none. */
-  diagram?: DiagramIR;
+  /** A picture beside the paragraphs, @trick77/diagram's IR as the backend
+   *  validated it: a flow, a sequence or an entity model, the kinds
+   *  internal/diagram knows; absent when the statement has none. */
+  diagram?: FlowIR | SequenceIR | ERIR;
 }
 
 export interface Description {

@@ -1,5 +1,5 @@
-// Almanach's own, not rongo's: a map laid out by code, not by ELK.
-import type { FlowIR } from "./diagramIR";
+// Almanach's own, not @trick77/diagram's: a map laid out by code, not by
+// ELK, on the package's measures, drawn by its drawFlow.
 import {
   boxWidth,
   frame,
@@ -10,12 +10,13 @@ import {
   titleRoom,
   zonePad,
   type EdgeRoute,
+  type FlowIR,
   type FlowLayout,
   type LabelBox,
   type NodeBox,
   type Point,
   type ZoneBox,
-} from "./diagramLayout";
+} from "@trick77/diagram";
 
 /**
  * A map, the system map or a repository's: its zones stacked as bands, top
